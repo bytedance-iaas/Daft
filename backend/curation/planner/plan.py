@@ -1,45 +1,44 @@
-"""The planner: preflight + selected modules + limits -> execution plan (04 §3).
+"""The planner: preflight + selected modules + limits -> execution plan (04 §3, design doc 17 §3).
 
 The plan is data. The Daemon generates it, stores it with the task
 (``plan.json``), schedules by it and serves it read-only; ``curation plan
 --json`` prints the same thing (02 §3.2). Nobody submits a plan (D5); callers
 can only lower the limits it is derived from (D31).
 
-Stages follow v1's funnel (D18), in this order, and a stage without modules is
-left out (until F12.4 plans the two blocks of registry 2.0, design doc 17 §3; the registry's
-``dedup`` and ``profile`` stages are planned as the post-verdict ``dedup`` and ``profile_vlm``):
+Plan 2.0: the registry's two blocks run side by side and never filter each other (D57).
+Each stage names its ``block`` and the stage before it there (``after``); every stage
+takes the whole selection, a stage without modules is left out:
 
-    autolabel  captions for episodes without a task text, before the funnel
-    integrity  the data integrity module            cpu (mostly I/O), hard gate 0 (design doc 14)
-    numeric    parquet-only checks                  cpu, hard gate 1
-    frame      checks sharing one full-rate decode  cpu, hard gate 2
-    vlm        the VLM check on the survivors       vlm gates, merge proposal
-    verdict    aggregate --phase funnel             (always)
-    dedup      exact duplicates on the kept set     cpu, concurrency always 1
-    profile_vlm skill profile on the kept set       vlm gates
-    final      aggregate --phase final              (always)
+    cpu block   integrity  the data integrity module            cpu (mostly I/O)
+                numeric    parquet-only checks                  cpu
+                frame      checks sharing one full-rate decode  cpu
+                dedup      exact duplicates (full set)          cpu, concurrency always 1
+    vlm block   autolabel  captions for episodes without a task text
+                vlm        the VLM checks                       vlm gates, merge proposal
+                profile    the skill profile (full set)         vlm gates
+    final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
-Each funnel stage reads the survivors of the one before it. autolabel runs only
-if a selected funnel module needs the task text (in v1 only task_success does:
-``run.py`` captions unlabeled episodes only when task_success is on;
-skill_profile reuses those captions and captions the rest itself) and some
-selected episode may lack one. Modules the preflight marked unsupported stay
-out, and the plan says why.
+A full-set stage (``full_set``) needs the whole selection at once and starts when the
+stages before it in its block are done (§3.2). autolabel runs only if a selected module
+reads the task text (task_success; v1 captions unlabeled episodes only when it is on) and
+some selected episode may lack one. Modules the preflight marked unsupported stay out, and
+the plan says why.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..contracts import modules as registry_mod
-from ..pipeline import gates_v1
 from .estimates import estimate
 from .gates import derive_gates, stage_gates
 from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
                      effective_cpu_concurrency, effective_vlm_parallelism)
 from .merge import declared_frame_policy
 
-SCHEMA_VERSION = "1.0"
-FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
+SCHEMA_VERSION = "2.0"
+#: the stages that hand episodes on one at a time (the Daemon's episode pipeline); the others of a block
+#: run as one command: autolabel before its block's checks, the full-set stages after them
+STREAM_STAGES = ("integrity", "numeric", "frame", "vlm")
 
 
 class PlanError(ValueError):
@@ -178,48 +177,36 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
 
     stages: list[dict[str, Any]] = []
     unlabeled = _unlabeled(dataset, selected, count, unlabeled_episodes, notes)
-    if unlabeled and any(s.stage not in registry_mod.FULL_SET_STAGES and "autolabel" in s.depends_on
-                         for s in chosen):
-        stages.append({"id": "autolabel", "kind": "vlm", "command": "autolabel",
-                       "episodes": "unlabeled", "gates": stage_gates("autolabel", gates)})
-
-    previous = None
-    for stage_id in FUNNEL_STAGES:
-        members = [s for s in chosen if s.stage == stage_id]
-        if not members:
-            continue
-        kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
-        stage: dict[str, Any] = {"id": stage_id, "kind": kind, "command": "check"}
-        if kind == "cpu":
-            stage["concurrency"] = cpu.value
-        stage["modules"] = [s.id for s in members]
-        stage["episodes"] = f"survivors:{previous}" if previous else "selected"
-        hard = [s.id for s in members if gates_v1.gate(s) == "hard"]
-        if hard:
-            stage["hard_gates"] = hard
-        if kind == "vlm":
-            stage["gates"] = stage_gates("vlm", gates)
-            stage["merge"] = _merge_proposal(members, site, notes)
-        stages.append(stage)
-        previous = stage_id
-    stages.append({"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"})
-
-    dedup = [s for s in chosen if s.stage == "dedup"]
-    profile = [s for s in chosen if s.stage == "profile"]
-    if dedup:
-        stages.append({"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1,
-                       "modules": [s.id for s in dedup], "episodes": "keep"})
-    if profile:
-        kind = "vlm" if any("vlm" in s.needs for s in profile) else "cpu"
-        stage = {"id": "profile_vlm", "kind": kind, "command": "check"}
-        if kind == "cpu":
-            stage["concurrency"] = cpu.value
-        stage["modules"] = [s.id for s in profile]
-        stage["episodes"] = "keep-minus-duplicates" if dedup else "keep"
-        if kind == "vlm":
-            stage["gates"] = stage_gates("profile", gates)
-            stage["merge"] = _merge_proposal(profile, site, notes)
-        stages.append(stage)
+    captions = bool(unlabeled) and any(
+        s.stage not in registry_mod.FULL_SET_STAGES and "autolabel" in s.depends_on for s in chosen)
+    for block, block_stages in registry_mod.BLOCKS.items():
+        previous = None
+        for stage_id in block_stages:
+            if stage_id == "autolabel":
+                if not captions:
+                    continue
+                stage: dict[str, Any] = {"id": "autolabel", "kind": "vlm", "command": "autolabel",
+                                         "block": block, "episodes": "unlabeled",
+                                         "gates": stage_gates("autolabel", gates)}
+            else:
+                members = [s for s in chosen if s.stage == stage_id]
+                if not members:
+                    continue
+                kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
+                stage = {"id": stage_id, "kind": kind, "command": "check", "block": block}
+                if previous:
+                    stage["after"] = previous
+                if stage_id in registry_mod.FULL_SET_STAGES:
+                    stage["full_set"] = True
+                if kind == "cpu":
+                    stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
+                stage["modules"] = [s.id for s in members]
+                stage["episodes"] = "selected"
+                if kind == "vlm":
+                    stage["gates"] = stage_gates(stage_id, gates)
+                    stage["merge"] = _merge_proposal(members, site, notes)
+            stages.append(stage)
+            previous = stage_id
     stages.append({"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"})
 
     if not chosen:

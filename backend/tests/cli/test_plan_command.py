@@ -37,7 +37,8 @@ def test_the_default_plan_has_v1s_gates(vlm_stage, tmp_path):
     assert _stage(plan, "vlm")["gates"] == {"episode": 32, "probe": 64, "endstate": 64,
                                             "arbitration": 32, "guard_caption": 32}
     assert _stage(plan, "vlm")["merge"] == {"strategy": "none", "groups": []}
-    assert [s["id"] for s in plan["stages"]][:4] == ["autolabel", "numeric", "frame", "vlm"]
+    assert [s["id"] for s in plan["stages"]] == ["numeric", "frame", "dedup", "autolabel", "vlm", "profile",
+                                                 "final"]                       # the two blocks, then the verdicts
 
 
 def test_the_smallest_limit_wins(vlm_stage, tmp_path):

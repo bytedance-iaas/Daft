@@ -45,12 +45,17 @@ def test_curves_per_camera_downsampled_with_the_reading_on_them(world):
     assert world.get("/episodes/3/sync-curves", rev=1).status_code == 200
 
 
-def test_why_there_are_no_curves(world):
+def test_why_there_are_no_curves(world, monkeypatch):
+    from daemon.results import revision
+
     body = assert_error(world.get("/episodes/0/sync-curves"), "not_found", 404)
     assert body["error"]["details"] == {"episode_index": 0, "revision": 1, "reason": "no_curves"}
-    body = assert_error(world.get("/episodes/1/sync-curves"), "not_found", 404)   # killed at numeric
+    real = revision.Revision.record
+    monkeypatch.setattr(revision.Revision, "record",
+                        lambda self, m, ep: None if (m, ep) == ("video_action_sync", 1) else real(self, m, ep))
+    body = assert_error(world.get("/episodes/1/sync-curves"), "not_found", 404)   # no record of the module
     assert body["error"]["details"]["reason"] == "no_record"
-    assert "前面已被判废" in body["error"]["message"]
+    assert "没有视频-动作同步的结果" in body["error"]["message"]
     body = assert_error(world.get("/episodes/99/sync-curves"), "not_found", 404)
     assert body["error"]["details"]["reason"] == "episode_missing"
     assert_error(world.get("/episodes/-1/sync-curves"), "validation_failed", 400)

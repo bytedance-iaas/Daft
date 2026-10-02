@@ -26,8 +26,9 @@ from .test_dump_v1_e2e import kept_task_text, of_task, rewrite_tape
 
 pytestmark = pytest.mark.e2e
 
+#: the Daemon's two blocks one after the other, every stage on the whole selection (design doc 17 §3)
 STEPS = ["preflight", "plan", "snapshot", "autolabel", "check numeric", "check frame",
-         "check vlm", "aggregate funnel", "check dedup", "check skill_profile",
+         "check vlm", "check dedup", "check skill_profile",
          "aggregate final", "report", "export", "verify"]
 
 
@@ -54,7 +55,7 @@ def v2_golden(mini_dataset, tmp_path_factory):
     return out, proc, doc
 
 
-def test_golden_walks_the_whole_funnel(v2_golden):
+def test_golden_walks_both_blocks(v2_golden):
     out, proc, doc = v2_golden
     assert [s["step"] for s in doc["steps"]] == STEPS
     assert all(s["exit_code"] == 0 for s in doc["steps"])
@@ -177,8 +178,7 @@ def test_adjudication_replays_its_golden_exactly(v2_adj_golden, mini_dataset, tm
                                    os.path.join(golden, "vlm_tape.jsonl.gz"))
     assert proc.returncode == 0, proc.stderr[-4000:]
     assert [s["step"] for s in doc["steps"]] == [
-        "adjudicate-apply", "check task_success", "aggregate funnel", "check skill_profile",
-        "aggregate final", "report"]
+        "adjudicate-apply", "check task_success", "check skill_profile", "aggregate final", "report"]
     assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
     rc, report = compare(golden, out)
     assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]

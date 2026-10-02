@@ -203,8 +203,7 @@ CASES = [
 
 
 def _record(module, passed, score, details, **kw):
-    return record_from_struct(module, 7, {"passed": passed, "score": score, "detail": json.dumps(details)},
-                              version="2.0", **kw)
+    return record_from_struct(module, 7, {"passed": passed, "score": score, "detail": json.dumps(details)}, **kw)
 
 
 @pytest.mark.parametrize("module,passed,score,details,codes,unassessable", CASES,
@@ -293,7 +292,7 @@ def test_guards_keep_todays_gates():
 def test_context_and_errors():
     rec = _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": {"source": "profile"}})
     assert rec["readings"]["action_semantics"] == {"source": "profile"}
-    err = record_from_struct("task_success", 3, None, incidents=[{"step": "probe", "cause": "timeout"}], version="2.0")
+    err = record_from_struct("task_success", 3, None, incidents=[{"step": "probe", "cause": "timeout"}])
     assert err["status"] == "error" and err["findings"] == [] and err["assessed"] == []
     assert schemas.errors("cli/result-record.schema.json", err) == []
     assert legacy_verdict(err) == "error" and not passes_funnel(err)
@@ -303,8 +302,9 @@ def test_the_compatibility_verdict_matches_1_0():
     """Views that still count by 1.0's verdict read a 2.0 record the same way (camera_defects, always abstain
     in 1.0, and sync without cameras, a pass in 1.0, are the two deliberate exceptions)."""
     for module, passed, score, details, *_ in CASES:
-        old = record_from_struct(module, 7, {"passed": passed, "score": score, "detail": json.dumps(details)},
-                                 version="1.0")
+        verdict = {True: "pass", False: "fail"}.get(passed) or ("scored" if score is not None else "abstain")
+        old = {"episode_index": 7, "module": module, "verdict": verdict, "passed": passed, "score": score,
+               "gate": "none", "details": details, "evidence": [], "elapsed_s": None, "error": None}
         new = upgrade_record(old)
         if module == "camera_defects" or details is SYNC_NONE:
             continue

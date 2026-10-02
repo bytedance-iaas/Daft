@@ -1,8 +1,8 @@
 """The data integrity findings in the verdict and its person's question (design doc 14 §4, D50-D51;
 17 §4).
 
-A blocking finding is final (no appeal) and ends the funnel for its episode: the later stages
-have no result for it, and it is a reject, not held. A review finding (a suspect) is kept,
+A blocking finding is final (no appeal): a reject, not held - the other modules judged the episode
+too (D57) and their findings change nothing. A review finding (a suspect) is kept,
 delivered and asked on ``integrity_check`` - counted as pending like every line on passed
 episodes; "intact" settles it, "broken" makes it a person's blocking finding, "unsure" keeps it
 asked.
@@ -55,18 +55,17 @@ def final(run_dir: str, episodes: str, revision: int = 1) -> dict[str, dict[int,
 
 
 def _world(tmp_path) -> str:
-    rd = RunDir(str(tmp_path / "run")).good(0, 2, 3, 4)
+    rd = RunDir(str(tmp_path / "run")).good(0, 1, 2, 3, 4)
     for ep, v in ((0, "pass"), (1, "fail"), (2, "abstain"), (3, "abstain"), (4, "abstain")):
         integrity(rd, ep, v)
-    # 1 was rejected at the first gate: no later stage ever saw it
     rd.replace("task_success", 4, "abstain")                  # two questions on one card
     return rd.write()
 
 
-def test_a_reject_ends_the_funnel_and_is_final(tmp_path):
+def test_a_reject_is_final(tmp_path):
     lists = final(_world(tmp_path), "0-4")
     assert sorted(lists["passed"]) == [0, 2, 3, 4] and sorted(lists["reject"]) == [1]
-    assert lists["held"] == {}                                # not "no result": killed by the gate
+    assert lists["held"] == {}
     with open(os.path.join(str(tmp_path / "run"), "revisions", "r0001", "verdicts.jsonl"), encoding="utf-8") as fh:
         line = next(json.loads(ln) for ln in fh if json.loads(ln)["episode_index"] == 1)
     assert line["verdict"] == "drop" and line["reason"] == TRUNCATED

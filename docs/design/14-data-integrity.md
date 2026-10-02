@@ -204,7 +204,7 @@ LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 / L2 对账�
 > 2026-10-01（设计 17 §1.5、§2.2）：三种结论改为发现的级别——判废的码默认 blocking，可疑的码默认 review（裁决线 `integrity_check`），
 > 数据集级的码 info；`row_invalid` 按原因拆成 `video_missing`、`length_mismatch`、`values_invalid`、`metadata_invalid`、`timestamps_invalid`、
 > `action_missing`，「录制中断且读不出」记 `cut_unreadable`。每个码对应分类表的一项，目录在注册表 2.0。记录按 2.0 写从 F12.2 起，
-> 「进下一档 / 不进后面的档」的执行语义由两块并行取代（D57，F12.4）。下表是 1.x 的写法。
+> 「进下一档 / 不进后面的档」的执行语义已由两块并行取代（D57，F12.4 已实现）：判废的条目照样进后面的段与 VLM 块。下表是 1.x 的写法。
 
 | 结论 | 结果记录 | 去向 |
 |---|---|---|

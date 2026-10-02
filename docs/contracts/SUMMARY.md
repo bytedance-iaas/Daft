@@ -294,3 +294,6 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   check 起写记录 2.0，aggregate 按任务策略判决——Daemon 在 `run.json` 冻结 `c2: "2.0"`、`registry_version` 与完整策略，
   每个结果版本另存 `policy.json`；`run.json` 没有 `c2: "2.0"` 的旧任务不再运行（`legacy_task`），aggregate / adjudicate-apply 遇到 1.0 记录退出码 2。
   报告 2.0 的模块小节：`score_hist` 落成「读数 → 十格」，技能画像多 `delivered_family_distribution`（交付集，按 `passed`）——都在 summary 的开放字段里。
+- **F12.4（2026-10-01）**：C2 计划落成 2.0（`block` / `after` / `full_set`，没有 `hard_gates` 与漏斗判决档，`profile_vlm` 改名 `profile`），契约在 F12.1
+  已定；C4 2.2.0——`PipelineEpisode` 的 `last_stage` / `next_stage` 改为可选（只有漏斗时代的旧任务有），两块的运行给 `stages` 与 `provisional`；
+  `StageProgress` 的档名说明补上两块的档。过渡表 `pipeline/gates_v1.py` 删除。

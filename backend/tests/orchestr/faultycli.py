@@ -8,7 +8,9 @@ active while the file named by ``FAKE_SWITCH`` exists (always, when it is unset)
 * ``FAKE_ERROR`` - that module records an execution error for that episode (a model
   call that failed after every retry, D33), the other episodes are judged normally;
 * ``FAKE_FAIL_MODULE`` (``<module>``) - a check including that module fails as a
-  whole (exit 4, as when its VLM endpoint is unreachable).
+  whole (exit 4, as when its VLM endpoint is unreachable);
+* ``FAKE_SLOW`` (``<module>:<seconds>``) - every episode of a check including that module
+  takes that much longer (a slow stage, to see the other block go on without it).
 """
 from __future__ import annotations
 
@@ -35,10 +37,15 @@ def install() -> None:
     from curation.pipeline.incidents import IncidentLog
 
     crash, error, fail = _target("FAKE_CRASH"), _target("FAKE_ERROR"), _target("FAKE_FAIL_MODULE")
+    slow_module, _, slow_s = os.environ.get("FAKE_SLOW", "").partition(":")
     original_work = check_stage.StageRun._work
 
     def work(self, source, ep):
         if _active():
+            if slow_module and slow_module in self.o.modules:
+                import time
+
+                time.sleep(float(slow_s or 0))
             if crash and crash[0] in self.o.modules and ep == crash[1]:
                 os.kill(os.getpid(), signal.SIGKILL)
             if error and error[0] in self.o.modules and ep == error[1]:

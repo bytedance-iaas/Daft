@@ -362,11 +362,13 @@ def _dedup(ctx, args, run_dir, src, episodes, part, guard):
     payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
                         embodiment_id=args.embodiment_id)
     from ..pipeline.policy import load as load_policy
-    from ..pipeline.records import passes_funnel
+    from ..pipeline.records import passes_funnel, two_blocks
 
-    # the copies the task's policy rejects (default: every duplicate but its group's first; report_only: none)
+    # the copies the task's policy rejects (default: every duplicate but its group's first; report_only: none);
+    # plan 2.0 hands the profile every episode (design doc 17 §3.2): dedup only reports its groups
     policy = load_policy(run_dir)
-    dups = {e for e, rec in _latest(run_dir, "dedup").items() if not passes_funnel(rec, policy)}
+    dups = set() if two_blocks(run_dir) else \
+        {e for e, rec in _latest(run_dir, "dedup").items() if not passes_funnel(rec, policy)}
     errors = set(payload["modules"]["dedup"]["error_episodes"])
     left_out = {s["episode_index"] for s in
                 payload["modules"]["dedup"].get("skipped_missing_source") or []}
@@ -431,15 +433,18 @@ def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
 def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int], set[int]]:
     """The given episodes skill_profile files, and the ones a person restored.
 
-    The byte copies dedup found are left out: after an adjudication ``--episodes``
-    is the new ``keep.txt`` and dedup is not run again, its first result stands
-    (v1's rejudge). An episode a person brought into the delivery is never
+    Plan 2.0 (design doc 17 §3.2): every given episode - the profile files the whole selection, and the
+    report gives the delivered set's distribution next to it. A funnel run leaves out the byte copies dedup
+    found: after an adjudication ``--episodes`` is the new ``keep.txt`` and dedup is not run again, its
+    first result stands (v1's rejudge); an episode a person brought into the delivery is never
     deduplicated and is filed from its text (v1's ``_sync_profile``).
     """
     from ..pipeline import aggregate as agg
     from ..pipeline.adjudication import Decisions
-    from ..pipeline.records import latest_results
+    from ..pipeline.records import latest_results, two_blocks
 
+    if two_blocks(run_dir):
+        return list(episodes), set()
     decisions = Decisions.of(run_dir)
     if not latest_results(run_dir, "dedup") and not decisions.applied:
         return list(episodes), set()

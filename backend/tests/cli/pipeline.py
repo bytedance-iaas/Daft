@@ -113,7 +113,10 @@ def comparable(rec: dict) -> dict:
 
 
 class Chain:
-    """The commands in the Daemon's order on one run directory."""
+    """The commands of the Daemon's main run on one run directory (plan 2.0, design doc 17 §3): the two blocks
+    one after the other - autolabel, the CPU checks, the VLM checks, then the full-set steps dedup and
+    skill_profile - every stage on the whole selection, then the final verdicts. The Daemon runs the blocks
+    side by side; the records do not depend on it."""
 
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
     FRAME = "visual_quality,video_action_sync"
@@ -154,29 +157,26 @@ class Chain:
                 "--source-manifest", self.path("source_manifest.json"), *self.extra_source]
 
     def before_vlm(self, episodes: str = "0-7") -> None:
-        """autolabel, check numeric, check frame: everything the VLM stage reads."""
+        """autolabel, check numeric, check frame: every stage on the whole selection."""
         os.makedirs(self.path("stages"), exist_ok=True)
         self.step("autolabel", "autolabel", *self.common(), "--episodes", episodes, *self.vlm)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
                   "--episodes", episodes, "--survivors-out", self.path("stages", "numeric.txt"))
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),
-                  "--episodes", "@" + self.path("stages", "numeric.txt"),
-                  "--survivors-out", self.path("stages", "frame.txt"))
+                  "--episodes", episodes, "--survivors-out", self.path("stages", "frame.txt"))
 
     def funnel(self, episodes: str = "0-7") -> None:
+        """The per-episode checks of both blocks."""
         self.before_vlm(episodes)
         self.step("vlm", "check", "--modules", "task_success", *self.common(),
-                  "--episodes", "@" + self.path("stages", "frame.txt"), *self.vlm)
+                  "--episodes", episodes, *self.vlm)
 
     def post(self, revision: int = 1, episodes: str = "0-7") -> None:
+        """The full-set steps on the whole selection, the final verdicts and the report."""
         r = str(revision)
-        self.step("funnel", "aggregate", "--run-dir", self.rd, "--phase", "funnel",
-                  "--revision", r, "--episodes", episodes)
-        keep = self.path("revisions", f"r{revision:04d}", "keep.txt")
-        self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes",
-                  "@" + keep, "--survivors-out", self.path("stages", "dedup.txt"))
-        self.step("profile_vlm", "check", "--modules", "skill_profile", *self.common(),
-                  "--episodes", "@" + self.path("stages", "dedup.txt"), *self.vlm)
+        self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes", episodes)
+        self.step("profile", "check", "--modules", "skill_profile", *self.common(),
+                  "--episodes", episodes, *self.vlm)
         self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)

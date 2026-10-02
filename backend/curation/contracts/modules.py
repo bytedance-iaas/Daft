@@ -47,8 +47,8 @@ host runs. Neither is part of the JSON export's semantics beyond ``rides_on``.
 
 History: 1.x described modules by their funnel gate (``gate``: hard veto, soft score, dedup removal
 or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
-whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel; the
-executor that still runs the funnel reads them from ``pipeline.gates_v1`` until F12.3 / F12.4.
+whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel: the task's
+policy grades a module's findings (design doc 17 §4) and the two blocks hand every episode on (§3).
 """
 from __future__ import annotations
 
@@ -629,6 +629,15 @@ def native_ids() -> tuple[str, ...]:
     """Modules v2 runs itself, outside v1's check configuration (the EEF module since 1.8, the data
     integrity module since 1.11): v1's ``apply_check_selection`` never sees them."""
     return tuple(m.id for m in MODULES if m.native)
+
+
+def is_rider(module_id: str) -> bool:
+    """Answered inside another module's requests (``rides_on``): its findings are reported, it never holds an
+    episode of its own and a model failure of its host is the host's. False for an unknown id."""
+    try:
+        return bool(get(module_id).rides_on)
+    except KeyError:
+        return False
 
 
 def riders_of(host: str) -> tuple[str, ...]:

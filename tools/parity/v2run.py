@@ -1,13 +1,14 @@
 """Run the v2 command chain on a dataset, with the model calls taped: ``python -m parity run-v2``.
 
 The v2 side of the synthetic parity (design doc 11 §3, 2026-09-21): the atomic
-commands run in this process in the order the Daemon runs them (doc 00 §4) -
+commands run in this process in the order of the Daemon's two blocks (design doc 17 §3),
+one block after the other -
 
-    preflight -> plan -> snapshot -> autolabel -> check numeric -> check frame
-    -> check vlm -> aggregate funnel -> check dedup -> check skill_profile
+    preflight -> plan -> snapshot -> autolabel -> check (integrity) -> check numeric
+    -> check frame -> check vlm -> check dedup -> check skill_profile
     -> aggregate final -> report -> export -> verify
 
-- each stage reading the survivors of the one before, into one v2 run
+- every stage on the whole selection (no stage filters another, D57), into one v2 run
 directory, which ``python -m parity compare`` loads directly. Model calls go
 through the same tape hooks as ``dump-v1``: ``--replay`` serves v1's recorded
 answers and counts every request that is not on the tape (a different prompt,
@@ -23,8 +24,7 @@ With ``--from RUN_DIR --decisions FILE`` it runs the Daemon's adjudication seque
 instead (doc 02 section 3.9) on a copy of a finished run directory -
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> aggregate funnel -> check skill_profile --incremental
-    -> aggregate final -> report
+    -> check skill_profile --incremental (the whole selection) -> aggregate final -> report
 
 on the next result revision; its tape is the one ``dump-v1 -- rejudge`` recorded
 while v1 applied the same decisions, and ``compare`` checks the two (D39).
@@ -102,19 +102,12 @@ class Chain:
         if rerun:
             self.run("check task_success", "check", "--modules", "task_success", *common,
                      "--episodes", ",".join(str(e) for e in rerun), *self.vlm)
-        self.run("aggregate funnel", "aggregate", "--run-dir", rd, "--phase", "funnel",
-                 "--revision", revision, "--episodes", episodes)
-        keep = os.path.join(rd, "revisions", f"r{int(revision):04d}", "keep.txt")
-        self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                 "--episodes", f"@{keep}", "--incremental", *self.vlm)
+        if "skill_profile" in self.modules:
+            self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
+                     "--episodes", episodes, "--incremental", *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", revision, "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", revision)
-
-    def stage_file(self, name: str) -> str:
-        path = os.path.join(self.run_dir, "stages", f"{name}.txt")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return path
 
     def all(self, episodes: str) -> None:
         rd, ds = self.run_dir, self.dataset
@@ -132,28 +125,18 @@ class Chain:
             # mcap / lance: the Daemon names the task's selection (their semantics sample)
             common += ["--selection", episodes]
         self.run("autolabel", "autolabel", *common, "--episodes", episodes, *self.vlm)
-        first = episodes
-        if INTEGRITY in self.modules:           # the Daemon's first funnel layer (design doc 14)
-            integ = self.stage_file("integrity")
+        if INTEGRITY in self.modules:           # the CPU block's first stage (design doc 14)
             self.run("check integrity", "check", "--modules", INTEGRITY, *common,
-                     "--episodes", episodes, "--survivors-out", integ)
-            first = f"@{integ}"
-        num, frame = self.stage_file("numeric"), self.stage_file("frame")
+                     "--episodes", episodes)
         self.run("check numeric", "check", "--modules",
-                 "timestamp_check,kinematic_limits,motion_quality", *common,
-                 "--episodes", first, "--survivors-out", num)
+                 "timestamp_check,kinematic_limits,motion_quality", *common, "--episodes", episodes)
         self.run("check frame", "check", "--modules", "visual_quality,video_action_sync",
-                 *common, "--episodes", f"@{num}", "--survivors-out", frame)
+                 *common, "--episodes", episodes)
         self.run("check vlm", "check", "--modules", "task_success", *common,
-                 "--episodes", f"@{frame}", *self.vlm)
-        self.run("aggregate funnel", "aggregate", "--run-dir", rd, "--phase", "funnel",
-                 "--revision", "1", "--episodes", episodes)
-        keep = os.path.join(rd, "revisions", "r0001", "keep.txt")
-        dedup = self.stage_file("dedup")
-        self.run("check dedup", "check", "--modules", "dedup", *common,
-                 "--episodes", f"@{keep}", "--survivors-out", dedup)
+                 "--episodes", episodes, *self.vlm)
+        self.run("check dedup", "check", "--modules", "dedup", *common, "--episodes", episodes)
         self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                 "--episodes", f"@{dedup}", *self.vlm)
+                 "--episodes", episodes, *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")

@@ -142,16 +142,15 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
     """The pipeline config for this call: exactly ``modules`` enabled (v1's ``--only``),
     the VLM settings from the arguments and the gate sizes as v1 config keys.
 
-    Advisory modules (``gates_v1.advisory_ids``: the camera defects) and the modules v2 runs itself
+    Riders (``rides_on``: the camera defects, answered in task_success's requests) and the modules v2 runs itself
     (``native_ids``: data integrity, EEF) are not v1 checks and never enter v1's config: they are left
     out here, and a call that selects nothing else runs with every v1 check off. The native gates
     join the verdict config in aggregate."""
     from ..contracts import modules as registry
-    from ..pipeline import gates_v1
     from ..pipeline.config import apply_check_selection, apply_overrides, validate_config
 
     cfg = copy.deepcopy(ctx.config())
-    v1 = [m for m in modules if m not in gates_v1.advisory_ids() and m not in registry.native_ids()]
+    v1 = [m for m in modules if not registry.is_rider(m) and m not in registry.native_ids()]
     try:
         if v1:
             cfg = apply_check_selection(cfg, only=",".join(v1))
@@ -240,7 +239,8 @@ def cpu_workers(args, plan_stage: dict | None) -> int:
 def load_plan_stage(path: str | None, modules, *, stage_id: str | None = None) -> dict | None:
     """``--plan-stage``: one stage of ``plan.json`` (or a whole plan: the stage with these
     modules, or with ``stage_id``, is taken). It carries the gates, the concurrency and
-    the merge proposal."""
+    the merge proposal. Some of a stage's modules may run on their own (a retry redoes only
+    the modules that erred, design doc 17 §3.4): the stage that has them all is taken."""
     if not path:
         return None
     doc = read_json(path, "--plan-stage")
@@ -249,14 +249,15 @@ def load_plan_stage(path: str | None, modules, *, stage_id: str | None = None) -
             stages = [s for s in doc["stages"] if s.get("id") == stage_id]
         else:
             stages = [s for s in doc["stages"]
-                      if s.get("modules") and set(s["modules"]) == set(modules)]
+                      if s.get("modules") and set(s["modules"]) == set(modules)] or \
+                     [s for s in doc["stages"] if modules and s.get("modules") and set(modules) <= set(s["modules"])]
         if not stages:
             raise UsageError(f"--plan-stage {path}: no stage "
                              f"{stage_id or 'runs ' + str(sorted(modules))}")
         doc = stages[0]
     if not isinstance(doc, dict) or not doc.get("id") or not doc.get("kind"):
         raise UsageError(f"--plan-stage {path}: not a plan stage (needs id and kind)")
-    if doc.get("modules") and set(doc["modules"]) != set(modules):
+    if doc.get("modules") and not set(modules) <= set(doc["modules"]):
         raise UsageError(f"--plan-stage {path} is stage {doc['id']} for {doc['modules']}, "
                          f"not for {sorted(modules)}")
     return doc

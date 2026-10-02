@@ -44,7 +44,7 @@ log = logging.getLogger("daemon.orchestr")
 
 ALL_MODULE_STATES = frozenset({"pending", "running", "succeeded", "completed_with_errors",
                                "failed", "skipped", "stale"})
-_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note", "pipeline")
+_STAGE_KEYS = ("id", "block", "full_set", "state", "done", "total", "elapsed_s", "eta_s", "note", "pipeline")
 _FINAL_STAGE_STATES = ("succeeded", "completed_with_errors", "failed", "skipped")
 #: the child a run has in flight (pid = its process group), for reaping after a crash
 PROC_FILE = "proc.json"
@@ -220,8 +220,10 @@ class Run:
         return handle
 
     # ------------------------------------------------------------------ progress
-    def plan_progress(self, stage_ids: Iterable[str]) -> None:
-        """The stage list of this run; done stages keep what the journal says about them."""
+    def plan_progress(self, stage_ids: Iterable[str], plan: dict | None = None) -> None:
+        """The stage list of this run; done stages keep what the journal says about them. A stage of
+        ``plan`` names its block and whether it takes the full set (C4 ``StageProgress``, design doc 17 §5.5)."""
+        where = {st["id"]: st for st in (plan or {}).get("stages") or [] if st.get("block")}
         self.stages.clear()
         for sid in stage_ids:
             kept = self.journal.stage(sid).get("progress")
@@ -230,6 +232,10 @@ class Run:
             else:
                 self.stages[sid] = {"id": sid, "state": "pending", "done": 0, "total": 0,
                                     "elapsed_s": None, "eta_s": None}
+            if sid in where:
+                self.stages[sid]["block"] = where[sid]["block"]
+                if where[sid].get("full_set"):
+                    self.stages[sid]["full_set"] = True
         self.persist_progress(force=True)
 
     def progress(self, stage: str, *, state: str | None = None, done: int | None = None,
@@ -759,13 +765,17 @@ class Run:
                               stage=stage) from None
 
     def require_current_format(self) -> None:
-        """D59: a task made before C2 2.0 (its run.json has no ``c2: "2.0"``) is read only - its records and
-        lists are 1.0, which this version reads but never aggregates again."""
+        """D59: a task made before C2 2.0 (its run.json has no ``c2: "2.0"``) or before the two blocks (its
+        plan.json is not 2.0) is read only - this version reads it but never runs it again."""
         from .planning import C2_VERSION
 
         doc = read_json(self.wd.run_json, None)
         if isinstance(doc, dict) and doc.get("c2") != C2_VERSION:
             raise TaskFailure("legacy_task", "这个任务由旧版本生成（结果格式 1.0），新版本只能查看、不能再运行；"
+                                             "请复制为新任务")
+        plan = read_json(self.wd.plan, None)
+        if isinstance(plan, dict) and plan.get("stages") and str(plan.get("schema_version")) != "2.0":
+            raise TaskFailure("legacy_task", "这个任务的执行计划由旧版本生成（逐档漏斗），新版本只能查看、不能再运行；"
                                              "请复制为新任务")
 
     # ------------------------------------------------------------------ run it

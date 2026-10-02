@@ -206,8 +206,12 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
 
     lines = _funnel(rd)
     for e in hit:
-        assert lines[e]["verdict"] == "held" and lines[e]["error_modules"] == ["task_success"]
-        assert lines[e]["reason"].startswith("待补跑")
+        assert lines[e]["error_modules"] == ["task_success"]
+        if lines[e]["blocking"]:                 # 2 and 5: their timestamps reject them all the same (D35)
+            assert lines[e]["verdict"] == "drop" and "不影响结论" in lines[e]["reason"]
+        else:
+            assert lines[e]["verdict"] == "held" and lines[e]["reason"].startswith("待补跑")
+    assert any(lines[e]["verdict"] == "held" for e in hit)
 
 
 def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
@@ -314,8 +318,9 @@ def test_a_failed_skill_profile_module_holds_every_episode_until_a_retry(vlm_sta
     assert res.rc == 4 and res.doc["error"]["code"] == "module_failed", res.doc
     lists = final()
     assert lists["passed"] == {}                        # nothing is delivered
-    assert sorted(lists["held"]) == survivors           # every episode it had to file
-    for e in survivors:
+    kept = [e for e in survivors if e not in lists["reject"]]   # 7, a byte copy of 3, is rejected as one
+    assert sorted(lists["held"]) == kept and 7 in survivors and 7 in lists["reject"]
+    for e in kept:
         assert [(r["module"], r["kind"]) for r in lists["held"][e]["reasons"]] == \
             [("skill_profile", "execution_error")]
         assert "技能画像" in lists["held"][e]["reasons"][0]["text"]
@@ -323,7 +328,7 @@ def test_a_failed_skill_profile_module_holds_every_episode_until_a_retry(vlm_sta
     assert profile().rc == 0                             # the retry succeeds
     lists = final()
     assert lists["held"] == {}
-    assert sorted(lists["passed"]) == survivors
+    assert sorted(lists["passed"]) == kept
 
 
 # ---------------------------------------------------------------- source guard

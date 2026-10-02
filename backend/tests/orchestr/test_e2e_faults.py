@@ -78,7 +78,7 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     assert (ts["state"], ts["episodes_error"]) == ("completed_with_errors", 1)
     rd = d.run_dir(first["id"])
     assert 0 not in _passed(rd, 1)                          # not delivered ...
-    assert 0 not in results(rd, "dedup")                    # ... and in no later stage
+    assert 0 in results(rd, "dedup") and 0 in results(rd, "visual_quality")   # ... the rest judged it (D57)
     manifest = json.load(open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8"))
     assert 0 not in {e["episode_index"] for e in manifest["episodes"]}
     batch = d.delivery(first["run_id"])
@@ -113,6 +113,32 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
         assert fh.read().strip() == first["run_id"]     # now complete: latest moves
 
 
+def test_the_two_blocks_overlap_and_an_error_in_one_stops_nothing(daemon, faulty):
+    """F12.4 acceptance 1 (design doc 17 §3, D57): an episode the CPU block's numeric stage could not judge goes
+    on to the frame stage and dedup, the VLM block judges it all the same, and the VLM block - fast here - is
+    done before the slowed-down frame stage of the CPU block."""
+    from curation.pipeline.episode_state import EpisodeState, state_path
+
+    faulty("FAKE_ERROR", "timestamp_check:3")
+    faulty("FAKE_SLOW", "visual_quality:0.5")
+    d = daemon()
+    task = d.wait(d.create(params={"start_now": True, "export": False, "vlm_hedge": False,
+                                   "limits": {"cpu_concurrency": 1}})["id"], timeout=240)
+    assert task["state"] == "completed_with_errors", json.dumps(task)[:2000]
+    rd = d.run_dir(task["id"])
+    assert results(rd, "timestamp_check")[3]["status"] == "error"
+    for module in ("visual_quality", "video_action_sync", "dedup", "task_success", "skill_profile"):
+        assert 3 in results(rd, module), module
+    with open(os.path.join(rd, "revisions", "r0001", "held.json"), encoding="utf-8") as fh:
+        assert [e["episode_index"] for e in json.load(fh)["episodes"]] == [3]
+    store = EpisodeState(state_path(rd))
+    try:
+        last = dict(store.db.execute("SELECT block, MAX(updated_seq) FROM block_progress GROUP BY block"))
+    finally:
+        store.close()
+    assert last["vlm"] < last["cpu"]                    # the VLM block did not wait for the CPU block
+
+
 def test_a_module_that_fails_as_a_whole_leaves_the_rest_running_and_a_retry_runs_it(
         daemon, faulty):
     faulty("FAKE_FAIL_MODULE", "task_success")
@@ -124,7 +150,8 @@ def test_a_module_that_fails_as_a_whole_leaves_the_rest_running_and_a_retry_runs
     assert mods["visual_quality"]["state"] == "succeeded"
     stages = {s["id"]: s["state"] for s in first["progress"]["stages"]}
     assert stages["vlm"] == "failed" and stages["final"] == "succeeded"
-    assert first["summary"]["passed"] == 0 and first["summary"]["held"] == 6
+    # 2 and 5 are rejected on their timestamps, 7 is a copy of 3: the other five wait for task_success
+    assert (first["summary"]["passed"], first["summary"]["rejected"], first["summary"]["held"]) == (0, 3, 5)
 
     faulty.switch.unlink()
     r = d.api("POST", f"/tasks/{first['id']}/retry", json={"modules": ["task_success"]})

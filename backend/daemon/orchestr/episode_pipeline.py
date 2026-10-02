@@ -1,4 +1,9 @@
-"""Credit-based episode dispatch to one persistent process per funnel layer.
+"""Credit-based episode dispatch to one persistent process per layer of a chain.
+
+A chain is the streaming stages of one block (plan 2.0, design doc 17 §3; :mod:`.blocks`
+runs the two blocks' chains side by side): every episode with a record of a layer goes on
+to the next layer of its chain - a finding or an execution error stops nothing (D57). A
+funnel run (one chain, before plan 2.0) hands on the survivors only.
 
 The CPU layers draw their episodes' slots from the Daemon's CPU pool (:mod:`.cpupool`,
 D54): the plan's concurrency is what this task may use at most, the pool decides what it
@@ -205,7 +210,10 @@ def cpu_pool_of(run, size: int) -> CpuPool:
     return pool if pool is not None else CpuPool(size)
 
 
-def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
+def run_episodes(run, stages: list[dict], selection: list[int], *,
+                 abort: threading.Event | None = None, pool_key=None) -> None:
+    """The layers of one chain over ``selection``. ``abort``: shared with the other block's chain (set when
+    either fails, :mod:`.blocks`); ``pool_key``: whom the CPU pool books this chain's slots to."""
     from .pipeline import cpu_shares_for, effective_batch_size
 
     if not stages:
@@ -216,7 +224,8 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
     pooled = pooled_layers(run, stages)
     pool = cpu_pool_of(run, max([cpu_budget] + [int(s.get("concurrency") or 1)
                                                 for s in stages if s["id"] in pooled]))
-    pool_key = run.cpu_key
+    pool_key = pool_key if pool_key is not None else run.cpu_key
+    block = stages[0].get("block")
     # a CPU layer's share of the budget; else its own concurrency (the data integrity layer,
     # I/O bound, design doc 14 §2.2), else a VLM layer's episode gate
     layers = [Layer(s, shares.get(s["id"], int(s.get("concurrency")
@@ -225,13 +234,20 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
     batch_size = effective_batch_size(stages, len(selection),
                                      (run.task.params or {}).get("batch_size"))
     store = EpisodeState(state_path(run.wd.root))
-    abort = threading.Event()
-    run._pipeline_abort = abort
+    own_abort = abort is None
+    if own_abort:
+        abort = threading.Event()
+        run._pipeline_abort = abort
     sync_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline-sync")
     sync_jobs = []
     try:
         store.bootstrap(str(run.wd.root), [m for s in stages for m in s["modules"]])
-        store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
+        if store.blocks is not None:                       # plan 2.0: this chain's block
+            def where(episodes):
+                return store.positions(episodes, block)
+        else:
+            store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
+            where = store.progress_for
         failures = store.failed_stages()
         for i, layer in enumerate(layers):
             for episode in store.stage_inputs(layer.stage["modules"]):
@@ -239,13 +255,16 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
             layer.failed = failures.get(layer.sid)
             if layer.failed:
                 store.reopen_gate(layer.sid, layers[i + 1].sid if i + 1 < len(layers) else "done")
-        saved = store.progress_for(selection)
+        saved = where(selection)
         by_id = {layer.sid: layer for layer in layers}
         for ep in selection:
             dest = saved.get(ep, layers[0].sid)
             if dest in by_id:
                 by_id[dest].ready.append(ep)
-        run.log("system", "info", f"流水线：逐条交接并持续补位，每次最多派发 {batch_size} 条；"
+        from curation.contracts import modules as registry
+
+        title = registry.BLOCK_TITLES.get(block, "") if block else ""
+        run.log("system", "info", f"{title}流水线：逐条交接并持续补位，每次最多派发 {batch_size} 条；"
                                   + "，".join(f"{l.sid} 并发 {l.width}" for l in layers)
                                   + (f"；CPU 档每条占全局 CPU 池的一个名额（共 {pool.size} 个，"
                                      "与同时运行的任务共用）" if pooled else ""))
@@ -312,7 +331,7 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
                         raise TaskFailure("crashed", f"{layer.sid} worker 反复异常退出", stage=layer.sid) from exc
                     # The child may have committed a result before its notification
                     # reached us. Route those records instead of executing them twice.
-                    positions = store.progress_for(sorted(layer.active))
+                    positions = where(sorted(layer.active))
                     for ep in sorted(layer.active):
                         dest = positions.get(ep, layer.sid)
                         if dest == layer.sid:
@@ -429,4 +448,5 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
         sync_pool.shutdown(wait=True)
         run.usage.flush()
         store.close()
-        run._pipeline_abort = None
+        if own_abort:
+            run._pipeline_abort = None

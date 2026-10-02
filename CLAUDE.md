@@ -32,16 +32,15 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
 （设计 00 §2.1）。
 
-**质检漏斗**（今天的执行；有 blocking 发现的条目不进后面的档）：
-`integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）→ `frame`（visual_quality、
-video_action_sync）→ `vlm`（eef_video_consistency、task_success）→ `post_verdict`（dedup）→ `profile_vlm`（skill_profile）。
-task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
-**判决已是策略判决**（设计 17，F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），`aggregate` 用任务的策略
-（`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info 再判
-keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）。**注册表 2.0 已是两块**（F12.1）：CPU 块 `integrity → numeric → frame → dedup`、
-VLM 块 `autolabel → vlm → profile`；两块并行（F12.4）落地前，执行仍是上面的漏斗，过渡用的 `gate` 在 `pipeline/gates_v1.py`。
+**两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
+→ `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `autolabel` → `vlm`（eef_video_consistency、task_success，camera_defects 骑在
+task_success 的请求上）→ `profile`（skill_profile）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
+本块下一段；`dedup`、`profile` 是全量步骤，块内前面的段跑完才启动。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
+**判决是策略判决**（F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），两块都结束后 `aggregate` 用任务的策略
+（`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info，再判
+keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 blocking 发现即拒，否则任一所选模块出错或没有记录即待补跑。
 
-**一次任务**：建任务时预检，开跑时生成并冻结执行计划 → Daemon 排队，逐档调 CLI（每档一个常驻 worker，episode 逐条交接）→
+**一次任务**：建任务时预检，开跑时生成并冻结执行计划 → Daemon 排队，两块同时调 CLI（每个逐条段一个常驻 worker，episode 逐条交接）→
 结果落在运行目录 `runs/<task_id>/`（`checks/<模块>/`、结果版本 `revisions/rNNNN/` 里的清单与报告、`export/`）→ 同步到交付目录，
 最后写 `_COMPLETE` → 前端经 REST / SSE 看进度和报告。重试、继续运行、执行裁决、重新导出都作为子任务跑；执行裁决会产生新的结果版本。
 
@@ -88,7 +87,7 @@ VLM 块 `autolabel → vlm → profile`；两块并行（F12.4）落地前，执
 | 14 | 数据完整性（首节是开工指引；决策 D50–D52） |
 | 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（`15-rerun-presigned-access.md`，D55；首节是开工指引，涉及 rerun 仓库） |
 | 16 | 回归测试样本集（`16-regression-samples.md`：检测项分类表、评测集、期望值与打分；样本与真值在 TOS） |
-| 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；立项后取代下文「质检漏斗」的执行短路与硬门 / 软分判决） |
+| 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；取代了逐档漏斗的执行短路与硬门 / 软分判决，§7 末尾是各 feature 落地时的细化） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

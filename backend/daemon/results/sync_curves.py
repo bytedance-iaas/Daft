@@ -116,7 +116,8 @@ def sync_curves(rev: Revision, episode: int) -> dict:
         raise _missing(rev, ep, "module_not_run", "这个任务没有勾选「视频-动作同步」，没有同步曲线")
     rec = rev.record(MODULE, ep)
     if rec is None:
-        raise _missing(rev, ep, "no_record", f"{name} 没有走到视频-动作同步这一档（前面已被判废），没有同步曲线")
+        raise _missing(rev, ep, "no_record", f"{name} 没有视频-动作同步的结果（这一档还没跑到它，或旧任务里它在前面的档已被判废），"
+                                             "没有同步曲线")
     if is_error(rec):
         raise _missing(rev, ep, "no_record", f"视频-动作同步在 {name} 上执行出错，没有同步曲线；补跑成功后才有")
     details = rec.get("details") if isinstance(rec.get("details"), dict) else {}

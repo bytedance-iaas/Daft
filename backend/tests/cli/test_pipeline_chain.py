@@ -42,7 +42,7 @@ def chain(tmp_path_factory, mini_dataset):
 
 def test_every_step_ran_and_fits_its_contract(chain):
     assert list(chain.steps) == ["preflight", "plan", "snapshot", "autolabel", "numeric",
-                                 "frame", "vlm", "funnel", "dedup", "profile_vlm", "final",
+                                 "frame", "vlm", "dedup", "profile", "final",
                                  "report", "export", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
 
@@ -75,18 +75,20 @@ def test_by_default_one_model_request_at_a_time(chain):
     assert len(chain.vlm_calls) > 20 and chain.max_in_flight == 1
 
 
-def test_the_funnel_takes_the_survivors_of_each_stage(chain):
+def test_every_stage_judges_every_episode(chain):
+    """D57: no stage stops an episode - 2 and 5 are rejected on their timestamps and still judged by the
+    frame and the model checks; dedup and the profile take the whole selection."""
     s = chain.steps
     ts = s["numeric"].doc["modules"]["timestamp_check"]
     assert ts["episodes"] == {"total": 8, "ok": 8, "error": 0}
-    assert ts["findings"] == {"gap": 1, "fragment": 1}                  # 2 and 5 stop here
-    assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 6
+    assert ts["findings"] == {"gap": 1, "fragment": 1}                  # 2 and 5
+    assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 8
     task = s["vlm"].doc["modules"]["task_success"]
-    assert task["episodes"] == {"total": 6, "ok": 6, "error": 0}
-    assert task["findings"] == {"uncertain": 3, "task_text_missing": 2}  # 4 and 6: captions
+    assert task["episodes"] == {"total": 8, "ok": 8, "error": 0}
+    assert task["findings"] == {"uncertain": 4, "task_text_missing": 2}  # 0 2 3 7; 4 and 6: captions
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
     assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
-    assert s["profile_vlm"].doc["modules"]["skill_profile"]["episodes"]["total"] == 5
+    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 8
 
 
 def test_files_fit_their_contracts(chain):
@@ -148,7 +150,7 @@ def test_export_delivers_passed_and_verify_writes_complete(chain):
 
 def test_usage_is_booked_per_module_on_both_ledgers(chain):
     lines = []
-    for name in ("autolabel", "vlm", "profile_vlm"):
+    for name in ("autolabel", "vlm", "profile"):
         lines += [e for e in chain.steps[name].events if e["kind"] == "usage"]
     assert {e["module"] for e in lines} == {"autolabel", "task_success", "skill_profile"}
     assert {e["ledger"] for e in lines} == {"actual", "attributed"}
@@ -214,9 +216,9 @@ def test_report_summaries_are_chart_ready(chain):
     assert subs["actuator_saturation"]["mean"] is None and subs["actuator_saturation"]["na_reason"]
     vq = s["visual_quality"]
     assert [c["camera"] for c in vq["cameras"]] == ["exterior", "wrist"]
-    assert all(c["n"] == 6 and sum(c["hist"]) == 6 for c in vq["cameras"])
+    assert all(c["n"] == 8 and sum(c["hist"]) == 8 for c in vq["cameras"])
     sync = s["video_action_sync"]
-    assert sum(v["count"] for v in sync["verdicts"]) == 6 and sync["lag_tol_s"] == 0.25
+    assert sum(v["count"] for v in sync["verdicts"]) == 8 and sync["lag_tol_s"] == 0.25
     assert [c["camera"] for c in sync["cameras"]] == ["exterior", "wrist"] and sync["sync_advice"]
     task = s["task_success"]
     assert sum(j["count"] for j in task["judgements"]) == task["counts"]["total"] - task["counts"]["error"]

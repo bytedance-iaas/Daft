@@ -1,8 +1,15 @@
-"""SQLite index and durable episode handoff for the Daemon funnel.
+"""SQLite index and durable episode handoff for the Daemon's episode pipeline.
 
 The public check result files remain JSONL. This private database is the resume
 source for a pipelined run: a stage commits its records and next destination in
 one transaction after the corresponding result lines have been fsynced.
+
+Two layouts. A run of plan 2.0 (design doc 17 §3) has two blocks side by side: the
+Daemon names their streaming stages once (:meth:`EpisodeState.set_blocks`), every
+episode has a position in each block (``block_progress``), and a stage hands every
+episode on to the next one of its block - a finding or an execution error stops
+nothing (D57). A run made before it (one chain, the funnel) keeps ``progress``: a
+stage hands on its survivors only.
 """
 from __future__ import annotations
 
@@ -64,6 +71,20 @@ class EpisodeState:
                 stage TEXT PRIMARY KEY,
                 message TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS block_progress (
+                episode INTEGER NOT NULL,
+                block TEXT NOT NULL,
+                last_stage TEXT NOT NULL,
+                next_stage TEXT NOT NULL,
+                reason TEXT,
+                updated_seq INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (episode, block)
+            );
+            CREATE INDEX IF NOT EXISTS block_progress_recent ON block_progress(updated_seq DESC);
         """)
         if "updated_seq" not in {row[1] for row in self.db.execute("PRAGMA table_info(progress)")}:
             with self.db:
@@ -79,8 +100,107 @@ class EpisodeState:
                     self.db.execute("UPDATE results SET verdict=? WHERE module=? AND episode=?",
                                     (index_verdict(json.loads(record), self.policy), module, ep))
 
+        self._chains = self._load_chains()
+
     def close(self) -> None:
         self.db.close()
+
+    # ------------------------------------------------------------ the two blocks (plan 2.0)
+    def _load_chains(self) -> dict[str, list[tuple[str, list[str]]]] | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key='blocks'").fetchone()
+        if row is None:
+            return None
+        return {block: [(stage, list(mods)) for stage, mods in chain] for block, chain in json.loads(row[0]).items()}
+
+    def set_blocks(self, chains: dict[str, list[tuple[str, list[str]]]]) -> None:
+        """A run of plan 2.0: each block's streaming stages in order, with their modules. Every episode then
+        has a position in each block and every stage hands every episode on (design doc 17 §3.3)."""
+        doc = {block: [[stage, list(mods)] for stage, mods in chain] for block, chain in chains.items()}
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO meta VALUES ('blocks', ?)", (json.dumps(doc),))
+        self._chains = self._load_chains()
+
+    @property
+    def blocks(self) -> dict[str, list[tuple[str, list[str]]]] | None:
+        """The blocks' streaming stages (plan 2.0); None for a run with one chain (the funnel)."""
+        return self._chains
+
+    def block_of(self, stage: str) -> str | None:
+        for block, chain in (self._chains or {}).items():
+            if any(sid == stage for sid, _ in chain):
+                return block
+        return None
+
+    def _place(self, episodes: list[int], stage: str, next_stage: str, reason: str | None) -> None:
+        """Within the caller's transaction: the episodes' position in ``stage``'s block."""
+        block = self.block_of(stage)
+        if block is None:
+            raise ValueError(f"stage {stage!r} is in no block of this run")
+        first = self._reserve(len(episodes))
+        self.db.executemany("INSERT OR REPLACE INTO block_progress VALUES (?, ?, ?, ?, ?, ?)",
+                            ((ep, block, stage, next_stage, reason, first + i) for i, ep in enumerate(episodes)))
+
+    def positions(self, episodes: list[int], block: str) -> dict[int, str]:
+        """``episode -> the stage it waits for`` in ``block`` (``done`` at its end); an episode not yet in the
+        block is absent (it starts at the block's first stage)."""
+        out = {}
+        for start in range(0, len(episodes), 900):
+            chunk = episodes[start:start + 900]
+            if not chunk:
+                continue
+            slots = ",".join("?" for _ in chunk)
+            out.update(self.db.execute(
+                f"SELECT episode, next_stage FROM block_progress WHERE block=? AND episode IN ({slots})",
+                (block, *chunk)).fetchall())
+        return out
+
+    def seed_blocks(self, episodes: list[int]) -> None:
+        """Positions from the records alone, for episodes a block has none for (records written outside the
+        pipeline): past every stage all of whose modules have a record of the episode."""
+        with self.db:
+            for block, chain in (self._chains or {}).items():
+                known = self.positions(episodes, block)
+                have = {}
+                for stage, mods in chain:
+                    for module in mods:
+                        for (ep,) in self.db.execute("SELECT episode FROM results WHERE module=?", (module,)):
+                            have.setdefault((stage, ep), set()).add(module)
+                for ep in episodes:
+                    if ep in known:
+                        continue
+                    last = None
+                    for i, (stage, mods) in enumerate(chain):
+                        if have.get((stage, ep), set()) != set(mods):
+                            break
+                        last = i
+                    if last is not None:
+                        nxt = chain[last + 1][0] if last + 1 < len(chain) else "done"
+                        self._place([ep], chain[last][0], nxt, None)
+
+    def completed(self, modules: list[str]) -> list[int]:
+        """Episodes with a record (any status) from every one of ``modules``."""
+        if not modules:
+            return []
+        slots = ",".join("?" for _ in modules)
+        return [row[0] for row in self.db.execute(
+            f"SELECT episode FROM results WHERE module IN ({slots}) GROUP BY episode "
+            "HAVING count(DISTINCT module)=? ORDER BY episode", (*modules, len(modules)))]
+
+    def stage_states(self, episode: int) -> dict[str, str]:
+        """``stage -> done | error | waiting`` over the blocks' streaming stages (C4 ``PipelineEpisode.stages``):
+        a stage the episode is past is done, or error when one of its modules failed on it."""
+        out: dict[str, str] = {}
+        records = self.episode_records(episode)
+        for block, chain in (self._chains or {}).items():
+            pos = self.positions([episode], block).get(episode)
+            past = len(chain) if pos == "done" else next((i for i, (sid, _) in enumerate(chain) if sid == pos), 0)
+            for i, (stage, mods) in enumerate(chain):
+                if i >= past:
+                    out[stage] = "waiting"
+                else:
+                    failed = any((records.get(m) or {}).get("status") == "error" for m in mods)
+                    out[stage] = "error" if failed else "done"
+        return out
 
     def failed_stages(self) -> dict[str, str]:
         return dict(self.db.execute("SELECT stage, message FROM failed_stages"))
@@ -91,6 +211,8 @@ class EpisodeState:
                             (stage, message))
 
     def reopen_gate(self, stage: str, next_stage: str) -> list[int]:
+        if self._chains is not None:                     # plan 2.0 has no gates: nothing was held back
+            return []
         episodes = [row[0] for row in self.db.execute(
             "SELECT episode FROM progress WHERE last_stage=? AND reason='gate'", (stage,))]
         self.forward(stage, episodes, next_stage)
@@ -128,6 +250,15 @@ class EpisodeState:
                next_stage: str) -> None:
         from .records import _json_default
 
+        if self._chains is not None:                     # plan 2.0: every episode goes on
+            with self.db:
+                self.db.executemany("INSERT OR REPLACE INTO results VALUES (?, ?, ?, ?)",
+                                    ((module, episode, json.dumps(record, ensure_ascii=False,
+                                                                   default=_json_default),
+                                      index_verdict(record, self.policy))
+                                     for module, record in records.items()))
+                self._place([episode], stage, next_stage, None)
+            return
         terminal = any(index_verdict(r, self.policy) in ("fail", "error") for r in records.values())
         destination = "done" if terminal or next_stage == "done" else next_stage
         reason = "gate" if terminal else None
@@ -150,13 +281,25 @@ class EpisodeState:
                              index_verdict(record, self.policy)))
 
     def missing(self, stage: str, episode: int) -> None:
+        """Its source files are gone (D40): left out, in every later stage too."""
         with self.db:
+            if self._chains is not None:
+                for block in self._chains:
+                    first = self._reserve(1)
+                    self.db.execute("INSERT OR REPLACE INTO block_progress VALUES (?, ?, ?, 'done', 'missing', ?)",
+                                    (episode, block, stage, first))
+                return
             self.db.execute("INSERT OR REPLACE INTO progress VALUES (?, ?, 'done', 'missing', ?)",
                             (episode, stage, self._reserve(1)))
 
     def forward(self, stage: str, episodes: list[int], next_stage: str) -> None:
-        """A whole module failed; its gate is open for every episode in the batch."""
+        """A whole module failed: the episodes go on without its records (a funnel run: its gate is open
+        for every episode in the batch)."""
         if not episodes:
+            return
+        if self._chains is not None:
+            with self.db:
+                self._place(list(episodes), stage, next_stage, None)
             return
         with self.db:
             first = self._reserve(len(episodes))
@@ -218,7 +361,26 @@ class EpisodeState:
                 chunk).fetchall())
         return out
 
+    def _block_rows(self, sql_tail: str, args: tuple) -> list[dict]:
+        """One row per episode of a two-block run: its latest change and the positions of its blocks."""
+        rows = self.db.execute(
+            "SELECT episode, MAX(updated_seq) AS seq FROM block_progress GROUP BY episode " + sql_tail, args).fetchall()
+        out = []
+        for ep, seq in rows:
+            blocks = {b: {"last_stage": last, "next_stage": nxt, "reason": reason} for b, last, nxt, reason in
+                      self.db.execute("SELECT block, last_stage, next_stage, reason FROM block_progress "
+                                      "WHERE episode=?", (ep,))}
+            done = all((blocks.get(b) or {}).get("next_stage") == "done" for b in self._chains or {})
+            missing = any(v.get("reason") == "missing" for v in blocks.values())
+            out.append({"episode_index": ep, "updated_seq": seq, "blocks": blocks, "done": done,
+                        "reason": "missing" if missing else None})
+        return out
+
     def recent(self, *, before: int | None = None, limit: int = 50) -> list[dict]:
+        if self._chains is not None:
+            if before is not None:
+                return self._block_rows("HAVING seq < ? ORDER BY seq DESC LIMIT ?", (before, limit))
+            return self._block_rows("ORDER BY seq DESC LIMIT ?", (limit,))
         sql = "SELECT episode, last_stage, next_stage, reason, updated_seq FROM progress"
         args: tuple = ()
         if before is not None:
@@ -229,6 +391,9 @@ class EpisodeState:
                 for row in self.db.execute(sql, (*args, limit))]
 
     def episode(self, index: int) -> dict | None:
+        if self._chains is not None:
+            rows = self._block_rows("HAVING episode = ?", (index,))
+            return rows[0] if rows else None
         row = self.db.execute(
             "SELECT episode, last_stage, next_stage, reason, updated_seq FROM progress WHERE episode=?",
             (index,)).fetchone()
@@ -241,6 +406,11 @@ class EpisodeState:
             "SELECT module, record FROM results WHERE episode=?", (index,))}
 
     def totals(self) -> dict[str, int]:
+        if self._chains is not None:
+            total, done = self.db.execute(
+                "SELECT count(*), sum(finished) FROM (SELECT episode, sum(next_stage='done')=? AS finished "
+                "FROM block_progress GROUP BY episode)", (len(self._chains),)).fetchone()
+            return {"started": int(total or 0), "finished": int(done or 0)}
         total, done = self.db.execute(
             "SELECT count(*), sum(next_stage='done') FROM progress").fetchone()
         return {"started": int(total or 0), "finished": int(done or 0)}
@@ -273,6 +443,10 @@ class EpisodeState:
             modules)]
 
     def survivors(self, modules: list[str]) -> list[int]:
+        """A funnel run: the episodes every one of ``modules`` judged and none stopped (plan 2.0: every one with
+        records, :meth:`completed`)."""
+        if self._chains is not None:
+            return self.completed(modules)
         if not modules:
             return []
         slots = ",".join("?" for _ in modules)

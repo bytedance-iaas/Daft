@@ -12,7 +12,7 @@ The story of the main task (nine episodes, all eight modules):
 ep    what happens                                            where it ends (r1)
 ====  =====================================================  ==========================
 0     every check passes                                      passed
-1     timestamp fragment (hard gate, numeric stage)           reject - final
+1     timestamp fragment (a blocking finding)                 reject - final
 2     task_success judges it failed                           reject - appealable
 3     task_success abstains                                   passed + review (verdict)
 4     label conflict (skill_profile's audit)                  passed + review (label)
@@ -34,7 +34,6 @@ from pathlib import Path
 import pytest
 
 from curation.contracts import modules as registry
-from curation.pipeline import gates_v1
 from daemon.repo import protocol as P
 
 from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by importing them
@@ -51,8 +50,7 @@ from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by impor
 
 API = "/curation/api/v1"
 JSON = {"Content-Type": "application/json"}
-MODULES = tuple(m.id for m in registry.MODULES if gates_v1.votes(m.id) and m.id not in registry.native_ids())   # v1's eight
-GATE = {m.id: gates_v1.gate(m.id) for m in registry.MODULES}
+MODULES = tuple(m.id for m in registry.MODULES if not m.rides_on and m.id not in registry.native_ids())   # v1's eight
 CAMERAS = ("observation.images.wrist", "observation.images.exterior_1")
 SHORT = ("wrist", "exterior_1")
 EPISODES = range(9)
@@ -136,8 +134,6 @@ def story(rd: RunDir) -> None:
         else:
             rd.put("motion_quality", ep, "scored", score=round(0.70 + 0.03 * ep, 2),
                    details={"fluency": 0.8, "active_ratio": 0.9, "stuck_joints": []})
-        if ep == 1:
-            continue                                   # killed in the numeric stage
         rd.put("visual_quality", ep, "scored", score=round(0.6 + 0.04 * ep, 2), details={
             "per_camera_detail": {cam: {"score": None if (ep, k) == (3, 1) else
                                         round(0.5 + 0.05 * ep + 0.01 * k, 3),
@@ -151,12 +147,12 @@ def story(rd: RunDir) -> None:
             if verdict in ("fail", "abstain") else []
         rd.put("task_success", ep, verdict, details=task_details(ep, verdict)
                if verdict != "error" else {}, evidence=evidence)
-    for ep in (0, 3, 4, 5, 7, 8):                      # the keep set of the funnel
+    for ep in (0, 3, 4, 5, 7, 8):                      # a hand-made subset: the readers need no more
         if ep == 7:
             rd.put("dedup", ep, "fail", details={"duplicate_of": 0})
         else:
             rd.put("dedup", ep, "pass", details={})
-    for ep in (0, 3, 4, 5, 8):                         # what dedup kept; the audit flags 4 and 5
+    for ep in (0, 3, 4, 5, 8):                         # likewise; the audit flags 4 and 5
         rd.put("skill_profile", ep, "abstain" if ep in (4, 5) else "pass",
                details={"family": "放置", "subskill": "放进容器", "caption": CAPTION.get(ep, TEXT[ep]),
                         "grouping_text": TEXT[ep], "grouping_text_source": "原始标注"})

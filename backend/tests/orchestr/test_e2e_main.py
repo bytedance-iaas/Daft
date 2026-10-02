@@ -17,19 +17,24 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert created["state"] == "queued"
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    # the fixture: 2 captions, 2 killed by the numeric gates, 7 a copy of 3 -> 5 / 3 / 0 / 2
+    # the fixture: 2 captions, 2 rejected on their timestamps, 7 a copy of 3 -> 5 / 3 / 0 / 2
     assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
     assert task["result_rev"] == 1 and task["delivery_stale"] is False
-    assert [s["id"] for s in task["progress"]["stages"]] == [
-        "autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final", "report",
-        "export", "verify"]
-    assert all(s["state"] in ("succeeded", "completed_with_errors")
-               for s in task["progress"]["stages"]), task["progress"]
+    # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
+    stages = task["progress"]["stages"]
+    assert [s["id"] for s in stages] == [
+        "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final", "report", "export", "verify"]
+    assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
+        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm", "profile": "vlm"}
+    assert [s["id"] for s in stages if s.get("full_set")] == ["dedup", "profile"]
+    assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}
     assert mods["timestamp_check"]["state"] == "succeeded"
     assert mods["timestamp_check"]["episodes_total"] == 8
-    assert mods["task_success"]["episodes_total"] == 6 and mods["task_success"]["episodes_error"] == 0
+    # every module judges every episode (D57): task_success too on the two rejected on their timestamps
+    assert mods["task_success"]["episodes_total"] == 8 and mods["task_success"]["episodes_error"] == 0
+    assert mods["dedup"]["episodes_total"] == 8 and mods["skill_profile"]["episodes_total"] == 8
     assert task["usage"]["requests"] > 0 and task["usage"]["prompt_tokens"] > 0
     run_id = task["run_id"]
     batch = d.delivery(run_id)
@@ -51,7 +56,11 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert_schema("DatasetDetail", ds)
     assert [c["trigger"] for c in ds["checks"]][-1] == "add"
     rd = d.run_dir(task["id"])
-    assert set(results(rd, "task_success")) == {0, 1, 3, 4, 6, 7}
+    assert set(results(rd, "task_success")) == set(range(8))
+    page = d.api("GET", f"/tasks/{task['id']}/pipeline/episodes").json()
+    assert page["started"] == page["finished"] == 8
+    assert all(set(r["stages"]) == {"numeric", "frame", "vlm"} and set(r["stages"].values()) == {"done"}
+               and r["provisional"] for r in page["items"])
     assert read_jsonl(os.path.join(rd, "usage.jsonl"))
 
 

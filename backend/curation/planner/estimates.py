@@ -36,13 +36,16 @@ def _vlm_seconds(requests: int, gate: int) -> float:
 def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
              selected: int, unlabeled: int, cameras: int,
              max_units: int, notes: list[str]) -> dict[str, Any]:
-    """Requests and seconds for ``stages``; appends what it could not count to ``notes``."""
-    requests, seconds = 0, 0.0
+    """Requests and seconds for ``stages``; appends what it could not count to ``notes``. The two
+    blocks run side by side (design doc 17 §3): the wall clock is the longer block's, then aggregate."""
+    requests = 0
+    per_block: dict[str, float] = {}
     cams = max(1, min(cameras or 1, MAX_ENDSTATE_CAMS))
     autolabelled = 0
     uncounted: list[str] = []
     for stage in stages:
         sid, gates = stage["id"], stage.get("gates", {})
+        seconds = 0.0
         if sid == "autolabel":
             autolabelled = unlabeled
             requests += unlabeled * CAPTIONS_PER_EPISODE
@@ -78,11 +81,11 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     pass                              # answered inside its host's requests
                 else:
                     uncounted.append(module)
-        elif sid in ("verdict", "final"):
+        elif sid == "final":
             seconds += AGGREGATE_S
         elif sid == "dedup":
             seconds += selected * DEDUP_S_PER_EPISODE
-        elif sid in ("profile", "profile_vlm"):
+        elif sid == "profile":
             for module in stage["modules"]:
                 if module == "skill_profile":
                     n = max(0, selected - autolabelled) * CAPTIONS_PER_EPISODE
@@ -90,13 +93,17 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     seconds += _vlm_seconds(n, gates.get("caption", 1))
                 elif stage["kind"] == "vlm":
                     uncounted.append(module)
-    notes.append(f"rough estimate: every selected episode is assumed to pass the hard gates; "
+        block = stage.get("block") or "final"
+        per_block[block] = per_block.get(block, 0.0) + seconds
+    blocks = [t for b, t in per_block.items() if b != "final"]
+    wall = (max(blocks) if blocks else 0.0) + per_block.get("final", 0.0)
+    notes.append(f"rough estimate: every selected episode goes through both blocks, which run side by side; "
                  f"{VLM_LATENCY_S:g} s per request at {GATE_UTILISATION:.0%} gate use "
                  "(image-request baseline from v1, 2026-09-07; video latency is not calibrated)")
     if any(s["id"] == "vlm" and "task_success" in s.get("modules", ()) for s in stages):
         notes.append("task_success arbitration and label-guard calls depend on the data "
                      "and are not counted")
-    if any(s["id"] in ("profile", "profile_vlm") and "skill_profile" in s.get("modules", ()) for s in stages):
+    if any(s["id"] == "profile" and "skill_profile" in s.get("modules", ()) for s in stages):
         notes.append("skill_profile text calls (taxonomy, label audit) are per dataset "
                      "and not counted")
     if any(s["id"] == "integrity" for s in stages):
@@ -104,4 +111,4 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                      "about one more decode of every frame")
     if uncounted:
         notes.append(f"no request model for {sorted(set(uncounted))}; not counted")
-    return {"vlm_requests": int(requests), "wall_clock_s": int(round(seconds)), "notes": notes}
+    return {"vlm_requests": int(requests), "wall_clock_s": int(round(wall)), "notes": notes}

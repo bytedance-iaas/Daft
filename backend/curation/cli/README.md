@@ -290,28 +290,32 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 
 ## Daemon 的调用顺序
 
-一次完整运行（00 篇 §4，每档读上一档的幸存者）：
+一次完整运行（设计 17 §3，计划 2.0）：两块同时跑、互不过滤，每一段都拿任务的全部所选条目（`--episodes` 是所选，不再是上一档的幸存者）：
 
 ```
-preflight → plan → snapshot → autolabel
-→ check 数值档 --survivors-out numeric.txt → check 帧档 --episodes @numeric.txt --survivors-out frame.txt
-→ check task_success --episodes @frame.txt → aggregate --phase funnel --revision N
-→ check dedup --episodes @revisions/rNNNN/keep.txt --survivors-out dedup.txt
-→ check skill_profile --episodes @dedup.txt → aggregate --phase final --revision N
-→ report --revision N → export --revision N --output … → （同步运行目录）→ verify
+preflight → plan → snapshot
+CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（全量步骤：块内前面的段对全集跑完才启动）
+VLM 块：autolabel（只补无标注条目）→ check task_success（及 EEF）→ check skill_profile（全量步骤）
+两块都结束 → aggregate --phase final --revision N → report --revision N → export --revision N --output … → （同步运行目录）→ verify
 ```
+
+块内的逐条段由 Daemon 的流水线逐条交接（`check --pipeline-state … --pipeline-next …`，常驻 worker）：一条在本段有了记录（判完或出错）
+就交给下一段，判废的发现、执行出错都不拦它。全量步骤是整段命令。没有 `aggregate --phase funnel`：判决只在两块都结束后由 `final` 按任务策略算一次。
 
 人工裁决后的重跑（新版本 N+1，旧版本原样保留）：
 
 ```
 adjudicate-apply → check task_success --episodes <rerun_task_success>（写新分片）
-→ aggregate --phase funnel --revision N+1
-→ check skill_profile --incremental --episodes @revisions/rN+1/keep.txt
+→ check skill_profile --incremental --episodes <全部所选>（改标的条按新标注重新归类）
 → aggregate --phase final --revision N+1
 → report --revision N+1 → export --revision N+1 --incremental --output … → verify
 ```
 
-裁决之后**不再跑 dedup**：第一次的去重结论保持不变，技能画像自己跳过其中的副本，`final` 对由人带回的条不做去重（与 v1 相同）。`keep.txt` 已经按裁决增减过，直接交给技能画像。
+裁决之后**不再跑 dedup**：它报的重复组不变，`final` 在人工决定之后选每组留哪条（原件被人判失败时副本顶上），由人带回的条不做去重。
+画像在两块的运行里归档全部所选，交付集的分布由报告按 `passed` 算。
+
+重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup / 画像出错或
+被点名时整段重跑，然后 `final`。
 
 mcap / Lance 数据集的顺序相同，`autolabel`、`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。
 

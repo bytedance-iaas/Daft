@@ -874,10 +874,12 @@ export const zh = {
       title: 'Episode 流水线',
       stage: { integrity: '完整性验证', numeric: '数值验证', frame: '视频验证', vlm: '模型验证', done: '已完成' },
       verdict: { keep: '漏斗保留', drop: '漏斗拒绝', held: '待补跑' },
+      /** a two-block run (design doc 17 §3.3): the policy on the findings so far; the final verdict is the report's */
+      provisional: { keep: '暂判保留', drop: '暂判拒绝', held: '待补跑' } as Record<string, string>,
       missing: '源文件缺失',
       finished: '已完成',
       waiting: (stage: string) => `等待${stage}`,
-      count: (finished: number, total: number | string) => `${finished} / ${total} 条已完成漏斗验证`,
+      count: (finished: number, total: number | string) => `${finished} / ${total} 条已完成逐条验证`,
       note: '耗时按每条 episode 的实际处理累计，不含排队和等待 CPU；尚未执行的阶段显示 —。去重和画像完成后生成最终结果。',
       episode: (index: number) => `ep ${index}`,
       columnEpisode: 'Episode',

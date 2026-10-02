@@ -21,7 +21,6 @@ import os
 import time
 
 from ..contracts import modules as registry
-from . import gates_v1
 from .aggregate import NAMES_CN
 from .records import (CRASHES_NAME, LATENCY_FILE, PLAN_NAME, SOURCE_MANIFEST_NAME, USAGE_FILE,
                       is_error, latest_results, legacy_verdict, module_dir, parts_used, read_jsonl,
@@ -218,7 +217,7 @@ def _summary(rev: Revision, m: str) -> dict:
                     "gap" if d.get("gap_frames") else "other")
                 why[key] = why.get(key, 0) + 1
         out["fail_kinds"] = why
-    if res and gates_v1.votes(m):
+    if res and not registry.is_rider(m):                  # a rider's views are its own (camera_defects)
         out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
     out.update(finding_stats(rev, m))
     return out

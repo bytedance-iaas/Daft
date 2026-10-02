@@ -45,8 +45,8 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
 - **规范化记录**：每个模块每条 episode 一行，格式与 v2 的 `checks/<module>/results.jsonl` 相同，
   见 [`docs/contracts/cli/result-record.schema.json`](../../docs/contracts/cli/result-record.schema.json)。
   `verdict` 取 `pass` / `fail` / `abstain` / `scored`（打分项，不投票）/ `error`（D33：降级得来的结论也算出错）。
-- **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 的顺序依次调 v2 的原子命令，
-  每档读上一档的幸存者（`--survivors-out`），写出一个普通的 v2 运行目录，`compare` 直接读它（`checks/*/results.jsonl`、
+- **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 两块的顺序依次调 v2 的原子命令（设计 17 §3：CPU 块的检查与去重、
+  VLM 块的补描述、模型判定与画像，每一段都拿全部所选条目），写出一个普通的 v2 运行目录，`compare` 直接读它（`checks/*/results.jsonl`、
   `revisions/r0001/` 的清单、`autolabel/`、`checks/dedup/groups.json`、`checks/skill_profile/`）。
   `--replay` 用 v1 的录制带回答；`--fake-vlm` 用内置假模型现答并录一盘新带。调模型的命令都带 `--hedge`
   （v1 总是对冲，挂钩替换的正是对冲函数）和 `--concurrency 64`（N=64 时八把闸门与 v1 出厂值逐项相等）。
@@ -59,7 +59,7 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
 - **人工裁决也对账**（D39）：`dump-v1 … -- rejudge` 让 v1 在自己的交付上执行 `human-decisions/` 里的裁决，
   挂钩取出它按新标注重判的每条（`_build_rerun`：多视角打分 + 逐机位复核两层）、裁决后的三件套和技能归类，并录下这期间的调用；
   `run-v2 --from <v2 运行目录> --decisions <decisions.json> --replay <这盘带>` 在 v2 运行目录的副本上按 Daemon 的顺序跑
-  adjudicate-apply → 重判改标条目 → 漏斗 → 增量技能画像 → 终判 → 报告（下一个结果版本）。`compare` 认出金标是 rejudge，
+  adjudicate-apply → 重判改标条目 → 增量技能画像（全部所选）→ 终判 → 报告（下一个结果版本）。`compare` 认出金标是 rejudge，
   只比这几样：重判的 task_success 记录逐位一致（v2 的记录另外写明用哪段文字、按哪种口径判的——新标注、`人工改标`、`v1`，
   v1 把它们记在交付条目上），裁决后的技能归类逐条一致，终判清单一致，回放无缺无余。
   v1 的 rejudge 不探活端点，v2 每条命令探一次；带子上没有 `/models` 时 `run-v2` 自己应答（探活不是模型调用）。

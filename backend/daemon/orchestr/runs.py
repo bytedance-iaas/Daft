@@ -1,27 +1,24 @@
-"""The main run and the four subtasks (design doc 00 §4 and §4.1).
+"""The main run and the four subtasks (design doc 00 §4 and §4.1, 17 §3).
 
-Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's
-stages in order - autolabel, then the funnel stages ``numeric`` -> ``frame`` ->
-``vlm`` on concurrent bounded batch workers (each reads the survivors of the
-one before; a module that fails as a whole leaves its gate open), ``verdict``
-(aggregate funnel into revision N), ``dedup``
-on ``keep.txt``, ``profile`` on the kept set minus duplicates, ``final``
-(aggregate final) - then ``report`` (commit.json last), ``export`` when the task
-exports, and ``verify``: the run directory is synced to ``<delivery>/<run_id>/``,
-read back, ``_COMPLETE`` written; only then does ``result_rev`` switch (D25) and
-``latest`` move for a complete batch (D29, P13). Every check stage runs with
-``--resume``: after a pause or a crash nothing finished is done twice.
+Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's two blocks side by side
+(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame on the episode pipeline, then dedup on the
+whole selection; the VLM block's autolabel, vlm on the episode pipeline, then the skill profile on the
+whole selection - no stage filters another (D57). Then ``final`` (aggregate: the policy verdicts into
+revision N), ``report`` (commit.json last), ``export`` when the task exports, and ``verify``: the run
+directory is synced to ``<delivery>/<run_id>/``, read back, ``_COMPLETE`` written; only then does
+``result_rev`` switch (D25) and ``latest`` move for a complete batch (D29, P13). Every per-episode stage
+runs with ``--resume``: after a pause or a crash nothing finished is done twice.
 
-* ``resume`` continues the main run from its journal (stopped / failed tasks, D20).
-* ``retry`` re-runs the held episodes from the stage they erred in (whole failed
-  modules in full), then syncs dedup / profile when their input changed, into a
-  new revision (D25, D35).
-* ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) ->
-  task_success on the relabelled episodes without a human verdict -> aggregate
-  funnel (new revision; its ``keep.txt`` follows the decisions) -> skill_profile
-  ``--incremental`` on that ``keep.txt`` -> aggregate final -> report -> verify.
-  dedup is not run again (its first result stands, as in v1's rejudge). It never
-  exports (D9); the delivery becomes stale.
+* ``resume`` continues the main run from its journal (stopped / failed tasks, D20): each block goes on
+  from where its episodes are.
+* ``retry`` re-runs the (module, episode) pairs that erred or have no record - a module that failed as a
+  whole on every episode - then dedup / the skill profile when they erred or were asked for, into a new
+  revision (design doc 17 §3.4; D35).
+* ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
+  relabelled episodes without a human verdict -> skill_profile ``--incremental`` on the whole selection
+  when it has something to re-file -> aggregate final -> report -> verify. dedup is not run again (its
+  groups stand; aggregate picks each group's keeper after the decisions). It never exports (D9); the
+  delivery becomes stale.
 * ``reexport``: ``export --incremental`` of the current revision, then verify.
 """
 from __future__ import annotations
@@ -38,9 +35,10 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
-FUNNEL = ("integrity", "numeric", "frame", "vlm")
-#: plan stages of the advisory modules (``advisory_<stage>``, registry 1.4): all selected episodes
-ADVISORY = "advisory_"
+#: the per-episode stages (the episode pipeline); dedup and profile take the whole selection
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
+#: the full-set stages (design doc 17 §3.2)
+FULL_SET = tuple(registry.FULL_SET_STAGES)
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"
@@ -65,7 +63,7 @@ class StageRun(Run):
         out_file = self.wd.episodes_file(self.run_key, f"{sid}.out")
         if self.journal.done(sid):
             return read_lines(out_file) or []
-        post = sid in ("dedup", "profile", "profile_vlm")
+        post = sid in FULL_SET
         self.progress(sid, state="running", done=0, total=len(episodes))
         if not episodes:
             if fresh:
@@ -92,7 +90,7 @@ class StageRun(Run):
         if sid == "frame":
             resources.admit_memory(self, sid)
         with self.cpu_slots(st, len(episodes)) as workers:
-            if workers is not None and sid in FUNNEL:
+            if workers is not None and sid in EPISODE_STAGES:
                 argv += ["--concurrency", str(workers)]
             outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
                                inflight_modules=mods, episodes=len(episodes))
@@ -122,9 +120,8 @@ class StageRun(Run):
                 total, errors = (0, 0) if post else self.counts_from_records(m)
                 self.module_result(m, "failed", total=total, errors=errors,
                                    digest=input_digest(episodes), error=msg[:2000])
-            self.log(sid, "error", f"{names(mods)}整体失败：{msg}。它的门视为尚未生效，后面的模块照常跑；"
-                                   "这些条目都待补跑，等「重试」")
-            write_lines(out_file, episodes)                # the gate stays open (04 §7)
+            self.log(sid, "error", f"{names(mods)}整体失败：{msg}。别的模块照常跑；这些条目都待补跑，等「重试」")
+            write_lines(out_file, episodes)                # the next stage takes them all the same
             self.stage_done(sid, "failed")
             return list(episodes)
         self.fail_on(outcome, sid)
@@ -258,23 +255,6 @@ class StageRun(Run):
                 self.fail_on(outcome, sid)
         self.stage_done(sid, "succeeded")
 
-    def keep_of(self, rev: int) -> list[int]:
-        return read_lines(self.wd.revision_dir(rev) / "keep.txt") or []
-
-    def minus_duplicates(self, episodes: list[int], modules: list[str]) -> list[int]:
-        """The kept episodes the skill profile files: dedup's copies left out the way aggregate decides them
-        after the human decisions (design doc 17 §4.5: each group keeps its first member not rejected for
-        another reason; one a person brought in is never a copy), and the ones dedup could not judge."""
-        from curation.pipeline import aggregate as agg
-        from curation.pipeline.adjudication import Decisions
-        from curation.pipeline.records import is_error, latest_results
-
-        root = str(self.wd.root)
-        state = agg.RunState(root, [m for m in modules if m != "skill_profile"], episodes)
-        members, _ = agg.profile_members(state, Decisions.of(root))
-        erred = {e for e, r in latest_results(root, "dedup").items() if is_error(r)}
-        return [e for e in members if e not in erred]
-
     # -- publishing -------------------------------------------------------------------
     def publish(self, rev: int, *, export: bool) -> None:
         """Export (optional), sync, verify, then switch the revision - one delivery at a time."""
@@ -317,61 +297,21 @@ class MainRun(StageRun):
         return ids + ["verify"]
 
     def execute(self) -> str:
+        from .blocks import run_blocks
+
         self.reload()
         if self.sub_id is not None:                      # a resume, maybe days later
             self.ensure_local()
         self.require_current_format()
         plan = planning.ensure_plan(self)
-        self.plan_progress(self.stage_ids(plan))
+        self.plan_progress(self.stage_ids(plan), plan)
         modules = self.plan_modules(plan)
         planning.mark_skipped_modules(self, plan)
         selection = self.selection()
         rev = self.allocate_revision()
-        stages = {s["id"]: s for s in plan["stages"]}
-        survivors: dict[str, list[int]] = {}
-        funnel_stages = [s for s in plan["stages"] if s["id"] in FUNNEL]
-        from curation.pipeline.episode_state import state_path
-
-        # A pre-pipeline task may already have journaled whole stages. Finish it
-        # with its original stage boundaries; new tasks and pipeline resumes use
-        # the per-episode SQLite handoff instead.
-        pipeline = bool(funnel_stages) and (state_path(self.wd.root).is_file() or not any(
-            self.journal.done(s["id"]) for s in funnel_stages))
-        funnel_started = False
-        for st in plan["stages"]:
-            self.check_intent()
-            sid = st["id"]
-            if st.get("command") == "autolabel":
-                self.autolabel(selection)
-            elif sid in FUNNEL:
-                if pipeline:
-                    if not funnel_started:
-                        if not all(self.journal.done(s["id"]) for s in funnel_stages):
-                            from .pipeline import run_funnel
-
-                            run_funnel(self, funnel_stages, selection)
-                        funnel_started = True
-                else:
-                    ref = st.get("episodes", "selected")
-                    source = selection if ref == "selected" else survivors.get(
-                        ref.split(":", 1)[1], [])
-                    survivors[sid] = self.check_stage(st, source, fresh=True)
-            elif sid.startswith(ADVISORY):
-                # every selected episode, never a gate (registry 1.4): nothing reads its survivors
-                self.check_stage(st, selection, fresh=True)
-            elif st.get("phase") == "funnel":
-                self.aggregate(sid, "funnel", rev, modules, selection)
-            elif sid == "dedup":
-                survivors["dedup"] = self.check_stage(st, self.keep_of(rev), fresh=True)
-            elif sid in ("profile", "profile_vlm"):
-                source = survivors["dedup"] if "dedup" in stages else self.keep_of(rev)
-                survivors[sid] = self.check_stage(st, source, fresh=True)
-            elif st.get("phase") == "final":
-                self.aggregate(sid, "final", rev, modules, selection)
-            if (st.get("command") == "check" and not (pipeline and sid in FUNNEL)) \
-                    or st.get("command") == "autolabel":
-                self.sync_quietly(sid)                 # checks/<module>/ goes up as it is done
+        run_blocks(self, plan, selection)
         self.check_intent()
+        self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
         self.publish(rev, export=bool((self.task.params or {}).get("export", True)))
@@ -383,58 +323,71 @@ class ResumeRun(MainRun):
 
 
 class RetryRun(StageRun):
-    """Held episodes again, from the stage they erred in; whole failed modules in full (D25)."""
+    """The (module, episode) pairs that erred or have no record, again; a module that failed as a whole on
+    every episode (design doc 17 §3.4). Nothing downstream depends on them: no stage is redone after them."""
 
     kind = "retry"
 
     def execute(self) -> str:
+        from curation.pipeline.records import is_error, latest_results
+        from curation.pipeline.skipped import all_skipped
+
         self.reload()
         self.ensure_local()
         self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
-        cur = int(self.task.result_rev or 0)
         scope = set((self.subtask.scope or {}).get("modules") or [])
-        held_doc = read_json(self.wd.revision_dir(cur) / "held.json", {}) or {}
-        widened = scope | ({"autolabel"} if "task_success" in scope else set())
-        held = sorted({int(e["episode_index"]) for e in held_doc.get("episodes") or []
-                       if not scope or any((r.get("module") in widened)
-                                           for r in e.get("reasons") or [])})
         rows = self.module_rows()
         failed = {m for m in modules if rows.get(m) and rows[m].state == "failed"
                   and (not scope or m in scope)}
-        funnel = [s for s in plan["stages"] if s["id"] in FUNNEL]
-        advisory = [s for s in plan["stages"] if s["id"].startswith(ADVISORY)
-                    and any(rows.get(m) and (rows[m].state in ("failed", "stale") or rows[m].episodes_error > 0
-                                             or m in scope) for m in s["modules"])]
-        ids = (["autolabel"] if any(s.get("command") == "autolabel" for s in plan["stages"])
-               else []) + [s["id"] for s in funnel] + [s["id"] for s in advisory] + ["verdict"]
-        post = {s["id"]: s for s in plan["stages"] if s["id"] in ("dedup", "profile", "profile_vlm")}
-        ids += list(post) + ["final", "report", "verify"]
-        self.plan_progress(ids)
-        self.journal.set(episodes=held, failed_modules=sorted(failed))
-        self.log("verdict", "info", f"重试：补跑 {len(held)} 条待补跑的 episode"
+        selection = self.selection()
+        left_out = set(all_skipped(str(self.wd.root)))        # missing source files (D40)
+        judged = [e for e in selection if e not in left_out]
+        stream = [s for s in plan["stages"] if s.get("command") == "check" and not s.get("full_set")]
+        full = [s for s in plan["stages"] if s.get("full_set")]
+        todo: dict[str, tuple[list[str], list[int]]] = {}
+        for st in stream:
+            mods, eps = [], set()
+            for m in st["modules"]:
+                host = registry.get(m).rides_on or m        # a rider is answered in its host's requests
+                if scope and m not in scope and host not in scope:
+                    continue
+                if m in failed:
+                    need = set(judged)
+                else:
+                    recs = latest_results(str(self.wd.root), m)
+                    need = {e for e in judged if e not in recs or is_error(recs[e])}
+                if need:
+                    eps |= need
+                    mods += [x for x in (host, m) if x not in mods]
+            todo[st["id"]] = ([m for m in st["modules"] if m in mods], sorted(eps))
+        vlm = todo.get("vlm", ([], []))
+        captions = vlm[1] if "task_success" in vlm[0] and any(
+            s.get("command") == "autolabel" for s in plan["stages"]) else []
+        ids = (["autolabel"] if captions else []) + [s["id"] for s in stream] + [s["id"] for s in full] \
+            + ["final", "report", "verify"]
+        self.plan_progress(ids, plan)
+        pairs = sum(len(m) * len(e) for m, e in todo.values())
+        self.journal.set(retry={sid: {"modules": m, "episodes": e} for sid, (m, e) in todo.items()},
+                         failed_modules=sorted(failed))
+        self.log("system", "info", f"重试：补跑 {len(set().union(*[set(e) for _, e in todo.values()]))} 条 episode 上"
+                                   f"出错或没有结果的模块（共 {pairs} 对）"
                  + (f"，整体失败的模块全量重跑：{names(sorted(failed))}" if failed else ""))
         rev = self.allocate_revision()
-        selection = self.selection()
-        todo = list(held)
-        if "autolabel" in ids:
-            self.autolabel(todo)
-        for st in funnel:
+        if captions:
+            self.autolabel(captions)
+        for st in stream:
             self.check_intent()
-            todo = self.check_stage(st, todo, fresh=False)
-        for st in advisory:                 # --resume redoes only their error lines
+            mods, eps = todo[st["id"]]
+            if mods and eps:
+                self.check_stage({**st, "modules": mods}, eps, fresh=False)
+            elif not self.journal.done(st["id"]):
+                self.stage_done(st["id"], "skipped")
+                self.progress(st["id"], note="没有需要补跑的条目", force=True)
+        for st in full:
             self.check_intent()
-            self.check_stage(st, selection, fresh=False)
-        self.check_intent()
-        self.aggregate("verdict", "funnel", rev, modules, selection)
-        keep = self.keep_of(rev)
-        if "dedup" in post:
-            self.sync_post("dedup", post["dedup"], keep, scope, rows)
-        profile_sid = "profile_vlm" if "profile_vlm" in post else "profile"
-        if profile_sid in post:
-            base = self.minus_duplicates(keep, modules) if "dedup" in post else keep
-            self.sync_post(profile_sid, post[profile_sid], base, scope, rows, incremental=True)
+            self.sync_full_set(st, selection, scope, rows)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
@@ -442,25 +395,21 @@ class RetryRun(StageRun):
         self.publish(rev, export=False)
         return self.recomputed_state(rev)
 
-    def sync_post(self, sid: str, st: dict, episodes: list[int], scope: set, rows: dict, *,
-                  incremental: bool = False) -> list[int]:
-        """dedup / profile follow the kept set: re-run when it changed, or when they erred."""
+    def sync_full_set(self, st: dict, episodes: list[int], scope: set, rows: dict) -> None:
+        """dedup / the profile again when they erred, failed, went stale or were asked for (full selection)."""
+        sid = st["id"]
         module = st["modules"][0]
         row = rows.get(module)
-        changed = row is None or row.input_digest != input_digest(episodes)
-        erred = row is not None and (row.state in ("failed", "stale") or row.episodes_error > 0)
         if self.journal.done(sid):
-            return read_lines(self.wd.episodes_file(self.run_key, f"{sid}.out")) or []
-        if not (changed or erred or module in scope):
+            return
+        erred = row is None or row.state in ("failed", "stale") or row.episodes_error > 0
+        if not (erred or module in scope):
             self.stage_done(sid, "skipped")
-            self.progress(sid, note="输入没有变化，沿用上一版结果", force=True)
-            return episodes
-        if changed and row is not None and row.state in ("succeeded", "completed_with_errors"):
-            self.repo.mark_modules_stale(self.task_id, [module])
-        # --incremental builds on an existing profile; without one (never ran, failed, empty)
-        # the module runs in full
-        full = row is None or row.state == "failed" or row.episodes_total == 0 or not incremental
-        return self.check_stage(st, episodes, fresh=True, incremental=incremental and not full)
+            self.progress(sid, note="没有出错，沿用上一版结果", force=True)
+            return
+        # --incremental builds on an existing profile; without one (never ran, failed, empty) it runs in full
+        incremental = sid == "profile" and not (row is None or row.state == "failed" or row.episodes_total == 0)
+        self.check_stage(st, episodes, fresh=True, incremental=incremental)
 
 
 class AdjudicationRun(StageRun):
@@ -475,10 +424,9 @@ class AdjudicationRun(StageRun):
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
-        ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) + ["verdict"]
-        profile_sid = "profile_vlm" if "profile_vlm" in stages else "profile"
-        ids += ([profile_sid] if profile_sid in stages else []) + ["final", "report", "verify"]
-        self.plan_progress(ids)
+        ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) \
+            + (["profile"] if "profile" in stages else []) + ["final", "report", "verify"]
+        self.plan_progress(ids, plan)
         rev = self.allocate_revision()
         selection = self.selection()
         applied = self.apply_decisions()
@@ -486,19 +434,17 @@ class AdjudicationRun(StageRun):
         if "vlm" in stages and "task_success" in stages["vlm"].get("modules", []):
             self.rejudge(stages["vlm"], rerun)
         self.check_intent()
-        self.aggregate("verdict", "funnel", rev, modules, selection)
-        keep = self.keep_of(rev)                  # already follows the applied decisions
         rows = self.module_rows()
-        if profile_sid in stages and not self.journal.done(profile_sid):
+        if "profile" in stages and not self.journal.done("profile"):
+            # the profile files the whole selection (design doc 17 §3.2): a relabel is filed again
             row = rows.get("skill_profile")
-            if applied.get("resync") or row is None or row.input_digest != input_digest(keep) \
-                    or row.state in ("failed", "stale"):
+            if applied.get("resync") or row is None or row.state in ("failed", "stale"):
                 self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
                 full = row is None or row.state == "failed"
-                self.check_stage(stages[profile_sid], keep, fresh=True, incremental=not full)
+                self.check_stage(stages["profile"], selection, fresh=True, incremental=not full)
             else:
-                self.stage_done(profile_sid, "skipped")
-                self.progress(profile_sid, note="画像的输入没有变化", force=True)
+                self.stage_done("profile", "skipped")
+                self.progress("profile", note="画像没有需要重新归类的条目", force=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)

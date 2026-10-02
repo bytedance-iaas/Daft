@@ -218,7 +218,7 @@ def test_chain_semantics_come_from_the_selection(chain):
     few survivors it reads (the frame stage reads 6 of 8)."""
     rec = results(chain.rd, "motion_quality")[0]
     assert verdict_of(rec) in ("pass", "fail", "scored", "abstain")
-    assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 6
+    assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 8   # every one (D57)
 
 
 def test_chain_delivers_the_format(chain, mini_mcap):

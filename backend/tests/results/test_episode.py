@@ -32,8 +32,9 @@ def test_every_episode_of_the_revision(world):
         body = _view(world, ep)
         assert body["episode_index"] == ep and body["revision"] == 1
         assert body["list"] == lists[ep], ep
-    ep1 = _view(world, 1)          # killed in the numeric stage: no later module saw it
-    assert sorted(ep1["modules"]) == ["kinematic_limits", "motion_quality", "timestamp_check"]
+    ep1 = _view(world, 1)          # rejected on its timestamps; every module judged it all the same (D57)
+    assert sorted(ep1["modules"]) == ["kinematic_limits", "motion_quality", "task_success", "timestamp_check",
+                                      "video_action_sync", "visual_quality"]
     assert ep1["reasons"] == [{"module": "timestamp_check", "kind": "finding", "code": "fragment",
                                "item": "STRM-5", "appealable": False, "text": "fragment"}]
     ep0 = _view(world, 0)

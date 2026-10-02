@@ -6,6 +6,7 @@ import { api, unwrap } from '../../api/client';
 import { useModules } from '../../api/queries';
 import type { operations } from '../../api/schema';
 import type { PipelineEpisode, Task } from '../../api/types';
+import { rowStages, rowState } from '../../lib/pipelineRow';
 import { recordVerdict } from '../../lib/records';
 
 type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
@@ -13,14 +14,6 @@ import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const copy = zh.taskDetail.pipelineEpisodes;
-const STAGE: Record<string, string> = copy.stage;
-const VERDICT: Record<string, string> = copy.verdict;
-
-function stateLabel(row: PipelineEpisode): string {
-  if (row.reason === 'missing') return copy.missing;
-  if (row.next_stage === 'done') return VERDICT[row.verdict ?? ''] ?? copy.finished;
-  return copy.waiting(STAGE[row.next_stage] ?? row.next_stage);
-}
 
 function color(row: PipelineEpisode): string {
   if (row.verdict === 'drop') return 'red';
@@ -103,7 +96,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
               { title: copy.columnEpisode, dataIndex: 'episode_index', render: (ep: number) => (
                 <Button type="text" size="mini" onClick={() => setSelected(ep)}>{copy.episode(ep)}</Button>
               ) },
-              { title: copy.columnStage, dataIndex: 'last_stage', render: (stage: string) => STAGE[stage] ?? stage },
+              { title: copy.columnStage, dataIndex: 'last_stage', render: (_: unknown, row: PipelineEpisode) => rowStages(row) },
               ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
                 title: copy.processingStage[stage] ?? stage,
                 dataIndex: 'stage_processing_s.' + stage,
@@ -115,7 +108,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
               { title: copy.processingTotal, dataIndex: 'processing_s', render: (seconds: number | null | undefined) =>
                 seconds != null ? seconds.toFixed(2) + ' s' : '—' },
               { title: copy.columnResult, dataIndex: 'next_stage', render: (_: unknown, row: PipelineEpisode) => (
-                <Tag color={color(row)}>{stateLabel(row)}</Tag>
+                <Tag color={color(row)}>{rowState(row)}</Tag>
               ) },
             ]}
           />
@@ -145,7 +138,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
           {detail.isLoading ? <span className="muted">{zh.common.loading}</span> : detail.data ? (
             <>
               <Typography.Paragraph>
-                <Tag color={color(detail.data)}>{stateLabel(detail.data)}</Tag>
+                <Tag color={color(detail.data)}>{rowState(detail.data)}</Tag>
                 {detail.data.verdict_reason ? ` ${detail.data.verdict_reason}` : ''}
               </Typography.Paragraph>
               {detail.data.processing_s != null ? <Typography.Paragraph type="secondary">

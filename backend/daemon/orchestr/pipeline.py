@@ -1,4 +1,6 @@
-"""Funnel entry point and batch compatibility for site-supplied CLI wrappers."""
+"""The entry point of a chain's per-episode stages, and batch compatibility for site-supplied CLI wrappers.
+
+A chain is one block's streaming stages (plan 2.0, :mod:`.blocks`) or, before it, the funnel."""
 from __future__ import annotations
 
 import concurrent.futures as futures
@@ -48,15 +50,19 @@ def cpu_shares_for(stages: list[dict]) -> dict[str, int]:
     return {"numeric": numeric, "frame": max(1, budget - numeric)}
 
 
-def run_funnel(run, stages: list[dict], selection: list[int]) -> None:
+def run_funnel(run, stages: list[dict], selection: list[int], *,
+               abort: threading.Event | None = None, pool_key=None) -> None:
+    """A chain of per-episode stages over ``selection`` (``abort``, ``pool_key``: see
+    :func:`.episode_pipeline.run_episodes`)."""
     if not os.environ.get("CURATOR_CLI"):
         from .episode_pipeline import run_episodes
 
-        return run_episodes(run, stages, selection)
-    return run_batches(run, stages, selection)
+        return run_episodes(run, stages, selection, abort=abort, pool_key=pool_key)
+    return run_batches(run, stages, selection, abort=abort)
 
 
-def run_batches(run, stages: list[dict], selection: list[int]) -> None:
+def run_batches(run, stages: list[dict], selection: list[int], *,
+                abort: threading.Event | None = None, pool_key=None) -> None:
     """Compatibility path for external CLI wrappers and batch comparison tests.
 
     Every worker commits each episode into SQLite before publishing its batch's
@@ -73,8 +79,11 @@ def run_batches(run, stages: list[dict], selection: list[int]) -> None:
     store = EpisodeState(path)
     try:
         store.bootstrap(str(run.wd.root), modules)
-        store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
-        saved = store.progress_for(selection)
+        if store.blocks is not None:                       # plan 2.0: this chain's block
+            saved = store.positions(selection, stages[0].get("block"))
+        else:
+            store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
+            saved = store.progress_for(selection)
     finally:
         store.close()
 
@@ -93,8 +102,10 @@ def run_batches(run, stages: list[dict], selection: list[int]) -> None:
                          note=f"按 episode 流水执行，每批最多 {batch_size} 条")
 
     queues = [queue.Queue(maxsize=2) for _ in stages]
-    abort = threading.Event()
-    run._pipeline_abort = abort
+    own_abort = abort is None
+    if own_abort:
+        abort = threading.Event()
+        run._pipeline_abort = abort
     first_error: list[BaseException] = []
     error_lock = threading.Lock()
     sync_lock = threading.Lock()
@@ -241,7 +252,8 @@ def run_batches(run, stages: list[dict], selection: list[int]) -> None:
             for job in jobs:
                 job.result()
     finally:
-        run._pipeline_abort = None
+        if own_abort:
+            run._pipeline_abort = None
     if first_error:
         raise first_error[0]
     run.check_intent()

@@ -73,21 +73,24 @@ def test_batches_overlap_and_episode_result_is_readable_before_revision(daemon, 
 
 
 def test_resume_routes_each_episode_from_its_saved_stage(daemon, fake_vlm, monkeypatch):
+    """A pause half way: each block goes on from where its episodes were, nothing is judged twice."""
     monkeypatch.setattr(pipeline, "batch_size_for", lambda stages: 2)
-    fake_vlm.delay_s = 0.15
     d = daemon()
-    task_id = d.create()["id"]
-
-    def first_result():
-        return d.api("GET", f"/tasks/{task_id}/pipeline/episodes").json()["finished"] > 0
-
-    d.wait_for(first_result, what="the first persisted episode")
-    assert d.action(task_id, "pause").status_code == 200
+    # half way by construction: the model gives no judgement until the pause is asked for, so the VLM
+    # block has its first episode in flight and the rest wait (episode gate 1)
+    judge = "Assess the robot manipulation task"
+    asked, hold = fake_vlm.count(judge), fake_vlm.hold(judge)
+    try:
+        task_id = d.create(params={"start_now": True, "export": True, "vlm_hedge": False,
+                                   "limits": {"vlm_parallelism": 2}})["id"]
+        d.wait_for(lambda: fake_vlm.count(judge) > asked, what="the VLM block to ask about its first episode")
+        assert d.action(task_id, "pause").status_code == 200
+    finally:
+        hold.set()
     d.wait(task_id, states=("paused",))
     saved = d.api("GET", f"/tasks/{task_id}/pipeline/episodes").json()
-    assert 0 < saved["finished"] < 8
+    assert 0 < saved["started"] and saved["finished"] < 8
 
-    fake_vlm.delay_s = 0.0
     assert d.action(task_id, "resume").status_code == 200
     task = d.wait(task_id)
     assert task["state"] == "succeeded", task

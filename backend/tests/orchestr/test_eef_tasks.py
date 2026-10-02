@@ -239,10 +239,10 @@ def test_an_eef_task_runs_end_to_end(daemon):
     uploads = json.load(open(os.path.join(rd, "inputs", "uploads.json")))
     assert set(uploads) == {traj["handle"], seeds["handle"]}
     assert all(os.path.isfile(os.path.join(rd, e["path"])) for e in uploads.values())
-    # D49: a vlm-tier gate next to task_success, on the frame stage's survivors
+    # D49: in the vlm stage next to task_success, on the whole selection (the VLM block, D57)
     plan = json.load(open(os.path.join(rd, "plan.json")))
     (vlm,) = [s for s in plan["stages"] if s["id"] == "vlm"]
-    assert EEF in vlm["modules"] and vlm["episodes"] == "survivors:frame" and EEF in vlm["hard_gates"]
+    assert EEF in vlm["modules"] and vlm["episodes"] == "selected" and vlm["block"] == "vlm"
     assert not [s for s in plan["stages"] if s["id"].startswith("advisory_")]
     recs = {r["episode_index"]: r for r in (json.loads(x) for x in open(os.path.join(rd, "checks", EEF,
                                                                                       "results.jsonl")))}

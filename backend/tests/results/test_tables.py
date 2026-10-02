@@ -23,7 +23,7 @@ def _get(world, table):
 
 def test_default_order_pages_through_the_file_without_gaps_or_duplicates(world):
     rows = _file_rows(world, "visual_quality")
-    assert len(rows) == 16                                 # 8 episodes x 2 cameras
+    assert len(rows) == 18                                 # 9 episodes x 2 cameras
     items, bodies = all_pages(_get(world, "visual_quality"), limit=3)
     for body in bodies:
         assert_schema(TABLE, body)
@@ -55,7 +55,7 @@ def test_whitelisted_sort_keeps_missing_values_last_and_ties_in_file_order(world
     known = [s for s in scores if s is not None]
     assert scores[-1] is None and scores.count(None) == 1          # ep 3's second camera
     assert known == sorted(known, reverse=(order == "desc"))
-    assert len(items) == 16
+    assert len(items) == 18
     assert sorted((i["episode_index"], i["camera"]) for i in items) == sorted(
         (r["episode_index"], r["camera"]) for r in _file_rows(world, "visual_quality"))
 

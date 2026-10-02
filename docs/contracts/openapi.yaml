@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.1.0
+  version: 2.2.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -173,6 +173,12 @@ info:
     `reasons` may carry what a C2 2.0 reason carries: the finding `code`, its taxonomy `item` and
     whether it may be `appealable`; its `kind` is then `finding`, `human`, `execution_error` or
     `duplicate`.
+
+    2.2.0 (2026-10-01): the two blocks (F12.4, design doc 17 §3). A `PipelineEpisode` of a two-block
+    run has `stages` (every per-episode stage of both blocks: waiting / running / done / error) and a
+    `provisional` verdict; `last_stage` / `next_stage` are a funnel run's position and only appear on
+    tasks made before. `StageProgress` of a two-block run names its `block` and, for dedup and the
+    skill profile, `full_set`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -2667,7 +2673,7 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "v1: autolabel, numeric, frame, vlm, verdict, dedup, profile, final; then export, report, verify; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
         full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
@@ -2931,19 +2937,19 @@ components:
     PipelineEpisode:
       type: object
       additionalProperties: false
-      required: [episode_index, last_stage, next_stage, reason, verdict, verdict_reason]
+      required: [episode_index, reason, verdict, verdict_reason]
       properties:
         episode_index: {type: integer, minimum: 0}
-        last_stage: {enum: [integrity, numeric, frame, vlm]}
-        next_stage: {enum: [numeric, frame, vlm, done]}
-        reason: {type: [string, "null"]}
+        last_stage: {enum: [integrity, numeric, frame, vlm], description: "a funnel run (tasks made before 2.2.0): the last stage it went through"}
+        next_stage: {enum: [numeric, frame, vlm, done], description: "a funnel run: where it goes next"}
+        reason: {type: [string, "null"], description: "missing: left out, its source files are gone (D40); a funnel run's gate: stopped there"}
         verdict: {type: [string, "null"], enum: [keep, drop, held, null]}
         verdict_reason: {type: [string, "null"]}
         stages:
           type: object
           description: >-
-            two-block pipelines (design doc 17 §5.5): every stage the episode takes part in, both blocks;
-            last_stage / next_stage describe the funnel and go with it (F12.4)
+            two-block runs (design doc 17 §5.5): every per-episode stage of both blocks - done (or error, when one
+            of its modules failed on the episode), running, or waiting
           propertyNames: {pattern: "^[a-z][a-z0-9_]*$"}
           additionalProperties: {enum: [waiting, running, done, error]}
         provisional:

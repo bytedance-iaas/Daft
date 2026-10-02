@@ -1761,7 +1761,7 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description v1: autolabel, numeric, frame, vlm, verdict, dedup, profile, final; then export, report, verify; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
@@ -1986,15 +1986,22 @@ export interface components {
         };
         PipelineEpisode: {
             episode_index: number;
-            /** @enum {unknown} */
-            last_stage: "integrity" | "numeric" | "frame" | "vlm";
-            /** @enum {unknown} */
-            next_stage: "numeric" | "frame" | "vlm" | "done";
+            /**
+             * @description a funnel run (tasks made before 2.2.0): the last stage it went through
+             * @enum {unknown}
+             */
+            last_stage?: "integrity" | "numeric" | "frame" | "vlm";
+            /**
+             * @description a funnel run: where it goes next
+             * @enum {unknown}
+             */
+            next_stage?: "numeric" | "frame" | "vlm" | "done";
+            /** @description missing: left out, its source files are gone (D40); a funnel run's gate: stopped there */
             reason: string | null;
             /** @enum {string|null} */
             verdict: "keep" | "drop" | "held" | null;
             verdict_reason: string | null;
-            /** @description two-block pipelines (design doc 17 §5.5): every stage the episode takes part in, both blocks; last_stage / next_stage describe the funnel and go with it (F12.4) */
+            /** @description two-block runs (design doc 17 §5.5): every per-episode stage of both blocks - done (or error, when one of its modules failed on the episode), running, or waiting */
             stages?: {
                 [key: string]: "waiting" | "running" | "done" | "error";
             };

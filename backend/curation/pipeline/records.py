@@ -29,8 +29,6 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from . import gates_v1
-
 SCHEMA_VERSION = "1.0"
 #: The format ``record_from_struct`` writes (C2 result-record): 2.0 since the policy verdicts (F12.3).
 RECORD_VERSION = "2.0"
@@ -53,21 +51,6 @@ _PART_RE = re.compile(r"^([0-9]{4})\.jsonl$")
 
 # ---------------------------------------------------------------- records
 
-def gate_of(module: str) -> str:
-    """The 1.0 record's ``gate`` field (registry 2.0 has no gates; ``gates_v1`` keeps them)."""
-    return gates_v1.gate(module)
-
-
-def derive_verdict(passed: bool | None, score: float | None, error: dict | None) -> str:
-    if error:
-        return "error"
-    if passed is True:
-        return "pass"
-    if passed is False:
-        return "fail"
-    return "scored" if score is not None else "abstain"
-
-
 def parse_detail(detail: Any) -> dict:
     """v1's detail JSON string -> dict (same rule as the parity tool)."""
     if isinstance(detail, dict):
@@ -85,15 +68,13 @@ def record_from_struct(module: str, episode_index: int, struct: dict | None, *,
                        incidents: list[dict] | None = None,
                        evidence: Iterable[str] | None = None,
                        elapsed_s: float | None = None, params: dict | None = None,
-                       context: dict | None = None, version: str | None = None) -> dict:
-    """A ``{passed, score, detail}`` struct (v1's check column value) -> a record.
+                       context: dict | None = None) -> dict:
+    """A ``{passed, score, detail}`` struct (v1's check column value) -> a record 2.0.
 
     ``passed`` / ``score`` are coerced the way daft's struct column coerces them
-    (bool / float64), so a numpy scalar never leaks into the JSON line.
-
-    ``version`` is the record format (``RECORD_VERSION`` when not given): 1.0 keeps the
-    tri-state and the score; 2.0 (design doc 17 §1) turns them into findings with
-    :mod:`.findings`, judged with the module's ``params`` (defaults filled in).
+    (bool / float64), so a numpy scalar never leaks into the JSON line, and turned into
+    findings with :mod:`.findings` (design doc 17 §1), judged with the module's ``params``
+    (defaults filled in).
     """
     struct = struct or {}
     passed = struct.get("passed")
@@ -103,11 +84,6 @@ def record_from_struct(module: str, episode_index: int, struct: dict | None, *,
     details = parse_detail(struct.get("detail"))
     error = {"kind": "execution", "incidents": list(incidents)} if incidents else None
     elapsed = None if elapsed_s is None else round(float(elapsed_s), 3)
-    if (version or RECORD_VERSION) == "1.0":
-        return {"episode_index": int(episode_index), "module": module,
-                "verdict": derive_verdict(passed, score, error), "passed": passed,
-                "score": score, "gate": gate_of(module), "details": details,
-                "evidence": list(evidence or []), "elapsed_s": elapsed, "error": error}
     return record_v2(module, episode_index, passed, score, details, error=error,
                      evidence=evidence, elapsed_s=elapsed, params=params, context=context)
 
@@ -218,19 +194,10 @@ def passes_funnel(rec: dict | None, policy=None) -> bool:
 
 
 def check_counts(records: dict[int, dict], episodes: Iterable[int]) -> tuple[str, dict, list[int], dict]:
-    """``check --json`` for one module over ``episodes`` (C2 ``check``): (schema_version, the episode
-    counts, the error episodes, finding code -> episodes; empty in 1.0). An episode without a record
-    counts as an error. The format follows ``RECORD_VERSION``: 2.0 counts ok / error and the findings."""
+    """``check --json`` 2.0 for one module over ``episodes`` (C2 ``check``): (schema_version, the episode
+    counts - ok / error -, the error episodes, finding code -> episodes). An episode without a record
+    counts as an error."""
     errors: list[int] = []
-    if RECORD_VERSION == "1.0":
-        counts = {"total": 0, "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0}
-        for e in episodes:
-            counts["total"] += 1
-            verdict = legacy_verdict(records.get(e)) or "error"
-            counts[verdict] += 1
-            if verdict == "error":
-                errors.append(e)
-        return "1.0", counts, errors, {}
     counts = {"total": 0, "ok": 0, "error": 0}
     found: dict[str, int] = {}
     for e in episodes:
@@ -289,6 +256,18 @@ def next_part(run_dir: str, modules: Iterable[str]) -> str:
         for p in part_ids(run_dir, m):
             top = max(top, int(p))
     return f"{top + 1:04d}"
+
+
+def two_blocks(run_dir: str) -> bool:
+    """A run of plan 2.0 (design doc 17 §3, D57): every selected module judges every selected episode - no
+    stage stops one, the full-set steps take the whole selection. False for a run without a plan (a hand-made
+    run directory) or with a funnel plan."""
+    try:
+        with open(os.path.join(run_dir, "plan.json"), encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(doc, dict) and str(doc.get("schema_version")) == "2.0"
 
 
 def revision_dir(run_dir: str, revision: int) -> str:

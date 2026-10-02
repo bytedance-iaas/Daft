@@ -10,8 +10,8 @@
 > （细码的项，加只给读数的项 `also_covers`）。去掉了 `gate`、`input_scope`、`affects_dataset_verdict`、`produces_adjudication`、
 > `review_lines`、模块级 `appealable`——后三项由细码推出（代码里仍是 `ModuleSpec` 的属性）。导出的 JSON 另带
 > `blocks`、`taxonomy`、`finding_levels`、`unassessable_reasons`。细码目录见设计 17 §2.2。
-> 过渡期：两块执行（F12.4）与策略判决（F12.3）落地之前，漏斗仍按 1.x 的门判决，所需的 `gate` 与「是否参与判决」
-> 由 `backend/curation/pipeline/gates_v1.py`（前端 `src/lib/registry.ts`）保留，随最后一个使用方删除。
+> 过渡期已结束（F12.3 策略判决、F12.4 两块执行）：后端的过渡表 `gates_v1.py` 已删除，「参与不参与判决」看 `rides_on`；
+> 前端 `src/lib/registry.ts` 的 `funnelGate` 只给 F12.5 之前的旧视图用。
 > 下文是 1.x 的写法，保留作对照；块、段、细码与覆盖以本节为准。
 
 八个模块，**一期数量不变**。注册表是单一事实源：CLI、Daemon、前端三方的模块清单、

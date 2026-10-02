@@ -7,11 +7,12 @@ that failed on it is still named, D35), else a module it needs that failed or ha
 it is kept and its review findings go to their review lines. The default policy is today's gates (P18):
 only the soft-score rejects are gone.
 
-**Funnel phase** - until the two blocks of F12.4 the stages still run one after another and an episode that
-stops at a stage (an error, or a finding that blocks under the policy) has no records in the later ones;
-the modules an episode needs are walked the same way (:func:`expected`). ``verdicts.jsonl`` holds the
-machine's verdicts (2.0 lines), ``keep.txt`` the episodes kept after the applied human decisions - the
-input of dedup and skill_profile.
+**Every module judges every episode** (D57): the two blocks run side by side and no stage stops an
+episode, so an episode needs a judgement of every selected module (:func:`expected`) - one without is held.
+
+**Funnel phase** - the machine's verdicts of the per-episode modules (``verdicts.jsonl``, 2.0 lines) and
+``keep.txt``, the episodes kept after the applied human decisions (a funnel run's input of dedup and
+skill_profile; the Daemon's two-block runs go straight to the final phase).
 
 **Final phase** - adds dedup, skill_profile and the applied human decisions (:mod:`.adjudication`):
 a discard wins over everything; a person's answer is the conclusion of the findings it answers; an appeal
@@ -39,9 +40,9 @@ from .records import (is_error, is_v2, latest_results, revision_dir, write_json_
 from .tasktext import TaskText, load_autolabel
 from .verdicts import Graded, Verdict, also_failed, judge, name_of
 
-#: the funnel's stages in order (until the two blocks of F12.4)
-FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: modules that need the whole selection; they run after the funnel on its kept episodes
+#: the stages whose modules judge one episode at a time (the full-set stages, dedup and profile, judge them all)
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
+#: the full-set modules (dedup, skill_profile): one run over the whole selection (a funnel run's: over its kept episodes)
 FULL_SET = tuple(m.id for m in registry.MODULES if m.stage in registry.FULL_SET_STAGES)
 NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
 DEDUP = "dedup"
@@ -86,24 +87,11 @@ class RunState:
 
 
 def expected(state: RunState, ep: int, recs: dict[str, dict | None]) -> list[str]:
-    """The funnel modules ``ep`` needs a judgement of: the stages in order, stopping after the first stage
-    where it stopped - a module failed on it, has no record, or a finding blocks under the policy."""
-    out: list[str] = []
-    for stage in FUNNEL_STAGES:
-        mods = [m for m in state.modules if registry.get(m).stage == stage and not registry.get(m).rides_on]
-        if not mods:
-            continue
-        out += mods
-        stop = False
-        for m in mods:
-            rec = recs.get(m)
-            if rec is None or is_error(rec):
-                stop = True
-            elif any(state.policy.level(m, f) == "blocking" for f in rec.get("findings") or []):
-                stop = True
-        if stop:
-            break
-    return out
+    """The per-episode modules ``ep`` needs a judgement of: every selected one (D57, D58) - a rider is answered
+    in its host's requests and never holds an episode of its own; the full-set modules are added for a kept
+    episode (:func:`decide`)."""
+    return [m for m in state.modules
+            if registry.get(m).stage in EPISODE_STAGES and not registry.get(m).rides_on]
 
 
 def _without(recs: dict[str, dict | None], module: str) -> dict[str, dict | None]:

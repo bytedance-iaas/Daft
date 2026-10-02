@@ -1,4 +1,4 @@
-"""build_plan(): stages, survivors, autolabel, merge proposal, estimates (04 §3)."""
+"""build_plan(): the two blocks and their stages, autolabel, merge proposal, estimates (04 §3, design doc 17 §3)."""
 from __future__ import annotations
 
 import itertools
@@ -8,13 +8,12 @@ import pytest
 
 from curation.contracts import modules as C1
 from curation.contracts import schemas
-from curation.pipeline import gates_v1
 from curation.planner import PlanError, build_plan, derive_gates, validate_plan
 
 from . import examples as X
 
 ALL = list(C1.ids())
-V1 = [m.id for m in C1.MODULES if gates_v1.votes(m.id) and m.id not in C1.native_ids()]   # v1's eight
+V1 = [m.id for m in C1.MODULES if not m.rides_on and m.id not in C1.native_ids()]   # v1's eight
 VLM_MODULES = [m.id for m in C1.MODULES if "vlm" in m.needs]
 
 
@@ -42,77 +41,87 @@ def test_example_preflight_is_valid():
 
 def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final"]
+    assert p["schema_version"] == "2.0"
+    assert ids(p) == ["numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 30, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
-    assert stage(p, "autolabel") == {"id": "autolabel", "kind": "vlm", "command": "autolabel",
-                                     "episodes": "unlabeled", "gates": {"caption": 32}}
     assert stage(p, "numeric") == {
-        "id": "numeric", "kind": "cpu", "command": "check", "concurrency": 30,
-        "modules": ["timestamp_check", "kinematic_limits", "motion_quality"],
-        "episodes": "selected", "hard_gates": ["timestamp_check", "kinematic_limits"]}
+        "id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 30,
+        "modules": ["timestamp_check", "kinematic_limits", "motion_quality"], "episodes": "selected"}
     assert stage(p, "frame") == {
-        "id": "frame", "kind": "cpu", "command": "check", "concurrency": 30,
-        "modules": ["visual_quality", "video_action_sync"], "episodes": "survivors:numeric",
-        "hard_gates": ["video_action_sync"]}
+        "id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric",
+        "concurrency": 30, "modules": ["visual_quality", "video_action_sync"], "episodes": "selected"}
+    assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check", "block": "cpu",
+                                 "after": "frame", "full_set": True, "concurrency": 1,
+                                 "modules": ["dedup"], "episodes": "selected"}
+    assert stage(p, "autolabel") == {"id": "autolabel", "kind": "vlm", "command": "autolabel",
+                                     "block": "vlm", "episodes": "unlabeled", "gates": {"caption": 32}}
     vlm = stage(p, "vlm")
-    assert vlm["modules"] == ["task_success", "camera_defects"] and vlm["episodes"] == "survivors:frame"
+    assert (vlm["block"], vlm["after"], vlm["episodes"]) == ("vlm", "autolabel", "selected")
+    assert vlm["modules"] == ["task_success", "camera_defects"] and "hard_gates" not in vlm
     assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
                             "guard_caption": 32}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
-    assert stage(p, "verdict") == {"id": "verdict", "kind": "aggregate", "command": "aggregate",
-                                   "phase": "funnel"}
-    assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check",
-                                 "concurrency": 1, "modules": ["dedup"], "episodes": "keep"}
-    profile = stage(p, "profile_vlm")
-    assert profile["episodes"] == "keep-minus-duplicates"
+    profile = stage(p, "profile")
+    assert (profile["block"], profile["after"], profile["full_set"], profile["episodes"]) == \
+        ("vlm", "vlm", True, "selected")
     assert profile["gates"] == {"caption": 32, "llm": 16, "audit": 16}
-    assert stage(p, "final")["phase"] == "final"
+    assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
 
-def test_the_eef_module_is_a_vlm_gate_on_the_frame_survivors():
-    """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success."""
+def test_blocks_never_chain_into_each_other():
+    """design doc 17 §3.3: ``after`` names a stage of the same block; every stage takes the selection."""
+    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup", "skill_profile"]):
+        p = plan(chosen, preflight=X.preflight(64, without_task=5))
+        by_id = {s["id"]: s for s in p["stages"]}
+        for s in p["stages"]:
+            if s["kind"] == "aggregate":
+                continue
+            assert s["id"] in C1.BLOCKS[s["block"]]
+            if "after" in s:
+                assert by_id[s["after"]]["block"] == s["block"]
+            assert s["episodes"] in ("selected", "unlabeled")
+            assert ("full_set" in s) == (s["id"] in C1.FULL_SET_STAGES)
+
+
+def test_the_eef_module_is_in_the_vlm_block():
+    """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success, and like every
+    stage it takes the whole selection (D57: nothing upstream filters it)."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["autolabel", "integrity", "numeric", "frame", "vlm", "verdict", "dedup",
-                      "profile_vlm", "final"]
+    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
-        and vlm["episodes"] == "survivors:frame"
-    assert vlm["hard_gates"] == ["eef_video_consistency", "task_success"]
+        and vlm["episodes"] == "selected" and "hard_gates" not in vlm
     only = plan(["eef_video_consistency"])
-    assert ids(only) == ["vlm", "verdict", "final"] and stage(only, "vlm")["episodes"] == "selected"
+    assert ids(only) == ["vlm", "final"] and "after" not in stage(only, "vlm")
 
 
-def test_the_data_integrity_module_is_the_first_gate():
+def test_the_data_integrity_module_is_the_cpu_blocks_first_stage():
     """design doc 14 §2.2: its own stage before numeric, a CPU stage (mostly I/O) with the plan's
-    concurrency; numeric reads its survivors; without it the funnel starts at numeric as before."""
+    concurrency; without it the CPU block starts at numeric."""
     p = plan()
-    integ = stage(p, "integrity")
-    assert ids(p)[:3] == ["autolabel", "integrity", "numeric"] or ids(p)[:2] == ["integrity", "numeric"]
-    assert integ == {"id": "integrity", "kind": "cpu", "command": "check", "concurrency": 30,
-                     "modules": ["data_integrity"], "episodes": "selected",
-                     "hard_gates": ["data_integrity"]}
-    assert stage(p, "numeric")["episodes"] == "survivors:integrity"
+    assert stage(p, "integrity") == {"id": "integrity", "kind": "cpu", "command": "check", "block": "cpu",
+                                     "concurrency": 30, "modules": ["data_integrity"], "episodes": "selected"}
+    assert stage(p, "numeric")["after"] == "integrity"
     assert any("decode_test" in n for n in p["estimates"]["notes"])
     without = plan(V1)
-    assert "integrity" not in ids(without) and stage(without, "numeric")["episodes"] == "selected"
+    assert "integrity" not in ids(without) and "after" not in stage(without, "numeric")
 
 
 def test_unselected_modules_and_empty_stages_disappear():
     p = plan(["visual_quality", "task_success"])
-    assert ids(p) == ["frame", "vlm", "verdict", "final"]
-    assert stage(p, "frame")["episodes"] == "selected"
-    assert stage(p, "frame")["modules"] == ["visual_quality"] and "hard_gates" not in stage(p, "frame")
-    assert stage(p, "vlm")["episodes"] == "survivors:frame"
+    assert ids(p) == ["frame", "vlm", "final"]
+    assert stage(p, "frame")["modules"] == ["visual_quality"] and "after" not in stage(p, "frame")
+    assert "after" not in stage(p, "vlm")                 # another block: never after frame
 
 
-def test_survivors_chain_skips_missing_stages():
-    assert stage(plan(["timestamp_check", "task_success"]), "vlm")["episodes"] == "survivors:numeric"
-    assert stage(plan(["task_success"]), "vlm")["episodes"] == "selected"
-    p = plan(["motion_quality", "video_action_sync"])
-    assert stage(p, "frame")["episodes"] == "survivors:numeric"
-    assert "hard_gates" not in stage(p, "numeric")
+def test_after_skips_missing_stages():
+    assert "after" not in stage(plan(["timestamp_check", "task_success"]), "vlm")
+    p = plan(["motion_quality", "video_action_sync", "dedup"])
+    assert stage(p, "frame")["after"] == "numeric" and stage(p, "dedup")["after"] == "frame"
+    assert stage(plan(["timestamp_check", "dedup"]), "dedup")["after"] == "numeric"
+    assert "after" not in stage(plan(["dedup"]), "dedup")
 
 
 def test_module_order_follows_the_registry_not_the_caller():
@@ -129,7 +138,7 @@ def test_unsupported_modules_stay_out_and_are_explained():
     assert any("kinematic_limits skipped" in n and "umi_dual_handheld_gripper" in n
                for n in p["estimates"]["notes"])
     p = plan(["kinematic_limits"], preflight=pf)          # the task does not fail (05 §4)
-    assert ids(p) == ["verdict", "final"]
+    assert ids(p) == ["final"]
 
 
 def test_needs_input_modules_are_planned_with_a_note():
@@ -249,7 +258,7 @@ def test_caps_flow_into_the_plan():
     g = derive_gates(16)
     assert stage(p, "vlm")["gates"] == {k: g[k] for k in
                                         ("episode", "probe", "endstate", "arbitration", "guard_caption")}
-    assert stage(p, "profile_vlm")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
+    assert stage(p, "profile")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 
@@ -270,8 +279,11 @@ def test_site_gate_overrides_reach_the_plan():
     assert stage(p, "vlm")["gates"]["probe"] == 96
 
 
-def test_profile_reads_keep_without_dedup():
-    assert stage(plan(["skill_profile"]), "profile_vlm")["episodes"] == "keep"
+def test_the_profile_takes_the_whole_selection():
+    """design doc 17 §3.2: a full-set stage of the vlm block, with or without dedup."""
+    for chosen in (["skill_profile"], ["dedup", "skill_profile"]):
+        profile = stage(plan(chosen), "profile")
+        assert (profile["episodes"], profile["full_set"], profile["block"]) == ("selected", True, "vlm")
 
 
 # ---------------------------------------------------------------- estimates
@@ -289,6 +301,17 @@ def test_estimates_follow_v1_call_graph():
              site_config={"vlm": {"merge": {"enabled": False}}})
     assert p["estimates"]["vlm_requests"] == 20
     assert plan(["timestamp_check"])["estimates"]["vlm_requests"] == 0
+
+
+def test_the_wall_clock_is_the_longer_block():
+    """The blocks run side by side: CPU checks of many episodes do not add to the model's time."""
+    pf = X.preflight(10, cameras=("a", "b", "c"))
+    vlm = plan(["task_success"], preflight=pf)["estimates"]["wall_clock_s"]
+    both = plan(["timestamp_check", "task_success"], preflight=pf)["estimates"]["wall_clock_s"]
+    assert both == vlm                                   # 10 parquet checks hide under the model calls
+    cpu = plan(["visual_quality"], preflight=X.preflight(10_000))["estimates"]["wall_clock_s"]
+    assert plan(["visual_quality", "task_success"], preflight=X.preflight(10_000))["estimates"]["wall_clock_s"] \
+        >= cpu
 
 
 def test_plan_is_deterministic_and_json():

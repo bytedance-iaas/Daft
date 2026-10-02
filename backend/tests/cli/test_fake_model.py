@@ -79,7 +79,8 @@ def test_the_mini_dataset_walks_every_task_success_path(vlm_stage):
     got = {e: (verdict_of(r), r["details"].get("verdict"))
            for e, r in vlm_stage["reference"].items()}
     assert got == {0: ("abstain", "uncertain"), 1: ("pass", "arbitration_success"),
-                   3: ("abstain", "uncertain"), 4: ("pass", "arbitration_success"),
+                   2: ("abstain", "uncertain"), 3: ("abstain", "uncertain"),
+                   4: ("pass", "arbitration_success"), 5: ("pass", "arbitration_success"),
                    6: ("pass", "arbitration_success"), 7: ("abstain", "uncertain")}
     captions = {ln["episode_index"]: ln["caption"] for ln in
                 read_jsonl(f"{vlm_stage['reference_dir']}/autolabel/captions.jsonl")}

@@ -35,12 +35,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..contracts import modules as registry_mod
-from . import funnel, gates_v1
+from . import funnel
 from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, wrap_decode,
                         wrap_voter)
 from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error,
                       latest_results, passes_funnel,
-                      module_dir, pid_alive, read_inflight, record_from_struct,
+                      module_dir, pid_alive, read_inflight, record_from_struct, two_blocks,
                       write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
@@ -186,6 +186,8 @@ class StageRun:
         from .policy import load as load_policy
 
         self.funnel_policy = load_policy(opts.run_dir)
+        #: plan 2.0: the next stage takes every episode this one judged (design doc 17 §3, D57)
+        self.two_blocks = two_blocks(opts.run_dir)
         if opts.pipeline_state:
             from .episode_state import EpisodeState
 
@@ -486,7 +488,7 @@ class StageRun:
         total = len(o.episodes)
         writer = PartWriter(o.run_dir, o.modules, o.part, index=self._store is None)
         inflight = Inflight(o.run_dir, o.modules, o.part)
-        breaker = (_Breaker(watched={m for m in o.modules if gates_v1.votes(m)})
+        breaker = (_Breaker(watched={m for m in o.modules if not registry_mod.is_rider(m)})
                    if o.stage == "vlm" else None)
         self.done = skipped if o.episode_stream is None else 0
         drained = False
@@ -559,8 +561,8 @@ class StageRun:
                 self._store.finish(o.stage, ep, records, o.pipeline_next)
             inflight.remove(ep)
             self.done += 1
-            stream.completed(ep, records is not None and all(
-                passes_funnel(r, self.funnel_policy) for r in records.values()))
+            stream.completed(ep, records is not None and (self._store.blocks is not None or all(
+                passes_funnel(r, self.funnel_policy) for r in records.values())))
             ctx.progress(self.label, self.done, total, episode_index=ep)
 
         try:
@@ -689,12 +691,17 @@ class StageRun:
         return {"schema_version": version, "modules": out}
 
     def survivors(self) -> list[int]:
-        """Episodes of this call that go on to the next stage (no error, no hard fail)."""
+        """Episodes of this call that go on to the next stage: plan 2.0 - every one judged (findings and errors
+        stop nothing, D57); a funnel run - no error, nothing that blocks under the policy."""
         cur = {m: latest_results(self.o.run_dir, m, self.o.episodes)
                for m in self.o.modules}
         out = []
         for e in self.o.episodes:
             recs = [cur[m].get(e) for m in self.o.modules]
+            if self.two_blocks:
+                if all(r is not None for r in recs):
+                    out.append(e)
+                continue
             if not all(passes_funnel(r, self.funnel_policy) for r in recs):
                 continue
             out.append(e)

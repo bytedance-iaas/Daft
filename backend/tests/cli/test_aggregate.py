@@ -137,9 +137,8 @@ def apply(run_dir: str, path: str) -> dict:
 
 def test_funnel_gates_errors_and_d35(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0, 6)
-    # 1: a finding blocks; the later stages have no result and are not asked
-    rd.put("timestamp_check", 1, "fail", details={"reason": "丢帧"})
-    rd.put("kinematic_limits", 1, "pass").put("motion_quality", 1, "scored")
+    # 1: a finding blocks; every other module judged it too (D57)
+    rd.good(1).replace("timestamp_check", 1, "fail", details={"reason": "丢帧"})
     # 2: a frame module's finding blocks while the other frame module failed to run
     rd.good(2).replace("visual_quality", 2, "error").replace("video_action_sync", 2, "fail")
     # 3: task_success failed to run; low scores are readings and reject nothing (P18): held back
@@ -152,7 +151,7 @@ def test_funnel_gates_errors_and_d35(tmp_path):
     rd.good(5).drop("task_success", 5)
     # 6: the model could not tell - a review finding, kept and asked
     rd.replace("task_success", 6, "abstain")
-    # 7: a numeric module failed to run: the later stages never saw it and are not needed
+    # 7: a module failed to run and three never judged it: held, every one of them named (D57, D58)
     rd.good(7).replace("motion_quality", 7, "error")
     for m in ("visual_quality", "video_action_sync", "task_success"):
         rd.drop(m, 7)
@@ -176,7 +175,8 @@ def test_funnel_gates_errors_and_d35(tmp_path):
     assert "没有结果" in lines[5]["reason"]
     assert lines[6]["verdict"] == "keep" and lines[6]["review"] == [
         {"module": "task_success", "code": "uncertain", "item": "TASK-5", "line": "task_verdict"}]
-    assert lines[7]["verdict"] == "held" and lines[7]["error_modules"] == ["motion_quality"]
+    assert lines[7]["verdict"] == "held" and lines[7]["error_modules"] == [
+        "motion_quality", "visual_quality", "video_action_sync", "task_success"]
     assert lines[8]["verdict"] == "drop" and modules_of(lines[8]["blocking"]) == ["task_success"]
     assert lines[8]["error_modules"] == ["motion_quality"]
     with open(os.path.join(rd.path, "revisions", "r0001", "keep.txt"), encoding="utf-8") as fh:

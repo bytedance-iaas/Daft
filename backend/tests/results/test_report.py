@@ -48,12 +48,12 @@ def test_module_summaries_carry_chart_ready_statistics(world):
     assert kin["violations_by_joint"] == [{"name": "3", "count": 1}]
     vq = s["visual_quality"]
     assert [c["camera"] for c in vq["cameras"]] == ["exterior_1", "wrist"]
-    assert sum(sum(c["hist"]) for c in vq["cameras"]) == 15           # ep3's second camera has no score
+    assert sum(sum(c["hist"]) for c in vq["cameras"]) == 17           # 9 x 2; ep3's second camera has no score
     task = s["task_success"]
     assert {x["name"]: x["count"] for x in task["judgements"]} == {
-        "success": 4, "review_conflict": 2, "failure": 1}
+        "success": 5, "review_conflict": 2, "failure": 1}
     assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
-    assert task["text_sources"] == [{"name": "原始标注", "count": 7}]
+    assert task["text_sources"] == [{"name": "原始标注", "count": 8}]
     assert s["dedup"]["counts"]["fail"] == 1 and s["dedup"]["group_sizes"] == []   # no groups.json here
     assert s["skill_profile"]["family_distribution"] == [{"name": "放置", "count": 5}]
     assert s["skill_profile"]["disagreement_high"] == 2
