@@ -57,8 +57,8 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
 
 CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --min-support 5`，任何一项的 precision、recall、control 通过率
 比基线掉超过 0.05（且这一项至少有 5 条计数）就以退出码 3 结束；`--require-all-runs` 让缺运行目录的子集以退出码 2 结束。
-平台 `1b30fb224` 上不用模型的 6 个模块的打分在 `tos://curation-robo-anchor/baseline/1b30fb224/score/`（2026-10-02 按分类表 1.2 与第二批 b 之后的期望重打；
-2026-10-01 的留在 `score/archive-2026-10-01/`，第一份留在 `score/archive-2026-09-30/`）。
+平台 `1b30fb224` 上不用模型的 6 个模块的打分在 `tos://curation-robo-anchor/baseline/1b30fb224/score/`（2026-10-02 样本集按「质量优先」精简后重打，
+设计 16 §7.8、§8.4；精简前的留在 `score/archive-2026-10-02/`，10-01 的留在 `score/archive-2026-10-01/`，第一份留在 `score/archive-2026-09-30/`）。
 
 对照表要跟着平台走：平台改了问题码、细节字段名或模块 id，`tests/test_score.py` 的一致性检查会失败，同步改 `finding_map.json`。
 
@@ -108,8 +108,8 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 ```bash
 # mcap 结构故障：每个基底用一次，前几个按 --plan 注入，余下的做对照
 .venv/bin/python tools/regression_samples/inject_mcap.py --out <新目录> --bases a.mcap,b.mcap,... --controls 2
-# LeRobot v3 索引故障：故障:episode[:参数]，其余条目原样留作对照
-.venv/bin/python tools/regression_samples/inject_v3.py --base <v3 数据集> --out <新目录> --plan offset:10:6,video_range:20:1.0,dangling_task:30,frame_index:40
+# LeRobot v3 索引故障：故障:episode[:参数]，其余条目原样留作对照（样本集里的 svla_so101_index_injected 用的是下面这组，基底是精简后的 10 条）
+.venv/bin/python tools/regression_samples/inject_v3.py --base <v3 数据集> --out <新目录> --plan offset:0:6,offset:1:1,video_range:2:1.0,dangling_task:25,frame_index:38
 ```
 
 ## 手动验证步骤
@@ -118,7 +118,7 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 
 1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests`，全部通过。
 2. 从 `tos://curation-robo-anchor/` 取 `anchor/v1/expectation.json` 与 `baseline/1b30fb224/`（含 `runs.json`），按上面的命令打分：
-   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.2, map 1.3)`，写明 1079 条全部打分、77 个子集都有运行目录。
+   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.2, map 1.3)`，写明 475 条全部打分、63 个子集都有运行目录。
 3. 再加 `--baseline baseline/1b30fb224/score/anchor.json` 跑一遍：退出码 0，`score.md` 末尾写「Against the baseline: no regression」。
 
 注入：
