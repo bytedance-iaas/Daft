@@ -70,6 +70,14 @@ export function seedVizMappings(now: number): Map<string, { mapping: VizMapping;
 
 const READERS: Record<string, 'lerobot' | 'mcap' | null> = { lerobot_v2: 'lerobot', lerobot_v3: 'lerobot', mcap: 'mcap' };
 
+/**
+ * The format as the visualizer sees it (the Daemon's ``viz_format``): episode_N.mcap files make an
+ * mcap dataset even when the checks cannot read it with the site's default topics (ABC-130k).
+ */
+export function vizFormatOf(d: { format: DatasetDetail['format']; preflight?: { format?: { kind?: string } } }): DatasetDetail['format'] {
+  return d.preflight?.format?.kind === 'mcap' ? 'mcap' : d.format;
+}
+
 /** C4 ``VizStatus`` of a registration (``DatasetItem.viz``). */
 export function vizStatusOf(format: DatasetDetail['format'], mapped: boolean): VizStatus {
   if (!READERS[format]) {
@@ -227,11 +235,12 @@ function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
 
 export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDetail, mapping: VizMapping | null, mappingVersion: number | null): VizDataset {
   const p = DATASET_PROFILES.find((x) => x.uri === d.uri) ?? DATASET_PROFILES[1];
-  const reader = READERS[d.format] ?? null;
+  const fmt = vizFormatOf(d);
+  const reader = READERS[fmt] ?? null;
   const shape = reader ? shapeOf(p, mapping) : { cameras: [], streams: [], sources: [], fps: p.fps };
   const warnings = [];
-  if (d.format === 'mcap' && !mapping) warnings.push({ code: 'mapping_pending', message: 'mcap 数据集还没有确认字段映射：到「mcap 配置」确认后才能看相机与曲线' });
-  if (!reader) warnings.push({ code: 'unsupported', message: vizStatusOf(d.format, false).reason ?? '' });
+  if (fmt === 'mcap' && !mapping) warnings.push({ code: 'mapping_pending', message: 'mcap 数据集还没有确认字段映射：到「mcap 配置」确认后才能看相机与曲线' });
+  if (!reader) warnings.push({ code: 'unsupported', message: vizStatusOf(fmt, false).reason ?? '' });
   for (const s of shape.sources.filter((x) => !x.supported)) warnings.push({ code: 'annotation_unsupported', message: s.reason ?? '标注格式不支持' });
   return {
     scope,
@@ -249,7 +258,7 @@ export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDeta
     streams: shape.streams,
     annotation_sources: shape.sources,
     field_tree: reader ? fieldTree(p, shape) : [],
-    mapping: d.format === 'mcap'
+    mapping: fmt === 'mcap'
       ? { state: scope === 'task' && mapping ? 'frozen' : mapping ? 'confirmed' : 'none', version: mappingVersion, name: mapping?.name ?? null }
       : { state: 'not_needed', version: null, name: null },
     transcode: { enabled: true },
@@ -457,8 +466,132 @@ const UMI_TOPICS: [string, string, string, number, number][] = [
   ['/robot0/system_info', 'foxglove.SystemInfo', 'ignore', 43, 0.8],
 ];
 
-/** The probe of a UMI-like mcap dataset (GenRobot), drafted with builtin:umi or another template. */
-export function mcapProbe(file: string, files: number, template: string | null): McapProbe {
+type AbcTopic = [string, string, [string, number][], number | null, number, boolean];
+
+/** An ABC-130k episode (real probe of abc130k_arrange_flowers_zedx, trimmed to the left side). */
+const ABC_TOPICS: AbcTopic[] = [
+  ['/instruction', 'Instructions', [], null, 1, false],
+  ['/left-arm-action', 'RobotState', [['position', 6]], 199.96, 1990, false],
+  ['/left-arm-state', 'RobotState', [['position', 6], ['velocity', 6], ['torque', 6]], 262.02, 2601, false],
+  ['/left-ee-action', 'GripperState', [['position', 1]], 199.96, 1990, false],
+  ['/left-ee-state', 'GripperState', [['position', 1], ['velocity', 1], ['torque', 1]], 262.02, 2601, false],
+  ['/left-wrist-camera', 'foxglove.CompressedVideo', [], 30, 301, true],
+  ['/left-wrist-camera-info', 'foxglove.CameraCalibration', [['width', 1], ['height', 1], ['D', 5], ['K', 9], ['P', 12]], null, 1, false],
+  ['/top-left-camera', 'foxglove.CompressedVideo', [], 30, 301, true],
+  ['/top-left-camera-info', 'foxglove.CameraCalibration', [['width', 1], ['height', 1], ['D', 5], ['K', 9], ['P', 12]], null, 1, false],
+];
+
+/** The probe of an ABC-130k-like dataset: no template fits, builtin:foxglove drafts it by schema. */
+function abcProbe(file: string, files: number, template: string | null): McapProbe {
+  const topics: McapTopic[] = ABC_TOPICS.map(([topic, schema, fields, rate, count, video]) => ({
+    topic,
+    schema,
+    schema_encoding: 'protobuf',
+    message_encoding: 'protobuf',
+    count,
+    rate_hz: rate,
+    start_s: 0,
+    end_s: 9.95,
+    image: video ? { codec: 'h265', width: 1920, height: 1200 } : null,
+    fields: fields.map(([path, size]) => ({ path, size })),
+    use: video ? 'camera' : schema.endsWith('Calibration') ? 'ignore' : topic === '/instruction' ? 'task' : 'series',
+    role: video || schema.endsWith('Calibration') || topic === '/instruction' ? null : topic.endsWith('state') ? 'state' : 'action',
+    name: video ? topic.slice(1) : topic === '/instruction' ? '任务描述' : schema.endsWith('Calibration') ? '' : topic.slice(1),
+    notes: [...(rate && rate > 150 ? ['高频：作曲线时下采样到 ≤ 2000 点'] : []), ...(video ? ['H.265：浏览器放不了时由平台转码'] : [])],
+  }));
+  const series = topics.filter((t) => t.use === 'series');
+  const draft: VizMapping = {
+    schema_version: 'viz-mapping/1.0',
+    name: 'Foxglove 通用',
+    base: 'builtin:foxglove',
+    timeline: { source: 'log_time', frame_reference: null },
+    cameras: topics.filter((t) => t.use === 'camera').map((t) => ({ topic: t.topic, name: t.name, schema: t.schema ?? undefined })),
+    series: series.map((t) => ({ topic: t.topic, name: t.name, schema: t.schema ?? undefined, role: t.role ?? 'other', fields: ['position'], pair_with: t.topic.replace(/(state|action)$/, (w) => (w === 'state' ? 'action' : 'state')) })),
+    task: { topic: '/instruction' },
+    segments: null,
+    ignore: topics.filter((t) => t.use === 'ignore').map((t) => t.topic),
+  };
+  return {
+    file,
+    files,
+    topics,
+    metadata: { 'episode-metadata': { task_name: 'arrange the flowers into the vase', top_camera_type: 'ZED_X' } },
+    attachments: [],
+    draft,
+    matched: template ? { template_id: 'builtin:foxglove', name: 'Foxglove 通用（内置）', coverage: 1 } : null,
+    warnings: [
+      { code: 'checks_gap', message: '质检读取器读不出 /left-arm-action 的 position、/left-arm-state 的 position 等的数值（protobuf 的 repeated 字段、ROS 2 的嵌套消息）：质检用不了这份映射，可视化不受影响' },
+      { code: 'checks_gap', message: '质检读取器只读 JPEG 与 H.264 相机，读不了 H.265（/left-wrist-camera、/top-left-camera）：质检用不了这份映射，可视化不受影响' },
+    ],
+  };
+}
+
+/** A site template applied to a probe (the Daemon's ``from_template``): entries the file lacks go. */
+export function fromTemplate(t: VizTemplate, probe: McapProbe): McapProbe {
+  const have = new Set(probe.topics.map((x) => x.topic));
+  const m = t.mapping!;
+  const series = m.series.filter((s) => have.has(s.topic));
+  const kept = new Set(series.map((s) => s.topic));
+  const named = [...m.cameras.map((c) => c.topic), ...m.series.map((s) => s.topic)];
+  const draft: VizMapping = {
+    ...m,
+    cameras: m.cameras.filter((c) => have.has(c.topic)),
+    series: series.map((s) => (s.pair_with && !kept.has(s.pair_with) ? { ...s, pair_with: null } : s)),
+    task: m.task && 'topic' in m.task && !have.has(m.task.topic) ? null : m.task ?? null,
+    ignore: (m.ignore ?? []).filter((x) => have.has(x)),
+  };
+  const coverage = named.length ? named.filter((x) => have.has(x)).length / named.length : 0;
+  return { ...probe, draft, matched: { template_id: t.id, name: t.name, coverage: round(coverage, 3) } };
+}
+
+/** warehouse_mcap's episode: the check reader's default topics, drafted by builtin:foxglove. */
+function warehouseProbe(file: string, files: number, template: string | null): McapProbe {
+  const rows: [string, string, [string, number][], number | null, McapTopic['image']][] = [
+    ['/action', 'RobotJointState', [['position', 8]], 30, null],
+    ['/camera_info', 'foxglove.CameraCalibration', [['K', 9], ['P', 12]], null, null],
+    ['/imu', 'foxglove.IMUMeasurement', [['linear_acceleration.x', 1], ['linear_acceleration.y', 1], ['linear_acceleration.z', 1]], 200, null],
+    ['/observation.images.front', 'foxglove.CompressedImage', [], 30, { codec: 'jpeg', width: 640, height: 480 }],
+    ['/observation.images.wrist', 'foxglove.CompressedVideo', [], 30, { codec: 'h264', width: 640, height: 480 }],
+    ['/observation.state', 'RobotJointState', [['position', 8], ['velocity', 8]], 30, null],
+    ['/tf', 'foxglove.FrameTransforms', [], 10, null],
+  ];
+  const draft: VizMapping = { ...WAREHOUSE_MAPPING, name: 'Foxglove 通用' };
+  const topics: McapTopic[] = rows.map(([topic, schema, fields, rate, image]) => {
+    const series = draft.series.find((x) => x.topic === topic);
+    const camera = draft.cameras.find((x) => x.topic === topic);
+    return {
+      topic,
+      schema,
+      schema_encoding: 'protobuf',
+      message_encoding: 'protobuf',
+      count: rate ? rate * 20 : 1,
+      rate_hz: rate,
+      start_s: 0,
+      end_s: 20,
+      image,
+      fields: fields.map(([path, size]) => ({ path, size })),
+      use: camera ? 'camera' : series ? 'series' : 'ignore',
+      role: series?.role ?? null,
+      name: camera?.name ?? series?.name ?? '',
+      notes: rate && rate > 150 ? ['高频：作曲线时下采样到 ≤ 2000 点'] : [],
+    };
+  });
+  return {
+    file,
+    files,
+    topics,
+    metadata: { episode: { task: 'pick the box onto the shelf' } },
+    attachments: [],
+    draft,
+    matched: template ? { template_id: 'builtin:foxglove', name: 'Foxglove 通用（内置）', coverage: 1 } : null,
+    warnings: [],
+  };
+}
+
+/** The probe of a UMI-like mcap dataset (GenRobot), drafted with builtin:umi or another template; `abc` an ABC-130k-like one. */
+export function mcapProbe(file: string, files: number, template: string | null, flavor: 'umi' | 'abc' | 'warehouse' = 'umi'): McapProbe {
+  if (flavor === 'abc') return abcProbe(file, files, template);
+  if (flavor === 'warehouse') return warehouseProbe(file, files, template);
   const umi = !template || template === 'builtin:umi';
   const topics: McapTopic[] = UMI_TOPICS.map(([topic, schema, use, count, rate]) => {
     const asCamera = use === 'camera';
@@ -507,9 +640,17 @@ export function mcapProbe(file: string, files: number, template: string | null):
     metadata: { episode: { robot: 'das_gripper' } },
     attachments: [],
     draft,
-    matched: umi ? { template_id: 'builtin:umi', name: 'UMI 手持夹爪（内置）', coverage: 0.86 } : null,
+    matched: umi
+      ? { template_id: 'builtin:umi', name: 'UMI 手持夹爪（内置）', coverage: 0.86 }
+      : { template_id: template!, name: BUILTIN_TEMPLATES.find((t) => t.id === template)?.name ?? template!, coverage: 1 },
     warnings: [],
   };
+}
+
+/** C4 ``DatasetAnnotationsInfo`` of a viz_annotations upload, as the Daemon makes it. */
+export function annotationsInfo(up: Record<string, unknown>): { upload_id: string; name: string; format: string; episodes: number; uploaded_at: number } {
+  const summary = ((up.validation as { summary?: Record<string, unknown> } | undefined)?.summary ?? {}) as { format?: string; episodes?: number };
+  return { upload_id: String(up.upload_id), name: String(up.name), format: summary.format ?? 'argus', episodes: summary.episodes ?? 0, uploaded_at: Number(up.created_at) };
 }
 
 /** The check reader's mapping derived from a C7 mapping (design doc 18 §6.2), as the Daemon shows it. */

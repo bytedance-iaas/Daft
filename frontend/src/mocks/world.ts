@@ -346,11 +346,34 @@ export const DATASET_PROFILES: DatasetProfile[] = [
 
 export const PUBLIC_BUCKET = 'hf-cache';
 
+/** An address the mock world takes for an mcap dataset (GenRobot UMI, ABC-130k, anything …mcap…). */
+export const MCAP_URI = /mcap|genrobot|abc130k/i;
+
 export function profileFor(uri: string): DatasetProfile {
   const clean = uri.replace(/\/+$/, '');
   const hit = DATASET_PROFILES.find((p) => p.uri === clean);
   if (hit) return hit;
   const name = clean.split('/').pop() || 'dataset';
+  if (MCAP_URI.test(clean)) {
+    // design doc 18 §6: GenRobot reads with the site's defaults (UMI); ABC-130k's topics are its own,
+    // so the checks call it unsupported until a mapping names them - the visualizer still takes it as mcap
+    const abc = /abc/i.test(clean);
+    return {
+      uri: clean,
+      source: 'tos',
+      name,
+      format: abc
+        ? { kind: 'mcap', version: null, supported: false, detail: 'mcap episode files found, but no required action topic (/action) - confirm a field mapping' }
+        : { kind: 'mcap', version: null, supported: true, detail: 'mcap, 4 episodes, 2 cameras; UMI layout' },
+      episodes: 4,
+      cameras: abc ? ['top-left-camera', 'left-wrist-camera'] : ['robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed'],
+      fps: null,
+      robotType: abc ? null : 'das_gripper',
+      withTask: abc ? 4 : 0,
+      missing: [],
+      profile: null,
+    };
+  }
   return {
     uri: clean,
     source: clean.includes(`//${PUBLIC_BUCKET}/`) ? 'public' : 'tos',

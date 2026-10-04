@@ -279,7 +279,7 @@ def dataset_item(ds: P.Dataset, last_task: P.Task | None) -> dict:
             "check_state": ds.check_state, "checked_at": ds.checked_at,
             "preflighted_at": ds.preflighted_at, "created_at": ds.created_at,
             "last_task": task_ref(last_task) if last_task is not None else None,
-            "viz": viz_status(ds)}
+            "viz": viz_status(ds), "viz_mapping": mapping_info(ds)}
 
 
 def dataset_check(check: P.DatasetCheck) -> dict:
@@ -308,8 +308,7 @@ def dataset_detail(ds: P.Dataset, *, tasks: list[P.Task], checks: list[P.Dataset
             "preflight": ds.preflight, "meta_fingerprint": ds.meta_fingerprint,
             "listing": listing(ds.source_fingerprint),
             "checks": [dataset_check(c) for c in checks],
-            "tasks": [task_ref(t) for t in tasks], "links": [],
-            "viz_mapping": mapping_info(ds), "annotations": annotations}
+            "tasks": [task_ref(t) for t in tasks], "links": [], "annotations": annotations}
 
 
 def is_under(path: pathlib.Path, root: pathlib.Path) -> bool:

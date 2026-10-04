@@ -13,6 +13,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
+import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
 import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { grouped } from '../../lib/format';
@@ -37,10 +38,26 @@ export function FormatTag({ format }: { format: DatasetFormat }) {
   return <Tag color={format === 'unsupported' ? 'red' : 'arcoblue'}>{zh.format[format] ?? format}</Tag>;
 }
 
+/** Under an mcap dataset's format: the confirmed mapping's name, or 待确认 (design doc 18 §6.4 step 7). */
+export function MappingLine({ d }: { d: Pick<DatasetItem, 'viz_mapping'> }) {
+  const m = d.viz_mapping;
+  if (!m) return null;
+  return m.state === 'confirmed' ? (
+    <div className="muted" style={{ fontSize: 12 }} data-testid="mapping-line">
+      <OneLine text={zh.mcap.listConfirmed(m.name, m.version)} />
+    </div>
+  ) : (
+    <div style={{ fontSize: 12, color: 'var(--c-warning)' }} data-testid="mapping-line">
+      {zh.mcap.listPending}
+    </div>
+  );
+}
+
 /** 数据集 (07 §4.4, D36): registered datasets, page-number pagination, search and filters. */
 export function DatasetListPage() {
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(false);
+  const [mapping, setMapping] = useState<DatasetItem | null>(null);
   const actions = useDatasetActions();
   const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
   const pageSize = Number(params.get('page_size')) || readPageSize('datasets');
@@ -80,7 +97,17 @@ export function DatasetListPage() {
     { title: zh.datasets.colName, dataIndex: 'name', width: 150, render: (_: unknown, d) => <Link to={`/datasets/${d.id}`}><OneLine text={d.name} /></Link> },
     { title: zh.datasets.colSource, dataIndex: 'source', width: 165, render: (v: string) => <span className="nowrap">{zh.source[v] ?? v}</span> },
     { title: zh.datasets.colUri, dataIndex: 'uri', width: 220, render: (v: string) => <OneLine text={v} mono /> },
-    { title: zh.datasets.colFormat, dataIndex: 'format', width: 100, render: (_: unknown, d) => <FormatTag format={d.format} /> },
+    {
+      title: zh.datasets.colFormat,
+      dataIndex: 'format',
+      width: 160,
+      render: (_: unknown, d) => (
+        <div>
+          <FormatTag format={d.format} />
+          <MappingLine d={d} />
+        </div>
+      ),
+    },
     { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', width: 90, render: (v: number | null) => grouped(v) },
     { title: zh.datasets.colRobot, dataIndex: 'robot_type', width: 130, render: (v: string | null) => (v ? <OneLine text={v} /> : <span className="muted">{zh.common.unknown}</span>) },
     { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 100, render: (_: unknown, d) => <span className="nowrap"><CheckTag d={d} short /></span> },
@@ -103,12 +130,18 @@ export function DatasetListPage() {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
-      width: 330,
-      // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page.
+      width: 410,
+      // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page. An mcap
+      // dataset adds 「mcap 配置」 (design doc 18 §6.4).
       render: (_: unknown, d) => (
         <Space size={4}>
           <VisualizeButton d={d} />
           <LegacyVisualizeButton d={d} />
+          {d.viz_mapping ? (
+            <Button type="text" size="small" onClick={() => setMapping(d)}>
+              {zh.mcap.entry}
+            </Button>
+          ) : null}
           <Button type="text" size="small" disabled={d.format === 'unsupported'} onClick={() => actions.newTask(d)}>
             {zh.datasets.newTaskShort}
           </Button>
@@ -160,7 +193,7 @@ export function DatasetListPage() {
             loading={list.isLoading}
             columns={columns}
             data={list.data?.items ?? []}
-            scroll={{ x: 1565 }}
+            scroll={{ x: 1705 }}
             noDataElement={<Typography.Text type="secondary">{q || format || check ? zh.datasets.emptyFiltered : zh.datasets.empty}</Typography.Text>}
             pagination={{
               current: page,
@@ -178,6 +211,7 @@ export function DatasetListPage() {
         )}
       </Card>
       <AddDatasetDrawer visible={adding} onClose={() => setAdding(false)} />
+      <McapConfigDrawer dataset={mapping} onClose={() => setMapping(null)} />
       {actions.dialogs}
     </div>
   );

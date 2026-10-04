@@ -1,7 +1,8 @@
 import { Alert, Button, Card, Descriptions, Dropdown, Menu, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
 import { IconDown } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { qk, useBackends, useModules } from '../../api/queries';
 import type { DatasetCheck, TaskRef } from '../../api/types';
@@ -10,6 +11,8 @@ import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { StateTag } from '../../components/StateTag';
+import { DatasetAnnotations } from '../../features/datasets/Annotations';
+import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
 import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { bytes, grouped } from '../../lib/format';
@@ -17,9 +20,23 @@ import { reasonText, withVlmBackends } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { CheckTag, FormatTag } from './DatasetListPage';
 
-/** 数据集详情 (07 §4.4): preflight result, fingerprints and their history, tasks run on it. */
+/**
+ * 数据集详情 (07 §4.4): preflight result, fingerprints and their history, tasks run on it; the
+ * visualizer's settings - an mcap dataset's field mapping (「mcap 配置」, `?mcap=1` opens it, as the
+ * visualize page's 去确认映射 does) and the external annotation file (design doc 18 §6.4, §4.5).
+ */
 export function DatasetDetailPage() {
   const { id } = useParams();
+  const [params, setParams] = useSearchParams();
+  const [mapping, setMapping] = useState(params.get('mcap') === '1');
+  const closeMapping = () => {
+    setMapping(false);
+    if (params.has('mcap')) {
+      const next = new URLSearchParams(params);
+      next.delete('mcap');
+      setParams(next, { replace: true });
+    }
+  };
   const reg = useModules();
   const backends = useBackends();
   const actions = useDatasetActions();
@@ -41,7 +58,7 @@ export function DatasetDetailPage() {
     { label: zh.datasets.colSource, value: zh.source[d.source] ?? d.source },
     { label: zh.datasets.colUri, value: <span className="mono">{d.uri}</span> },
     { label: zh.datasets.region, value: d.source === 'public' ? zh.taskForm.publicRegion : regionLabel(d.region) },
-    { label: zh.datasets.credential, value: d.source === 'public' ? zh.taskForm.publicKey : d.credential ?? zh.datasets.credentialGone },
+    { label: zh.datasets.credential, value: d.source === 'public' ? zh.taskForm.publicKey : d.source === 'local' ? '—' : d.credential ?? zh.datasets.credentialGone },
     { label: zh.datasets.colCreated, value: <RelTime ms={d.created_at} /> },
     { label: zh.datasets.preflightedAt, value: <RelTime ms={d.preflighted_at} /> },
     { label: zh.datasets.checkedAt, value: <RelTime ms={d.checked_at} /> },
@@ -84,6 +101,7 @@ export function DatasetDetailPage() {
               {zh.datasets.newTask}
             </Button>
             <VisualizeButton d={d} type="secondary" size="default" />
+            {d.viz_mapping ? <Button onClick={() => setMapping(true)}>{zh.mcap.entry}</Button> : null}
             <LegacyVisualizeButton d={d} type="secondary" size="default" />
             {d.check_state === 'changed' ? <Button onClick={() => actions.repreflight(d)}>{zh.datasets.repreflight}</Button> : null}
             <Button onClick={() => actions.recheck(d)}>{zh.datasets.recheck}</Button>
@@ -110,6 +128,33 @@ export function DatasetDetailPage() {
         {d.check_state === 'changed' ? <Alert type="warning" content={zh.datasets.changedAlert} /> : null}
         <Card title={zh.datasets.detailBasic}>
           <Descriptions column={2} data={basic} />
+        </Card>
+        <Card title={zh.mcap.detailCard} data-testid="dataset-viz">
+          <Descriptions
+            column={1}
+            data={[
+              ...(d.viz_mapping
+                ? [
+                    {
+                      label: zh.mcap.mapping,
+                      value: (
+                        <Space>
+                          {d.viz_mapping.state === 'confirmed' ? (
+                            <span>{zh.mcap.mappingValue(d.viz_mapping.name, d.viz_mapping.version)}</span>
+                          ) : (
+                            <span style={{ color: 'var(--c-warning)' }}>{zh.mcap.mappingPending}</span>
+                          )}
+                          <Button size="mini" onClick={() => setMapping(true)}>
+                            {zh.mcap.entry}
+                          </Button>
+                        </Space>
+                      ),
+                    },
+                  ]
+                : []),
+              { label: zh.annotations.label, value: <DatasetAnnotations d={d} /> },
+            ]}
+          />
         </Card>
         <Card title={zh.datasets.detailPreflight}>
           <Descriptions column={2} data={preflight} />
@@ -180,6 +225,7 @@ export function DatasetDetailPage() {
         </Card>
       </div>
       {actions.dialogs}
+      <McapConfigDrawer dataset={mapping && d.viz_mapping ? d : null} onClose={closeMapping} />
     </div>
   );
 }

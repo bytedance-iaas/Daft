@@ -382,7 +382,7 @@ C4 升 **2.4.0**（`openapi.yaml`，标签 `viz`）。同一套读取器挂两�
 | `GET` / `POST /viz/templates`、`DELETE /viz/templates/{template_id}` | 站点模版库；内置模版（`builtin:*`）列在前面、`mapping` 为空、不能删；新模版编号 `vt-<9 个小写字母>` |
 | `POST /uploads?kind=viz_annotations`、`PUT /datasets/{id}/annotations` | 外部标注文件：JSON 照常以 `application/json` 发，zip 以 `application/zip` 发（不是 CORS 简单类型，跨站写照样被拒）；挂到数据集上 / 换掉 / 摘掉（`upload_id: null`） |
 | `GET /datasets?viz=true` | 可视化页的数据集下拉：只列有读取器的格式；每个条目都带 `viz{state: ready｜mapping_pending｜unsupported, reason}` |
-| `DatasetCreate.viz_mapping` / `annotations_upload`；`DatasetDetail.viz_mapping` / `annotations` | 添加时一并提交映射（记第 1 版）与外部标注；详情里给映射的状态、版本与外部标注文件 |
+| `DatasetCreate.viz_mapping` / `annotations_upload`；`DatasetItem.viz_mapping`、`DatasetDetail.annotations` | 添加时一并提交映射（记第 1 版）与外部标注；列表与详情都给映射的状态、版本与名称（列表在格式下面写「映射：…」，F13.7），详情另给外部标注文件 |
 | `EpisodeView` 补 `fps`（可空）与 `dataset_id`（可空） | 不开播放器时把帧号写成秒；「在可视化页打开」 |
 
 C2（`preflight.schema.json`，只加可选字段，仍是 1.0，旧文档照常有效）：`dataset` 补 `features[{key, dtype, shape, names}]`、`camera_info[]`（与 `cameras` 同序同名：`key`、`codec`、`pix_fmt`、`width`、`height`、`fps`、`needs_transcode`；`cameras` 仍是短名数组，库里存着的预检与读它的代码都不受影响）、`segment_sources[]`（识别到的分段来源，或 `supported: false` + 原因）、`topics[{topic, schema, message_encoding, count, rate_hz}]`（mcap）。
@@ -533,6 +533,23 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
   点报告里这条发现的帧号，弹窗聚焦这条、播放器停在第 95 帧，五条色段的位置与帧号一致；格子按「运动类」挑了相机与状态 / 动作曲线。
 - 发现的帧号口径：报告页的时段按钮从 1 数（「第 96–124 帧」），模块写的句子和播放器从 0 数（第 95 帧），点了跳过去帧号差一。这不是本阶段引入的，
   待需求方定一个统一的口径。
+
+### 9.5 F13.7 落地时的细化（2026-10-04）
+
+- 「mcap 配置」区块（`features/datasets/McapConfig.tsx`）与已登记数据集的抽屉（`McapConfigDrawer.tsx`）共用一套表格；映射的纯逻辑（用途判定、改用途 /
+  角色 / 字段 / 叠画、摘要与警告、导入校验）在 `lib/vizMapping.ts`。改用途时按 Daemon 的起草规则补齐（字段取 `position` / `q` / `value` 等或前六个数值叶子，
+  角色按名字猜，`*-state` / `*-action` 自动叠画，高频的「其他」与 IMU 不进智能布局）；改字段时丢掉不再一一对应的 `labels` 与 `transforms`。
+- 导入的 JSON 在浏览器里按 C7 与探测到的 topic 校验（规则照抄 Daemon 的 `validate`：Schema、topic 重复、叠画的两组同角色、忽略了又映射、帧号基准没映射、
+  文件里没有的 topic），不合格的不导入、逐条报错；保存时 Daemon 再校验一次，不合格把 `details.errors` 列出来。
+- 列表要写映射名，`DatasetItem` 加了 `viz_mapping`（`DatasetMappingInfo`，从详情挪到列表条目，C4 仍是 2.4.0，本阶段尚未发布）。
+- 「添加数据集」顺带补了「本地挂载路径」来源（静态稿里有；与新建任务同一个开关 `window.__CURATOR_FEATURES__.local_input`，Daemon 目前不注入这个开关，
+  两处都只在调试时打开）和「外部标注文件」（`POST /uploads?kind=viz_annotations`，zip 以 `application/zip` 原样发）。
+- 静态稿里的「预览可视化」（用未保存的映射读第一个 episode）没有做：C4 里没有对未登记输入的预览接口；保存后「可视化」立即可用。「另存为模版」的
+  「可见范围」也没有做（单租户，§8）。
+- 实测（本机 Daemon，本地挂载的样本副本）：GenRobot（`genrobot_drawer` 的一个 episode）自动匹配「UMI 手持夹爪（内置）」覆盖 100%，把 IMU 改成「曲线 · 其他」后
+  JSON 与摘要即时更新，保存后第 1 版、派生的质检映射不含 IMU（「其他」不进动作 / 状态）；ABC-130k（`abc_excerpt`）按「Foxglove 通用」起草，8 组曲线两两叠画，
+  两条质检读取器差距照实提示，`/left-arm-state` 的候选字段是 position / velocity / torque（各 6 维），勾上 velocity 保存后左臂曲线组画 12 条状态线叠 6 条动作线；
+  不带映射登记的 GenRobot 副本在列表里是「映射：待确认」、「可视化」置灰、「新建任务」可用，在列表的「mcap 配置」里确认第 1 版后「可视化」可点。
 
 ## 10. 第二期（另立阶段，先记在这里）
 

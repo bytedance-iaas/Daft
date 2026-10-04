@@ -1867,12 +1867,12 @@ export interface components {
             created_at: number;
             last_task: null | components["schemas"]["TaskRef"];
             viz: components["schemas"]["VizStatus"];
+            /** @description the mcap field mapping (C7) - its state, version and name, shown under the format in the list; null for other formats */
+            viz_mapping: null | components["schemas"]["DatasetMappingInfo"];
         };
         DatasetItem: components["schemas"]["DatasetItemFields"];
         DatasetDetail: components["schemas"]["DatasetItemFields"] & {
             note: string | null;
-            /** @description the mcap field mapping (C7); null for other formats */
-            viz_mapping: null | components["schemas"]["DatasetMappingInfo"];
             /** @description the external annotation file attached to it (a viz_annotations upload), if any */
             annotations: null | components["schemas"]["DatasetAnnotationsInfo"];
             /** @description access key name; null for the public bucket, or once the key is deleted */

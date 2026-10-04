@@ -27,11 +27,11 @@ export function jsonlToArray(text: string): string {
   return JSON.stringify(rows);
 }
 
-function post(payload: string, kind: UploadKind, name: string, onPhase?: (p: UploadPhase) => void): Promise<Upload> {
+function post(payload: string | Blob, kind: UploadKind, name: string, onPhase?: (p: UploadPhase) => void, contentType = 'application/json'): Promise<Upload> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${apiBaseUrl()}/uploads?${new URLSearchParams({ kind, name })}`);
-    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Content-Type', contentType);
     xhr.setRequestHeader('Accept', 'application/json');
     // Some environments never report the upload itself: the answer still ends the call.
     xhr.upload.addEventListener('load', () => onPhase?.('validating'));
@@ -71,4 +71,13 @@ export function readText(file: Blob): Promise<string> {
 export async function uploadFile(file: File, kind: UploadKind, onPhase?: (p: UploadPhase) => void): Promise<Upload> {
   const text = await readText(file);
   return uploadText(text, kind, file.name, onPhase);
+}
+
+/**
+ * An external annotation file (design doc 18 §4.5): a zip of per-episode JSON goes as it is, as
+ * application/zip (not a CORS-safelisted type either); a JSON as JSON, like every other upload.
+ */
+export async function uploadAnnotations(file: File, onPhase?: (p: UploadPhase) => void): Promise<Upload> {
+  if (/\.zip$/i.test(file.name) || file.type === 'application/zip') return post(file, 'viz_annotations', file.name, onPhase, 'application/zip');
+  return uploadText(await readText(file), 'viz_annotations', file.name, onPhase);
 }

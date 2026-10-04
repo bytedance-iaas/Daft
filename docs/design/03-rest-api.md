@@ -53,7 +53,7 @@
 |---|---|---|
 | GET | `/api/v1/modules` | 模块注册表：id、中文名、所属档、参数 schema。前端的模块清单只从这里来 |
 | GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、所选时间段的统计（`?days=7\|30\|90\|365`，D36，§12） |
-| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选；`viz=true` 只列可视化读得了的格式，每条带 `viz` 状态）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12）；mcap 可一并提交确认过的字段映射 `viz_mapping`（预检就按它读），任何格式可一并挂外部标注文件 `annotations_upload`（设计 18） |
+| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选；`viz=true` 只列可视化读得了的格式，每条带 `viz` 状态与 mcap 映射的 `viz_mapping{state, version, name}`）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12）；mcap 可一并提交确认过的字段映射 `viz_mapping`（预检就按它读），任何格式可一并挂外部标注文件 `annotations_upload`（设计 18） |
 | GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
 | POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |

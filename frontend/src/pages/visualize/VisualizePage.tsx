@@ -107,7 +107,7 @@ export function VisualizePage() {
           ) : pending ? (
             <div className="vz-pending" role="alert">
               <p>{zh.vizPage.mappingPending(item?.viz?.reason ?? '')}</p>
-              <Button type="primary" onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId)}`)}>
+              <Button type="primary" onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId)}?mcap=1`)}>
                 {zh.vizPage.goMapping}
               </Button>
             </div>

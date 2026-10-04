@@ -82,6 +82,7 @@ def test_dataset_list_pages_filters_and_last_task(client_for, clock):
     assert [x["id"] for x in body["items"]] == [broken.id, umi.id] + ids[::-1][:8]
     item = body["items"][1]
     assert item.pop("viz") == {"state": "ready", "reason": None}           # C4 2.4.0
+    assert item.pop("viz_mapping") is None                                 # not mcap
     assert body["items"][0]["viz"]["state"] == "unsupported"
     assert item == {"id": umi.id, "name": "UMI 640", "source": "tos",
                     "uri": "tos://bucket/other/umi_640", "region": "cn-beijing",

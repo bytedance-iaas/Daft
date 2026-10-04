@@ -2746,7 +2746,7 @@ components:
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
-                 preflighted_at, created_at, last_task, viz]
+                 preflighted_at, created_at, last_task, viz, viz_mapping]
       properties:
         id:
           type: string
@@ -2768,6 +2768,11 @@ components:
             - type: "null"
             - $ref: "#/components/schemas/TaskRef"
         viz: {$ref: "#/components/schemas/VizStatus"}
+        viz_mapping:
+          description: the mcap field mapping (C7) - its state, version and name, shown under the format in the list; null for other formats
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/DatasetMappingInfo"
     DatasetItem:
       allOf:
         - $ref: "#/components/schemas/DatasetItemFields"
@@ -2776,14 +2781,9 @@ components:
       allOf:
         - $ref: "#/components/schemas/DatasetItemFields"
         - type: object
-          required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links, viz_mapping, annotations]
+          required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links, annotations]
           properties:
             note: {type: [string, "null"]}
-            viz_mapping:
-              description: the mcap field mapping (C7); null for other formats
-              oneOf:
-                - type: "null"
-                - $ref: "#/components/schemas/DatasetMappingInfo"
             annotations:
               description: the external annotation file attached to it (a viz_annotations upload), if any
               oneOf:

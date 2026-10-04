@@ -1,0 +1,107 @@
+/* 「mcap 配置」 (design doc 18 §6.4): the add drawer's section and the dataset's drawer. */
+.mcap {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--c-border);
+}
+.mcap-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.mcap-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--c-text-1);
+}
+.mcap-label {
+  font-size: 12px;
+  color: var(--c-text-2);
+  margin-bottom: 4px;
+}
+.mcap-small {
+  font-size: 12px;
+}
+.mcap-probing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+}
+.mcap-match {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: var(--c-text-1);
+}
+.mcap-sum {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.mcap-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  color: var(--c-text-2);
+  margin-bottom: 4px;
+}
+.mcap-counts span + span::before {
+  content: '·';
+  margin: 0 10px;
+  color: var(--c-text-4);
+}
+.mcap-note {
+  font-size: 12px;
+  color: var(--c-warning);
+}
+.mcap-info {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+.mcap-bad {
+  font-size: 12px;
+  color: var(--c-danger);
+}
+.mcap-tbl td {
+  vertical-align: top;
+}
+.mcap-tbl .mcap-topic,
+.mcap-tbl .mcap-schema {
+  font-size: 12px;
+  word-break: break-all;
+}
+.mcap-tbl tr.mcap-idle .mcap-topic {
+  color: var(--c-text-3);
+}
+.mcap-series {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mcap-sources {
+  margin-top: 14px;
+}
+.mcap-json {
+  margin-top: 12px;
+}
+.mcap-json summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+.mcap-json pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+}
+.mcap-foot {
+  margin-top: 12px;
+}
+.mcap-saveas {
+  margin-top: 8px;
+}

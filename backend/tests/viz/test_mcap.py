@@ -256,7 +256,7 @@ def test_mapping_lifecycle_and_the_model(mc):
     assert body["mapping"]["state"] == "none" and body["cameras"] == [] and body["warnings"][0]["code"] == "mapping_pending"
     assert_error(mc.get(f"{API}/datasets/{ds}/episodes/0/viz"), "validation_failed")
     item = next(d for d in mc.get(f"{API}/datasets").json()["items"] if d["id"] == ds)
-    assert item["viz"]["state"] == "mapping_pending"
+    assert item["viz"]["state"] == "mapping_pending" and item["viz_mapping"]["state"] == "none"
     probe = mc.post(f"{API}/viz/mcap-probe", json={"input": {"dataset_id": ds}}).json()
     uses = {t["topic"]: t["use"] for t in probe["topics"]}
     assert uses["/robot0/sensor/camera0/compressed"] == "camera" and uses["/robot0/sensor/imu"] == "ignore"
@@ -266,6 +266,10 @@ def test_mapping_lifecycle_and_the_model(mc):
     assert_schema("DatasetMapping", doc)
     assert (doc["state"], doc["version"]) == ("confirmed", 1) and doc["check_mapping"]["profile"] == "umi_das"
     assert mc.get(f"{API}/datasets/{ds}").json()["viz_mapping"]["version"] == 1
+    # the list says it under the format (映射：<name>)
+    item = next(d for d in mc.get(f"{API}/datasets").json()["items"] if d["id"] == ds)
+    assert_schema("DatasetItem", item)
+    assert (item["viz_mapping"]["state"], item["viz_mapping"]["name"]) == ("confirmed", doc["mapping"]["name"])
     model = mc.get(f"{API}/datasets/{ds}/viz").json()
     assert_schema("VizDataset", model)
     assert [(c["key"], c["kind"], c["access"], c["codec"]) for c in model["cameras"]] == [

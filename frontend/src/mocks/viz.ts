@@ -6,8 +6,9 @@ import type { DatasetDetail, McapProbeRequest, Task, VizMapping, VizTemplate } f
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
 import { API, body, cursorPage, err, idempotent } from './plumbing';
-import { DATASET_PROFILES, datasetFormatOf, profileFor } from './world';
+import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
 import {
+  annotationsInfo,
   BUILTIN_TEMPLATES,
   checkMappingOf,
   episodeItems,
@@ -15,11 +16,13 @@ import {
   frameIndex,
   framePack,
   framesOf,
+  fromTemplate,
   mappingInfoOf,
   mcapProbe,
   vizDataset,
   vizEpisode,
   vizSeries,
+  vizFormatOf,
   vizStatusOf,
 } from './vizWorld';
 
@@ -84,7 +87,7 @@ function urlsFor(s: Source, index: number) {
 }
 
 function needsMapping(s: Source): Response | null {
-  if (s.dataset.format === 'mcap' && !s.mapping) {
+  if (vizFormatOf(s.dataset) === 'mcap' && !s.mapping) {
     return err(400, 'validation_failed', 'mcap 数据集还没有确认字段映射：到「mcap 配置」确认后才能看', { reason: 'mapping_pending' });
   }
   return null;
@@ -213,7 +216,7 @@ export const vizHandlers = [
   http.get(`${API}/datasets/:id/mapping`, ({ params }) => {
     const d = db.datasets.find((x) => x.id === params.id);
     if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
-    if (d.format !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
+    if (vizFormatOf(d) !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
     const stored = db.vizMappings.get(d.id);
     return HttpResponse.json({
       dataset_id: d.id,
@@ -230,8 +233,8 @@ export const vizHandlers = [
       const d = db.datasets.find((x) => x.id === params.id);
       if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const b = await body<{ mapping: VizMapping }>(request, 'putDatasetMapping');
-      if (d.format !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
-      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...mcapProbe('x', 1, null).topics.map((t) => t.topic)]);
+      if (vizFormatOf(d) !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
+      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...mcapProbe('x', 1, null).topics.map((t) => t.topic), ...mcapProbe('x', 1, null, 'abc').topics.map((t) => t.topic)]);
       const unknown = [...b.mapping.cameras, ...b.mapping.series].map((x) => x.topic).filter((t) => !known.has(t));
       if (unknown.length) {
         return err(400, 'validation_failed', `映射里有数据集没有的 topic：${unknown.join('、')}`, { errors: unknown.map((t) => ({ field: 'mapping', problem: `unknown topic ${t}` })) });
@@ -240,8 +243,8 @@ export const vizHandlers = [
       const now = clock();
       const next = { mapping: b.mapping, version: (prev?.version ?? 0) + 1, updatedAt: now };
       db.vizMappings.set(d.id, next);
-      d.viz = vizStatusOf(d.format, true);
-      d.viz_mapping = mappingInfoOf(d.format, next);
+      d.viz = vizStatusOf('mcap', true);
+      d.viz_mapping = mappingInfoOf('mcap', next);
       return HttpResponse.json({ dataset_id: d.id, state: 'confirmed', mapping: next.mapping, version: next.version, updated_at: now, check_mapping: checkMappingOf(next.mapping), warnings: [] });
     }),
   ),
@@ -250,7 +253,10 @@ export const vizHandlers = [
       const d = db.datasets.find((x) => x.id === params.id);
       if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const b = await body<{ upload_id: string | null }>(request, 'putDatasetAnnotations');
-      d.annotations = b.upload_id ? { upload_id: b.upload_id, name: 'labels.zip', format: 'argus', episodes: 12, uploaded_at: clock() } : null;
+      const up = b.upload_id ? db.uploads.get(b.upload_id) : null;
+      if (b.upload_id && !up) return err(404, 'not_found', '没有这个上传件');
+      if (up && up.kind !== 'viz_annotations') return err(400, 'validation_failed', '这个上传件不是外部标注文件（kind 应为 viz_annotations）', { errors: [{ field: 'upload_id', problem: 'wrong kind' }] });
+      d.annotations = up ? annotationsInfo(up) : null;
       return HttpResponse.json(d);
     }),
   ),
@@ -261,8 +267,16 @@ export const vizHandlers = [
       const ds = 'dataset_id' in input ? db.datasets.find((d) => d.id === input.dataset_id) : null;
       if ('dataset_id' in input && !ds) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const uri = ds ? ds.uri : 'uri' in input ? input.uri : '';
-      if (ds ? ds.format !== 'mcap' : !/mcap|genrobot|umi/i.test(uri)) return err(400, 'validation_failed', '这不是 mcap 数据集：没有 episode_N.mcap', { reason: 'not_mcap' });
-      return HttpResponse.json(mcapProbe(b.file ?? 'episode_100110.mcap', 12, b.template ?? null));
+      if (ds ? vizFormatOf(ds) !== 'mcap' : !MCAP_URI.test(uri)) return err(400, 'validation_failed', '这不是 mcap 数据集：没有 episode_N.mcap', { reason: 'not_mcap' });
+      const flavor = /abc/i.test(uri) ? 'abc' : /warehouse/i.test(uri) ? 'warehouse' : 'umi';
+      const team = b.template && !b.template.startsWith('builtin:') ? db.vizTemplates.find((t) => t.id === b.template) : undefined;
+      if (b.template && !b.template.startsWith('builtin:') && !team) return err(404, 'not_found', '没有这个模版');
+      const first = flavor === 'umi' ? 'episode_100110.mcap' : 'episode_0.mcap';
+      const probe = mcapProbe(b.file ?? first, flavor === 'umi' ? 12 : 4, team ? null : b.template ?? null, flavor);
+      if (team) return HttpResponse.json(fromTemplate(team, probe));
+      // without a template, a team template that names exactly these topics wins (design doc 18 §6.3)
+      const fits = b.template ? undefined : db.vizTemplates.find((t) => fromTemplate(t, probe).matched?.coverage === 1);
+      return HttpResponse.json(fits ? fromTemplate(fits, probe) : probe);
     }),
   ),
   http.get(`${API}/viz/templates`, () => HttpResponse.json({ items: [...BUILTIN_TEMPLATES, ...[...db.vizTemplates].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))] })),

@@ -61,7 +61,7 @@ import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
 import { vizHandlers } from './viz';
-import { mappingInfoOf, vizStatusOf } from './vizWorld';
+import { annotationsInfo, mappingInfoOf, vizFormatOf, vizStatusOf } from './vizWorld';
 
 // ------------------------------------------------------------------ plumbing (mocks/plumbing.ts)
 
@@ -370,7 +370,7 @@ const datasets = [
       .filter((d) => !q || d.name.toLowerCase().includes(q) || d.uri.toLowerCase().includes(q))
       .filter((d) => !format || d.format === format)
       .filter((d) => !check || d.check_state === check)
-      .filter((d) => !viz || ['lerobot_v2', 'lerobot_v3', 'mcap'].includes(d.format))
+      .filter((d) => !viz || ['lerobot_v2', 'lerobot_v3', 'mcap'].includes(vizFormatOf(d)))
       .sort((a, b) => b.created_at - a.created_at)
       .map(toDatasetItem);
     return HttpResponse.json(page(items, url));
@@ -409,17 +409,22 @@ const datasets = [
         checks: [{ at: now, trigger: 'add', result: 'same', change: null }],
         tasks: [],
         links: [],
-        viz: vizStatusOf(formatOf(result), false),
-        viz_mapping: mappingInfoOf(formatOf(result)),
+        viz: vizStatusOf(result.format.kind === 'mcap' ? 'mcap' : formatOf(result), false),
+        viz_mapping: mappingInfoOf(result.format.kind === 'mcap' ? 'mcap' : formatOf(result)),
         annotations: null,
       };
-      if (b.viz_mapping && d.format === 'mcap') {
+      if (b.viz_mapping && result.format.kind === 'mcap') {
         const stored = { mapping: b.viz_mapping, version: 1, updatedAt: now };
         db.vizMappings.set(d.id, stored);
-        d.viz = vizStatusOf(d.format, true);
-        d.viz_mapping = mappingInfoOf(d.format, stored);
+        d.viz = vizStatusOf('mcap', true);
+        d.viz_mapping = mappingInfoOf('mcap', stored);
       }
-      if (b.annotations_upload) d.annotations = { upload_id: b.annotations_upload, name: 'labels.zip', format: 'argus', episodes: d.episode_count ?? 0, uploaded_at: now };
+      if (b.annotations_upload) {
+        const up = db.uploads.get(b.annotations_upload);
+        if (!up) return err(404, 'not_found', '没有这个上传件');
+        if (up.kind !== 'viz_annotations') return err(400, 'validation_failed', '这个上传件不是外部标注文件（kind 应为 viz_annotations）', { errors: [{ field: 'annotations_upload', problem: 'wrong kind' }] });
+        d.annotations = annotationsInfo(up);
+      }
       db.datasets.push(d);
       return HttpResponse.json(d, { status: 201 });
     }),
@@ -546,6 +551,7 @@ function toDatasetItem(d: DatasetDetail) {
     created_at: d.created_at,
     last_task: d.last_task,
     viz: d.viz,
+    viz_mapping: d.viz_mapping,
   };
 }
 
@@ -1456,7 +1462,6 @@ const system = [
 
 // ------------------------------------------------------------------ uploads (C4 1.8.0)
 
-const uploads = new Map<string, Record<string, unknown>>();
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -1473,8 +1478,8 @@ const uploadHandlers = [
       const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return err(400, 'validation_failed', '不是 zip 文件', { errors: [{ field: null, problem: 'not a zip' }] });
       const id = nextId('upl');
-      const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: '0'.repeat(64), size_bytes: bytes.length, created_at: clock(), validation: { valid: true, summary: { format: 'argus', episodes: 12, files: 12 }, warnings: [] } };
-      uploads.set(id, up);
+      const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: '0'.repeat(64), size_bytes: bytes.length, created_at: clock(), validation: { valid: true, summary: { format: 'argus', episodes: 12, first: 0, last: 11, segments: 34, events: 5, zip: true }, warnings: [] } };
+      db.uploads.set(id, up);
       return HttpResponse.json(up, { status: 201 });
     }
     const text = await request.text();
@@ -1509,7 +1514,8 @@ const uploadHandlers = [
       const a = doc as { timeline?: unknown[]; key_events?: unknown[]; event_labels?: unknown[] };
       if (!Array.isArray(a.timeline) && !Array.isArray(a.event_labels))
         return err(400, 'validation_failed', '标注格式不支持：认得出的是 Argus 风格的 timeline / key_events / completion（或 event_labels）', { errors: [{ field: null, problem: 'no timeline or event_labels', code: 'annotation_unsupported' }] });
-      summary = { format: 'argus', episodes: 1, segments: (a.timeline ?? a.event_labels ?? []).length, events: (a.key_events ?? []).length };
+      const ep = Number(/(\d+)\.json$/i.exec(name)?.[1] ?? 0);
+      summary = { format: 'argus', episodes: 1, first: ep, last: ep, segments: (a.timeline ?? a.event_labels ?? []).length, events: (a.key_events ?? []).length, zip: false };
     } else if (kind === 'eef_record_mapping') {
       // as the Daemon summarizes a dataset-record mapping (daemon/uploads.py, design doc 12 §8.7)
       const m = doc as { schema_version?: string; record?: Record<string, Record<string, unknown> | undefined> };
@@ -1525,11 +1531,11 @@ const uploadHandlers = [
     }
     const id = nextId('upl');
     const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: await sha256Hex(text), size_bytes: text.length, created_at: clock(), validation: { valid: true, summary, warnings: [] } };
-    uploads.set(id, up);
+    db.uploads.set(id, up);
     return HttpResponse.json(up, { status: 201 });
   }),
   http.get(`${API}/uploads/:id`, ({ params }) => {
-    const up = uploads.get(String(params.id));
+    const up = db.uploads.get(String(params.id));
     return up ? HttpResponse.json(up) : err(404, 'not_found', '没有这个上传件');
   }),
 ];
