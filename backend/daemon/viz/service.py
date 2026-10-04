@@ -14,7 +14,7 @@ from typing import Any
 
 from ..errors import ApiError
 from ..results.files import LRU
-from .media import DiskCache, Transcoder, digest, file_response, pending_body
+from .media import DiskCache, Transcoder, digest, file_response, pending_body, ranged_response
 from .source import URL_TTL_S, Access, VizSource, dataset_source, task_source
 
 _CREATE = threading.Lock()
@@ -34,7 +34,7 @@ class EpisodeUrls:
 
     def camera(self, src: VizSource, index: int, cam: dict, rel: str | None, frm, to) -> dict:
         out = {"key": cam["key"], "kind": cam["kind"], "access": cam["access"], "url": None, "index_url": None,
-               "transcode_url": None, "from_ts": frm, "to_ts": to, "offset_s": 0.0,
+               "samples_url": None, "transcode_url": None, "from_ts": frm, "to_ts": to, "offset_s": 0.0,
                "transcoded": cam["access"] == "transcode", "expires_at": None, "reason": cam.get("reason")}
         if rel is None:
             out["access"], out["reason"] = "unsupported", "这条 episode 没有这一路相机的视频文件"
@@ -45,16 +45,19 @@ class EpisodeUrls:
             out["expires_at"] = self.svc.rt.clock() + URL_TTL_S * 1000
             if out["url"] is None:                                 # a local source after all
                 out["access"], out["url"] = "local", self.daemon(src, index, cam["key"], "mp4")
-        elif access in ("local", "transcode", "remux"):
+        elif access in ("local", "transcode", "remux", "blob"):
             out["url"] = self.daemon(src, index, cam["key"], "mp4")
         elif access == "frames":
             out["url"] = self.daemon(src, index, cam["key"], "frames")
             out["index_url"] = self.daemon(src, index, cam["key"], "json")
-        if self.svc.transcode_enabled and access in ("direct", "local", "remux"):
+        if self.svc.transcode_enabled and access in ("direct", "local", "remux", "blob"):
             out["transcode_url"] = self.daemon(src, index, cam["key"], "mp4", transcode=True)
         if access == "transcode":                       # the copy starts now, before the player asks
             with contextlib.suppress(Exception):
-                self.svc.lerobot_transcode(src, index, cam["key"])
+                if self.svc.reader_of(src) == "lance":
+                    self.svc.lance_transcode(src, index, cam["key"])
+                else:
+                    self.svc.lerobot_transcode(src, index, cam["key"])
         return out
 
 
@@ -72,11 +75,14 @@ class VizService:
                               int(float(getattr(s, "viz_cache_gb", 20.0)) * (1 << 30)))
         self.transcoder = Transcoder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
         self.urls = EpisodeUrls(self)
+        from .lance import LanceReader
         from .lerobot import LeRobotReader
         from .mcap import McapReader
 
         self.lerobot = LeRobotReader(self)
         self.mcap = McapReader(self)
+        self.lance = LanceReader(self)
+        self._lance_roots: dict[tuple, bool] = {}
 
     # ------------------------------------------------------------ sources
     def dataset_source(self, dataset_id: str, owner: str) -> VizSource:
@@ -93,18 +99,48 @@ class VizService:
         return task_source(self.rt, task, owner, run_dir)
 
     def reader_of(self, src: VizSource) -> str | None:
-        # mcap and LeRobot whether or not the check reader takes them (status.viz_format)
+        # mcap and LeRobot whether or not the check reader takes them (status.viz_format); Lance
+        # tables are lerobot-lancedb's whether the preflight saw them as Lance (0.3) or as LeRobot
+        # missing its data files (0.1-0.2, whose root holds meta/ beside <name>.lance)
         kind, version = src.format()
+        if kind == "lance":
+            return "lance"
         if kind == "lerobot" and version in ("v2", "v3"):
-            return "lerobot"
+            return "lance" if self._has_lance_tables(src) else "lerobot"
         if kind == "mcap":
             return "mcap"
         return None
+
+    def _has_lance_tables(self, src: VizSource) -> bool:
+        key = (src.scope, src.id, src.fingerprint)
+        hit = self._lance_roots.get(key)
+        if hit is None:
+            from curation.viz.lance_layout import tables_of
+
+            listing = src.listing()
+            if listing is None or not any(k.startswith("data/") for k in listing):
+                # the kept listing of a LeRobot registration holds only meta/, data/ and videos/: a
+                # root without data/ is looked at itself (0.1-0.2 Lance keeps <name>.lance there)
+                try:
+                    if src.is_local:
+                        listing = {p.name + "/": None for p in Access(self.rt, src).local_root().iterdir() if p.is_dir()}
+                    else:
+                        with Access(self.rt, src).storage() as st:
+                            listing = st.list("")
+                except Exception:  # noqa: BLE001 - unreadable now: taken for LeRobot, which says why
+                    listing = None
+            hit = bool(listing) and bool(tables_of(listing))
+            if len(self._lance_roots) > 512:
+                self._lance_roots.clear()
+            self._lance_roots[key] = hit
+        return hit
 
     def _reader(self, src: VizSource):
         reader = self.reader_of(src)
         if reader == "lerobot":
             return self.lerobot
+        if reader == "lance":
+            return self.lance
         if reader == "mcap":
             mcap = self.mcap
             if not src.mapping:
@@ -123,15 +159,15 @@ class VizService:
         out: dict[str, Any] = {
             "scope": src.scope, "id": src.id, "dataset_id": src.dataset_id, "name": src.name,
             "format": {"kind": kind if kind in ("lerobot", "mcap", "lance", "lancedb", "rrd") else "unknown",
-                       "version": version if version in ("v2", "v3") else None, "reader": reader},
+                       "version": version if version in ("v2", "v3") else None, "reader": reader, "layout": None},
             "fps": None, "episode_count": 0, "episode_indices": None, "total_frames": None,
             "robot_type": None, "bytes": sum(o.size for o in listing.values()) if listing else None,
             "cameras": [], "streams": [], "annotation_sources": [], "field_tree": [],
             "mapping": self._mapping_state(src, kind), "transcode": {"enabled": self.transcode_enabled},
             "warnings": [], "fingerprint": src.fingerprint}
         if reader is None:
-            out["warnings"].append({"code": "unsupported", "message": "Lance 数据集的可视化读取器在第二期" if kind == "lance"
-                                    else f"这个数据集的格式（{kind}）没有可视化读取器"})
+            out["warnings"].append({"code": "unsupported", "message": "这份 Lance 数据没有 LeRobot 的元数据（不是 lerobot-lancedb 转出来的），可视化读不了"
+                                    if kind == "lancedb" else f"这个数据集的格式（{kind}）没有可视化读取器"})
             return out
         if reader == "mcap" and not src.mapping:
             out["warnings"].append({"code": "mapping_pending",
@@ -221,6 +257,37 @@ class VizService:
             raise ApiError("internal", job.message, details={"reason": "transcode_failed"})
         return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
 
+    def lance_transcode(self, src: VizSource, index: int, camera: str):
+        """The transcode of a Lance camera the browser cannot play: the mp4 is copied out of the blob
+        once (the whole shared file, kept beside the copies), then transcoded like a LeRobot one."""
+        if not self.transcode_enabled:
+            raise ApiError("not_found", "平台转码已关闭（CURATOR_VIZ_TRANSCODE=0）",
+                           details={"reason": "transcode_disabled"})
+        cam, blob, frm, to = self.lance.blob(src, index, camera)
+        m, row = self.lance.row(src, index)
+        feature = m.camera_features[camera]
+        chunk, file = row.video_files[feature]
+        fp = digest(src.scope, src.id, src.fingerprint)
+        out = self.disk.path("transcode", fp, f"ep{int(index):06d}", f"{camera}.mp4")
+        source_copy = self.disk.path("source", fp, "lance", f"{feature}-c{chunk}-f{file}.mp4")
+
+        def prepare() -> pathlib.Path:
+            if self.disk.get(source_copy) is None:
+                tmp = source_copy.with_name(source_copy.name + ".part")
+                size, pos = blob.size(), 0
+                with open(tmp, "wb") as fh:
+                    while pos < size:
+                        data = blob.read_range(pos, min(1 << 22, size - pos))
+                        if not data:
+                            break
+                        fh.write(data)
+                        pos += len(data)
+                tmp.replace(source_copy)
+                self.disk.added(source_copy)
+            return source_copy
+
+        return self.transcoder.ensure(f"{fp}:{index}:{camera}", out, prepare, start=frm, end=to, keep=(source_copy,))
+
     def mcap_transcode(self, src: VizSource, index: int, camera: str):
         if not self.transcode_enabled:
             raise ApiError("not_found", "平台转码已关闭（CURATOR_VIZ_TRANSCODE=0）",
@@ -238,14 +305,20 @@ class VizService:
 
     def camera_frames(self, src: VizSource, index: int, camera: str, request_headers):
         self._reader(src)
-        if self.reader_of(src) != "mcap":
-            raise ApiError("not_found", "只有 mcap 的 JPEG / PNG 相机有帧包", details={"reason": "not_frames"})
+        reader = self.reader_of(src)
+        if reader == "lance":
+            return file_response(self.lance.frame_pack(src, index, camera)[0], "application/octet-stream", request_headers)
+        if reader != "mcap":
+            raise ApiError("not_found", "只有 mcap 与 Lance 逐帧图片的相机有帧包", details={"reason": "not_frames"})
         return file_response(self.mcap.frames_file(src, index, camera), "application/octet-stream", request_headers)
 
     def camera_frame_index(self, src: VizSource, index: int, camera: str) -> dict:
         self._reader(src)
-        if self.reader_of(src) != "mcap":
-            raise ApiError("not_found", "只有 mcap 的 JPEG / PNG 相机有帧包", details={"reason": "not_frames"})
+        reader = self.reader_of(src)
+        if reader == "lance":
+            return self.lance.frame_pack(src, index, camera)[1]
+        if reader != "mcap":
+            raise ApiError("not_found", "只有 mcap 与 Lance 逐帧图片的相机有帧包", details={"reason": "not_frames"})
         return self.mcap.frame_index(src, index, camera)
 
     def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers):
@@ -259,6 +332,12 @@ class VizService:
             if video is None:
                 video = self.mcap.mjpeg_file(src, index, camera)
             return file_response(video, "video/mp4", request_headers)
+        if self.reader_of(src) == "lance":
+            self._reader(src)
+            cam, blob, _, _ = self.lance.blob(src, index, camera)
+            if transcode or cam["access"] in ("transcode", "unsupported"):
+                return self._transcode_answer(self.lance_transcode(src, index, camera), request_headers)
+            return ranged_response(blob.read_range, int(blob.size()), "video/mp4", request_headers)
         if self.reader_of(src) != "lerobot":
             raise ApiError("not_found", "这个数据集的相机不经这条路由", details={"reason": "not_lerobot"})
         cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)

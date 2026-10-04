@@ -507,9 +507,10 @@ function PlayerView({
   );
 }
 
-/** "LeRobot v3", "mcap" ... */
+/** "LeRobot v3", "mcap", "Lance（lerobot-lancedb 0.3）" ... */
 export function formatLabel(f: VizDataset['format']): string {
   if (f.kind === 'lerobot') return `LeRobot ${f.version ?? ''}`.trim();
+  if (f.kind === 'lance') return f.layout ? zh.viz.lanceLayout(f.layout) : 'Lance';
   return f.kind;
 }
 

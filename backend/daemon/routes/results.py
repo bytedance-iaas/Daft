@@ -135,8 +135,8 @@ def get_pipeline_episode(request: Request, task_id: str, index: int):
 def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
                        transcode: bool = False):
     """One camera of the task's input served by the Daemon (C4 2.4.0 ``getTaskCameraVideo``):
-    LeRobot cameras of a local dataset or that need (or are asked for) a transcode go to the
-    visualizer; an mcap episode's camera is muxed from the source in memory as before (the
+    LeRobot cameras of a local dataset or that need (or are asked for) a transcode, and Lance
+    blobs (2.5.0), go to the visualizer; an mcap episode's camera is muxed from the source in memory as before (the
     report's 各机位视频, until it retires). ``Range`` is honoured so the player can seek."""
     _index(index)
     rt = runtime(request)
@@ -147,7 +147,7 @@ def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
     viz = viz_of(rt)
     src = viz.task_source(task.id, owner)
     reader = viz.reader_of(src)
-    if reader == "lerobot" or (reader == "mcap" and (src.mapping or transcode)):
+    if reader in ("lerobot", "lance") or (reader == "mcap" and (src.mapping or transcode)):
         # tasks with a frozen mcap mapping (C4 2.4.0) get the visualizer's remux / frame packs;
         # older tasks keep the in-memory muxing of the retiring 各机位视频
         return viz.camera_video(src, index, camera, transcode, request.headers)

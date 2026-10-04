@@ -218,6 +218,47 @@ def pending_body(job: Job) -> dict:
             "message": job.message}
 
 
+#: bytes one read of a blob range brings in (a response streams the range in reads this big)
+BLOB_CHUNK = 1 << 20
+
+
+def ranged_response(read_range: Callable[[int, int], bytes], size: int, media_type: str, request_headers) -> object:
+    """Bytes that live somewhere a ``FileResponse`` cannot serve from - a Lance blob (design doc 19 §4.3) -
+    with ``Range``: one ``bytes=a-b`` / ``a-`` / ``-n`` range answers 206 with the range streamed in
+    :data:`BLOB_CHUNK` reads, a range past the end 416, anything else the whole body (200)."""
+    import re as _re
+
+    from starlette.responses import Response, StreamingResponse
+
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=600"}
+    raw = (request_headers.get("range") if request_headers is not None else None) or ""
+    m = _re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", raw)
+    start, end, status = 0, size - 1, 200
+    if m and (m.group(1) or m.group(2)):
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+        else:
+            start = max(0, size - int(m.group(2)))
+        if start >= size or start > end:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+        status = 206
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    headers["Content-Length"] = str(max(0, end - start + 1))
+
+    def body():
+        pos = start
+        while pos <= end:
+            n = min(BLOB_CHUNK, end - pos + 1)
+            data = read_range(pos, n)
+            if not data:
+                break
+            yield data
+            pos += len(data)
+
+    return StreamingResponse(body(), status_code=status, media_type=media_type, headers=headers)
+
+
 def file_response(path: pathlib.Path, media_type: str, request_headers) -> object:
     """A local file with Range (Starlette's FileResponse answers 206 / 416 itself)."""
     from starlette.responses import FileResponse

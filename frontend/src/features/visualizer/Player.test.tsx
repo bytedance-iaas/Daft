@@ -170,6 +170,20 @@ describe('Player (design doc 18 §5)', () => {
     width.mockRestore();
   });
 
+  it('plays the camera of a Lance dataset out of its table, through the Daemon (design doc 19 §4)', async () => {
+    const pusht = DATASET_PROFILES.find((p) => p.name === 'pusht_lance')!;
+    db.datasets.push(datasetDetail('ds_pusht_lance', pusht, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));
+    renderWithProviders(<Player source={{ scope: 'dataset', id: 'ds_pusht_lance' }} index={3} />);
+    const player = await ready();
+    expect(player.querySelector('.vz-head .meta')?.textContent).toContain('Lance（lerobot-lancedb 0.3 三表）');
+    const v = await waitFor(() => {
+      const el = player.querySelector('video');
+      expect(el).not.toBeNull();
+      return el as HTMLVideoElement;
+    });
+    expect(v.getAttribute('src') ?? v.currentSrc).toContain('/datasets/ds_pusht_lance/episodes/3/cameras/image.mp4');
+  });
+
   it('draws an mcap JPEG camera from its frame pack and plays the H.264 one as a video', async () => {
     renderWithProviders(
       <StrictMode>

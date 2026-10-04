@@ -19,6 +19,7 @@ import {
   fromTemplate,
   mappingInfoOf,
   mcapProbe,
+  sampleIndex,
   vizDataset,
   vizEpisode,
   vizSeries,
@@ -126,7 +127,11 @@ function cameraBytes(s: Source, request: Request, index: number, file: string): 
   if (!cam) return err(404, 'not_found', `episode ${index} 没有相机 ${key}`);
   const frames = framesOf(profileOf(s.dataset), index);
   if (suffix === 'json' || suffix === 'frames') {
-    if (cam.kind !== 'frames') return err(404, 'not_found', `相机 ${key} 不是 JPEG 帧包`, { reason: 'not_frames' });
+    if (cam.access === 'remux') {
+      // an mcap H.264 camera's sample pack (design doc 19 §3): fake bytes, a keyframe every second
+      return suffix === 'json' ? HttpResponse.json(sampleIndex(key, frames, cam.fps ?? 30)) : ranged(request, framePack(frames), 'application/octet-stream');
+    }
+    if (cam.kind !== 'frames') return err(404, 'not_found', `相机 ${key} 不是帧包`, { reason: 'not_frames' });
     return suffix === 'json' ? HttpResponse.json(frameIndex(key, frames, cam.fps ?? 30)) : ranged(request, framePack(frames), 'application/octet-stream');
   }
   const transcode = new URL(request.url).searchParams.get('transcode') === 'true' || new URL(request.url).searchParams.get('transcode') === '1';

@@ -65,7 +65,7 @@
 | GET | `/api/v1/uploads/{id}` | 读回上传件的元数据与校验摘要 |
 | POST | `/api/v1/deliveries/probe` | 交付目录写探针：用指定的访问密钥真实写一个对象再删掉。新建页交付目录失焦时调 |
 
-**数据可视化**（设计 18，C4 2.4.0；数据集级给「可视化」页，任务级给报告 / 裁决 / 任务详情里的迷你播放器，读任务冻结的输入）
+**数据可视化**（设计 18，C4 2.4.0；数据集级给「可视化」页，任务级给报告 / 裁决 / 任务详情里的迷你播放器，读任务冻结的输入。2.5.0 起有 Lance 读取器与浏览器内解码的样本包，设计 19）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -74,9 +74,9 @@
 | GET | `/api/v1/datasets/{id}/viz/meta` | 字段树里元数据文件的预览（`meta/*`、README，256 KiB 截断） |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/viz`、`/api/v1/tasks/{id}/episodes/{index}/viz` | 一条 episode：时钟、相机地址、任务描述、分段 / 事件 / 条目标签；任务级另有把发现换到 episode 时间的 `check_clock` |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/series`、`/api/v1/tasks/{id}/episodes/{index}/series` | 一个曲线组，按 min / max 抽稀到 `points` 以内，可按区间再取 |
-| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、fMP4 转封装、`?transcode=1` 的 H.264 转码），带 Range，准备中 202 |
-| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | JPEG 帧包（各帧原字节首尾相接，Range 读） |
-| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、Lance 表 blob 里的 mp4、fMP4 转封装、`?transcode=1` 的 H.264 转码），带 Range，准备中 202 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | 帧包（各帧原字节首尾相接，Range 读）：mcap 与 Lance 逐帧图片的 JPEG / PNG；mcap H.264 / H.265 相机给浏览器自己解码的样本包（每条消息一个 Annex-B 访问单元，2.5.0） |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度；样本包另有每帧是否关键帧、按码流参数集算的 `codec_string` |
 | GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2） |
 | PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
 | POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |

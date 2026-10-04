@@ -503,7 +503,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** A camera served by the Daemon - a local dataset's file, a fragmented-mp4 remux or an H.264 transcode - with Range */
+        /** A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range */
         get: operations["getDatasetCameraVideo"];
         put?: never;
         post?: never;
@@ -526,7 +526,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The JPEG frame pack of a camera - the frames' own bytes back to back, read by Range with the index */
+        /** The frame pack of a camera - the frames' own bytes back to back (JPEG / PNG, or an H.264 / H.265 sample pack, 2.5.0), read by Range with the index */
         get: operations["getDatasetCameraFrames"];
         put?: never;
         post?: never;
@@ -549,7 +549,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The index of a camera's JPEG frame pack - time, offset and size of every frame */
+        /** The index of a camera's frame pack - time, offset and size of every frame (and, for a sample pack, its keyframes and codec string) */
         get: operations["getDatasetCameraFrameIndex"];
         put?: never;
         post?: never;
@@ -1351,7 +1351,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The JPEG frame pack of a camera of the task's input (as getDatasetCameraFrames) */
+        /** The frame pack of a camera of the task's input (as getDatasetCameraFrames) */
         get: operations["getTaskCameraFrames"];
         put?: never;
         post?: never;
@@ -1374,7 +1374,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The index of a camera's JPEG frame pack (as getDatasetCameraFrameIndex) */
+        /** The index of a camera's frame pack (as getDatasetCameraFrameIndex) */
         get: operations["getTaskCameraFrameIndex"];
         put?: never;
         post?: never;
@@ -2774,25 +2774,36 @@ export interface components {
             reason: string | null;
         };
         VizFormat: {
-            /** @enum {unknown} */
+            /**
+             * @description as the visualizer reads it: a lerobot-lancedb 0.1-0.2 dataset (which the preflight takes for LeRobot) is lance
+             * @enum {unknown}
+             */
             kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "unknown";
             /** @enum {unknown} */
             version: "v2" | "v3" | null;
             /**
-             * @description the reader serving it; null = none in this phase (lance: phase two, design doc 18 §10)
+             * @description the reader serving it; null = none (Lance tables without LeRobot metadata, rrd ...)
              * @enum {unknown}
              */
-            reader: "lerobot" | "mcap" | null;
+            reader: "lerobot" | "mcap" | "lance" | null;
+            /**
+             * @description Lance: which lerobot-lancedb layout (design doc 19 §4.2) - 0.3's frames / videos / meta
+             *     tables, 0.1-0.2's frames table with a videos table beside it, or with a JPEG column per
+             *     camera; null for the other formats. 2.5.0
+             * @enum {unknown}
+             */
+            layout: "lance-0.3" | "lance-0.2-video" | "lance-0.2-frames" | null;
         };
         /**
          * @description How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
          *     public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
          *     Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
          *     drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
-         *     player tags it 平台转码); unsupported: cannot be shown, `reason` says why.
+         *     player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
+         *     blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.
          * @enum {unknown}
          */
-        VizAccess: "direct" | "local" | "remux" | "frames" | "transcode" | "unsupported";
+        VizAccess: "direct" | "local" | "remux" | "frames" | "transcode" | "blob" | "unsupported";
         /** @description URL-safe camera key (LeRobot short name; mcap topic with / turned into _) */
         VizCameraKey: string;
         VizCamera: {
@@ -2970,8 +2981,16 @@ export interface components {
             access: components["schemas"]["VizAccess"];
             /** @description video: what <video> plays; frames: the frame pack; null when unsupported */
             url: string | null;
-            /** @description frames: the frame pack's index */
+            /** @description frames: the frame pack's index; with samples_url, the sample pack's (VizFrameIndex with key and codec_string) */
             index_url: string | null;
+            /**
+             * @description 2.5.0 (design doc 19 §3): an mcap H.264 / H.265 camera's sample pack - one Annex-B access
+             *     unit per message back to back, from the first keyframe, every keyframe carrying its
+             *     parameter sets - for the browser to decode itself (WebCodecs); it falls back to `url`.
+             *     Null when CURATOR_VIZ_CLIENT_DECODE is off, for any other camera, or a stream without a
+             *     keyframe or parameter sets.
+             */
+            samples_url: string | null;
             /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one */
             transcode_url: string | null;
             /** @description LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts) */
@@ -3060,13 +3079,20 @@ export interface components {
         };
         VizFrameIndex: {
             camera: components["schemas"]["VizCameraKey"];
-            /** @enum {unknown} */
-            codec: "jpeg" | "png";
+            /**
+             * @description h264 / h265: a sample pack (2.5.0)
+             * @enum {unknown}
+             */
+            codec: "jpeg" | "png" | "h264" | "h265";
             width: number | null;
             height: number | null;
             count: number;
             /** @description episode seconds of every frame */
             t: number[];
+            /** @description sample packs: whether each frame is a keyframe (decoding starts at one); 2.5.0 */
+            key?: boolean[];
+            /** @description sample packs: RFC 6381 codec string from the stream's own parameter sets (avc1.PPCCLL, hvc1....), for VideoDecoder.configure; 2.5.0 */
+            codec_string?: string | null;
             /** @description byte offset of every frame in the pack */
             offset: number[];
             size: number[];

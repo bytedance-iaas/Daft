@@ -68,7 +68,7 @@ export function seedVizMappings(now: number): Map<string, { mapping: VizMapping;
   return new Map([['ds_mcap', { mapping: WAREHOUSE_MAPPING, version: 1, updatedAt: now - 4 * DAY }]]);
 }
 
-const READERS: Record<string, 'lerobot' | 'mcap' | null> = { lerobot_v2: 'lerobot', lerobot_v3: 'lerobot', mcap: 'mcap' };
+const READERS: Record<string, 'lerobot' | 'mcap' | 'lance' | null> = { lerobot_v2: 'lerobot', lerobot_v3: 'lerobot', mcap: 'mcap', lance: 'lance' };
 
 /**
  * The format as the visualizer sees it (the Daemon's ``viz_format``): episode_N.mcap files make an
@@ -85,7 +85,7 @@ export function vizFormatOf(d: { format: DatasetDetail['format']; preflight?: { 
 /** C4 ``VizStatus`` of a registration (``DatasetItem.viz``). */
 export function vizStatusOf(format: DatasetDetail['format'], mapped: boolean): VizStatus {
   if (!READERS[format]) {
-    return { state: 'unsupported', reason: format === 'lance' ? 'Lance 数据集的读取器在第二期' : '这个格式没有可视化读取器' };
+    return { state: 'unsupported', reason: '这个格式没有可视化读取器' };
   }
   if (format === 'mcap' && !mapped) return { state: 'mapping_pending', reason: 'mcap 数据集要先确认字段映射（mcap 配置）' };
   return { state: 'ready', reason: null };
@@ -113,7 +113,8 @@ function camera(key: string, p: DatasetProfile, over: Partial<VizCamera> = {}): 
     name: key,
     source: `observation.images.${key}`,
     kind: 'video',
-    access: p.source === 'local' ? 'local' : 'direct',
+    // a Lance table keeps its mp4s in a blob column: the Daemon serves them (design doc 19 §4.3)
+    access: p.format.kind === 'lance' ? 'blob' : p.source === 'local' ? 'local' : 'direct',
     codec: 'av1',
     codec_string: 'av01.0.05M.08',
     width: big ? 1280 : 320,
@@ -251,7 +252,7 @@ export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDeta
     id,
     dataset_id: scope === 'dataset' ? id : d.id,
     name: d.name,
-    format: { kind: p.format.kind, version: p.format.version, reader },
+    format: { kind: p.format.kind, version: p.format.version, reader, layout: reader === 'lance' ? 'lance-0.3' : null },
     fps: shape.fps,
     episode_count: p.episodes,
     episode_indices: null,
@@ -340,16 +341,24 @@ export function vizEpisode(scope: 'dataset' | 'task', id: string, model: VizData
   const duration = round(frames / rate, 3);
   const v3 = p.format.version === 'v3';
   const cameras: VizEpisodeCamera[] = model.cameras.map((c) => {
-    const base = { key: c.key, kind: c.kind, access: c.access, transcoded: c.transcoded, reason: c.reason, offset_s: 0 };
+    const base = { key: c.key, kind: c.kind, access: c.access, transcoded: c.transcoded, reason: c.reason, offset_s: 0, samples_url: null };
     if (c.access === 'frames') {
       return { ...base, url: urls.daemon(c.key, 'frames'), index_url: urls.daemon(c.key, 'json'), transcode_url: null, from_ts: null, to_ts: null, expires_at: null };
+    }
+    if (c.access === 'remux') {
+      // an mcap H.264 camera: the browser may decode its sample pack itself (design doc 19 §3)
+      return { ...base, url: urls.daemon(c.key, 'mp4'), index_url: urls.daemon(c.key, 'json'), samples_url: urls.daemon(c.key, 'frames'), transcode_url: urls.daemon(c.key, 'mp4', true), from_ts: null, to_ts: null, expires_at: null };
+    }
+    if (c.access === 'blob') {
+      const from = v3 ? round(index * 20.0, 3) : null;
+      return { ...base, url: urls.daemon(c.key, 'mp4'), index_url: null, transcode_url: urls.daemon(c.key, 'mp4', true), from_ts: from, to_ts: from === null ? null : round(from + duration, 3), expires_at: null };
     }
     if (c.access === 'direct') {
       const file = v3 ? `videos/${c.source}/chunk-000/file-000.mp4` : `videos/chunk-000/${c.source}/episode_${String(index).padStart(6, '0')}.mp4`;
       const from = v3 ? round(index * 20.0, 3) : null;
       return { ...base, url: urls.direct(file), index_url: null, transcode_url: urls.daemon(c.key, 'mp4', true), from_ts: from, to_ts: from === null ? null : round(from + duration, 3), expires_at: now + 1800 * 1000 };
     }
-    return { ...base, url: urls.daemon(c.key, 'mp4', c.access === 'transcode'), index_url: null, transcode_url: c.access === 'remux' ? urls.daemon(c.key, 'mp4', true) : null, from_ts: null, to_ts: null, expires_at: null };
+    return { ...base, url: urls.daemon(c.key, 'mp4', c.access === 'transcode'), index_url: null, transcode_url: null, from_ts: null, to_ts: null, expires_at: null };
   });
   const steps = stepsOf(p, index);
   const annotations: VizAnnotations = {
@@ -437,6 +446,13 @@ export function frameIndex(camera: string, frames: number, rate: number): VizFra
     size: Array.from({ length: frames }, () => size),
     bytes: frames * size,
   };
+}
+
+/** The index of an mcap H.264 camera's sample pack: the frame pack's, with a keyframe every second. */
+export function sampleIndex(camera: string, frames: number, rate: number): VizFrameIndex {
+  const base = frameIndex(camera, frames, rate);
+  const every = Math.max(1, Math.round(rate));
+  return { ...base, codec: 'h264', width: 640, height: 480, key: base.t.map((_, k) => k % every === 0), codec_string: 'avc1.64001f' };
 }
 
 export function framePack(frames: number): Uint8Array {

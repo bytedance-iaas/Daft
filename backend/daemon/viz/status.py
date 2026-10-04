@@ -1,8 +1,8 @@
 """Whether the visualizer can open a registered dataset (C4 2.4.0 ``VizStatus``, design doc 18 §5.0).
 
-LeRobot v2 / v3 and mcap have a reader in this phase; an mcap dataset also needs its field mapping
-confirmed (D62, design doc 18 §6.4 step 7) - until then the visualize page greys it out and says why.
-Lance waits for its reader (phase two, design doc 18 §10).
+LeRobot v2 / v3, mcap and Lance (lerobot-lancedb's layouts, design doc 19 §4) have a reader; an mcap
+dataset also needs its field mapping confirmed (D62, design doc 18 §6.4 step 7) - until then the
+visualize page greys it out and says why. Lance tables without LeRobot metadata (``lancedb``) have none.
 
 An mcap dataset is one whose preflight found mcap episode files, whether or not the check reader could
 read them with the site's default topics (``format.supported`` false, "找不到必需的动作 topic"): the
@@ -17,7 +17,7 @@ from ..repo import protocol as P
 from ..repo.extras import dataset_format
 
 #: the C4 ``DatasetFormat`` values a reader serves, and which reader
-READERS = {"lerobot_v2": "lerobot", "lerobot_v3": "lerobot", "mcap": "mcap"}
+READERS = {"lerobot_v2": "lerobot", "lerobot_v3": "lerobot", "mcap": "mcap", "lance": "lance"}
 
 
 def is_mcap(preflight: dict | None) -> bool:
@@ -35,9 +35,12 @@ def lerobot_version(preflight: dict | None) -> str | None:
 
 
 def viz_format(preflight: dict | None) -> str:
-    """``dataset_format`` as the visualizer sees it: mcap and LeRobot whether the checks read them or not."""
+    """``dataset_format`` as the visualizer sees it: mcap, LeRobot and Lance whether the checks read them or not."""
     if is_mcap(preflight):
         return "mcap"
+    fmt = preflight.get("format") if isinstance(preflight, dict) else None
+    if isinstance(fmt, dict) and fmt.get("kind") == "lance":
+        return "lance"
     version = lerobot_version(preflight)
     if version is not None:
         return f"lerobot_{version}"
@@ -48,8 +51,7 @@ def viz_status(ds: P.Dataset) -> dict:
     """C4 ``VizStatus`` of a registration."""
     fmt = viz_format(ds.preflight if isinstance(ds.preflight, dict) else {})
     if fmt not in READERS:
-        reason = ("Lance 数据集的可视化读取器在第二期" if fmt == "lance"
-                  else "这个数据集的格式不支持可视化")
+        reason = "这个数据集的格式不支持可视化"
         return {"state": "unsupported", "reason": reason}
     if fmt == "mcap" and not ds.viz_mapping:
         return {"state": "mapping_pending",

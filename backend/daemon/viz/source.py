@@ -196,6 +196,35 @@ class Access:
         except BadPath:
             return None
 
+    def lance_target(self, rel: str) -> tuple[str, dict[str, str] | None]:
+        """Where Lance opens the table ``rel`` (``frames.lance``): a directory of a local dataset, or
+        ``s3://`` on TOS's S3-compatible endpoint (design doc 19 §4.3) with the input key - anonymous
+        for the public bucket. The key only ever goes to Lance's object store in this process."""
+        from curation.viz.lance_layout import s3_endpoint_of, s3_options
+
+        if self.src.is_local:
+            root = self.local_root().resolve()
+            path = (root / rel).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                raise ApiError("not_found", "路径不在数据集之内") from None
+            return str(path), None
+        from ..secrets.tos import join_key, split_uri
+
+        key = self._key()
+        ends = self._svc().tos_endpoints(key, self.src.region or (key.region if key is not None else None))
+        override = getattr(self.rt.settings, "viz_lance_s3_endpoint", None)
+        endpoint = override or s3_endpoint_of(ends.server)
+        host = endpoint.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        bucket, prefix = split_uri(self.src.uri)
+        opts = s3_options(endpoint, ends.region,
+                          key_id=key.access_key_id if key is not None else None,
+                          secret=key.secret_access_key if key is not None else None,
+                          token=key.session_token if key is not None else None,
+                          virtual_hosted=host.endswith((".volces.com", ".ivolces.com")))
+        return f"s3://{bucket}/{join_key(prefix, rel)}", opts
+
     def local_file(self, rel: str) -> pathlib.Path:
         """The file of ``rel`` inside a local dataset; never outside it."""
         root = self.local_root().resolve()

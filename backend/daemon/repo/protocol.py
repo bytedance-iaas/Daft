@@ -557,8 +557,8 @@ class Repository(Protocol):
         """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | mcap | lance | unsupported, read
         from the preflight (mcap and lance since schema step 4, C4 1.11); ``formats`` keeps any
         of several (the visualizer's picker, C4 2.4.0), and with ``mcap`` / ``lerobot_v2`` /
-        ``lerobot_v3`` among them also the registrations whose preflight found that layout but the
-        checks could not read it (design doc 18 §9.2, §9.6)."""
+        ``lerobot_v3`` / ``lance`` among them also the registrations whose preflight found that
+        layout but the checks could not read it (design doc 18 §9.2, §9.6; design doc 19 §4)."""
 
     def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
         """Name and note (PATCH), a replacement access key, the visualizer's ``display_config``

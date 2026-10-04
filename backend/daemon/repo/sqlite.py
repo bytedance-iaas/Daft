@@ -1040,6 +1040,9 @@ class SqliteRepository:
                 # an mcap registration the checks cannot read with the defaults (format
                 # unsupported) is still mcap to the visualizer: its mapping is what fixes it
                 match = f"({match} OR json_extract(preflight, '$.format.kind')='mcap')"
+            if "lance" in wanted:
+                # lerobot-lance-convert's tables whatever the checks make of them (design doc 19 §4)
+                match = f"({match} OR json_extract(preflight, '$.format.kind')='lance')"
             for version in ("v2", "v3"):
                 if f"lerobot_{version}" in wanted:
                     # likewise a LeRobot dataset the check reader refuses (no action column)

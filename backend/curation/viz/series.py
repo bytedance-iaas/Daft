@@ -50,7 +50,7 @@ def read_episode_columns(fileobj, columns: list[str], *, from_index: int | None 
     elif by_window:
         idx = table.column("index")
         table = table.filter(pc.and_(pc.greater_equal(idx, from_index), pc.less(idx, to_index)))
-    return {c: _values(table.column(c)) for c in wanted}
+    return {c: column_values(table.column(c)) for c in wanted}
 
 
 def _overlaps(pf, group: int, column: str, lo, hi, episode) -> bool:
@@ -68,7 +68,9 @@ def _overlaps(pf, group: int, column: str, lo, hi, episode) -> bool:
     return True
 
 
-def _values(col):
+def column_values(col):
+    """An Arrow column as the readers keep it: a 2-D float array for numeric lists (NaN-padded), a 1-D
+    float array for numeric scalars, a Python list otherwise."""
     import pyarrow as pa
 
     t = col.type

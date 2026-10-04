@@ -21,6 +21,8 @@
 | ``CURATOR_VIZ_CACHE_DIR`` | ``<scratch>/viz-cache`` | the visualizer's disk cache (transcodes, frame packs, fetched sources); disposable |
 | ``CURATOR_VIZ_CACHE_GB`` | 20 | its size; the least recently used products go first |
 | ``CURATOR_VIZ_TRANSCODE_WORKERS`` | 2 | transcodes at once (outside the checks' CPU pool) |
+| ``CURATOR_VIZ_CLIENT_DECODE`` | ``1`` | mcap H.264 / H.265 cameras also as sample packs the browser decodes itself (WebCodecs), remuxed only when asked (design doc 19 §3); ``0`` remuxes every one up front as before |
+| ``CURATOR_VIZ_LANCE_S3_ENDPOINT`` | empty | the S3-compatible endpoint the visualizer reads Lance tables on TOS through; empty = TOS's own ``tos-s3-<region>`` for the region (design doc 19 §4.3) |
 """
 from __future__ import annotations
 
@@ -117,6 +119,8 @@ class Settings:
     viz_cache_dir: pathlib.Path | None = None
     viz_cache_gb: float = 20.0
     viz_transcode_workers: int = 2
+    viz_client_decode: bool = True
+    viz_lance_s3_endpoint: str | None = None
 
     def __post_init__(self) -> None:
         # frozen dataclass: fill derived paths through object.__setattr__
@@ -171,6 +175,12 @@ class Settings:
         transcode = get("CURATOR_VIZ_TRANSCODE", "1").lower()
         if transcode not in ("1", "0", "true", "false", "yes", "no", "on", "off"):
             raise ConfigError("CURATOR_VIZ_TRANSCODE 只能是 1 或 0")
+        client_decode = get("CURATOR_VIZ_CLIENT_DECODE", "1").lower()
+        if client_decode not in ("1", "0", "true", "false", "yes", "no", "on", "off"):
+            raise ConfigError("CURATOR_VIZ_CLIENT_DECODE 只能是 1 或 0")
+        lance_s3 = get("CURATOR_VIZ_LANCE_S3_ENDPOINT").strip().rstrip("/") or None
+        if lance_s3 is not None and not re.match(r"^https?://[^/\s@]+$", lance_s3):
+            raise ConfigError("CURATOR_VIZ_LANCE_S3_ENDPOINT 只写协议和域名（端口可带），形如 https://tos-s3-cn-beijing.ivolces.com")
         log_format = get("CURATOR_LOG_FORMAT", "json").lower()
         if log_format not in ("json", "text"):
             raise ConfigError("CURATOR_LOG_FORMAT 只能是 json 或 text")
@@ -196,4 +206,6 @@ class Settings:
             viz_cache_dir=path("CURATOR_VIZ_CACHE_DIR"),
             viz_cache_gb=viz_cache_gb,
             viz_transcode_workers=viz_workers,
+            viz_client_decode=client_decode in ("1", "true", "yes", "on"),
+            viz_lance_s3_endpoint=lance_s3,
         )

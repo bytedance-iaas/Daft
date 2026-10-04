@@ -71,7 +71,7 @@ export function SidePanel({
     const e: VizEpisodeCamera | undefined = ep.cameras.find((c) => c.key === focused.key);
     if (cam) {
       title = zh.viz.side.camera(cam.name);
-      const openable = e?.url && (e.access === 'direct' || e.access === 'local' || e.access === 'remux');
+      const openable = e?.url && (e.access === 'direct' || e.access === 'local' || e.access === 'remux' || e.access === 'blob');
       body = (
         <>
           <div className="sec">{zh.viz.side.stream}</div>

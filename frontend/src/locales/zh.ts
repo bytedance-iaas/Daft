@@ -2220,8 +2220,13 @@ export const zh = {
       remux: 'Daemon 转封装（不重编码）',
       frames: '帧包（逐帧 JPEG / PNG）',
       transcode: '平台转码（H.264）',
+      blob: 'Daemon 出 Lance 表里的视频字节',
+      client: '浏览器解码（WebCodecs）',
       unsupported: '播不了',
     } as Record<string, string>,
+    /** design doc 19 §4.2 */
+    lanceLayout: (layout: string) =>
+      ({ 'lance-0.3': 'Lance（lerobot-lancedb 0.3 三表）', 'lance-0.2-video': 'Lance（lerobot-lancedb 0.2 视频表）', 'lance-0.2-frames': 'Lance（lerobot-lancedb 0.2 逐帧图片）' })[layout] ?? 'Lance',
     loadingModel: '正在读取数据集…',
     loadingEpisode: '正在生成可视化索引…',
     modelFailed: '可视化读不出来',

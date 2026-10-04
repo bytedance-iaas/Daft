@@ -57,7 +57,7 @@ def test_dataset_model_v2(app):
     assert r.status_code == 200, r.text
     body = r.json()
     assert_schema("VizDataset", body)
-    assert body["format"] == {"kind": "lerobot", "version": "v2", "reader": "lerobot"}
+    assert body["format"] == {"kind": "lerobot", "version": "v2", "reader": "lerobot", "layout": None}
     assert (body["episode_count"], body["fps"], body["total_frames"]) == (3, 10.0, sum(LENGTHS))
     cams = {c["key"]: c for c in body["cameras"]}
     assert cams["front"]["access"] == "local" and cams["front"]["codec"] == "h264"
@@ -282,7 +282,8 @@ def test_unsupported_and_pending_formats(app):
     rt = app.app.state.runtime
     from daemon.repo import protocol as P
 
-    lance_pf = {**_preflight("v3"), "format": {"kind": "lance", "version": "v3", "supported": True, "detail": "lance"}}
+    # Lance tables that are not lerobot-lancedb's (no LeRobot meta/): no reader (Lance itself: test_lance.py)
+    lance_pf = {**_preflight("v3"), "format": {"kind": "lancedb", "version": None, "supported": False, "detail": "lance"}}
     lance, _ = rt.repo.register_dataset(P.Dataset(
         id="", name="lance", source="local", uri="/nowhere/lance", preflight=lance_pf, meta_fingerprint="x",
         source_fingerprint={"objects": 0, "bytes": 0, "digest": "d"}, preflighted_at=1))

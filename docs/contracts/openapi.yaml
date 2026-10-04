@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.4.0
+  version: 2.5.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -206,6 +206,13 @@ info:
     `viz_mapping`). `DatasetItem.viz` says whether a dataset can be visualized and
     `GET /datasets?viz=true` lists only those; `DatasetDetail` names its `viz_mapping` and
     `annotations`; `EpisodeView` gains `fps` and `dataset_id`.
+
+    2.5.0 (2026-10-04): the visualizer's phase-two items done first (design doc 19). A Lance
+    reader (`VizFormat.reader: lance`, the lerobot-lancedb layout in `VizFormat.layout`) whose
+    videos the Daemon serves by Range out of the table's blob column (`VizAccess: blob`); the
+    browser decoding mcap H.264 / H.265 cameras itself with WebCodecs from a sample pack - the
+    existing `.frames` / `.json` routes, `VizEpisodeCamera.samples_url`, `VizFrameIndex` with
+    `h264` / `h265`, `key` and `codec_string` (`CURATOR_VIZ_CLIENT_DECODE`). Additions only.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -877,7 +884,7 @@ paths:
     get:
       tags: [viz]
       operationId: getDatasetCameraVideo
-      summary: A camera served by the Daemon - a local dataset's file, a fragmented-mp4 remux or an H.264 transcode - with Range
+      summary: A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range
       parameters:
         - $ref: "#/components/parameters/VizTranscode"
         - $ref: "#/components/parameters/RangeHeader"
@@ -899,7 +906,7 @@ paths:
     get:
       tags: [viz]
       operationId: getDatasetCameraFrames
-      summary: The JPEG frame pack of a camera - the frames' own bytes back to back, read by Range with the index
+      summary: The frame pack of a camera - the frames' own bytes back to back (JPEG / PNG, or an H.264 / H.265 sample pack, 2.5.0), read by Range with the index
       parameters:
         - $ref: "#/components/parameters/RangeHeader"
       responses:
@@ -920,7 +927,7 @@ paths:
     get:
       tags: [viz]
       operationId: getDatasetCameraFrameIndex
-      summary: The index of a camera's JPEG frame pack - time, offset and size of every frame
+      summary: The index of a camera's frame pack - time, offset and size of every frame (and, for a sample pack, its keyframes and codec string)
       responses:
         "200":
           description: the index
@@ -1910,7 +1917,7 @@ paths:
     get:
       tags: [viz]
       operationId: getTaskCameraFrames
-      summary: The JPEG frame pack of a camera of the task's input (as getDatasetCameraFrames)
+      summary: The frame pack of a camera of the task's input (as getDatasetCameraFrames)
       parameters:
         - $ref: "#/components/parameters/RangeHeader"
       responses:
@@ -1931,7 +1938,7 @@ paths:
     get:
       tags: [viz]
       operationId: getTaskCameraFrameIndex
-      summary: The index of a camera's JPEG frame pack (as getDatasetCameraFrameIndex)
+      summary: The index of a camera's frame pack (as getDatasetCameraFrameIndex)
       responses:
         "200":
           description: the index
@@ -3976,19 +3983,26 @@ components:
     VizFormat:
       type: object
       additionalProperties: false
-      required: [kind, version, reader]
+      required: [kind, version, reader, layout]
       properties:
-        kind: {enum: [lerobot, mcap, lance, lancedb, rrd, unknown]}
+        kind: {enum: [lerobot, mcap, lance, lancedb, rrd, unknown], description: "as the visualizer reads it: a lerobot-lancedb 0.1-0.2 dataset (which the preflight takes for LeRobot) is lance"}
         version: {enum: [v2, v3, null]}
-        reader: {enum: [lerobot, mcap, null], description: "the reader serving it; null = none in this phase (lance: phase two, design doc 18 §10)"}
+        reader: {enum: [lerobot, mcap, lance, null], description: "the reader serving it; null = none (Lance tables without LeRobot metadata, rrd ...)"}
+        layout:
+          enum: [lance-0.3, lance-0.2-video, lance-0.2-frames, null]
+          description: |
+            Lance: which lerobot-lancedb layout (design doc 19 §4.2) - 0.3's frames / videos / meta
+            tables, 0.1-0.2's frames table with a videos table beside it, or with a JPEG column per
+            camera; null for the other formats. 2.5.0
     VizAccess:
-      enum: [direct, local, remux, frames, transcode, unsupported]
+      enum: [direct, local, remux, frames, transcode, blob, unsupported]
       description: |
         How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
         public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
         Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
         drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
-        player tags it 平台转码); unsupported: cannot be shown, `reason` says why.
+        player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
+        blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.
     VizCameraKey:
       type: string
       pattern: "^[0-9A-Za-z_-]{1,96}$"
@@ -4168,13 +4182,21 @@ components:
     VizEpisodeCamera:
       type: object
       additionalProperties: false
-      required: [key, kind, access, url, index_url, transcode_url, from_ts, to_ts, offset_s, transcoded, expires_at, reason]
+      required: [key, kind, access, url, index_url, samples_url, transcode_url, from_ts, to_ts, offset_s, transcoded, expires_at, reason]
       properties:
         key: {$ref: "#/components/schemas/VizCameraKey"}
         kind: {enum: [video, frames]}
         access: {$ref: "#/components/schemas/VizAccess"}
         url: {type: [string, "null"], description: "video: what <video> plays; frames: the frame pack; null when unsupported"}
-        index_url: {type: [string, "null"], description: "frames: the frame pack's index"}
+        index_url: {type: [string, "null"], description: "frames: the frame pack's index; with samples_url, the sample pack's (VizFrameIndex with key and codec_string)"}
+        samples_url:
+          type: [string, "null"]
+          description: |
+            2.5.0 (design doc 19 §3): an mcap H.264 / H.265 camera's sample pack - one Annex-B access
+            unit per message back to back, from the first keyframe, every keyframe carrying its
+            parameter sets - for the browser to decode itself (WebCodecs); it falls back to `url`.
+            Null when CURATOR_VIZ_CLIENT_DECODE is off, for any other camera, or a stream without a
+            keyframe or parameter sets.
         transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one"}
         from_ts: {type: [number, "null"], description: "LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts)"}
         to_ts: {type: [number, "null"]}
@@ -4287,11 +4309,13 @@ components:
       required: [camera, codec, width, height, count, t, offset, size, bytes]
       properties:
         camera: {$ref: "#/components/schemas/VizCameraKey"}
-        codec: {enum: [jpeg, png]}
+        codec: {enum: [jpeg, png, h264, h265], description: "h264 / h265: a sample pack (2.5.0)"}
         width: {type: [integer, "null"]}
         height: {type: [integer, "null"]}
         count: {type: integer, minimum: 0}
         t: {type: array, items: {type: number}, description: "episode seconds of every frame"}
+        key: {type: array, items: {type: boolean}, description: "sample packs: whether each frame is a keyframe (decoding starts at one); 2.5.0"}
+        codec_string: {type: [string, "null"], description: "sample packs: RFC 6381 codec string from the stream's own parameter sets (avc1.PPCCLL, hvc1....), for VideoDecoder.configure; 2.5.0"}
         offset: {type: array, items: {type: integer}, description: "byte offset of every frame in the pack"}
         size: {type: array, items: {type: integer}}
         bytes: {type: integer, minimum: 0, description: "the pack's size"}

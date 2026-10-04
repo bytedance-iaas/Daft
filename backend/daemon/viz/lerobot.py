@@ -55,6 +55,7 @@ class EpisodeRow:
     from_index: int | None = None                # v3: global frame window [from, to)
     to_index: int | None = None
     fields: dict[str, Any] = field(default_factory=dict)   # the rest of the episode row
+    video_files: dict[str, tuple[int, int]] = field(default_factory=dict)   # v3: feature key -> (chunk, file)
 
 
 @dataclass
@@ -102,47 +103,49 @@ class LeRobotReader:
     def _build_meta(self, src: VizSource) -> LeRobotMeta:
         access = Access(self.svc.rt, src)
         with access.storage() as st:
-            try:
-                info = json.loads(st.read_bytes("meta/info.json").decode("utf-8"))
-            except Exception as exc:  # noqa: BLE001 - missing, unreadable: the page says so
-                raise ApiError("not_found", f"读不到 meta/info.json：{exc}") from None
-            version = "v3" if str(info.get("codebase_version") or "").startswith("v3") else "v2"
-            listing = src.listing()
-            meta_files = sorted(k for k in (listing or {}) if k.startswith("meta/"))
-            if listing is None:
-                meta_files = sorted(st.list("meta/"))
-            cams = L.camera_info_of(info)
-            camera_features = {}
-            cameras = []
-            used = set()
-            for c in cams:
-                key = _camera_key(c["name"], used)
-                camera_features[key] = c["key"]
-                cameras.append(self._camera(src, key, c))
-            episodes = self._episodes(st, info, version, meta_files, [c["key"] for c in cams])
-            ep_fields = set()
-            for e in episodes[:50]:
-                ep_fields.update(k for k, v in e.fields.items() if v is not None)
-            peeks: dict[str, dict | None] = {}
+            return self._meta_from(src, st, lambda: _meta_listing(src, st))
 
-            def peek(rel: str) -> dict | None:
-                if rel not in peeks:
-                    try:
-                        rows = A.parse_jsonl(st.read_range(rel, 0, 16384))
-                        peeks[rel] = rows[0] if rows else None
-                    except Exception:  # noqa: BLE001
-                        peeks[rel] = None
-                return peeks[rel]
+    def _meta_from(self, src: VizSource, st, meta_listing) -> LeRobotMeta:
+        """The model of a dataset whose ``meta/`` files ``st`` reads (``read_bytes`` / ``read_range``);
+        ``meta_listing()`` names them. The Lance reader hands in its ``meta.lance`` table here."""
+        try:
+            info = json.loads(st.read_bytes("meta/info.json").decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 - missing, unreadable: the page says so
+            raise ApiError("not_found", f"读不到 meta/info.json：{exc}") from None
+        version = "v3" if str(info.get("codebase_version") or "").startswith("v3") else "v2"
+        meta_files = meta_listing()
+        cams = L.camera_info_of(info)
+        camera_features = {}
+        cameras = []
+        used = set()
+        for c in cams:
+            key = _camera_key(c["name"], used)
+            camera_features[key] = c["key"]
+            cameras.append(self._camera(src, key, c))
+        episodes = self._episodes(st, info, version, meta_files, [c["key"] for c in cams])
+        ep_fields = set()
+        for e in episodes[:50]:
+            ep_fields.update(k for k, v in e.fields.items() if v is not None)
+        peeks: dict[str, dict | None] = {}
 
-            sources = A.detect_sources(info, meta_files, peek=peek, episode_fields=ep_fields)
-            if src.annotations_upload:
-                sources.append(A.Source("external", "segments", "外部标注", "argus", "外部标注文件（上传）"))
-                A._mark_primary(sources)
-            tasks = self._tasks(st, meta_files)
-            lookups = {}
-            for s in sources:
-                if s.table and s.table not in lookups and s.format in ("subtask_index", "index_table"):
-                    lookups[s.table] = self._lookup(st, s.table)
+        def peek(rel: str) -> dict | None:
+            if rel not in peeks:
+                try:
+                    rows = A.parse_jsonl(st.read_range(rel, 0, 16384))
+                    peeks[rel] = rows[0] if rows else None
+                except Exception:  # noqa: BLE001
+                    peeks[rel] = None
+            return peeks[rel]
+
+        sources = A.detect_sources(info, meta_files, peek=peek, episode_fields=ep_fields)
+        if src.annotations_upload:
+            sources.append(A.Source("external", "segments", "外部标注", "argus", "外部标注文件（上传）"))
+            A._mark_primary(sources)
+        tasks = self._tasks(st, meta_files)
+        lookups = {}
+        for s in sources:
+            if s.table and s.table not in lookups and s.format in ("subtask_index", "index_table"):
+                lookups[s.table] = self._lookup(st, s.table)
         groups = curve_groups(info)
         curve_cols = sorted({ln.source for g in groups for ln in g.lines})
         curve_cols = [c for c in curve_cols if L.width_of((info.get("features") or {}).get(c) or {}) <= MAX_CURVE_WIDTH]
@@ -218,19 +221,20 @@ class LeRobotReader:
                                                file_index=int(rec["data/file_index"]))
                 except (KeyError, TypeError, ValueError):
                     data_key = ""
-                videos, windows = {}, {}
+                videos, windows, files = {}, {}, {}
                 for vk in cam_keys:
                     try:
-                        videos[vk] = video_tpl.format(video_key=vk, chunk_index=int(rec[f"videos/{vk}/chunk_index"]),
-                                                      file_index=int(rec[f"videos/{vk}/file_index"]))
+                        chunk, file = int(rec[f"videos/{vk}/chunk_index"]), int(rec[f"videos/{vk}/file_index"])
+                        videos[vk] = video_tpl.format(video_key=vk, chunk_index=chunk, file_index=file)
                         windows[vk] = (_num(rec.get(f"videos/{vk}/from_timestamp")),
                                        _num(rec.get(f"videos/{vk}/to_timestamp")))
+                        files[vk] = (chunk, file)
                     except (KeyError, TypeError, ValueError):
                         continue
                 fields = {k: _v(v) for k, v in rec.items() if k not in skip and not k.startswith(("data/", "videos/", "stats/", "meta/"))}
                 out.append(EpisodeRow(idx, int(rec.get("length") or 0), task, data_key, videos, windows,
                                       from_index=_int(rec.get("dataset_from_index")),
-                                      to_index=_int(rec.get("dataset_to_index")), fields=fields))
+                                      to_index=_int(rec.get("dataset_to_index")), fields=fields, video_files=files))
         out.sort(key=lambda e: e.index)
         return out
 
@@ -403,9 +407,7 @@ class LeRobotReader:
         duration = float(t[-1] + (1.0 / m.fps if m.fps else 0.0)) if len(t) else (row.length / m.fps if m.fps else 0.0)
         cameras = []
         for c in m.cameras:
-            feature = m.camera_features[c["key"]]
-            rel = row.videos.get(feature)
-            frm, to = row.windows.get(feature, (None, None))
+            rel, frm, to = self._camera_place(m, row, c)
             cameras.append(urls.camera(src, index, c, rel, frm, to))
         ann = self._annotations(src, m, row, data)
         task = {"text": row.task, "source": "原始标注"} if row.task else None
@@ -413,6 +415,12 @@ class LeRobotReader:
                 "timeline": {"kind": "frame", "fps": m.fps, "frame_reference": None, "frame_times": None},
                 "cameras": cameras, "annotations": ann, "warnings": warnings,
                 "check_clock": {"offset_s": 0.0, "fps": m.fps} if src.scope == "task" else None}
+
+    def _camera_place(self, m: LeRobotMeta, row: EpisodeRow, cam: dict) -> tuple[str | None, float | None, float | None]:
+        """(file, from_ts, to_ts) of a camera in an episode; no file: the episode has no video of it."""
+        feature = m.camera_features[cam["key"]]
+        frm, to = row.windows.get(feature, (None, None))
+        return row.videos.get(feature), frm, to
 
     def _annotations(self, src: VizSource, m: LeRobotMeta, row: EpisodeRow, data: dict) -> dict:
         times = [float(x) for x in data["__t__"]]
@@ -491,6 +499,13 @@ class LeRobotReader:
             "markdown" if path.endswith(".md") else "text")
         return {"path": path, "size": int(size), "truncated": size > META_FILES_PREVIEW,
                 "kind": kind, "text": data.decode("utf-8", "replace")}
+
+
+def _meta_listing(src: VizSource, st) -> list[str]:
+    listing = src.listing()
+    if listing is None:
+        return sorted(st.list("meta/"))
+    return sorted(k for k in listing if k.startswith("meta/"))
 
 
 def _clean_tree(nodes: list[dict]) -> list[dict]:
