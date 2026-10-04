@@ -166,7 +166,7 @@ flowchart LR
 | LeRobot v2 | av1 / h264 | 能 | 预签名直连整个 mp4 | — |
 | LeRobot v3 | av1 / h264 | 能 | 预签名直连 + `#t=from,to`（现有 `withFragment`），播放器按 `from_ts` 对齐；大文件可选由 Daemon 按 GOP 切出该 episode（第二期） | — |
 | LeRobot | mpeg4 part 2、其他浏览器不支持的编码 | 不能 | Daemon 转码为 H.264 fMP4（首次慢，磁盘缓存；预检时就标出「需要转码」） | 「平台转码」 |
-| mcap `CompressedImage`（JPEG） | — | 不能当 `<video>` | **JPEG 帧包**：Daemon 输出 `frames.bin`（头部 = 每帧偏移 / 长度 / 时间戳的索引，正文 = 原 JPEG 字节），播放器用 `createImageBitmap` + canvas 逐帧绘；随机访问靠 Range，不转码。单路 1280×720 30 Hz 约 2 MB/s | — |
+| mcap `CompressedImage`（JPEG） | — | 不能当 `<video>` | **JPEG 帧包**：Daemon 输出 `<相机>.frames`（正文 = 各帧原 JPEG 字节首尾相接）与它的索引（`.json`：每帧时刻 / 偏移 / 长度），播放器用 `createImageBitmap` + canvas 逐帧绘；随机访问靠 Range，不转码。单路 1280×720 30 Hz 约 2 MB/s | — |
 | mcap `CompressedVideo` h264 | h264 | 能（要 fMP4） | Daemon 转封装为 fMP4（无重编码；现有 `_mux_annexb` 做成流式、带 Range） | — |
 | mcap `CompressedVideo` h265 | hevc | 看平台（Safari 能；Chrome 要硬解） | 转封装为 `hvc1` fMP4；播放器探测 `canPlayType`，不能播时向 Daemon 要转码版本 | 转了才标「平台转码」 |
 | mcap `RawImage` / PNG | — | 不能 | 本期不支持；预检与映射表里标出 | — |
@@ -604,19 +604,19 @@ mcap 记录 19–25 s）反映的是这条链路，不是部署环境（Daemon �
 
 ## 10. 第二期（另立阶段，先记在这里）
 
-需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
+需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。需求方 2026-10-04 指定其中三项先做（相机多于 9 路、浏览器内解码、Lance 读取器），见设计 19（阶段 14）。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
 
 | 项 | 内容 | 本阶段预留 |
 |---|---|---|
-| Lance 读取器 | 对应 lerobot-lancedb 版本的读取器（今天的 `lance_reader` 只支持 ≥ 0.3 的三表布局、TOS 上整表拷贝），产出同一个展示模型 | 读取器接口；格式矩阵的 Lance 行 |
+| Lance 读取器 | 对应 lerobot-lancedb 版本的读取器（今天的 `lance_reader` 只支持 ≥ 0.3 的三表布局、TOS 上整表拷贝），产出同一个展示模型（2026-10-04 起：设计 19 §4，阶段 14 先行） | 读取器接口；格式矩阵的 Lance 行 |
 | 三维场景 | 末端轨迹（`observation.eef_pose`、mcap `PoseInFrame`）、点云、URDF 本体；新的视图类型「三维」 | `transform` / `pointcloud` 流进字段树，「+」菜单里置灰 |
 | 深度图 | `uint16` 深度列与 mcap 深度流的渲染（伪彩、与 RGB 叠放） | `depth` 流进字段树 |
 | 我们自己的标注标准 | 统一标注模型的序列化格式（片段 / 事件 / 条目标签 / 多轨），把质检产出的区间（TASK-1 动作起止、ACT-7 人工接管…）并进去，可导出、可回写数据集；外部标注的更多格式与在线编辑 | `Annotations` 模型；外部标注上传件 |
 | 预生成 | 登记后后台生成可视化索引、帧包与转码产物（大数据集首次打开不等待；F13.8 实测 mcap 首开要等整条扫描，ABC-130k 一条冷开 29 s，HEVC 转码回退一路 64 s） | 缓存目录与指纹规则 |
 | moov 在尾的 mp4 | LeRobot v2 编码器不加 faststart（样本集 72 个 LeRobot 子集里 52 个），直连 TOS 时第一帧前多一次往返；可由预生成写 faststart 副本，或 Daemon 先读尾部的 `moov` 给浏览器 | `access` 可加 Daemon 代读 |
-| 相机多于 9 路 | 网格最大 3×3，RH20T 有 10 路放不全；4×3 网格或相机墙视图 | 格子数由 `GRID_SIZES` 决定 |
+| 相机多于 9 路 | 网格最大 3×3，RH20T 有 10 路放不全；4×3 网格或相机墙视图（2026-10-04 起：设计 19 §2，阶段 14 先行） | 格子数由 `GRID_SIZES` 决定 |
 | v3 片段切分 | 按 GOP 切出单条 episode 的 mp4，替代 `#t=from,to` 直连整个分块文件 | `access: remux` |
 | LeRobot 展示配置其余项 | 缺省布局、曲线分组覆盖、相机顺序之外的个性化 | `display_config` |
 | 多 episode 连播与并排对比 | 自动下一条；两条 episode 同屏对比 | 播放器以 episode 时间为时钟，可扩展为两个时钟 |
 | ReRun 入口下线 | 「可视化（旧）」下线，设计 15 的代签链路随之评估去留 | D63 |
-| 浏览器内解码（备选） | WebCodecs 直读 mcap 的 H.264 / H.265 裸流，省掉 Daemon 转封装 | `access` 枚举可加 `client_decode` |
+| 浏览器内解码（备选） | WebCodecs 直读 mcap 的 H.264 / H.265 裸流，省掉 Daemon 转封装（2026-10-04 起：设计 19 §3，阶段 14 先行） | `access` 枚举可加 `client_decode` |
