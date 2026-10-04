@@ -140,3 +140,26 @@ export function evidenceRange(span: EvidenceSpan, timeline: VizTimeline, frames:
   }
   return null;
 }
+
+/**
+ * Whether an episode number exists: `episode_indices` is null when the numbers are 0 … count − 1,
+ * else the compact list the preflight writes (`5,9,12`, `0-28,40`).
+ */
+export function hasEpisode(compact: string | null | undefined, count: number, n: number): boolean {
+  if (!Number.isInteger(n) || n < 0) return false;
+  if (!compact) return n < count;
+  return compact.split(',').some((part) => {
+    const m = /^\s*(\d+)(?:-(\d+))?\s*$/.exec(part);
+    if (!m) return false;
+    const a = Number(m[1]);
+    const b = m[2] !== undefined ? Number(m[2]) : a;
+    return n >= a && n <= b;
+  });
+}
+
+/** The first episode number. */
+export function firstEpisode(compact: string | null | undefined, count: number): number | null {
+  if (!compact) return count > 0 ? 0 : null;
+  const m = /^\s*(\d+)/.exec(compact);
+  return m ? Number(m[1]) : null;
+}

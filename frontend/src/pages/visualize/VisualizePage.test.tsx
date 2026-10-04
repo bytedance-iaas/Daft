@@ -29,6 +29,12 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(document.title).toContain('droid-200');
   });
 
+  it('falls back to the first episode when the address names one the dataset does not have', async () => {
+    renderApp('/visualize?dataset=ds_droid200&ep=99999');
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    await waitFor(() => expect(within(player).getByText('ep 0')).toBeInTheDocument());
+  });
+
   it('filters the episodes and folds the rail away', async () => {
     const { user } = renderApp('/visualize?dataset=ds_droid200&ep=12');
     const rail = await screen.findByTestId('vz-rail');

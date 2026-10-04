@@ -7,7 +7,9 @@ import {
   fmtClock,
   frameAt,
   frameCount,
+  firstEpisode,
   frameStep,
+  hasEpisode,
   mediaTime,
   segmentAt,
   stepFrom,
@@ -75,6 +77,13 @@ describe('vizTime', () => {
     expect(segmentAt(segs, 3.99)).toBe(2);
     expect(segmentAt(segs, 4)).toBe(-1);
     expect(segmentAt([], 1)).toBe(-1);
+  });
+
+  it('knows which episode numbers a dataset has', () => {
+    expect([hasEpisode(null, 3, 2), hasEpisode(null, 3, 3), hasEpisode(null, 3, -1)]).toEqual([true, false, false]);
+    expect([hasEpisode('532,1179,1346', 3, 1179), hasEpisode('532,1179,1346', 3, 0)]).toEqual([true, false]);
+    expect([hasEpisode('0-28,40', 30, 28), hasEpisode('0-28,40', 30, 29), hasEpisode('0-28,40', 30, 40)]).toEqual([true, false, true]);
+    expect([firstEpisode(null, 4), firstEpisode(null, 0), firstEpisode('532,1179', 2), firstEpisode('5-9', 5)]).toEqual([0, null, 532, 5]);
   });
 
   it('puts findings on the episode clock through the checks clock', () => {

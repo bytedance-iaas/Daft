@@ -5,6 +5,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { useVizModel, type VizRef } from '../../features/visualizer/data';
 import { Player, type PlayerControl } from '../../features/visualizer/Player';
 import { readPrefs, writePrefs } from '../../lib/prefs';
+import { firstEpisode, hasEpisode } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
 import { DatasetInfo } from './DatasetInfo';
 import { EpisodeRail, useVizDatasets } from './EpisodeRail';
@@ -17,11 +18,6 @@ const DEV_CLOCK = import.meta.env.DEV
     }
   : undefined;
 
-/** Expands a model's compact episode numbers ("0-3,7") into the first one. */
-function firstEpisode(compact: string | null | undefined): number | null {
-  const m = /^\s*(\d+)/.exec(compact ?? '');
-  return m ? Number(m[1]) : null;
-}
 
 /**
  * 「可视化」 (design doc 18 §5.0, D63): `/visualize?dataset=<id>&ep=<n>`. The left rail picks the
@@ -46,7 +42,9 @@ export function VisualizePage() {
     if (datasetId) writePrefs({ lastVizDataset: datasetId });
   }, [datasetId]);
 
-  const current = asked ?? order[0] ?? firstEpisode(model.data?.episode_indices) ?? null;
+  // an episode the dataset does not have (an old link, a typo) falls back to the first one
+  const known = asked !== null && (!model.data || hasEpisode(model.data.episode_indices, model.data.episode_count, asked));
+  const current = (known ? asked : null) ?? order[0] ?? (model.data ? firstEpisode(model.data.episode_indices, model.data.episode_count) : null);
   const go = useCallback(
     (dataset: string | null, ep: number | null) => {
       const next = new URLSearchParams();
