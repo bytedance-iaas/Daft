@@ -1035,7 +1035,12 @@ class SqliteRepository:
             args.append(fmt)
         if formats is not None:
             wanted = sorted(set(formats))
-            where.append(f"format IN ({_placeholders(len(wanted))})" if wanted else "0")
+            match = f"format IN ({_placeholders(len(wanted))})" if wanted else "0"
+            if "mcap" in wanted:
+                # an mcap registration the checks cannot read with the defaults (format
+                # unsupported) is still mcap to the visualizer: its mapping is what fixes it
+                match = f"({match} OR json_extract(preflight, '$.format.kind')='mcap')"
+            where.append(match)
             args += wanted
         if check_state is not None:
             where.append("check_state=?")
