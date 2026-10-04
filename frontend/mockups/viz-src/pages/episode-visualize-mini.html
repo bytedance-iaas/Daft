@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>质检报告 · Episode 明细 · 可视化（迷你版） — Curator v2 预览稿</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+{{tokens.css}}
+</style>
+<style>
+{{ui.css}}
+</style>
+<style>
+{{page.css}}
+</style>
+<style>
+{{player.css}}
+</style>
+<style>
+/* ===== this page: report shell, episode drawer, visualizer modal ===== */
+.stats { grid-template-columns: repeat(6, 1fr); }
+.lv { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.lv i { width: 8px; height: 8px; border-radius: 50%; }
+.lv.blocking i { background: var(--danger-6); } .lv.review i { background: var(--warning-6); } .lv.info i { background: var(--text-3); }
+.code { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: var(--fill-2); padding: 1px 5px; border-radius: 2px; }
+.drawer.wide { width: 920px; }
+.drawer .table { table-layout: fixed; }
+.drawer .table td { overflow-wrap: anywhere; }
+.drawer .card { margin-bottom: 14px; }
+.drawer .card-head { padding: 10px 16px; }
+.drawer .card-title { font-size: 14px; }
+.drawer .table th, .drawer .table td { padding: 9px 12px; font-size: 13px; }
+.ev-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; padding: 14px 16px; }
+.ev-tile { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; cursor: pointer; }
+.ev-tile .cap { position: absolute; left: 8px; bottom: 6px; font-size: 11px; opacity: .9; }
+.ev-tile .lvl { position: absolute; left: 0; top: 0; width: 100%; height: 3px; }
+.ev-tile:hover::after { content: '在可视化中查看'; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(22,93,255,.55); font-size: 12px; }
+.viz-modal { width: 1180px; max-width: 96vw; top: 5vh; }
+.viz-modal .modal-head { padding: 14px 20px; border-bottom: 1px solid var(--border); font-size: 15px; }
+.viz-modal .modal-head .ctx { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 6px; }
+.viz-modal .modal-head .x { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--text-3); cursor: pointer; padding: 0 2px; }
+.viz-modal .modal-body { padding: 0; }
+.verdict-line { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.legacy { font-size: 12px; color: var(--text-3); padding: 0 16px 12px; }
+</style>
+</head>
+<body>
+
+{{shell:tasks}}
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a data-toast="预览稿：任务列表见 tasks.html">质检任务</a> / <a data-toast="预览稿：任务详情见 task-detail.html">galaxea 厨房 60 条质检</a> / <b>质检报告</b></div>
+
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">质检报告 · galaxea 厨房 60 条质检 <span class="tag tag-green"><i class="dot"></i>已完成</span> <span class="tag tag-gray">结果版本 r0001 · 当前</span></h1>
+      <p class="page-desc">数据集 <a href="visualize.html" target="_blank">galaxea_open_world_kitchen</a>（LeRobot v2.1）· 60 条全部 · 策略 default · 2026-10-02 11:40 结束</p>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-outline" data-toast="预览稿：回到任务详情">返回任务详情</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">输入</div><div class="v">60</div></div>
+    <div class="stat"><div class="k">通过</div><div class="v">51 <small>含待裁决 10</small></div></div>
+    <div class="stat"><div class="k">拒绝</div><div class="v">7</div></div>
+    <div class="stat"><div class="k">待补跑</div><div class="v">2</div></div>
+    <div class="stat"><div class="k">通过率</div><div class="v">85%</div></div>
+    <div class="stat"><div class="k">发现</div><div class="v">83 <small>blocking 7 · review 29 · info 47</small></div></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="tab" data-toast="预览稿：只画了 Episode 明细一页">质检总览</button>
+      <button class="tab" data-toast="预览稿：只画了 Episode 明细一页">按模块</button>
+      <button class="tab active">Episode 明细 <span class="cnt">60</span></button>
+      <button class="tab" data-toast="预览稿：只画了 Episode 明细一页">性能剖析</button>
+    </div>
+    <div class="toolbar">
+      <select class="select" style="width:150px"><option>全部判决</option><option>拒绝</option><option>通过</option><option>待补跑</option></select>
+      <select class="select" style="width:150px"><option>全部级别</option><option>blocking</option><option>review</option><option>info</option></select>
+      <select class="select" style="width:190px"><option>全部检测项</option><option>TASK-5 任务未完成</option><option>AV-3 画面与动作不同步</option><option>IMG-2 画面静止</option></select>
+      <div class="spacer"></div>
+      <span class="hint">点 ep 编号看这一条的全部发现；「可视化」直接弹出播放器</span>
+    </div>
+    <table class="table">
+      <thead><tr><th style="width:90px">Episode</th><th style="width:100px">判决</th><th style="width:200px">发现</th><th>主要发现</th><th style="width:150px">操作</th></tr></thead>
+      <tbody id="epRows"></tbody>
+    </table>
+    <div class="pager"><span class="total">共 60 条</span><button class="pg" disabled>‹</button><button class="pg active">1</button><button class="pg">2</button><button class="pg">3</button><button class="pg">›</button></div>
+  </div>
+</main>
+
+<!-- ===== Episode 明细抽屉 ===== -->
+<div class="mask" id="mask"></div>
+<aside class="drawer wide" id="drawer">
+  <div class="drawer-head">
+    <span class="drawer-title">ep 12</span>
+    <span class="tag tag-red">拒绝</span>
+    <span class="hint">blocking 1 · review 1 · info 1</span>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" id="btnViz">可视化</button>
+    <button class="btn btn-outline" data-toast="预览稿：上一条 / 下一条 episode">‹</button>
+    <button class="btn btn-outline" data-toast="预览稿：上一条 / 下一条 episode">›</button>
+    <button class="btn btn-icon" id="btnCloseDrawer" title="关闭">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="card">
+      <div class="card-head"><span class="card-title">判决概要</span></div>
+      <div class="card-body" style="padding:14px 16px">
+        <div class="desc cols-2">
+          <div class="it"><span class="k">判决</span><span class="v"><span class="tag tag-red">拒绝</span>&nbsp; 有 blocking 发现（策略 default）</span></div>
+          <div class="it"><span class="k">结果版本</span><span class="v">r0001（当前）</span></div>
+          <div class="it full"><span class="k">任务描述</span><span class="v">Pick up the apple and put it into the bowl / 把苹果放进碗里 <span class="hint">（原始标注）</span></span></div>
+          <div class="it"><span class="k">长度</span><span class="v">642 帧 · 21.4 s · 30 fps</span></div>
+          <div class="it"><span class="k">分步标注</span><span class="v">5 段（数据集自带）</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">发现</span><span class="hint">按级别排序；点区间或「可视化」弹出播放器并跳到那一刻</span></div>
+      <table class="table">
+        <thead><tr><th style="width:86px">级别</th><th style="width:160px">检测项</th><th style="width:104px">模块</th><th style="width:92px">范围</th><th style="width:104px">区间</th><th>说明</th><th style="width:64px"></th></tr></thead>
+        <tbody id="findRows"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">证据帧</span><span class="hint">模块落盘的关键帧；点开在播放器里定位</span></div>
+      <div class="ev-tiles" id="evTiles"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">各模块读数</span></div>
+      <table class="table">
+        <thead><tr><th>模块</th><th style="width:90px">状态</th><th>摘要</th></tr></thead>
+        <tbody>
+          <tr><td>数据完整性</td><td><span class="tag tag-green">正常</span></td><td class="muted">3 路视频可解码 · 帧数与声明一致</td></tr>
+          <tr><td>时间戳检查</td><td><span class="tag tag-green">正常</span></td><td class="muted">单调 · 最大间隔 34 ms</td></tr>
+          <tr><td>运动质量</td><td><span class="tag tag-green">正常</span></td><td class="muted">卡顿 0 段 · 前置空闲 0.4 s</td></tr>
+          <tr><td>视觉质量</td><td><span class="tag tag-gray">info 1</span></td><td class="muted">right_wrist 帧 300–420 画面静止（4.0 s）</td></tr>
+          <tr><td>视频-动作同步</td><td><span class="tag tag-orange">review 1</span></td><td class="muted">left_wrist 画面滞后动作 0.40 s（6.0–12.0 s 窗口）</td></tr>
+          <tr><td>任务成败判定</td><td><span class="tag tag-red">blocking 1</span></td><td class="muted">三机位一致：苹果最终未入碗（15.0 s 起）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</aside>
+
+<!-- ===== 可视化弹窗（迷你版） ===== -->
+<div class="modal viz-modal" id="vizModal">
+  <div class="modal-head">可视化 · galaxea_open_world_kitchen · ep 12<span class="ctx">来自任务「galaxea 厨房 60 条质检」· r0001</span><span class="spacer"></span><a class="btn btn-outline" style="height:28px;font-size:12px;font-weight:400" href="visualize.html" target="_blank" title="在新窗口打开完整版（同一条 episode）">在可视化页打开</a><button class="x" id="btnCloseViz" title="关闭">×</button></div>
+  <div class="modal-body"><div id="miniPlayer"></div></div>
+</div>
+
+<div class="mockup-note"><b>预览稿 · 质检报告 › Episode 明细 › 可视化（迷你版）</b><br>「各机位视频」卡片已去掉，改为弹窗里的播放器；进度条上的色段是各发现的区间。点此关闭。</div>
+
+<script>
+{{player.js}}
+</script>
+<script>
+{{page.js}}
+</script>
+<script>
+(function () {
+  const DS = Viz.SAMPLE, el = Viz.el; const ep = Viz.makeEpisode(DS, 12);
+  // 这一条的发现（记录 2.0 的 findings：item / severity / scope / frames / time_s）→ 播放器的证据区间
+  const EV = [
+    { id: 'e1', level: 'blocking', item: 'TASK-5', itemName: '任务未完成', module: 'task_success', moduleName: '任务成败判定', label: '苹果最终未入碗', camera: 'head', time: [15.0, 21.4], text: '三机位连续视频判定：抓取与搬运正常，放下后苹果落在碗外，直至结束未纠正。' },
+    { id: 'e2', level: 'review', item: 'AV-3', itemName: '画面与动作不同步', module: 'video_action_sync', moduleName: '视频-动作同步', label: '画面滞后动作约 0.4 s', camera: 'left_wrist', time: [6.0, 12.0], text: '左腕相机画面动量与关节速度的互相关峰值在 +0.40 s（阈值 0.25 s）。' },
+    { id: 'e3', level: 'info', item: 'IMG-2', itemName: '画面静止', module: 'visual_quality', moduleName: '视觉质量', label: '右腕相机 4 秒静止画面', camera: 'right_wrist', frames: [300, 420], text: '连续 121 帧帧间差接近 0；右臂此时本就静止，仅记录。' },
+  ];
+  // mini 版的「智能」布局：看发现属于什么 → 只看视频 / 视频 + 曲线
+  function smartCells(ev) {
+    const cams = DS.cameras.map((c) => c.key);
+    if (ev.module === 'video_action_sync' || ev.module === 'eef_video_consistency' || ev.module === 'motion_quality') {
+      return { cells: [{ kind: 'video', ref: ev.camera }, { kind: 'curve', ref: ev.camera.startsWith('right') ? 'right_arm' : 'left_arm' }], cols: 2, rows: 1 };
+    }
+    if (ev.module === 'visual_quality' || ev.module === 'camera_defects' || ev.module === 'data_integrity') {
+      const other = cams.find((k) => k !== ev.camera);
+      return { cells: [{ kind: 'video', ref: ev.camera }, { kind: 'video', ref: other }], cols: 2, rows: 1 };
+    }
+    return { cells: cams.map((k) => ({ kind: 'video', ref: k })), cols: 3, rows: 1 };
+  }
+
+  // ---- list ----
+  const ROWS = [
+    { i: 12, v: 'drop', b: 1, r: 1, n: 1, main: 'TASK-5 任务未完成 · AV-3 画面滞后 0.4 s · IMG-2 右腕静止画面' },
+    { i: 3, v: 'keep', b: 0, r: 0, n: 1, main: 'LABEL-4 中英混排标注' },
+    { i: 7, v: 'held', b: 0, r: 0, n: 0, main: '任务成败判定执行出错（模型超时），待补跑' },
+    { i: 18, v: 'drop', b: 1, r: 0, n: 2, main: 'STRM-5 时间戳残段 · ACT-2 动作单点跳变' },
+    { i: 23, v: 'keep', b: 0, r: 2, n: 0, main: 'TASK-6 分步「放入碗中」不合格 · TASK-12 反复尝试' },
+    { i: 29, v: 'keep', b: 0, r: 1, n: 1, main: 'LABEL-2 标注与画面不一致（待裁决）' },
+    { i: 31, v: 'held', b: 0, r: 0, n: 0, main: '任务成败判定执行出错（模型超时），待补跑' },
+    { i: 38, v: 'drop', b: 1, r: 0, n: 0, main: 'TASK-5 任务未完成' },
+    { i: 44, v: 'drop', b: 1, r: 0, n: 0, main: 'SET-1 与 ep 43 精确重复' },
+    { i: 45, v: 'keep', b: 0, r: 0, n: 0, main: '—' },
+  ];
+  const VTAG = { drop: ['tag-red', '拒绝'], keep: ['tag-green', '通过'], held: ['tag-orange', '待补跑'] };
+  const body = document.getElementById('epRows');
+  for (const r of ROWS) {
+    const cnt = el('span', { class: 'lv' }); if (r.b) cnt.append(el('span', { class: 'lv blocking' }, el('i'), r.b)); if (r.r) cnt.append(el('span', { class: 'lv review', style: 'margin-left:8px' }, el('i'), r.r)); if (r.n) cnt.append(el('span', { class: 'lv info', style: 'margin-left:8px' }, el('i'), r.n)); if (!r.b && !r.r && !r.n) cnt.append(el('span', { class: 'muted' }, '—'));
+    body.append(el('tr', null, el('td', null, el('a', { href: '#', class: 'mono', onclick: (e) => { e.preventDefault(); r.i === 12 ? openDrawer() : toast('预览稿只做了 ep 12 的明细'); } }, 'ep ' + r.i)),
+      el('td', null, el('span', { class: 'tag ' + VTAG[r.v][0] }, VTAG[r.v][1])), el('td', null, cnt), el('td', { class: r.main === '—' ? 'muted' : '' }, r.main),
+      el('td', null, el('a', { href: '#', onclick: (e) => { e.preventDefault(); r.i === 12 ? openViz('e1') : toast('预览稿只做了 ep 12 的可视化'); } }, '可视化'), el('span', { class: 'muted' }, ' · '), el('a', { href: '#', onclick: (e) => { e.preventDefault(); r.i === 12 ? openDrawer() : toast('预览稿只做了 ep 12 的明细'); } }, '详情'))));
+  }
+
+  // ---- drawer content ----
+  const fr = document.getElementById('findRows');
+  for (const ev of EV) {
+    const rng = ev.time ? `${ev.time[0].toFixed(1)}–${ev.time[1].toFixed(1)} s` : `帧 ${ev.frames[0]}–${ev.frames[1]}`;
+    fr.append(el('tr', null, el('td', null, el('span', { class: 'lv ' + ev.level }, el('i'), ev.level)), el('td', null, el('span', { class: 'code' }, ev.item), ' ', ev.itemName), el('td', null, ev.moduleName), el('td', null, el('span', { class: 'code' }, ev.camera)),
+      el('td', null, el('a', { href: '#', class: 'mono', title: '在播放器里跳到这一刻', onclick: (e) => { e.preventDefault(); openViz(ev.id); } }, rng)), el('td', { class: 'muted' }, ev.text),
+      el('td', null, el('a', { href: '#', onclick: (e) => { e.preventDefault(); openViz(ev.id); } }, '可视化'))));
+  }
+  const tiles = document.getElementById('evTiles');
+  for (const [ev, t, cap] of [[EV[0], 15.0, 'task_success · head · 15.0 s'], [EV[0], 21.3, 'task_success · head · 21.3 s'], [EV[1], 8.2, 'video_action_sync · left_wrist · 8.2 s'], [EV[2], 10.0, 'visual_quality · right_wrist · 帧 300']]) {
+    tiles.append(el('div', { class: 'ev-tile', onclick: () => openViz(ev.id, t) }, el('i', { class: 'lvl', style: `background:${ev.level === 'blocking' ? 'var(--danger-6)' : ev.level === 'review' ? 'var(--warning-6)' : 'var(--text-3)'}` }), el('span', { class: 'cap' }, cap)));
+  }
+
+  // ---- open / close ----
+  const mask = document.getElementById('mask'), drawer = document.getElementById('drawer'), modal = document.getElementById('vizModal');
+  function openDrawer() { mask.classList.add('open'); drawer.classList.add('open'); }
+  function closeDrawer() { drawer.classList.remove('open'); if (!modal.classList.contains('open')) mask.classList.remove('open'); }
+  let mini = null;
+  function openViz(focusId, at) {
+    const ev = EV.find((e) => e.id === focusId) || EV[0];
+    mask.classList.add('open'); modal.classList.add('open');
+    if (!mini) {
+      const lay = smartCells(ev);
+      mini = new Viz.Player(document.getElementById('miniPlayer'), { mode: 'mini', dataset: DS, episode: ep, evidence: EV, focusEvidence: ev.id, smartCells, cells: lay.cells, cols: lay.cols, rows: lay.rows });
+      window.mini = mini;
+    } else mini.setFocusEvidence(ev.id);
+    mini.relayout(); if (at != null) mini.seek(at);
+  }
+  function closeViz() { if (mini) mini.pause(); modal.classList.remove('open'); if (!drawer.classList.contains('open')) mask.classList.remove('open'); }
+  document.getElementById('btnViz').addEventListener('click', () => openViz('e1'));
+  document.getElementById('btnCloseDrawer').addEventListener('click', closeDrawer);
+  document.getElementById('btnCloseViz').addEventListener('click', closeViz);
+  mask.addEventListener('click', () => { if (modal.classList.contains('open')) closeViz(); else closeDrawer(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (modal.classList.contains('open')) closeViz(); else closeDrawer(); } });
+  window.openViz = openViz;
+  openDrawer();
+})();
+</script>
+</body>
+</html>

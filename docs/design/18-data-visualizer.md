@@ -1,12 +1,12 @@
 # 18 · 数据可视化：独立的「可视化」页面、报告里的迷你播放器与 mcap 字段映射
 
-> 状态：草案 v0.3（2026-10-03 第三稿）—— 需求方两轮答复（§8.1、§8.2）与给定的架构都已并入，决策 D60–D64 在 `00-overview.md` §7；ReRun 的参考版本定为 0.38.1（§3.1）；§8.3 只剩三个小问题。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
+> 状态：**定稿 v1.0（2026-10-03）**—— 需求方三轮答复（§8.1–§8.3）与给定的架构都已并入，决策 D60–D64 在 `00-overview.md` §7；ReRun 的参考版本定为 0.38.1（§3.1）；第二期的内容先记在 §10。实现从 F13.1 开始（§9）。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
 > 需求账本：阶段 13（F13.0–F13.8）。
 > 静态稿：`frontend/mockups/visualize.html`（完整版，独立页面）、`episode-visualize-mini.html`（报告里的迷你版）、`dataset-add-mcap.html`（添加数据集的 mcap 配置），手动验证步骤在 `frontend/mockups/README.md`「第三批」。
 
 ## 0. 开工指引
 
-读的顺序：§1 背景 → §2 范围与两种布局的功能对照 → §4 架构与数据供给（读取器 → 统一展示模型 → 视图，这是实现上最要紧的一节）→ §5 播放器与页面规格 → §6 字段映射模版 → §7 契约与接口 → §8 已定的决策与待确认问题 → §9 工作包。
+读的顺序：§1 背景 → §2 范围与两种布局的功能对照 → §4 架构与数据供给（读取器 → 统一展示模型 → 视图，这是实现上最要紧的一节）→ §5 播放器与页面规格 → §6 字段映射模版 → §7 契约与接口 → §8 已定的决策与需求方三轮答复 → §9 工作包 → §10 第二期（不在本阶段）。
 静态稿先看一遍（三页，双击即可打开），对着 §5 核对。
 
 要动的地方：
@@ -46,6 +46,7 @@
 | 完整版 | 侧栏「数据集」分组下的二级项「可视化」（另一项是「数据集列表」），路由 `/visualize?dataset=<id>&ep=<n>`；数据集列表 / 详情的「可视化」在新窗口打开它 | 左侧可收起的侧栏（选数据集 → 列 episode）+ 播放器 + 「数据集信息」树状浏览 |
 | 迷你版 | 质检报告 Episode 明细抽屉、人工裁决卡片、任务详情的 Episode 流水线 → 「可视化」弹窗 | 只有播放器；布局由发现决定；进度条标出发现的区间；可跳到完整版 |
 | mcap 配置 | 添加数据集抽屉（格式识别为 mcap 时出现）；数据集详情的「mcap 配置」入口 | 探测 → 模版起草 → 表格确认 → 保存 / 另存为模版 / 导入导出 |
+| 外部标注文件 | 添加数据集抽屉（任何格式，选填）；数据集详情可换 | 上传一个 JSON 或按 episode 编号命名的 zip（Argus 风格），存为上传件挂在数据集上，读取器合并成一条「外部标注」轨 |
 
 两种布局的功能对照（编号对应需求原文 4.2 的 (1)–(8)）：
 
@@ -194,7 +195,7 @@ flowchart LR
 - 来源与适配（§3.4 的表）。口径（需求方 2026-10-03）：**已知格式直接支持、自动识别；识别不出的只警告「标注格式不支持」，不显示字幕；我们自己的标注标准后续另立**，不在本篇：
   - LeRobot 读取器按优先级识别：`subtask_index` + `meta/subtasks.*` → `language_persistent`（`style=subtask`）→ 逐帧 `task_index` 在一条里有变化 → 其他 `*_index` + 同名 `meta/*.jsonl` 查表（HABIT 的 `low_level_task_index`）→ 逐帧字符串列（RSS 的 `subtask`，全是占位不算）；布尔 `is_*_segment` 列 → 带标志的片段；`language_events` → 事件；`*quality_index` / `task_status` / `next.success` / `meta.rating` → 片段质量或条目标签。识别到的来源写进预检描述符（`segment_sources`），几套并存时各成一轨，字幕栏取优先级最高的一轨，其他轨在信息侧栏里切；有疑似分段字段但对不上这些写法的（比如字符串列全是占位、索引列没有查表文件），预检与播放器警告「标注格式不支持」。
   - mcap 读取器按映射里的 `segments`（topic 的 start / end / label 字段，或附件 JSON）；映射没写就不显示，不警告。
-  - 外部标注文件也算已知格式：Pantheon Argus 风格的每条 episode 一个 JSON（`timeline` / `key_events` / `completion`，或已发布标注里的 `event_labels`），放在数据集前缀下的 `annotations/<episode>.json`（放置约定见 §8.3），读取器合并成一条轨「外部标注」。
+  - 外部标注文件也算已知格式：Pantheon Argus 风格的每条 episode 一个 JSON（`timeline` / `key_events` / `completion`，或已发布标注里的 `event_labels`）。**添加数据集时可选上传**（需求方 2026-10-03）：一个 JSON（单条）或一个 zip（每条 episode 一个 JSON，按编号命名），按已知格式校验后存为 Daemon 上传件（复用 `POST /uploads` 的机制，`kind=viz_annotations`）挂在数据集上，详情页可换；读取器合并成一条轨「外部标注」，识别不出的格式提示「标注格式不支持」。
   - 质检任务产出的区间（TASK-1 动作起止、ACT-7 人工接管…）本期不进字幕栏，只作为「发现」色段出现在迷你版里；以后与自己的标注标准一起定。
 
 ### 4.6 迷你版的证据来源
@@ -357,6 +358,7 @@ C4（`openapi.yaml`，升小版本）：
 | `GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4` / `.frames` | 转封装 / 转码 / 帧包，带 Range（把今天任务级那条未声明的路由一并声明）；转码未就绪时返回 202 + 进度 |
 | `GET` / `PUT /datasets/{id}/mapping`、`POST /datasets/{id}/mapping/probe` | 映射的读写与探测 |
 | `GET` / `POST` / `DELETE /viz-templates` | 站点模版库 |
+| `POST /uploads?kind=viz_annotations`、`PUT /datasets/{id}/annotations` | 外部标注文件：上传件（JSON 或 zip，按已知格式校验）与挂到数据集上 / 换掉 |
 | `GET /datasets?viz=1` | 左侧栏的数据集下拉：只列格式支持的，带「映射待确认」状态 |
 | `EpisodeView` 补 `fps` 与 `dataset_id` | 迷你版把 `frames` 换算成秒、「在可视化页打开」 |
 
@@ -364,13 +366,13 @@ C2（`preflight.schema.json`，升小版本）：`dataset` 补 `features[{key, d
 
 C7（新）：`viz-mapping.schema.json` + `examples/viz-mapping/{umi,abc130k,invalid-*}.json`。
 
-C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_config`；新表 `viz_templates`；迁移。
+C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_config`、`annotations_upload`（上传件编号，可空）；新表 `viz_templates`；迁移。
 
 部署（09 §2.1 的环境变量表）：`CURATOR_VIZ_TRANSCODE`（缺省 `1`）、`CURATOR_VIZ_CACHE_GB`（缺省 20）、`CURATOR_VIZ_TRANSCODE_WORKERS`（缺省 2）；Chart 模板同步。
 
 设计文档：03（端点）、05（预检描述符）、07（§2 侧栏与路由、§4.4 数据集页的两个「可视化」、§5 Episode 明细改为「可视化」弹窗、§6 裁决卡片同、§9 懒加载）、09 §2.1、00 §7（已加 D60–D64）。
 
-## 8. 已定的决策与待确认问题
+## 8. 已定的决策与三轮答复
 
 ### 8.1 需求方 2026-10-03 对第一稿的答复（已落实）
 
@@ -397,11 +399,13 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 | 任务详情的 Episode 流水线 | 也挂迷你版 | §2；F13.6 |
 | ReRun 参考版本 | 与 0.38.1 比对后无 mcap 功能修复；`~/ws/rerun` 切到 `ref-0.38.1`，以稳定版为准 | §3.1 |
 
-### 8.3 还剩的小问题
+### 8.3 需求方第三轮答复（2026-10-03，已落实，至此没有待确认项）
 
-1. 「数据集」分组下第一个子项的名字：本稿叫「数据集列表」（避免与分组同名）；也可以仍叫「数据集」。
-2. 外部标注文件（Argus 风格 JSON）的放置约定：数据集前缀下的 `annotations/<episode>.json`（本稿），还是在登记 / 详情页上传一个压缩包？h200-14 上 Pantheon 发布的 3,546 条可以直接当接入样本。
-3. 我们自己的标注标准什么时候立项：建议在 F13.8 验收后，与质检产出的区间（TASK-1、ACT-7）一起定，另开设计篇。
+| 问题 | 答复 | 落在 |
+|---|---|---|
+| 「数据集」分组下第一个子项的名字 | 「数据集列表」 | §5.0、静态稿、D63 |
+| 外部标注文件的放置 | 登记时上传，选填 | §2、§4.5、§7（`viz_annotations` 上传件、`Dataset.annotations_upload`）、F13.7、静态稿的「外部标注文件」上传框 |
+| 自己的标注标准何时立项 | 不急，放到第二期一起 | §10 |
 
 ## 9. 工作包与风险
 
@@ -413,9 +417,9 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 | F13.4 | 前端：播放器核心（格子、模版、走带、进度条、曲线、同步、信息侧栏、字幕、键盘、「平台转码」标签） | F13.1 |
 | F13.5 | 前端：独立的「可视化」页面（侧栏子项、路由、左侧可收起的数据集 / episode 栏、数据集信息树）；数据集列表 / 详情头的「可视化」新窗口打开 + 「可视化（旧）」 | F13.2、F13.4 |
 | F13.6 | 前端：报告 Episode 明细、裁决卡片与任务详情 Episode 流水线的迷你版弹窗、证据色段、「在可视化页打开」；`SyncedVideos` 退役 | F13.4 |
-| F13.7 | 前端：添加数据集的 mcap 配置（探测表、模版、导入导出、另存为模版）与详情页入口 | F13.3 |
+| F13.7 | 前端：添加数据集的 mcap 配置（探测表、模版、导入导出、另存为模版）、外部标注文件的选填上传（任何格式）与详情页入口 | F13.3 |
 | F13.8 | 验收：样本集 88 个子集逐个打开（含 RH20T 10 路、FastUMI mpeg4 转码、ABC-130k H.265、深度列、无 names、Galaxea 拆列与分步、HABIT 多轨）；首帧时间与曲线接口时延指标；README 手动验证步骤 | 全部 |
-| 后续阶段（不在本篇） | Lance 读取器、三维场景与深度图视图、预生成索引、按 GOP 切 v3 片段、我们自己的标注标准 | F13.8 后另立设计与账本阶段 |
+| 第二期（§10，不在本阶段） | 见 §10 | F13.8 后另立设计篇与账本阶段 |
 
 风险：
 
@@ -424,3 +428,20 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 - 大数据集：曲线组多（HABIT 60 多字段）、相机多（RH20T 10 路）时的首屏请求数，靠懒加载与「智能布局只上必要的」控制。
 - 分段标注没有标准，探测规则会漏；靠「候选 + 用户确认」兜底。
 - 与 ReRun 并存期间两个入口的解释成本（已用「可视化（旧）」区分）。
+
+## 10. 第二期（另立阶段，先记在这里）
+
+需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
+
+| 项 | 内容 | 本阶段预留 |
+|---|---|---|
+| Lance 读取器 | 对应 lerobot-lancedb 版本的读取器（今天的 `lance_reader` 只支持 ≥ 0.3 的三表布局、TOS 上整表拷贝），产出同一个展示模型 | 读取器接口；格式矩阵的 Lance 行 |
+| 三维场景 | 末端轨迹（`observation.eef_pose`、mcap `PoseInFrame`）、点云、URDF 本体；新的视图类型「三维」 | `transform` / `pointcloud` 流进字段树，「+」菜单里置灰 |
+| 深度图 | `uint16` 深度列与 mcap 深度流的渲染（伪彩、与 RGB 叠放） | `depth` 流进字段树 |
+| 我们自己的标注标准 | 统一标注模型的序列化格式（片段 / 事件 / 条目标签 / 多轨），把质检产出的区间（TASK-1 动作起止、ACT-7 人工接管…）并进去，可导出、可回写数据集；外部标注的更多格式与在线编辑 | `Annotations` 模型；外部标注上传件 |
+| 预生成 | 登记后后台生成可视化索引、帧包与转码产物（大数据集首次打开不等待） | 缓存目录与指纹规则 |
+| v3 片段切分 | 按 GOP 切出单条 episode 的 mp4，替代 `#t=from,to` 直连整个分块文件 | `access: remux` |
+| LeRobot 展示配置其余项 | 缺省布局、曲线分组覆盖、相机顺序之外的个性化 | `display_config` |
+| 多 episode 连播与并排对比 | 自动下一条；两条 episode 同屏对比 | 播放器以 episode 时间为时钟，可扩展为两个时钟 |
+| ReRun 入口下线 | 「可视化（旧）」下线，设计 15 的代签链路随之评估去留 | D63 |
+| 浏览器内解码（备选） | WebCodecs 直读 mcap 的 H.264 / H.265 裸流，省掉 Daemon 转封装 | `access` 枚举可加 `client_decode` |

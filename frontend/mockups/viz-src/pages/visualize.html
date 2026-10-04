@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>可视化 · galaxea_open_world_kitchen · ep 12 — Curator v2 预览稿</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+{{tokens.css}}
+</style>
+<style>
+{{ui.css}}
+</style>
+<style>
+{{page.css}}
+</style>
+<style>
+{{player.css}}
+</style>
+<style>
+/* ===== this page: standalone 可视化 page = collapsible left rail (dataset → episodes) + player + dataset info ===== */
+.vzpage { display: flex; align-items: flex-start; gap: 0; }
+.vz-left { width: 292px; flex: none; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-card); display: flex; flex-direction: column; position: sticky; top: calc(var(--topbar-h) + 16px); max-height: calc(100vh - var(--topbar-h) - 32px); }
+.vzpage.collapsed .vz-left { display: none; }
+.vz-left-head { padding: 12px 12px 10px; border-bottom: 1px solid var(--border); }
+.vz-left-head .label { font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+.vz-left-head .select { background: var(--white); border-color: var(--border); }
+.ds-meta { padding: 8px 12px; font-size: 12px; color: var(--text-3); border-bottom: 1px solid var(--border); line-height: 1.6; }
+.ds-meta b { color: var(--text-2); font-weight: 500; }
+.ep-tools { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.ep-tools .input { height: 28px; font-size: 12px; }
+.ep-tools .select { width: 112px; height: 28px; font-size: 12px; padding-right: 22px; }
+.ep-list { flex: 1; overflow-y: auto; padding: 4px 6px; }
+.ep-row { display: grid; grid-template-columns: 54px 1fr auto; gap: 2px 8px; align-items: center; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12.5px; }
+.ep-row:hover { background: var(--fill-1); }
+.ep-row.cur { background: var(--primary-1); }
+.ep-row.cur .id { color: var(--primary-6); font-weight: 600; }
+.ep-row .id { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: var(--text-1); }
+.ep-row .dur { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-3); text-align: right; }
+.ep-row .task { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row .task.none { color: var(--text-4); }
+.ep-row .steps { grid-column: 1 / -1; display: inline-flex; gap: 2px; align-items: center; height: 8px; }
+.ep-row .steps i { display: block; width: 12px; height: 5px; border-radius: 2px; background: #BEDAFF; }
+.ep-row .steps i.unq { background: #FFCF8B; }
+.ep-row .steps.none i { background: var(--fill-2); }
+.vz-left-foot { padding: 8px 12px; font-size: 12px; color: var(--text-3); border-top: 1px solid var(--border); display: flex; gap: 8px; }
+.vz-left-foot .spacer { flex: 1; }
+.vz-rail-toggle { flex: none; width: 18px; height: 56px; margin: 12px 0 0; display: grid; place-items: center; border: 1px solid var(--border); border-left: 0; border-radius: 0 var(--radius) var(--radius) 0; background: var(--white); color: var(--text-3); cursor: pointer; }
+.vzpage.collapsed .vz-rail-toggle { border-left: 1px solid var(--border); border-radius: var(--radius); margin-left: 0; }
+.vz-rail-toggle:hover { color: var(--primary-6); border-color: var(--primary-6); }
+.vz-main { flex: 1; min-width: 0; margin-left: 12px; }
+.dsinfo { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 380px; }
+.tree { border-right: 1px solid var(--border); padding: 12px 8px; font-size: 13px; }
+.tree .nd { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: var(--radius-sm); cursor: pointer; color: var(--text-1); white-space: nowrap; }
+.tree .nd:hover { background: var(--fill-1); }
+.tree .nd.active { background: var(--primary-1); color: var(--primary-6); }
+.tree .nd .car { width: 12px; flex: none; color: var(--text-3); transition: transform .15s; display: inline-flex; }
+.tree .nd.open .car { transform: rotate(90deg); }
+.tree .nd .car.leaf { visibility: hidden; }
+.tree .nd .nm { overflow: hidden; text-overflow: ellipsis; }
+.tree .nd .sub { margin-left: auto; font-size: 11px; color: var(--text-3); padding-left: 8px; }
+.tree .kids { padding-left: 18px; display: none; }
+.tree .nd.open + .kids { display: block; }
+.detail { padding: 16px 20px; min-width: 0; }
+.detail h4 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.detail h4 .mono { font-weight: 400; color: var(--text-3); }
+.detail pre { background: var(--fill-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font: 12px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace; overflow: auto; max-height: 300px; margin: 0; color: var(--text-1); }
+.detail .acts { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.detail .table th, .detail .table td { padding: 8px 12px; font-size: 13px; }
+.detail .desc { margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+{{shell:visualize}}
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a href="dataset-add-mcap.html">数据集</a> / <b>可视化</b></div>
+
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">可视化</h1>
+      <p class="page-desc">看数据集里每条 episode 的多路相机与运动曲线，一条进度条统一控制；左侧选数据集和 episode。地址 <span class="mono">/visualize?dataset=ds-9f3k2m1qa&amp;ep=12</span> 可以直接打开这一条。</p>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-outline" data-toast="真实页面：带着当前数据集进入「新建质检任务」">新建质检任务</button>
+    <a class="btn btn-outline" href="dataset-add-mcap.html">数据集详情</a>
+  </div>
+
+  <div class="vzpage" id="vzpage">
+    <aside class="vz-left">
+      <div class="vz-left-head">
+        <div class="label">数据集</div>
+        <select class="select" id="dsSel">
+          <option>galaxea_open_world_kitchen · LeRobot v2.1</option>
+          <option>so101_pickplace · LeRobot v3.0</option>
+          <option>genrobot_p2_clean_bowl · mcap</option>
+          <option>abc130k_arrange_flowers_zedx · mcap（映射待确认）</option>
+          <option>droid_100 · LeRobot v3.0</option>
+        </select>
+      </div>
+      <div class="ds-meta"><b>60</b> episodes · <b>3</b> 路相机 · <b>30</b> fps · 38,520 帧 · 2.1 GB<br>分步标注：episodes.jsonl 的 subtasks</div>
+      <div class="ep-tools">
+        <input class="input" placeholder="编号或任务描述" id="epFilter">
+        <select class="select" id="epSort"><option value="idx">按编号</option><option value="dur">按时长</option><option value="nosteps">无分步在前</option></select>
+      </div>
+      <div class="ep-list" id="epList"></div>
+      <div class="vz-left-foot"><span id="epCount"></span><span class="spacer"></span><span>点一条即播放</span></div>
+    </aside>
+    <button class="vz-rail-toggle" id="railToggle" title="收起 / 展开侧栏">‹</button>
+
+    <section class="vz-main">
+      <div id="player" style="margin-bottom:16px"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">数据集信息</span>
+          <span class="hint">树状浏览数据集里的其他内容；相机和数值字段可以直接加进上面的播放器</span>
+          <span class="spacer"></span>
+          <span class="hint">LeRobot v2.1 · 60 episodes · 38,520 帧 · 2.1 GB</span>
+        </div>
+        <div class="dsinfo">
+          <div class="tree" id="tree"></div>
+          <div class="detail" id="detail"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="mockup-note"><b>预览稿 · 可视化（完整版，独立页面）</b><br>假数据：画面是脚本画的合成帧，曲线是合成的；right_wrist 故意写成 mpeg4 以演示「平台转码」标签。点此关闭。</div>
+
+<script>
+{{player.js}}
+</script>
+<script>
+{{page.js}}
+</script>
+<script>
+(function () {
+  const DS = Viz.SAMPLE; const el = Viz.el;
+  const eps = {}; const getEp = (i) => eps[i] || (eps[i] = Viz.makeEpisode(DS, i));
+  const player = new Viz.Player(document.getElementById('player'), { mode: 'full', dataset: DS, episode: getEp(12), onEpisodeChange: (i) => { const ep = getEp(i); document.title = `可视化 · ${DS.name} · ep ${i} — Curator v2 预览稿`; renderEpList(); return ep; } });
+  window.player = player;
+
+  // ---- left rail ----
+  document.getElementById('railToggle').addEventListener('click', (e) => { const p = document.getElementById('vzpage'); p.classList.toggle('collapsed'); e.currentTarget.textContent = p.classList.contains('collapsed') ? '›' : '‹'; });
+  document.getElementById('dsSel').addEventListener('change', (e) => { toast('预览稿只准备了 galaxea_open_world_kitchen 的数据；真实页面切数据集后左侧列出它的 episode'); e.target.selectedIndex = 0; });
+  let filter = '', sort = 'idx';
+  document.getElementById('epFilter').addEventListener('input', (e) => { filter = e.target.value.trim(); renderEpList(); });
+  document.getElementById('epSort').addEventListener('change', (e) => { sort = e.target.value; renderEpList(); });
+  function renderEpList() {
+    let all = DS.episodes.map(getEp).filter((e) => !filter || String(e.index) === filter || (e.task || '').includes(filter));
+    if (sort === 'dur') all = all.slice().sort((a, b) => b.duration - a.duration);
+    if (sort === 'nosteps') all = all.slice().sort((a, b) => (a.steps.length ? 1 : 0) - (b.steps.length ? 1 : 0));
+    const box = document.getElementById('epList'); box.innerHTML = '';
+    for (const e of all) {
+      const cur = e.index === player.ep.index;
+      box.append(el('div', { class: 'ep-row' + (cur ? ' cur' : ''), title: `ep ${e.index} · ${e.frames} 帧 · ${e.steps.length ? e.steps.length + ' 段分步' : '无分步'}`, onclick: () => { if (!cur) player.gotoEpisode(e.index); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
+        el('span', { class: 'id' }, 'ep ' + e.index), el('span'), el('span', { class: 'dur' }, Viz.fmtTime(e.duration)),
+        el('span', { class: 'task' + (e.task ? '' : ' none') }, e.task || '无任务描述'),
+        e.steps.length ? el('span', { class: 'steps' }, ...e.steps.map((s) => el('i', { class: s.quality === 'unqualified' ? 'unq' : '' }))) : el('span', { class: 'steps none' }, el('i'))));
+    }
+    document.getElementById('epCount').textContent = `共 ${DS.episodes.length} 条${filter ? ` · 匹配 ${all.length} 条` : ''}`;
+    const curEl = box.querySelector('.ep-row.cur'); if (curEl) curEl.scrollIntoView({ block: 'nearest' });
+  }
+  renderEpList();
+
+  // ---- dataset info tree ----
+  const NODES = [
+    { id: 'cams', label: '相机', sub: '3 路', kids: DS.cameras.map((c) => ({ id: 'cam:' + c.key, label: c.key, sub: `${c.w}×${c.h} · ${c.codec}` })) },
+    { id: 'sig', label: '状态与动作', sub: '3 个字段', kids: [
+      { id: 'f:observation.state', label: 'observation.state', sub: 'float32[14]' }, { id: 'f:action', label: 'action', sub: 'float32[14]' }, { id: 'f:observation.eef_pose', label: 'observation.eef_pose', sub: 'float32[2,7]' } ] },
+    { id: 'lab', label: '任务与标注', sub: '', kids: [ { id: 'tasks', label: 'tasks.jsonl', sub: '3 条任务' }, { id: 'steps', label: '分步标注（subtasks）', sub: '5 种步骤' }, { id: 'episodes', label: 'episodes.jsonl', sub: '60 条' } ] },
+    { id: 'meta', label: '元数据', sub: '', kids: [ { id: 'info', label: 'info.json' }, { id: 'stats', label: 'stats.json' }, { id: 'readme', label: 'README.md' } ] },
+    { id: 'files', label: '文件', sub: '241 个对象', kids: [ { id: 'data', label: 'data/chunk-000', sub: '60 parquet · 184 MB' }, { id: 'videos', label: 'videos/chunk-000', sub: '180 mp4 · 1.9 GB' } ] },
+  ];
+  const tree = document.getElementById('tree'), detail = document.getElementById('detail');
+  let activeId = null;
+  function renderTree() {
+    tree.innerHTML = '';
+    for (const n of NODES) {
+      const nd = el('div', { class: 'nd open' + (activeId === n.id ? ' active' : ''), onclick: () => { nd.classList.toggle('open'); } }, el('span', { class: 'car' }, car()), el('span', { class: 'nm' }, n.label), el('span', { class: 'sub' }, n.sub));
+      const kids = el('div', { class: 'kids' });
+      for (const k of n.kids) kids.append(el('div', { class: 'nd' + (activeId === k.id ? ' active' : ''), onclick: (e) => { e.stopPropagation(); activeId = k.id; renderTree(); renderDetail(k); } }, el('span', { class: 'car leaf' }, car()), el('span', { class: 'nm', title: k.label }, k.label), el('span', { class: 'sub' }, k.sub || '')));
+      tree.append(nd, kids);
+    }
+  }
+  function car() { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('width', 12); s.setAttribute('height', 12); s.setAttribute('viewBox', '0 0 12 12'); s.innerHTML = '<path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'; return s; }
+  const kv = (k, v) => el('div', { class: 'it' }, el('span', { class: 'k' }, k), el('span', { class: 'v' }, v));
+  const tbl = (heads, rows) => el('table', { class: 'table' }, el('thead', null, el('tr', null, ...heads.map((h) => el('th', null, h)))), el('tbody', null, ...rows.map((r) => el('tr', null, ...r.map((c) => el('td', null, c))))));
+  const stats = (seed, n) => Array.from({ length: n }, (_, i) => { const a = Math.sin(seed + i * 1.7); return [(-1.2 + a * .3).toFixed(3), (1.3 + a * .2).toFixed(3), (0.05 + a * .1).toFixed(3)]; });
+  function addToPlayer(content) {
+    const i = player.cells.findIndex((c) => c.kind === 'empty'); const idx = i >= 0 ? i : player.cells.length - 1;
+    player.setCell(idx, content); window.scrollTo({ top: 0, behavior: 'smooth' }); toast(i >= 0 ? '已加到空格子' : '没有空格子，替换了最后一个格子');
+  }
+  function renderDetail(n) {
+    detail.innerHTML = '';
+    if (n.id.startsWith('cam:')) {
+      const c = DS.cameras.find((x) => x.key === n.id.slice(4));
+      detail.append(el('h4', null, '相机 · ' + c.key, el('span', { class: 'mono' }, c.feature), c.transcoded ? el('span', { class: 'tag tag-orange' }, '平台转码') : null),
+        el('div', { class: 'desc cols-2' }, kv('dtype', 'video'), kv('shape', `[${c.h}, ${c.w}, 3]`), kv('names', '["height", "width", "channel"]'), kv('编码', c.transcoded ? `${c.codec} · ${c.pix}（浏览器不能直接播放，平台转为 h264）` : `${c.codec} · ${c.pix}`), kv('帧率', `${c.fps} fps`), kv('文件', '60 个 · 638 MB'),
+          kv('路径模版', el('span', { class: 'mono' }, 'videos/chunk-{episode_chunk:03d}/' + c.feature + '/episode_{episode_index:06d}.mp4'))),
+        el('div', { class: 'acts' }, el('button', { class: 'btn btn-primary', onclick: () => addToPlayer({ kind: 'video', ref: c.key }) }, '加入播放器'), el('button', { class: 'btn btn-outline', 'data-toast': '真实页面：用预签名地址在新标签打开当前 episode 的 mp4' }, '打开当前 episode 的文件')));
+    } else if (n.id.startsWith('f:')) {
+      const key = n.id.slice(2); const isPose = key.endsWith('eef_pose');
+      const names = isPose ? ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw'] : DS.names;
+      detail.append(el('h4', null, '数值字段 · ' + key),
+        el('div', { class: 'desc cols-2' }, kv('dtype', 'float32'), kv('shape', isPose ? '[2, 7]' : '[14]'), kv('names', isPose ? '["x","y","z","qx","qy","qz","qw"]（左、右各一组）' : '14 个关节 / 夹爪名'), kv('统计', '来自 stats.json')),
+        tbl(['维度', '名称', 'min', 'max', 'mean'], names.map((nm, i) => [i, nm, ...stats(key.length + i, 1)[0]])),
+        el('div', { class: 'acts' }, ...(isPose ? [el('button', { class: 'btn btn-outline', 'data-toast': '末端轨迹（3D）放在第二期' }, '加入播放器（第二期）')] : DS.groups.map((g) => el('button', { class: 'btn btn-outline', onclick: () => addToPlayer({ kind: 'curve', ref: g.key }) }, '加入播放器 · ' + g.title)))));
+    } else if (n.id === 'tasks') {
+      detail.append(el('h4', null, '任务文本 · meta/tasks.jsonl'), tbl(['task_index', 'task', 'episode 数'], DS.tasks.map((t, i) => [i, t, [28, 18, 6][i]])), el('p', { class: 'hint', style: 'margin:12px 0 0' }, '8 条 episode 没有任务文本（task_index 缺失），播放器顶栏显示「无任务描述」；质检任务里由自动补标补齐。'));
+    } else if (n.id === 'steps') {
+      detail.append(el('h4', null, '分步标注 · episodes.jsonl 的 subtasks'),
+        el('p', { style: 'margin:0 0 12px;font-size:13px;color:var(--text-2)' }, '数据集自带的分步起止（每条 episode 一组 {start, end, name, quality}），读进统一标注模型的「片段」。播放器下方的字幕栏按当前时刻实时显示，进度条上方的浅色色段是各步骤；标了 unqualified 的步骤显示为橙色并带「不合格」标签。'),
+        tbl(['步骤名', '出现次数', '平均时长', '不合格次数'], [['伸向苹果', 48, '4.1 s', 0], ['抓取苹果', 48, '4.6 s', 3], ['移到碗上方', 48, '5.7 s', 0], ['放入碗中', 48, '2.8 s', 12], ['复位', 48, '4.0 s', 1]]),
+        el('p', { class: 'hint', style: 'margin:12px 0 0' }, '12 条 episode 没有分步（字幕栏隐藏）。其他数据集的分步来源：LeRobot v3 的 subtask_index + meta/subtasks.parquet、language 列、逐帧 task_index 的变化、布尔段列；mcap 按映射里的 segments。'));
+    } else if (n.id === 'episodes') {
+      detail.append(el('h4', null, 'episodes.jsonl'), el('pre', null, Array.from({ length: 4 }, (_, i) => JSON.stringify({ episode_index: i, tasks: [DS.tasks[i % 3]], length: getEp(i).frames, subtasks: getEp(i).steps.map((s) => ({ name: s.label, start: +s.s.toFixed(2), end: +s.e.toFixed(2), quality: s.quality })) })).join('\n') + '\n…（共 60 行）'));
+    } else if (n.id === 'info') {
+      detail.append(el('h4', null, 'meta/info.json'), el('pre', null, JSON.stringify({ codebase_version: 'v2.1', robot_type: 'galaxea_r1_lite', total_episodes: 60, total_frames: 38520, total_tasks: 3, total_videos: 180, total_chunks: 1, chunks_size: 1000, fps: 30, splits: { train: '0:60' }, data_path: 'data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet', video_path: 'videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4', features: { 'observation.images.head': { dtype: 'video', shape: [480, 640, 3], names: ['height', 'width', 'channel'], info: { 'video.fps': 30, 'video.codec': 'av1', 'video.pix_fmt': 'yuv420p', 'video.is_depth_map': false, has_audio: false } }, 'observation.images.left_wrist': '…', 'observation.images.right_wrist': { dtype: 'video', shape: [480, 640, 3], info: { 'video.codec': 'mpeg4' } }, 'observation.state': { dtype: 'float32', shape: [14], names: DS.names }, action: { dtype: 'float32', shape: [14], names: DS.names }, 'observation.eef_pose': { dtype: 'float32', shape: [2, 7] }, timestamp: { dtype: 'float32', shape: [1] }, frame_index: { dtype: 'int64', shape: [1] }, episode_index: { dtype: 'int64', shape: [1] }, index: { dtype: 'int64', shape: [1] }, task_index: { dtype: 'int64', shape: [1] } } }, null, 2)));
+    } else if (n.id === 'stats') {
+      detail.append(el('h4', null, 'meta/stats.json'), el('pre', null, '{\n  "observation.state": { "min": [...14], "max": [...14], "mean": [...14], "std": [...14], "count": [38520] },\n  "action": { ... },\n  "observation.images.head": { "min": [[[0.0]], ...], "max": ..., "mean": [[[0.42]], [[0.39]], [[0.35]]], "std": ... },\n  ...\n}'));
+    } else if (n.id === 'readme') {
+      detail.append(el('h4', null, 'README.md'), el('pre', null, '---\nlicense: cc-by-nc-sa-4.0\ntask_categories: [robotics]\ntags: [LeRobot, galaxea]\n---\n# Galaxea Open-World Dataset (kitchen subset)\n\nR1 Lite mobile bimanual robot. Each episode carries step annotations (subtasks) with a quality flag...'));
+    } else if (n.id === 'data' || n.id === 'videos') {
+      const rows = Array.from({ length: 6 }, (_, i) => n.id === 'data' ? [`episode_${String(i).padStart(6, '0')}.parquet`, '3.1 MB', '2026-09-20'] : [`observation.images.head/episode_${String(i).padStart(6, '0')}.mp4`, '10.6 MB', '2026-09-20']);
+      detail.append(el('h4', null, n.label), tbl(['文件', '大小', '最后修改'], rows), el('p', { class: 'hint', style: 'margin:12px 0 0' }, n.id === 'data' ? '…共 60 个文件。文件清单来自登记时的指纹（listing），不再逐个访问 TOS。' : '…共 180 个文件。'));
+    }
+  }
+  activeId = 'cam:head'; renderTree(); renderDetail(NODES[0].kids[0]);
+})();
+</script>
+</body>
+</html>

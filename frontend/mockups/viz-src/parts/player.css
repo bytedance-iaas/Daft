@@ -1,0 +1,152 @@
+/* ===== data visualizer (设计 18) — player styles. Mockup only; identical block in every page that embeds the player. ===== */
+.vz { position: relative; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-card); }
+.vz.is-mini { border: 0; box-shadow: none; }
+
+/* 顶栏：数据集 + episode、帧率、任务描述（5） */
+.vz-head { display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.vz-head .ep { font-size: 15px; font-weight: 600; white-space: nowrap; }
+.vz-head .ep small { font-weight: 400; color: var(--text-3); margin-left: 6px; }
+.vz-head .meta { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.vz-head .meta i { display: inline-block; width: 1px; height: 12px; background: var(--border); margin: 0 2px; }
+.vz-head .task { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-head .task .k { color: var(--text-3); margin-right: 6px; }
+.vz-head .task.none { color: var(--text-4); font-style: normal; }
+.vz-head .ctl { display: flex; gap: 8px; align-items: center; flex: none; }
+.vz-head .ctl .select { width: 200px; height: 28px; font-size: 13px; }
+.vz-head .ctl .btn { height: 28px; padding: 0 10px; font-size: 13px; }
+.vz-head .ctl .btn.on { background: var(--primary-1); color: var(--primary-6); }
+
+/* 主体：格子 + 可隐藏侧栏（侧栏打开时挤压格子，不覆盖） */
+.vz-body { display: flex; align-items: stretch; }
+.vz-grid-wrap { flex: 1; min-width: 0; padding: 12px; }
+.vz-grid { display: grid; gap: 10px; }
+.vz-cell { position: relative; background: var(--fill-1); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-height: 120px; cursor: default; }
+.vz-cell.is-focus { border-color: var(--primary-6); box-shadow: 0 0 0 2px var(--primary-1); }
+.vz-cell.kind-video { background: #0F141B; }
+.vz-cell.kind-video canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.vz-cell.kind-video .vz-stamp { position: absolute; left: 10px; bottom: 8px; font: 11px/1 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: rgba(255,255,255,.85); background: rgba(0,0,0,.35); padding: 4px 6px; border-radius: 2px; }
+.vz-cell .vz-cap { position: absolute; left: 10px; top: 8px; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 2px; font-size: 12px; z-index: 2; background: rgba(29,33,41,.6); color: #fff; }
+.vz-cell.kind-curve .vz-cap { background: transparent; color: var(--text-1); font-weight: 500; left: 12px; top: 10px; padding: 0; }
+.vz-cell .vz-cap .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.vz-cell .vz-cap .vz-tc { margin-left: 4px; padding: 0 5px; border-radius: 2px; font-size: 11px; line-height: 16px; background: var(--warning-6); color: #fff; }
+.vz-cell .vz-tools { position: absolute; right: 8px; top: 8px; display: none; gap: 4px; z-index: 3; }
+.vz-cell:hover .vz-tools, .vz-cell.is-focus .vz-tools { display: flex; }
+.vz-cell .vz-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 24px; padding: 0 7px; border: 0; border-radius: 2px; background: rgba(29,33,41,.6); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.vz-cell .vz-tools button:hover { background: rgba(29,33,41,.85); }
+.vz-cell.kind-curve .vz-tools button { background: var(--fill-2); color: var(--text-2); }
+.vz-cell.kind-curve .vz-tools button:hover { background: var(--border); }
+.vz-cell.kind-empty { display: grid; place-items: center; border-style: dashed; background: var(--white); }
+.vz-cell.kind-empty .plus { display: grid; place-items: center; gap: 6px; color: var(--text-3); font-size: 13px; cursor: pointer; }
+.vz-cell.kind-empty .plus .ring { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border); display: grid; place-items: center; color: var(--text-2); background: var(--white); }
+.vz-cell.kind-empty .plus:hover { color: var(--primary-6); }
+.vz-cell.kind-empty .plus:hover .ring { border-color: var(--primary-6); color: var(--primary-6); }
+
+/* 曲线格 */
+.vz-cell.kind-curve { background: var(--white); }
+.vz-cell.kind-curve .plot { position: absolute; left: 0; right: 0; top: 0; }
+.vz-cell.kind-curve svg { display: block; width: 100%; height: 100%; }
+.vz-cell.kind-curve .legend { position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 0 10px; padding: 3px 10px 5px; font-size: 11px; line-height: 17px; color: var(--text-2); border-top: 1px solid var(--fill-2); background: var(--white); max-height: 44%; overflow: auto; }
+.vz-cell.kind-curve .legend .li { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; cursor: pointer; }
+.vz-cell.kind-curve .legend .li.off { opacity: .4; }
+.vz-cell.kind-curve .legend .sw { width: 14px; height: 0; border-top: 2px solid currentColor; flex: none; }
+.vz-cell.kind-curve .legend .sw.dash { border-top-style: dashed; }
+.vz-cell.kind-curve .legend .nm { overflow: hidden; text-overflow: ellipsis; }
+.vz-cell.kind-curve .legend .val { margin-left: auto; font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-1); }
+.vz-cell.kind-curve .legend .val.a { color: var(--text-3); }
+.vz-cell.kind-curve .axis text { font-size: 10px; fill: var(--text-3); }
+.vz-cell.kind-curve .grid line { stroke: var(--fill-2); stroke-width: 1; }
+.vz-cell.kind-curve .cursor { stroke: var(--text-1); stroke-width: 1; }
+.vz-cell.kind-curve .band { fill: rgba(245,63,63,.08); }
+.vz-cell.kind-curve .band.focus { fill: rgba(245,63,63,.18); }
+.vz-cell.kind-curve .band.review { fill: rgba(255,125,0,.10); }
+.vz-cell.kind-curve .band.review.focus { fill: rgba(255,125,0,.22); }
+.vz-cell.kind-curve .band.info { fill: rgba(134,144,156,.10); }
+.vz-cell.kind-curve .band.info.focus { fill: rgba(134,144,156,.22); }
+
+/* 侧栏 */
+.vz-side { width: 300px; flex: none; border-left: 1px solid var(--border); display: none; flex-direction: column; background: var(--white); }
+.vz.side-open .vz-side { display: flex; }
+.vz-side-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 500; font-size: 13px; }
+.vz-side-head .spacer { flex: 1; }
+.vz-side-head .x { border: 0; background: none; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+.vz-side-body { flex: 1; overflow: auto; padding: 10px 14px 14px; font-size: 12px; }
+.vz-side .kv { display: grid; grid-template-columns: 76px 1fr; gap: 6px 10px; padding: 6px 0; border-bottom: 1px solid var(--fill-2); }
+.vz-side .kv .k { color: var(--text-3); }
+.vz-side .kv .v { color: var(--text-1); overflow-wrap: anywhere; }
+.vz-side .sec { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 14px 0 6px; }
+.vz-side .sec:first-child { margin-top: 0; }
+.vz-side .sl { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.vz-side .sl .sw { width: 12px; height: 0; border-top: 2px solid currentColor; flex: none; }
+.vz-side .sl .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-side .sl .val { font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-1); }
+.vz-side .sl input { accent-color: var(--primary-6); margin: 0; }
+.vz-side .empty { color: var(--text-4); padding: 24px 0; text-align: center; }
+
+/* 统一进度条 + 走带（2） */
+.vz-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-top: 1px solid var(--border); }
+.vz-transport .tb { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-1); cursor: pointer; }
+.vz-transport .tb:hover { background: var(--fill-2); }
+.vz-transport .tb.play { width: 34px; height: 34px; background: var(--primary-6); color: #fff; border-radius: 50%; }
+.vz-transport .tb.play:hover { background: var(--primary-5); }
+.vz-transport .select { width: 70px; height: 28px; font-size: 13px; padding: 0 22px 0 8px; }
+.vz-transport .time { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-2); white-space: nowrap; min-width: 118px; text-align: center; }
+.vz-transport .frame { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.vz-transport .frame .input { width: 64px; height: 28px; font-size: 12px; text-align: center; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+.vz-transport .loop { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); cursor: pointer; white-space: nowrap; }
+.vz-transport .epnav { display: inline-flex; gap: 6px; margin-left: 4px; }
+.vz-transport .epnav .btn { height: 28px; padding: 0 10px; font-size: 12px; }
+
+.vz-prog { flex: 1; min-width: 220px; position: relative; height: 34px; cursor: pointer; user-select: none; }
+.vz-prog .steps { position: absolute; left: 0; right: 0; top: 4px; height: 6px; display: block; }
+.vz-prog .steps span { position: absolute; top: 0; height: 6px; border-radius: 3px; background: var(--primary-1); border: 1px solid #BEDAFF; }
+.vz-prog .steps span:nth-child(odd) { background: #E8F7FF; border-color: #9FD4FD; }
+.vz-prog .steps span.unq { background: var(--warning-1); border-color: #FFCF8B; }
+.vz-prog .steps span:hover { filter: brightness(.95); }
+.vz-prog .track { position: absolute; left: 0; right: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--fill-2); }
+.vz-prog .track .buf { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; background: var(--text-4); opacity: .35; }
+.vz-prog .track .fill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; background: var(--primary-6); }
+.vz-prog .knob { position: absolute; top: 11px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); box-shadow: 0 1px 3px rgba(0,0,0,.2); z-index: 2; }
+.vz-prog .ev { position: absolute; left: 0; right: 0; top: 24px; height: 8px; }
+.vz-prog .ev span { position: absolute; top: 1px; height: 5px; border-radius: 2px; opacity: .85; }
+.vz-prog .ev span.blocking { background: var(--danger-6); }
+.vz-prog .ev span.review { background: var(--warning-6); }
+.vz-prog .ev span.info { background: var(--text-3); }
+.vz-prog .ev span.focus { top: 0; height: 7px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px currentColor; }
+.vz-prog .ev span.blocking.focus { color: var(--danger-6); }
+.vz-prog .ev span.review.focus { color: var(--warning-6); }
+.vz-prog .ev span.info.focus { color: var(--text-3); }
+.vz-prog .ev span.pt { width: 3px !important; margin-left: -1px; }
+.vz-prog .tip { position: absolute; top: -26px; transform: translateX(-50%); padding: 2px 6px; border-radius: 2px; background: rgba(29,33,41,.9); color: #fff; font-size: 11px; white-space: nowrap; display: none; pointer-events: none; z-index: 5; }
+.vz-prog:hover .tip { display: block; }
+
+/* 字幕栏（6）：有分段标注才显示 */
+.vz-sub { display: none; align-items: center; gap: 10px; padding: 8px 16px 10px; font-size: 13px; color: var(--text-1); border-top: 1px solid var(--fill-2); background: var(--fill-1); }
+.vz-sub.on { display: flex; }
+.vz-sub .idx { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.vz-sub .lab { font-weight: 500; }
+.vz-sub .rng { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-3); }
+.vz-sub .src { margin-left: auto; font-size: 12px; color: var(--text-3); }
+.vz-sub .tag { height: 20px; }
+
+/* 弹出菜单（7、8：选择 / 更换内容） */
+.vz-pop { position: absolute; z-index: 50; min-width: 220px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 6px 0; font-size: 13px; }
+.vz-pop .grp { padding: 6px 12px 2px; font-size: 12px; color: var(--text-3); }
+.vz-pop .it { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; color: var(--text-1); }
+.vz-pop .it:hover { background: var(--fill-1); }
+.vz-pop .it.dis { color: var(--text-4); cursor: not-allowed; }
+.vz-pop .it .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.vz-pop .it .sub { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.vz-pop .it.cur { color: var(--primary-6); background: var(--primary-1); }
+
+/* 证据芯片（mini：当前聚焦的发现） */
+.vz-evlist { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--white); font-size: 12px; }
+.vz-evlist .k { color: var(--text-3); }
+.vz-evlist .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--white); cursor: pointer; color: var(--text-2); }
+.vz-evlist .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+.vz-evlist .chip.blocking .dot { background: var(--danger-6); } .vz-evlist .chip.review .dot { background: var(--warning-6); } .vz-evlist .chip.info .dot { background: var(--text-3); }
+.vz-evlist .chip.on { border-color: var(--primary-6); color: var(--primary-6); background: var(--primary-1); }
+.vz-evlist .chip code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
+
+/* 键盘提示 */
+.vz-keys { font-size: 11px; color: var(--text-4); white-space: nowrap; }
+.vz-keys kbd { display: inline-block; min-width: 16px; padding: 0 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--white); font: 10px/16px "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-3); text-align: center; }
