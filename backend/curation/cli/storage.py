@@ -51,7 +51,8 @@ class Storage:
     uri: str
     remote: bool
 
-    def list(self) -> dict[str, ObjectInfo]:
+    def list(self, prefix: str = "") -> dict[str, ObjectInfo]:
+        """Every object, keys relative to the dataset; ``prefix`` (``meta/episodes/``) narrows it."""
         raise NotImplementedError
 
     def stat(self, key: str) -> ObjectInfo | None:
@@ -105,12 +106,18 @@ class LocalStorage(Storage):
     def exists(self) -> bool:
         return os.path.isdir(self.root)
 
-    def list(self) -> dict[str, ObjectInfo]:
+    def list(self, prefix: str = "") -> dict[str, ObjectInfo]:
         if not os.path.isdir(self.root):
             raise unreachable(self.role, f"{self.root} does not exist or is not a directory",
                               {"path": self.root, "role": self.role})
         out: dict[str, ObjectInfo] = {}
-        for dirpath, dirnames, filenames in os.walk(self.root):
+        top = self.root
+        if prefix:
+            top = os.path.join(self.root, os.path.dirname(prefix.rstrip("/")) if not prefix.endswith("/")
+                               else prefix.rstrip("/"))
+            if not os.path.isdir(top):
+                return out
+        for dirpath, dirnames, filenames in os.walk(top):
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
             for name in filenames:
                 if name.startswith("."):          # .DS_Store, publish temp files
@@ -121,6 +128,8 @@ class LocalStorage(Storage):
                 except OSError:
                     continue
                 key = os.path.relpath(full, self.root).replace(os.sep, "/")
+                if prefix and not key.startswith(prefix):
+                    continue
                 out[key] = ObjectInfo(key, st.st_size, mtime_ns=st.st_mtime_ns)
         return out
 
@@ -248,8 +257,8 @@ class TosStorage(Storage):
             {"uri": self.uri, "region": self.region, "tos_code": _tos_code(e) or None,
              "role": self.role})
 
-    def _iter(self) -> Iterator[tuple[str, int, str, str | None]]:
-        start = self.prefix + "/" if self.prefix else ""
+    def _iter(self, sub: str = "") -> Iterator[tuple[str, int, str, str | None]]:
+        start = (self.prefix + "/" if self.prefix else "") + sub
         token = None
         while True:
             out = self._c.list_objects_type2(self.bucket, prefix=start,
@@ -262,11 +271,11 @@ class TosStorage(Storage):
                 return
             token = out.next_continuation_token
 
-    def list(self) -> dict[str, ObjectInfo]:
+    def list(self, prefix: str = "") -> dict[str, ObjectInfo]:
         cut = len(self.prefix) + 1 if self.prefix else 0
         out: dict[str, ObjectInfo] = {}
         try:
-            for key, size, etag, crc in self._iter():
+            for key, size, etag, crc in self._iter(prefix):
                 rel = key[cut:]
                 if not rel or rel.endswith("/"):    # directory marker objects
                     continue

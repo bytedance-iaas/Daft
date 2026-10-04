@@ -83,6 +83,21 @@ def skipped_episodes(rev: Revision) -> dict[int, list[str]]:
     return out
 
 
+def dataset_fps(rev: Revision) -> float | None:
+    """The dataset's fps from the task's preflight (C4 2.4.0 ``EpisodeView.fps``); None for mcap,
+    whose checks run at each episode's action rate (the task-scoped episode viz has ``check_clock``)."""
+    doc = None
+    try:
+        doc = cached_json(rev.store.docs, rev.run_dir / "preflight.json")
+    except (FileNotFoundError, ValueError):
+        doc = None
+    if not isinstance(doc, dict):
+        doc = rev.task.preflight if isinstance(rev.task.preflight, dict) else {}
+    ds = doc.get("dataset") if isinstance(doc.get("dataset"), dict) else {}
+    fps = ds.get("fps")
+    return float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) and fps > 0 else None
+
+
 def episode_view(rev: Revision, episode: int) -> dict:
     hit = rev.entries().get(int(episode))
     if hit is None:

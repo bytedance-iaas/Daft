@@ -50,7 +50,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 |---|---|
 | `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`；内核单测在包内 `tests/` |
 | `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）；`python -m daemon` 或 `curator-daemon` |
-| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`export`、`eef`、`optimizations`、`deploy` |
+| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`export`、`eef`、`optimizations`、`deploy`、`viz` |
 | `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装 |
 | `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
@@ -167,7 +167,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 
 | 任务 | 内容 | 时长 |
 |---|---|---|
-| `tests` | Python 3.10 下串行跑 14 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
+| `tests` | Python 3.10 下串行跑 15 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
 | `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` | 几分钟 |
 | `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记新哈希和理由，或在 PR 描述里写 `parity-change:` | 秒级 |
 | `lerobot-loader` | 官方 lerobot（0.3.3 读 v2.1、0.6.1 读 v3.0）加载增量重导出的产物 | 几分钟 |

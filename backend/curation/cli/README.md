@@ -144,6 +144,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `--modules` 只报告所选模块，没选的模块不追问。原因文案用英文，`validation` 里 v1 的报错保持中文原文。
 - 列目录时发现缺文件的条写进 `warnings`：LeRobot v2 缺数据 parquet 或某个机位视频的条照 v1 跳过（见 snapshot）；v3 的不跳过，检查时读不了、记为出错。
 - 编号不是 0 … count-1 时（从大数据集里取出、没有重新编号的子集；mcap 按文件名 `episode_<N>.mcap` 编号），`dataset.episode_indices` 写出全部编号，写法同 `--episodes`（如 `1,3,5`、`2604-2626`），`warnings` 里另有一句提示；编号正常的数据集没有这个字段（F12.8）。
+- LeRobot 数据集另写给数据可视化看的三项（设计 18 §7，C2 只加可选字段）：`dataset.features`（info.json 的特征表，names 的几种写法摊平成一个列表）、`dataset.camera_info`（与 `cameras` 同序：编码、尺寸、fps，
+  浏览器放不了的编码如 mpeg4 标 `needs_transcode`）、`dataset.segment_sources`（认出来的分段标注写法，认不出的写 `supported: false` 与「标注格式不支持」的原因）。只读 `meta/`，每张小表最多读开头 16 KiB。
 - 另有三条完整性警告（D52，设计 14 §1），都不多读数据、不改变模块可用性：数据与视频文件为空或小到放不下该格式的固定字节
   （parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节）；mcap 录制中断（文件尾没有结束标识）；mcap 摘要区的 CRC
   不符（摘要区的字节读摘要时本来就取回了）。要读数据的检查归质检最前面的「数据完整性」模块。

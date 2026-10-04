@@ -42,6 +42,7 @@ def test_every_episode_of_the_revision(world):
         ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
          "video_action_sync", "task_success", "dedup", "skill_profile"])
     assert ep0["reasons"] == [] and ep0["review"] == [] and ep0["evidence"] == []
+    assert (ep0["fps"], ep0["dataset_id"]) == (15.0, None)   # C4 2.4.0: the preflight's fps; no registration
     ep6 = _view(world, 6)
     assert ep6["modules"]["task_success"]["status"] == "error"
     assert ep6["reasons"][0]["kind"] == "execution_error"

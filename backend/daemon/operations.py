@@ -82,24 +82,24 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "repreflightDataset": ("POST", "/api/v1/datasets/{id}/repreflight"),
     # the route existed for mcap cameras before C4 declared it (2.4.0, design doc 18)
     "getTaskCameraVideo": ("GET", "/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4"),
+    # F13.2 the data visualizer: the presentation model, LeRobot reader (daemon/viz, routes/viz.py)
+    "getDatasetViz": ("GET", "/api/v1/datasets/{id}/viz"),
+    "listDatasetVizEpisodes": ("GET", "/api/v1/datasets/{id}/viz/episodes"),
+    "getDatasetVizMeta": ("GET", "/api/v1/datasets/{id}/viz/meta"),
+    "getDatasetEpisodeViz": ("GET", "/api/v1/datasets/{id}/episodes/{index}/viz"),
+    "getDatasetEpisodeSeries": ("GET", "/api/v1/datasets/{id}/episodes/{index}/series"),
+    "getDatasetCameraVideo": ("GET", "/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4"),
+    "putDatasetAnnotations": ("PUT", "/api/v1/datasets/{id}/annotations"),
+    "getTaskViz": ("GET", "/api/v1/tasks/{id}/viz"),
+    "getTaskEpisodeViz": ("GET", "/api/v1/tasks/{id}/episodes/{index}/viz"),
+    "getTaskEpisodeSeries": ("GET", "/api/v1/tasks/{id}/episodes/{index}/series"),
 }
 
-_LEROBOT = "the LeRobot reader and the presentation model (design doc 18 §4)"
 _MCAP = "the mcap reader, mappings and templates (design doc 18 §6)"
 #: operationId -> (owner, what it still needs): the data visualizer lands in F13.2 / F13.3
 PENDING: dict[str, tuple[str, str]] = {
-    "getDatasetViz": ("F13.2", _LEROBOT),
-    "listDatasetVizEpisodes": ("F13.2", _LEROBOT),
-    "getDatasetVizMeta": ("F13.2", _LEROBOT),
-    "getDatasetEpisodeViz": ("F13.2", _LEROBOT),
-    "getDatasetEpisodeSeries": ("F13.2", _LEROBOT),
-    "getDatasetCameraVideo": ("F13.2", "local files and transcoding (design doc 18 §4.2)"),
     "getDatasetCameraFrames": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
     "getDatasetCameraFrameIndex": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
-    "putDatasetAnnotations": ("F13.2", "external annotation files (design doc 18 §4.5)"),
-    "getTaskViz": ("F13.2", _LEROBOT),
-    "getTaskEpisodeViz": ("F13.2", _LEROBOT),
-    "getTaskEpisodeSeries": ("F13.2", _LEROBOT),
     "getTaskCameraFrames": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
     "getTaskCameraFrameIndex": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
     "getDatasetMapping": ("F13.3", _MCAP),

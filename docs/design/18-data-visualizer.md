@@ -469,6 +469,19 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
 - 分段标注没有标准，识别规则会漏；识别不出的只警告「标注格式不支持」（D64），漏掉的写法在 F13.8 的 gap 清单里补规则，或走外部标注文件。
 - 与 ReRun 并存期间两个入口的解释成本（已用「可视化（旧）」区分）。
 
+### 9.1 F13.2 落地时的细化（2026-10-04）
+
+对着样本集 72 个 LeRobot 子集（anchor / anchor-nc，h200-14）跑读取器之后定下的规则，代码在 `backend/curation/viz/`：
+
+- **曲线分组**：同长度的状态 / 动作按位置配对（Galaxea 两边的名字是两个 topic 路径，拼写不同但一一对应），长度不同且名字对不上（RH20T 15 / 8 维、没有名字；HIW 29 / 23 维）就分成「状态」「动作」两组，
+  不硬配；名字前缀分家时一家仍超过 8 维的再按下一个词分一次（最多 3 家、每家至少 2 维，`kLeft / kRight / kWaist`），还超的按 7 维一组；组名取这一家名字的公共前缀。
+- **分段标注**：`*_index` 列只有名字里带 task / skill / phase / stage / segment / primitive / label 才算标注（`source.state_step_index` 不算），`annotation.*` 下的列只按「家」报一次
+  「标注格式不支持」；布尔段只认 `*_segment` 与 `annotation.*` 下的 `is_*`，RLDS 的 `is_first / is_last / is_terminal` 不算；`next.success`、`is_episode_successful`、`is_success` 是条目标签「成败」；
+  布尔段只叠在进度条上，不当字幕轨；`language_persistent` 每帧带着整条 episode 带时间戳的子任务表（HIW），按条目自己的时刻切段。
+- **一条 episode 的行**：v3 的 episode 表行窗只用来挑行组，行以数据自己的 `episode_index` 为准（`svla_so101_index_injected` 故意把行窗偏了 6 行），条数对不上时 episode 记录带警告；
+  `timestamp` 列有非数值或倒退时不当时钟，退回 `frame_index / fps`，同样带警告。
+- 实测（本地盘，冷缓存）：数据集模型 ≤ 0.13 s，单条 episode ≤ 0.2 s；460 条 episode、1351 次曲线请求、460 次与 parquet 的逐点比对、287 个 v3 视频窗口（与 `LeRobotVideos.of()`）全部一致。
+
 ## 10. 第二期（另立阶段，先记在这里）
 
 需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。

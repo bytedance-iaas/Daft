@@ -114,8 +114,16 @@ async def create_dataset(request: Request):
         fields = taskspec.resolve_input(rt.repo, rt.settings, body["input"], who.owner_id)
         src = Source(fields["input_source"], fields["input_uri"], fields.get("input_region"),
                      fields.get("input_cred_id"))
+        annotations = body.get("annotations_upload")
+        if annotations is not None:                 # design doc 18 §4.5: checked before registering
+            up = orchestrator_of(rt).uploads.get(who.owner_id, annotations)
+            if up.get("kind") != "viz_annotations":
+                raise ApiError("validation_failed", "这个上传件不是外部标注文件（kind 应为 viz_annotations）",
+                               details={"errors": [{"field": "annotations_upload", "problem": "wrong kind"}]})
         ds, created, _ = orchestrator_of(rt).datasets.register(
             src, who.owner_id, name=body.get("name"), note=body.get("note"))
+        if created and annotations is not None:
+            ds = rt.repo.update_dataset(ds.id, owner=who.owner_id, annotations_upload=annotations)
         if created:
             rt.repo.append_event(actor=who.display_name, action="dataset.create", resource=ds.id,
                                  at=rt.clock(), owner=who.owner_id,

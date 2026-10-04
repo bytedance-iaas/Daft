@@ -82,6 +82,10 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE -rs tests/eef
+      - name: Data visualizer (F13; readers, presentation model, curves, transcoding)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/viz
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:

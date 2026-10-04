@@ -17,6 +17,10 @@
 | ``CURATOR_HOST`` / ``CURATOR_PORT`` | ``0.0.0.0`` / 8080 | listen address |
 | ``CURATOR_LOG_LEVEL`` / ``CURATOR_LOG_FORMAT`` | ``INFO`` / ``json`` | logging (``json`` or ``text``) |
 | ``CURATOR_TZ_OFFSET`` | ``+08:00`` | the site's UTC offset; where the overview's days begin and end |
+| ``CURATOR_VIZ_TRANSCODE`` | ``1`` | the visualizer may transcode cameras a browser cannot play (D60); ``0`` turns it off |
+| ``CURATOR_VIZ_CACHE_DIR`` | ``<scratch>/viz-cache`` | the visualizer's disk cache (transcodes, frame packs, fetched sources); disposable |
+| ``CURATOR_VIZ_CACHE_GB`` | 20 | its size; the least recently used products go first |
+| ``CURATOR_VIZ_TRANSCODE_WORKERS`` | 2 | transcodes at once (outside the checks' CPU pool) |
 """
 from __future__ import annotations
 
@@ -109,6 +113,10 @@ class Settings:
     log_level: str = "INFO"
     log_format: str = "json"
     tz_offset_minutes: int = 8 * 60
+    viz_transcode: bool = True
+    viz_cache_dir: pathlib.Path | None = None
+    viz_cache_gb: float = 20.0
+    viz_transcode_workers: int = 2
 
     def __post_init__(self) -> None:
         # frozen dataclass: fill derived paths through object.__setattr__
@@ -121,6 +129,10 @@ class Settings:
             self.scratch_dir or pathlib.Path(tempfile.gettempdir()) / "curator-scratch"))
         object.__setattr__(self, "source_cache_dir",
                            pathlib.Path(self.source_cache_dir or data / "source-cache"))
+        object.__setattr__(self, "viz_cache_dir", pathlib.Path(
+            self.viz_cache_dir or pathlib.Path(self.scratch_dir) / "viz-cache"))
+        if self.viz_cache_gb <= 0 or int(self.viz_transcode_workers) < 1:
+            raise ConfigError("CURATOR_VIZ_CACHE_GB 要大于 0，CURATOR_VIZ_TRANSCODE_WORKERS 至少为 1")
         object.__setattr__(self, "public_base_url", (self.public_base_url or "").strip().rstrip("/"))
         if self.public_base_url and not self.public_base_url.startswith(("http://", "https://")):
             raise ConfigError(f"CURATOR_PUBLIC_BASE_URL 必须以 http:// 或 https:// 开头："
@@ -152,8 +164,13 @@ class Settings:
         try:
             heartbeat = float(get("CURATOR_SSE_HEARTBEAT_S", "15"))
             port = int(get("CURATOR_PORT", "8080"))
+            viz_cache_gb = float(get("CURATOR_VIZ_CACHE_GB", "20"))
+            viz_workers = int(get("CURATOR_VIZ_TRANSCODE_WORKERS", "2"))
         except ValueError as err:
             raise ConfigError(f"数值型配置写法不对：{err}") from None
+        transcode = get("CURATOR_VIZ_TRANSCODE", "1").lower()
+        if transcode not in ("1", "0", "true", "false", "yes", "no", "on", "off"):
+            raise ConfigError("CURATOR_VIZ_TRANSCODE 只能是 1 或 0")
         log_format = get("CURATOR_LOG_FORMAT", "json").lower()
         if log_format not in ("json", "text"):
             raise ConfigError("CURATOR_LOG_FORMAT 只能是 json 或 text")
@@ -175,4 +192,8 @@ class Settings:
             log_level=get("CURATOR_LOG_LEVEL", "INFO").upper(),
             log_format=log_format,
             tz_offset_minutes=parse_tz_offset(get("CURATOR_TZ_OFFSET") or "+08:00"),
+            viz_transcode=transcode in ("1", "true", "yes", "on"),
+            viz_cache_dir=path("CURATOR_VIZ_CACHE_DIR"),
+            viz_cache_gb=viz_cache_gb,
+            viz_transcode_workers=viz_workers,
         )

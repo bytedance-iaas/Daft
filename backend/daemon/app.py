@@ -255,8 +255,10 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     from .routes import adjudication, results         # W5b
     from .routes import datasets_exec, runs           # W5a
     from .routes import uploads                       # F5.5
+    from .routes import viz                           # F13 the data visualizer (design doc 18)
     app.state.api_routers = [m.router for m in (access_keys, vlm, media, api, datasets, overview,
-                                                results, adjudication, runs, datasets_exec, uploads)]
+                                                results, adjudication, runs, datasets_exec, uploads,
+                                                viz)]
     for router in app.state.api_routers:                # new routers go here, before the fallback
         app.include_router(router, prefix=f"{base}/api/v1")
     app.include_router(api.fallback, prefix=f"{base}/api/v1")       # unknown paths: 404 / 405

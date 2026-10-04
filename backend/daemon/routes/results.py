@@ -17,6 +17,7 @@ from fastapi import APIRouter, Query, Request
 from starlette.responses import Response
 
 from ..errors import ApiError
+from ..repo import protocol as P
 from ..results import adjudication as A
 from ..results import clips as CL
 from ..results import episode as E
@@ -98,8 +99,18 @@ def _index(index: int) -> None:
 @router.get("/tasks/{task_id}/episodes/{index}")
 def get_episode(request: Request, task_id: str, index: int, rev: int | None = Query(None, ge=1)):
     _index(index)
-    _, _, revision = _task_and_revision(request, task_id, rev)
-    return E.episode_view(revision, index)
+    rt, task, revision = _task_and_revision(request, task_id, rev)
+    view = E.episode_view(revision, index)
+    # C4 2.4.0: the mini player reads frames as seconds and links to the visualize page
+    view["fps"] = E.dataset_fps(revision)
+    dataset_id = None
+    if task.dataset_id:
+        try:
+            dataset_id = rt.repo.get_dataset(task.dataset_id, owner=principal(request).owner_id).id
+        except P.NotFound:
+            dataset_id = None
+    view["dataset_id"] = dataset_id
+    return view
 
 
 @router.get("/tasks/{task_id}/pipeline/episodes")
@@ -121,10 +132,22 @@ def get_pipeline_episode(request: Request, task_id: str, index: int):
 
 
 @router.get("/tasks/{task_id}/episodes/{index}/cameras/{camera}.mp4")
-def get_episode_camera(request: Request, task_id: str, index: int, camera: str):
-    """One camera of an mcap episode as mp4, muxed from the source in memory; ``Range``
-    is honoured so the player can seek. 404 for anything but an mcap task's camera."""
+def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
+                       transcode: bool = False):
+    """One camera of the task's input served by the Daemon (C4 2.4.0 ``getTaskCameraVideo``):
+    LeRobot cameras of a local dataset or that need (or are asked for) a transcode go to the
+    visualizer; an mcap episode's camera is muxed from the source in memory as before (the
+    report's 各机位视频, until it retires). ``Range`` is honoured so the player can seek."""
     _index(index)
+    rt = runtime(request)
+    owner = principal(request).owner_id
+    task = rt.repo.get_task(task_id, owner=owner)
+    from ..viz.service import viz_of
+
+    viz = viz_of(rt)
+    src = viz.task_source(task.id, owner)
+    if viz.reader_of(src) == "lerobot":
+        return viz.camera_video(src, index, camera, transcode, request.headers)
     rt, task, revision = _task_and_revision(request, task_id, None)
     store = store_of(rt)
     if not CL.is_mcap(revision.run_dir, store.docs):

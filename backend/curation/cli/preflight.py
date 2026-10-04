@@ -179,6 +179,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     ctx.check_stop("after reading the metadata")
 
     _fill_supported(doc, specs, meta, listing, args, storage.uri)
+    _viz_descriptor(doc, info, listing, storage)
     return _done(ctx, doc)
 
 
@@ -243,6 +244,37 @@ def _embodiment(info: dict, override: str | None):
         return "ok", wanted, registry.get(wanted).embodiment_id
     except UnknownEmbodimentError:
         return "unsupported", wanted, registry.ids()
+
+
+def _viz_descriptor(doc: dict, info: dict, listing, storage) -> None:
+    """What the data visualizer reads from a LeRobot dataset (design doc 18 §7; C2 optional fields):
+    every feature, each camera's codec / size / fps and whether a browser cannot play it, and the
+    segment annotations it recognises (or warns it cannot read). Metadata only: a few hundred bytes
+    of each small ``meta/*.jsonl`` table at most."""
+    from ..viz import annotations as viz_ann
+    from ..viz import lerobot_info as viz_info
+
+    ds = doc.get("dataset")
+    if not isinstance(ds, dict):
+        return
+    ds["features"] = viz_info.features_of(info)
+    ds["camera_info"] = viz_info.camera_info_of(info)
+    meta_files = sorted(k for k in listing if k.startswith("meta/"))
+    peeks: dict[str, dict | None] = {}
+
+    def peek(rel: str) -> dict | None:
+        if rel not in peeks:
+            try:
+                rows = viz_ann.parse_jsonl(storage.read_range(rel, 0, 16384))
+                peeks[rel] = rows[0] if rows else None
+            except Exception:  # noqa: BLE001 - an unreadable table: the name decides
+                peeks[rel] = None
+        return peeks[rel]
+
+    first_episode = peek("meta/episodes.jsonl") if "meta/episodes.jsonl" in listing else None
+    fields = set(first_episode) if isinstance(first_episode, dict) else set()
+    ds["segment_sources"] = [s.as_preflight() for s in
+                             viz_ann.detect_sources(info, meta_files, peek=peek, episode_fields=fields)]
 
 
 def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,

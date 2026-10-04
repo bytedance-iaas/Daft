@@ -35,7 +35,8 @@ from .errors import ApiError
 from .util import ID_ATTEMPTS, id_regex, new_id
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
-KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template", "eef_record_mapping")
+KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template", "eef_record_mapping",
+         "viz_annotations")
 _ID_RE = re.compile(rf"^{id_regex('upl', r'upl_[0-9a-z]{10,40}')}$")
 _MAX_ERRORS = 50
 
@@ -155,8 +156,34 @@ def validate_record_mapping(data: bytes) -> dict:
     return {"valid": True, "summary": summary, "warnings": warnings}
 
 
+def validate_annotations(data: bytes, name: str = "") -> dict:
+    """The ``validation`` of an external annotation file (design doc 18 §4.5): a zip of per-episode
+    Argus-style JSON named by episode index, a JSON list / mapping of them, or one JSON for the
+    episode its file name names; or raises validation_failed (400) with every bad file located."""
+    from curation.viz.annotations import AnnotationFileError, argus_annotations, read_label_file
+
+    try:
+        docs = read_label_file(data, name)
+    except AnnotationFileError as err:
+        raise _invalid(f"外部标注文件不合格：{err}", [{"field": e.get("field"), "problem": e["problem"],
+                                                   "code": e.get("code", "annotation_invalid"), "severity": "error",
+                                                   **({"episode_index": e["episode_index"]} if "episode_index" in e else {})}
+                                                  for e in err.errors]) from None
+    segments = events = 0
+    for doc in docs.values():
+        ann = argus_annotations(doc)
+        segments += sum(len(t["segments"]) for t in ann.tracks)
+        events += len(ann.events)
+    episodes = sorted(docs)
+    summary = {"format": "argus", "episodes": len(episodes), "first": episodes[0], "last": episodes[-1],
+               "segments": segments, "events": events, "zip": data[:2] == b"PK"}
+    warnings = [] if segments else ["no timeline / event_labels segment in any episode"]
+    return {"valid": True, "summary": summary, "warnings": warnings}
+
+
 VALIDATORS = {"eef_trajectory": validate_trajectory, "eef_observation_seeds": validate_seeds,
-              "eef_gripper_template": validate_template, "eef_record_mapping": validate_record_mapping}
+              "eef_gripper_template": validate_template, "eef_record_mapping": validate_record_mapping,
+              "viz_annotations": validate_annotations}
 
 
 class UploadStore:
@@ -190,7 +217,7 @@ class UploadStore:
         if len(data) > MAX_UPLOAD_BYTES:
             raise ApiError("validation_failed", f"文件太大（上限 {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB）")
         clean = pathlib.PurePath(name).name.strip() or "upload.json"
-        validation = VALIDATORS[kind](data)
+        validation = validate_annotations(data, clean) if kind == "viz_annotations" else VALIDATORS[kind](data)
         upload_id, d = self._claim(owner)
         (d / clean).write_bytes(data)
         meta = {"upload_id": upload_id, "handle": registry.UPLOAD_PREFIX + upload_id, "kind": kind, "name": clean,

@@ -27,7 +27,8 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
-| `operations.py` | C4 全部操作的去向；W5a 之后全部已实现，`PENDING` 为空 |
+| `operations.py` | C4 全部操作的去向；W5a 之后全部已实现，阶段 13 的 mcap 部分（映射、模版、帧包）在 `PENDING`，F13.3 落地 |
+| `viz/`、`routes/viz.py` | 阶段 13 数据可视化（设计 18）：数据源、LeRobot 读取器、展示模型、曲线、转码与磁盘缓存，说明、配置与手动验证见 [`viz/README.md`](viz/README.md) |
 | `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 12 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
 
 ## 已实现的接口
@@ -49,7 +50,10 @@ W5b 的接口（读已提交的结果版本，见 [`results/README.md`](results/
 
 W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.md)）：建任务、开始 / 暂停 / 恢复 / 停止 / 继续运行、重试、执行裁决、重新导出、清理交付产物、计划、预检与重新预检、登记数据集与重新核对、浏览数据集与 episode 列表，共 16 个操作。
 
-至此 C4 的全部操作都已实现（`operations.py` 的 `PENDING` 为空），测试保证实现的操作正好是 `openapi.yaml` 的全部操作。
+数据可视化的接口（C4 2.4.0，见 [`viz/README.md`](viz/README.md)）：`GET /datasets/{id}/viz`、`GET /datasets/{id}/viz/episodes|meta`、
+`GET /datasets/{id}/episodes/{index}/viz|series`、`GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`PUT /datasets/{id}/annotations`、
+`GET /tasks/{id}/viz`、`GET /tasks/{id}/episodes/{index}/viz|series`；任务级的 `.mp4` 交给可视化服务处理 LeRobot 相机。mcap 的映射、模版与帧包（10 个操作）
+在 `operations.py` 的 `PENDING` 里（F13.3），测试保证实现的与待实现的合起来正好是 `openapi.yaml` 的全部操作。
 路径存在、方法不对时返回 405 `method_not_allowed`，带 `Allow`（比如 `PUT /tasks/{id}`）；还没实现的操作不算，仍是 404。
 
 ## 配置
@@ -76,6 +80,7 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 | `TOS_ENDPOINT` | 空 | W8：部署所在地域的 TOS 端点（v1 同名变量）。是内网端点（`*.ivolces.com`）时同地域的调用走内网，也原样交给 CLI |
 | `CURATOR_REASONING_EFFORT_TABLE` | 空 | W8：覆盖思考强度映射表，JSON 文件路径或 JSON 本身，写法见 [`secrets/README.md`](secrets/README.md) |
 | `CURATOR_MAX_RUNNING_TASKS`、`CURATOR_CPU_CORES` 等编排设置 | 3、容器的 CPU 配额 | 同时运行的任务数；核数减 2 是全部任务共用的 CPU 名额池（D54）。全表见 [`orchestr/README.md`](orchestr/README.md) 的「配置」 |
+| `CURATOR_VIZ_TRANSCODE`、`CURATOR_VIZ_CACHE_DIR`、`CURATOR_VIZ_CACHE_GB`、`CURATOR_VIZ_TRANSCODE_WORKERS` | `1`、临时卷下 `viz-cache`、20、2 | 数据可视化的平台转码开关与磁盘缓存（D60），见 [`viz/README.md`](viz/README.md) |
 
 htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴权，日志里会有一条警告，只适合本机调试。
 

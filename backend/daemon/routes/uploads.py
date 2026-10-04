@@ -24,11 +24,15 @@ def _store(rt):
     return orchestrator_of(rt).uploads
 
 
-async def _read_file(request: Request) -> bytes:
+async def _read_file(request: Request, *, zip_ok: bool = False) -> bytes:
     check_write_origin(request)
-    if not _is_json(request.headers.get("content-type", "")):
+    ctype = request.headers.get("content-type", "")
+    is_zip = ctype.split(";", 1)[0].strip().lower() == "application/zip"
+    if not (_is_json(ctype) or (zip_ok and is_zip)):
+        # application/zip is not a CORS-safelisted type either: a cross-site form cannot send it
         raise ApiError("validation_failed",
-                       "上传接口也只接受 JSON：请带上 Content-Type: application/json（文件内容就是请求体）")
+                       "上传接口只接受 JSON（外部标注文件还接受 zip）：请带上 Content-Type: application/json"
+                       + ("" if not zip_ok else " 或 application/zip") + "（文件内容就是请求体）")
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
         raise ApiError("validation_failed", f"文件太大（上限 {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB）")
@@ -45,7 +49,7 @@ async def _read_file(request: Request) -> bytes:
 @router.post("/uploads")
 async def create_upload(request: Request, kind: str = Query(...), name: str = Query(..., min_length=1,
                                                                                     max_length=200)):
-    data = await _read_file(request)
+    data = await _read_file(request, zip_ok=kind == "viz_annotations")
     rt, who = runtime(request), principal(request)
 
     def handler() -> Response:
