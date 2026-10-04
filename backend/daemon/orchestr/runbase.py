@@ -447,9 +447,21 @@ class Run:
         return {int(e["episode_index"]) for e in doc.get("skipped_episodes") or []
                 if isinstance(e, dict) and isinstance(e.get("episode_index"), int)}
 
+    def mapping_args(self) -> list[str]:
+        """The check reader's mcap mapping frozen into run.json at start (D62), for every command
+        that reads the source; nothing when the dataset had no confirmed mapping."""
+        doc = read_json(self.wd.run_json, None)
+        viz = doc.get("viz_mapping") if isinstance(doc, dict) else None
+        chk = viz.get("check_mapping") if isinstance(viz, dict) else None
+        if not isinstance(chk, dict):
+            return []
+        import json
+
+        return ["--set", "ingest.mcap_mapping=" + json.dumps(chk, ensure_ascii=False)]
+
     def source_args(self, *, manifest: bool = True, semantics: bool = True) -> list[str]:
         t = self.task
-        out = ["--input", t.input_uri, "--source", t.input_source]
+        out = ["--input", t.input_uri, "--source", t.input_source, *self.mapping_args()]
         if manifest:
             out += ["--source-manifest", str(self.wd.manifest)]
         if semantics:

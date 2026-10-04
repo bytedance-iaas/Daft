@@ -120,10 +120,19 @@ async def create_dataset(request: Request):
             if up.get("kind") != "viz_annotations":
                 raise ApiError("validation_failed", "这个上传件不是外部标注文件（kind 应为 viz_annotations）",
                                details={"errors": [{"field": "annotations_upload", "problem": "wrong kind"}]})
+        mapping = body.get("viz_mapping")
+        if mapping is not None:                     # design doc 18 §6.4: confirmed in the add drawer
+            from ..viz import service as VS
+
+            viz = VS.viz_of(rt)
+            VS.validate_for(viz, VS._input_source(viz, body["input"], who.owner_id), mapping)
         ds, created, _ = orchestrator_of(rt).datasets.register(
-            src, who.owner_id, name=body.get("name"), note=body.get("note"))
+            src, who.owner_id, name=body.get("name"), note=body.get("note"), mapping=mapping)
         if created and annotations is not None:
             ds = rt.repo.update_dataset(ds.id, owner=who.owner_id, annotations_upload=annotations)
+        # validate_for read the mapping's topics from episode_N.mcap files, so the preflight says mcap
+        if created and mapping is not None and (ds.preflight.get("format") or {}).get("kind") == "mcap":
+            ds = rt.repo.set_dataset_viz_mapping(ds.id, mapping, owner=who.owner_id)
         if created:
             rt.repo.append_event(actor=who.display_name, action="dataset.create", resource=ds.id,
                                  at=rt.clock(), owner=who.owner_id,

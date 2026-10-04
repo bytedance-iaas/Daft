@@ -146,7 +146,10 @@ def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
 
     viz = viz_of(rt)
     src = viz.task_source(task.id, owner)
-    if viz.reader_of(src) == "lerobot":
+    reader = viz.reader_of(src)
+    if reader == "lerobot" or (reader == "mcap" and (src.mapping or transcode)):
+        # tasks with a frozen mcap mapping (C4 2.4.0) get the visualizer's remux / frame packs;
+        # older tasks keep the in-memory muxing of the retiring 各机位视频
         return viz.camera_video(src, index, camera, transcode, request.headers)
     rt, task, revision = _task_and_revision(request, task_id, None)
     store = store_of(rt)

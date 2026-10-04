@@ -27,8 +27,8 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
-| `operations.py` | C4 全部操作的去向；W5a 之后全部已实现，阶段 13 的 mcap 部分（映射、模版、帧包）在 `PENDING`，F13.3 落地 |
-| `viz/`、`routes/viz.py` | 阶段 13 数据可视化（设计 18）：数据源、LeRobot 读取器、展示模型、曲线、转码与磁盘缓存，说明、配置与手动验证见 [`viz/README.md`](viz/README.md) |
+| `operations.py` | C4 全部操作的去向；F13.3 之后全部已实现，`PENDING` 为空 |
+| `viz/`、`routes/viz.py` | 阶段 13 数据可视化（设计 18）：数据源、LeRobot 与 mcap 读取器、展示模型、曲线、mcap 映射与模版库、帧包与重封装、转码与磁盘缓存，说明、配置与手动验证见 [`viz/README.md`](viz/README.md) |
 | `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 12 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
 
 ## 已实现的接口
@@ -52,8 +52,9 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 
 数据可视化的接口（C4 2.4.0，见 [`viz/README.md`](viz/README.md)）：`GET /datasets/{id}/viz`、`GET /datasets/{id}/viz/episodes|meta`、
 `GET /datasets/{id}/episodes/{index}/viz|series`、`GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`PUT /datasets/{id}/annotations`、
-`GET /tasks/{id}/viz`、`GET /tasks/{id}/episodes/{index}/viz|series`；任务级的 `.mp4` 交给可视化服务处理 LeRobot 相机。mcap 的映射、模版与帧包（10 个操作）
-在 `operations.py` 的 `PENDING` 里（F13.3），测试保证实现的与待实现的合起来正好是 `openapi.yaml` 的全部操作。
+`GET /tasks/{id}/viz`、`GET /tasks/{id}/episodes/{index}/viz|series`；mcap 的 `POST /viz/mcap-probe`、`GET/PUT /datasets/{id}/mapping`、
+`GET/POST /viz/templates`、`DELETE /viz/templates/{id}`、两级的帧包 `cameras/{camera}.frames|.json`（F13.3）；任务级的 `.mp4` 交给可视化服务处理 LeRobot 相机与
+确认过映射的 mcap 相机。测试保证 `operations.py` 里实现的与待实现的（现为空）合起来正好是 `openapi.yaml` 的全部操作。
 路径存在、方法不对时返回 405 `method_not_allowed`，带 `Allow`（比如 `PUT /tasks/{id}`）；还没实现的操作不算，仍是 404。
 
 ## 配置

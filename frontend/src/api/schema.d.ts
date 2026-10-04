@@ -572,10 +572,16 @@ export interface paths {
         get: operations["getDatasetMapping"];
         /**
          * Confirm a new version of the mapping (validated against C7 and the dataset's topics)
-         * @description Only for mcap datasets. Tasks started before keep the version frozen into their run.json
-         *     (D62); tasks started after read this one. A mapping that names topics the dataset does not
-         *     have, pairs series that are not of opposite roles or names a frame reference that is not
-         *     a camera or series fails with `validation_failed` and `details.errors` per item.
+         * @description Only for mcap datasets - including one the checks could not read with the site's default
+         *     topics (its `format` is `unsupported`): its registration's preflight is then taken again
+         *     with the new mapping, so it may become `mcap`. Tasks started before keep the version frozen
+         *     into their run.json (D62); tasks started after read this one. A mapping that names topics
+         *     the dataset does not have, pairs series that are not of opposite roles or names a frame
+         *     reference that is not a camera or series fails with `validation_failed` and
+         *     `details.errors` per item. `warnings` say what the check reader will not read in it
+         *     (`checks_gap`: protobuf repeated fields picked by a path, ROS 2 nested messages, H.265
+         *     cameras; design doc 18 §6.2) and when the checks still cannot read the dataset
+         *     (`checks_unreadable`).
          */
         put: operations["putDatasetMapping"];
         post?: never;

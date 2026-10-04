@@ -482,6 +482,31 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
   `timestamp` 列有非数值或倒退时不当时钟，退回 `frame_index / fps`，同样带警告。
 - 实测（本地盘，冷缓存）：数据集模型 ≤ 0.13 s，单条 episode ≤ 0.2 s；460 条 episode、1351 次曲线请求、460 次与 parquet 的逐点比对、287 个 v3 视频窗口（与 `LeRobotVideos.of()`）全部一致。
 
+### 9.2 F13.3 落地时的细化（2026-10-04）
+
+对着样本集 17 个 mcap 子集（anchor/mcap：ABC-130k 1 个、GenRobot 16 个，h200-14）跑读取器之后定下的规则，代码在 `backend/curation/viz/` 的
+`mcap_probe.py`、`mcap_mapping.py`、`mcap_episode.py`、`remux.py` 与 `backend/daemon/viz/mcap.py`：
+
+- **探测**：先按时间顺序走一遍文件开头（1 秒），开头就有的 topic 在这一遍里定下来；开头没有的 topic 再经 chunk 索引单独读它起始的那个 chunk。实测一次探测读 1.0–3.1 MB
+  （个别 8 MB），逐个 topic 读要 12–18 MB（每个 topic 都把第一个 chunk 重读一遍）。视频 topic 的画面尺寸用增量解码器读，最多看 300 条：GenRobot 的录制从 GOP 中间开始，
+  第一个参数集在约 1 秒之后。第一个文件探测不了（没有 summary、读坏）就顺延到后面的文件（最多 5 个），数据集带警告 `file_unreadable`。
+- **起草时的匹配**：内置 UMI、读取器默认约定（`/action` …）与团队模版（自身 topic 至少 80% 在文件里）一起排序，先比覆盖率、再比命中的 topic 数，平手时团队模版优先（团队调过再另存的 UMI 映射会被自动用上）；都不中才按消息编码用 `builtin:foxglove` / `builtin:ros2` 起草。通用规则里「高频不进智能布局」只管 IMU 与名字看不出状态 / 动作的 topic：ABC-130k 的手臂 200–270 Hz，仍是成对的状态 / 动作曲线。
+- **GenRobot 的相机是 H.264**（1600×1300，`foxglove.CompressedImage` 的 `format: h264`），不是 §3.2 以为的 JPEG；样本集的 mcap 里没有 JPEG 相机，帧包只由单测覆盖。
+- **一条 episode 一遍扫描**：按文件顺序读（视频样本要按写入顺序进解码器；没有 summary 的文件流式读到断点；TOS 上是一次向前扫），相机字节边读边落盘（帧包，或 Annex-B 临时文件），
+  曲线进紧凑数组，内存与 episode 长短无关（ABC-130k 一条四路共 470 MB）；帧与曲线读完再按时间排序。
+- **截断的文件**（footer 坏了）：从头线性读到断点，保留断点之前的部分，episode 带警告 `truncated`。样本集 FILE-3 的五种结构故障（无 summary、CRC 置零、截断、chunk CRC、
+  summary CRC）都能打开，截断那条显示前 18.9 秒。
+- **转封装**：纯流拷贝，不开编码器；第一个关键帧之前的包略过（解不出来，以非同步样本开头的 mp4 浏览器也可能拒放），相机的 `offset_s` 随之后移，episode 带警告 `leading_frames`。
+  样本集 28 路相机略过了开头共 753 帧（每路约 1 秒）。有 B 帧的码流照样转封装、警告 `b_frames`；样本集里没有（ABC-130k 的 H.265 只有 I / P 帧）。
+- **质检读不了的 mcap**：预检只要找到 mcap 文件，可视化就当它是 mcap（「映射待确认」），不看质检按缺省 topic 读不读得了（ABC-130k 的预检是 `unsupported`）；确认映射后按新映射
+  重新预检，登记时带的映射预检就按它读。质检读取器（A 类文件，本期不改，§6.2）读不了的部分在探测与映射的应答里警告 `checks_gap`：按路径挑出的 protobuf repeated 字段、
+  ROS 2 嵌套消息（用读取器自己的取数函数在首条消息上试出来），以及 H.265 相机；ABC-130k 因此只能看、不能检。
+- **D62 端到端**：映射确认后，预检与任务里每条读源的命令都带 `--set ingest.mcap_mapping=…`，任务开始时冻结进 `run.json`；端到端用例守着「按读取器约定起草的映射，判决不变」
+  （mini mcap 8 条，5 过 3 拒）与「之后改映射不影响已开始的任务」；UMI 模版派生的质检映射与 `_umi_mapping` 相同、读出的行逐值相同（单测）。
+- 实测（h200-14 本地盘，冷缓存）：98 条 episode 全部能开，扫描共 120 s、读 7.9 GB；200 路转封装的相机共 40.7 万帧全部可解码（与样本数相符，个别差末尾一帧）；384 次曲线请求与
+  直接解码逐点一致；42 条与质检读取器对账（派生映射读出的行与内置识别相同、`check_clock` 等于质检的锚与速率、动作曲线等于质检读出的 action）。内置浏览器（Chromium）
+  播放 Daemon 转封装的 GenRobot H.264 与 ABC-130k H.265，跳到任意时刻画面正常。
+
 ## 10. 第二期（另立阶段，先记在这里）
 
 需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。

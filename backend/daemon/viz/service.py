@@ -73,8 +73,10 @@ class VizService:
         self.transcoder = Transcoder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
         self.urls = EpisodeUrls(self)
         from .lerobot import LeRobotReader
+        from .mcap import McapReader
 
         self.lerobot = LeRobotReader(self)
+        self.mcap = McapReader(self)
 
     # ------------------------------------------------------------ sources
     def dataset_source(self, dataset_id: str, owner: str) -> VizSource:
@@ -96,7 +98,7 @@ class VizService:
         supported = bool((fmt or {}).get("supported", True))
         if kind == "lerobot" and supported and version in ("v2", "v3"):
             return "lerobot"
-        if kind == "mcap" and supported:
+        if kind == "mcap":                  # with or without the checks' defaults (status.is_mcap)
             return "mcap"
         return None
 
@@ -105,9 +107,7 @@ class VizService:
         if reader == "lerobot":
             return self.lerobot
         if reader == "mcap":
-            mcap = getattr(self, "mcap", None)
-            if mcap is None:
-                raise ApiError("not_found", "mcap 数据集的可视化在 F13.3 落地", details={"reason": "mcap_pending"})
+            mcap = self.mcap
             if not src.mapping:
                 raise ApiError("validation_failed", "mcap 数据集还没有确认字段映射：到「mcap 配置」确认后才能看",
                                details={"reason": "mapping_pending"})
@@ -213,20 +213,58 @@ class VizService:
 
         return self.transcoder.ensure(key, out, prepare, start=frm, end=to, keep=(source_copy,))
 
-    def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers):
-        """The ``.mp4`` route of a LeRobot camera: a local file, or the transcode (202 while it runs)."""
+    def _transcode_answer(self, job, request_headers):
         from starlette.responses import JSONResponse
 
+        if job.state == "done":
+            return file_response(job.out, "video/mp4", request_headers)
+        if job.state == "failed":
+            raise ApiError("internal", job.message, details={"reason": "transcode_failed"})
+        return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
+
+    def mcap_transcode(self, src: VizSource, index: int, camera: str):
+        if not self.transcode_enabled:
+            raise ApiError("not_found", "平台转码已关闭（CURATOR_VIZ_TRANSCODE=0）",
+                           details={"reason": "transcode_disabled"})
+        self._reader(src)                                         # the mapping must be there
+        cd, d = self.mcap.camera(src, index, camera)
+        out = d / f"{camera}.h264.mp4"
+        key = f"mcap:{out}"
+
+        def prepare() -> pathlib.Path:
+            video = self.mcap.video_file(src, index, camera)
+            return video if video is not None else self.mcap.mjpeg_file(src, index, camera)
+
+        return self.transcoder.ensure(key, out, prepare)
+
+    def camera_frames(self, src: VizSource, index: int, camera: str, request_headers):
+        self._reader(src)
+        if self.reader_of(src) != "mcap":
+            raise ApiError("not_found", "只有 mcap 的 JPEG / PNG 相机有帧包", details={"reason": "not_frames"})
+        return file_response(self.mcap.frames_file(src, index, camera), "application/octet-stream", request_headers)
+
+    def camera_frame_index(self, src: VizSource, index: int, camera: str) -> dict:
+        self._reader(src)
+        if self.reader_of(src) != "mcap":
+            raise ApiError("not_found", "只有 mcap 的 JPEG / PNG 相机有帧包", details={"reason": "not_frames"})
+        return self.mcap.frame_index(src, index, camera)
+
+    def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers):
+        """The ``.mp4`` route: a local LeRobot file, a remuxed mcap camera, a transcode (202 while
+        it runs); a JPEG mcap camera without ``transcode`` is muxed as MJPEG (the check reader's mp4)."""
+        if self.reader_of(src) == "mcap":
+            self._reader(src)
+            if transcode:
+                return self._transcode_answer(self.mcap_transcode(src, index, camera), request_headers)
+            video = self.mcap.video_file(src, index, camera)
+            if video is None:
+                video = self.mcap.mjpeg_file(src, index, camera)
+            return file_response(video, "video/mp4", request_headers)
         if self.reader_of(src) != "lerobot":
             raise ApiError("not_found", "这个数据集的相机不经这条路由", details={"reason": "not_lerobot"})
         cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
         if transcode or cam["access"] in ("transcode", "unsupported"):
-            job = self.lerobot_transcode(src, index, camera)
-            if job.state == "done":
-                return file_response(job.out, "video/mp4", request_headers)
-            if job.state == "failed":
-                raise ApiError("internal", job.message, details={"reason": "transcode_failed"})
-            return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
+            return self._transcode_answer(self.lerobot_transcode(src, index, camera), request_headers)
         if src.is_local:
             return file_response(Access(self.rt, src).local_file(rel), "video/mp4", request_headers)
         raise ApiError("not_found", f"相机 {camera} 直连 TOS，不经 Daemon（用 episode 记录里的 url）",
@@ -242,3 +280,148 @@ def viz_of(rt) -> VizService:
                 svc = VizService(rt)
                 rt.viz = svc
     return svc
+
+
+# ---------------------------------------------------------------- mcap mappings and templates (§6)
+
+def _input_source(svc: VizService, spec: dict, owner: str) -> VizSource:
+    """The source a probe reads: a registration (``{dataset_id}``), or an input given in full -
+    the add drawer probes before registering."""
+    if "dataset_id" in spec:
+        return svc.dataset_source(spec["dataset_id"], owner)
+    from ..taskspec import resolve_input
+
+    fields = resolve_input(svc.rt.repo, svc.rt.settings, spec, owner)
+    uri = fields["input_uri"]
+    return VizSource(scope="dataset", id="probe", owner=owner, name=uri.rstrip("/").rsplit("/", 1)[-1],
+                     source=fields["input_source"], uri=uri, region=fields.get("input_region"),
+                     cred_id=fields.get("input_cred_id"),
+                     preflight={"format": {"kind": "mcap", "version": None, "supported": True}},
+                     fingerprint=digest("probe", fields["input_source"], uri, fields.get("input_region")))
+
+
+def probe(svc: VizService, spec: dict, owner: str, *, file: str | None = None, template: str | None = None) -> dict:
+    """C4 ``McapProbe``: the topics of one episode file and a mapping drafted for them."""
+    from curation.viz import mcap_mapping as MMAP
+
+    src = _input_source(svc, spec, owner)
+    if svc.reader_of(src) not in ("mcap", None) and "dataset_id" in spec:
+        raise ApiError("validation_failed", "这不是 mcap 数据集：没有 episode_N.mcap", details={"reason": "not_mcap"})
+    pr, count, warnings = svc.mcap.probe_source(src, file)
+    site = [{"id": t.id, "name": t.name, "mapping": t.mapping} for t in svc.rt.repo.list_viz_templates(owner=owner)]
+    if template and not template.startswith("builtin:") and template not in {t["id"] for t in site}:
+        raise ApiError("not_found", f"没有模版 {template}", details={"reason": "unknown_template"})
+    mapping, matched = MMAP.draft(pr, template=template, site_templates=site)
+    uses = MMAP.topic_uses(mapping, pr)
+    topics = []
+    for t in sorted(pr.topics):
+        tp = pr.topics[t]
+        use, role, name = uses.get(t, ("unmapped", None, ""))
+        notes = []
+        rate = tp.rate_hz(pr.end_ns)
+        if rate is not None and rate > 150:
+            notes.append("高频：作曲线时下采样到 ≤ 2000 点")
+        if not tp.decodable:
+            notes.append(f"{tp.message_encoding} 消息解不开")
+        if tp.kind == "camera" and tp.codec not in ("jpeg", "png", "h264", "h265"):
+            notes.append(f"编码 {tp.codec} 本期不支持")
+        if tp.kind == "camera" and tp.codec == "h265":
+            notes.append("H.265：浏览器放不了时由平台转码")
+        topics.append({"topic": t, "schema": tp.schema, "schema_encoding": tp.schema_encoding,
+                       "message_encoding": tp.message_encoding, "count": tp.count, "rate_hz": rate,
+                       "start_s": round((tp.first_ns - pr.start_ns) / 1e9, 3) if tp.first_ns and pr.start_ns else None,
+                       "end_s": round((pr.end_ns - pr.start_ns) / 1e9, 3) if pr.end_ns and pr.start_ns else None,
+                       "image": {"codec": tp.codec, "width": tp.width, "height": tp.height} if tp.kind == "camera" else None,
+                       "fields": [{"path": f["path"], "size": f["size"]} for f in tp.fields] if tp.fields else None,
+                       "use": use, "role": role if role in ("state", "action", "other") else None, "name": name,
+                       "notes": notes})
+    if not mapping["cameras"]:
+        warnings.append({"code": "no_camera", "message": "没有相机：可视化只能看曲线"})
+    if not mapping["series"]:
+        warnings.append({"code": "no_series", "message": "没有曲线：运动质量、视频-动作同步等模块不可用"})
+    warnings += MMAP.check_gaps(mapping, pr)
+    return {"file": pr.file, "files": count, "topics": topics, "metadata": pr.metadata,
+            "attachments": pr.attachments, "draft": mapping, "matched": matched, "warnings": warnings}
+
+
+def mapping_doc(svc: VizService, ds, *, gaps: bool = True) -> dict:
+    """C4 ``DatasetMapping``; ``gaps`` adds what the check reader will not read in it (a probe of the
+    dataset, cached by its fingerprint)."""
+    from curation.viz import mcap_mapping as MMAP
+
+    from ..repo.extras import dataset_format
+    from .status import is_mcap
+
+    preflight = ds.preflight if isinstance(ds.preflight, dict) else {}
+    if not is_mcap(preflight):
+        raise ApiError("validation_failed", "只有 mcap 数据集有字段映射", details={"reason": "not_mcap"})
+    m = ds.viz_mapping if isinstance(ds.viz_mapping, dict) else None
+    warnings = []
+    if dataset_format(preflight) == "unsupported":
+        detail = str((preflight.get("format") or {}).get("detail") or "")
+        warnings.append({"code": "checks_unreadable",
+                         "message": ("质检读取器按这份映射仍读不了，可视化不受影响" if m else
+                                     "质检读取器按站点缺省读不了，确认映射后重新预检") + (f"：{detail[:300]}" if detail else "")})
+    if m and gaps:
+        try:
+            pr, _, _ = svc.mcap.probe_source(dataset_source(svc.rt, ds, ds.owner_id))
+            warnings += MMAP.check_gaps(m, pr)
+        except ApiError:
+            pass                                             # the files cannot be probed now: no claim
+    return {"dataset_id": ds.id, "state": "confirmed" if m else "none", "mapping": m,
+            "version": int(ds.viz_mapping_version or 0), "updated_at": ds.viz_mapping_updated_at,
+            "check_mapping": MMAP.check_mapping(m) if m else None, "warnings": warnings}
+
+
+def validate_for(svc: VizService, src: VizSource, mapping: dict) -> None:
+    """Raise validation_failed with every problem of ``mapping`` against the dataset's topics."""
+    from curation.viz import mcap_mapping as MMAP
+
+    problems = MMAP.validate(mapping)
+    if not problems:
+        pr, _, _ = svc.mcap.probe_source(src)
+        problems = MMAP.validate(mapping, set(pr.topics))
+    if problems:
+        first = problems[0]
+        raise ApiError("validation_failed", f"映射不合格：{first['field']} {first['problem']}"
+                       + (f"（另有 {len(problems) - 1} 处）" if len(problems) > 1 else ""),
+                       details={"errors": [{"field": f"mapping.{p['field']}", "problem": p["problem"]} for p in problems[:50]]})
+
+
+def put_mapping(svc: VizService, dataset_id: str, owner: str, mapping: dict):
+    ds = svc.rt.repo.get_dataset(dataset_id, owner=owner)
+    mapping_doc(svc, ds, gaps=False)                         # mcap only
+    validate_for(svc, dataset_source(svc.rt, ds, owner), mapping)
+    return svc.rt.repo.set_dataset_viz_mapping(dataset_id, mapping, owner=owner)
+
+
+def template_doc(t) -> dict:
+    return {"id": t.id, "name": t.name, "description": t.description, "builtin": False, "mapping": t.mapping,
+            "created_at": t.created_at, "updated_at": t.updated_at}
+
+
+def list_templates(svc: VizService, owner: str) -> list[dict]:
+    from curation.viz.mcap_mapping import BUILTINS
+
+    out = [{"id": b["id"], "name": b["name"], "description": b["description"], "builtin": True, "mapping": None,
+            "created_at": None, "updated_at": None} for b in BUILTINS]
+    return out + [template_doc(t) for t in svc.rt.repo.list_viz_templates(owner=owner)]
+
+
+def create_template(svc: VizService, owner: str, name: str, description: str, mapping: dict) -> dict:
+    from curation.viz import mcap_mapping as MMAP
+
+    from ..repo import protocol as P
+
+    problems = MMAP.validate(mapping)
+    if problems:
+        raise ApiError("validation_failed", f"模版不合格：{problems[0]['field']} {problems[0]['problem']}",
+                       details={"errors": [{"field": f"mapping.{p['field']}", "problem": p["problem"]} for p in problems[:50]]})
+    if name in {b["name"] for b in MMAP.BUILTINS}:
+        raise ApiError("name_taken", f"「{name}」是内置模版的名字，换一个")
+    try:
+        t = svc.rt.repo.create_viz_template(P.VizTemplate(id="", name=name, mapping=mapping,
+                                                          description=description or "", owner_id=owner))
+    except P.Conflict:
+        raise ApiError("name_taken", f"已经有叫「{name}」的模版") from None
+    return template_doc(t)

@@ -179,6 +179,48 @@ def test_a_changed_mcap_file_stops_the_start(daemon, containers):
     assert r.json()["error"]["details"]["sample_keys"] == ["episode_2.mcap"]
 
 
+@pytest.mark.slow
+def test_a_confirmed_mapping_reaches_every_command_and_changes_no_verdict(daemon, containers):
+    """D62 (design doc 18 §6): the registration's confirmed mcap mapping goes to the CLI as the
+    derived ingest.mcap_mapping and is frozen into run.json; the draft of the reader's own
+    convention reads the same rows, so the verdicts are those of the run without a mapping."""
+    d = daemon()
+    target = os.path.join(d.root, "mini_mcap")
+    shutil.copytree(containers["mcap"], target)
+    d.dataset = target
+    probe = d.api("POST", "/viz/mcap-probe", json={"input": {"source": "local", "uri": target}})
+    assert probe.status_code == 200, probe.text
+    r = d.api("POST", "/datasets", json={"input": {"source": "local", "uri": target},
+                                         "viz_mapping": probe.json()["draft"]})
+    assert r.status_code == 201, r.text
+    assert r.json()["viz_mapping"]["version"] == 1
+    task = d.wait(d.create()["id"])
+    assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
+    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
+                               "pass_rate": 0.625}
+    with open(os.path.join(d.run_dir(task["id"]), "run.json"), encoding="utf-8") as fh:
+        frozen = json.load(fh)["viz_mapping"]
+    assert frozen["version"] == 1 and frozen["check_mapping"]["action"] == "/action"
+    runs, cursor = [], None
+    while True:
+        page = d.api("GET", f"/tasks/{task['id']}/logs",
+                     params={"limit": 200, "level": "debug", **({"cursor": cursor} if cursor else {})})
+        assert page.status_code == 200, page.text
+        runs += [x["msg"] for x in page.json()["items"] if x["msg"].startswith("run: curation ")]
+        cursor = page.json().get("next_cursor")
+        if not cursor:
+            break
+    reading = [m for m in runs if " --input " in m]
+    assert reading and all("ingest.mcap_mapping=" in m for m in reading), runs
+    # a later confirmation is a new version for new tasks; this task keeps what it ran with
+    changed = dict(probe.json()["draft"], name="改过的映射")
+    r = d.api("PUT", f"/datasets/{task['dataset_id']}/mapping", json={"mapping": changed})
+    assert r.status_code == 200 and r.json()["version"] == 2, r.text
+    viz = d.api("GET", f"/tasks/{task['id']}/viz").json()
+    assert viz["mapping"] == {"state": "frozen", "version": 1, "name": probe.json()["draft"].get("name")}
+    assert d.api("GET", f"/datasets/{task['dataset_id']}/viz").json()["mapping"]["version"] == 2
+
+
 # ---------------------------------------------------------------- the janitor
 
 

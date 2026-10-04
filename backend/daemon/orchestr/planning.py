@@ -108,7 +108,30 @@ def write_run_json(run, plan: dict) -> None:
                             "vlm": ({"model": snap.get("model"),
                                      "reasoning_effort": snap.get("reasoning_effort")}
                                     if snap else None)}}
+    viz = frozen_viz_mapping(run)
+    if viz is not None:
+        doc["viz_mapping"] = viz
     write_json_atomic(run.wd.run_json, doc)
+
+
+def frozen_viz_mapping(run) -> dict | None:
+    """The registration's confirmed mcap mapping at start (D62, design doc 18 §6.4 step 6) and the
+    check reader's mapping derived from it; changing the mapping later never touches this run."""
+    task = run.task
+    if not task.dataset_id:
+        return None
+    from ..repo import protocol as P
+
+    try:
+        ds = run.repo.get_dataset(task.dataset_id, owner=task.owner_id)
+    except P.NotFound:
+        return None
+    if not isinstance(ds.viz_mapping, dict):
+        return None
+    from curation.viz.mcap_mapping import check_mapping
+
+    return {"version": int(ds.viz_mapping_version or 0), "mapping": ds.viz_mapping,
+            "check_mapping": check_mapping(ds.viz_mapping)}
 
 
 def mark_skipped_modules(run, plan: dict) -> None:

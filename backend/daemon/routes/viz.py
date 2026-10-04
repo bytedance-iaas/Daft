@@ -17,7 +17,10 @@ from fastapi import APIRouter, Query, Request
 from starlette.responses import JSONResponse, Response
 
 from ..errors import ApiError
+from ..orchestr.service import orchestrator_of
 from ..pagination import keyset_page
+from ..repo.extras import dataset_format
+from ..viz import service as S
 from ..viz.service import viz_of
 from . import datasets as _datasets  # noqa: F401 - registers the ds_id path convertor
 from .common import idempotency_key, in_thread, principal, read_json_body, runtime, validate
@@ -127,6 +130,113 @@ async def get_dataset_camera_video(request: Request, dataset_id: str, index: int
                                                     transcode, request.headers))
 
 
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.frames")
+async def get_dataset_camera_frames(request: Request, dataset_id: str, index: int, camera: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(camera)
+    return await in_thread(lambda: svc.camera_frames(svc.dataset_source(dataset_id, owner), index, camera,
+                                                     request.headers))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.json")
+async def get_dataset_camera_frame_index(request: Request, dataset_id: str, index: int, camera: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(camera)
+    return await in_thread(lambda: svc.camera_frame_index(svc.dataset_source(dataset_id, owner), index, camera))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/mapping")
+async def get_dataset_mapping(request: Request, dataset_id: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    return await in_thread(lambda: S.mapping_doc(svc, rt.repo.get_dataset(dataset_id, owner=owner)))
+
+
+@router.put("/datasets/{dataset_id:ds_id}/mapping")
+async def put_dataset_mapping(request: Request, dataset_id: str):
+    body = await read_json_body(request, required=True)
+    validate("DatasetMappingPut", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        ds = S.put_mapping(svc, dataset_id, who.owner_id, body["mapping"])
+        rt.repo.append_event(actor=who.display_name, action="dataset.update", resource=dataset_id, at=rt.clock(),
+                             owner=who.owner_id, detail={"fields": ["viz_mapping"], "version": ds.viz_mapping_version})
+        if dataset_format(ds.preflight if isinstance(ds.preflight, dict) else {}) == "unsupported":
+            # the checks could not read it with the site's defaults: the mapping may be what makes
+            # it readable, so the registration's preflight is taken again with it (D62)
+            ds, _ = orchestrator_of(rt).datasets.repreflight(ds, who.owner_id)
+            rt.repo.append_event(actor=who.display_name, action="dataset.repreflight", resource=ds.id,
+                                 at=rt.clock(), owner=who.owner_id, detail={"after": "viz_mapping"})
+        return JSONResponse(S.mapping_doc(svc, ds))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="putDatasetMapping",
+                           owner=who.owner_id, method="PUT", path=request.url.path, body=body, handler=handler)
+
+
+@router.post("/viz/mcap-probe")
+async def probe_mcap(request: Request):
+    body = await read_json_body(request, required=True)
+    validate("McapProbeRequest", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        return JSONResponse(S.probe(svc, body["input"], who.owner_id, file=body.get("file"),
+                                    template=body.get("template")))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="probeMcap",
+                           owner=who.owner_id, method="POST", path=request.url.path, body=body, handler=handler)
+
+
+@router.get("/viz/templates")
+async def list_viz_templates(request: Request):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    return await in_thread(lambda: {"items": S.list_templates(svc, owner)})
+
+
+@router.post("/viz/templates")
+async def create_viz_template(request: Request):
+    body = await read_json_body(request, required=True)
+    validate("VizTemplateCreate", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        t = S.create_template(svc, who.owner_id, body["name"], body.get("description") or "", body["mapping"])
+        rt.repo.append_event(actor=who.display_name, action="viz_template.create", resource=t["id"], at=rt.clock(),
+                             owner=who.owner_id, detail={"name": t["name"]})
+        return JSONResponse(t, status_code=201)
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="createVizTemplate",
+                           owner=who.owner_id, method="POST", path=request.url.path, body=body, handler=handler)
+
+
+@router.delete("/viz/templates/{template_id}")
+async def delete_viz_template(request: Request, template_id: str):
+    await read_json_body(request, required=False)
+    rt, who = runtime(request), principal(request)
+
+    def handler() -> Response:
+        if template_id.startswith("builtin:"):
+            raise ApiError("validation_failed", "内置模版不能删除")
+        with rt.repo.transaction():
+            t = rt.repo.get_viz_template(template_id, owner=who.owner_id)
+            rt.repo.delete_viz_template(template_id, owner=who.owner_id)
+            rt.repo.append_event(actor=who.display_name, action="viz_template.delete", resource=template_id,
+                                 at=rt.clock(), owner=who.owner_id, detail={"name": t.name})
+        return Response(status_code=204)
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="deleteVizTemplate",
+                           owner=who.owner_id, method="DELETE", path=request.url.path, body=None, handler=handler)
+
+
 @router.put("/datasets/{dataset_id:ds_id}/annotations")
 async def put_dataset_annotations(request: Request, dataset_id: str):
     body = await read_json_body(request, required=True)
@@ -170,6 +280,24 @@ async def get_task_episode_viz(request: Request, task_id: str, index: int):
     svc = viz_of(rt)
     _index(index)
     return await in_thread(lambda: svc.episode(svc.task_source(task_id, owner), index))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/cameras/{camera}.frames")
+async def get_task_camera_frames(request: Request, task_id: str, index: int, camera: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(camera)
+    return await in_thread(lambda: svc.camera_frames(svc.task_source(task_id, owner), index, camera, request.headers))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/cameras/{camera}.json")
+async def get_task_camera_frame_index(request: Request, task_id: str, index: int, camera: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(camera)
+    return await in_thread(lambda: svc.camera_frame_index(svc.task_source(task_id, owner), index, camera))
 
 
 @router.get("/tasks/{task_id}/episodes/{index}/series")

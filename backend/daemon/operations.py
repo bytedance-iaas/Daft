@@ -93,22 +93,21 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getTaskViz": ("GET", "/api/v1/tasks/{id}/viz"),
     "getTaskEpisodeViz": ("GET", "/api/v1/tasks/{id}/episodes/{index}/viz"),
     "getTaskEpisodeSeries": ("GET", "/api/v1/tasks/{id}/episodes/{index}/series"),
+    # F13.3 mcap: frame packs, mappings, probing, templates
+    "getDatasetCameraFrames": ("GET", "/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames"),
+    "getDatasetCameraFrameIndex": ("GET", "/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json"),
+    "getTaskCameraFrames": ("GET", "/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames"),
+    "getTaskCameraFrameIndex": ("GET", "/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json"),
+    "getDatasetMapping": ("GET", "/api/v1/datasets/{id}/mapping"),
+    "putDatasetMapping": ("PUT", "/api/v1/datasets/{id}/mapping"),
+    "probeMcap": ("POST", "/api/v1/viz/mcap-probe"),
+    "listVizTemplates": ("GET", "/api/v1/viz/templates"),
+    "createVizTemplate": ("POST", "/api/v1/viz/templates"),
+    "deleteVizTemplate": ("DELETE", "/api/v1/viz/templates/{template_id}"),
 }
 
-_MCAP = "the mcap reader, mappings and templates (design doc 18 §6)"
-#: operationId -> (owner, what it still needs): the data visualizer lands in F13.2 / F13.3
-PENDING: dict[str, tuple[str, str]] = {
-    "getDatasetCameraFrames": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
-    "getDatasetCameraFrameIndex": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
-    "getTaskCameraFrames": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
-    "getTaskCameraFrameIndex": ("F13.3", "JPEG frame packs (design doc 18 §4.2)"),
-    "getDatasetMapping": ("F13.3", _MCAP),
-    "putDatasetMapping": ("F13.3", _MCAP),
-    "probeMcap": ("F13.3", _MCAP),
-    "listVizTemplates": ("F13.3", _MCAP),
-    "createVizTemplate": ("F13.3", _MCAP),
-    "deleteVizTemplate": ("F13.3", _MCAP),
-}
+#: operationId -> (owner, what it still needs); empty since the visualizer's mcap reader landed (F13.3)
+PENDING: dict[str, tuple[str, str]] = {}
 
 
 def contract_operations() -> dict[str, tuple[str, str]]:

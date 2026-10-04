@@ -53,7 +53,7 @@
 |---|---|---|
 | GET | `/api/v1/modules` | 模块注册表：id、中文名、所属档、参数 schema。前端的模块清单只从这里来 |
 | GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、所选时间段的统计（`?days=7\|30\|90\|365`，D36，§12） |
-| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选；`viz=true` 只列可视化读得了的格式，每条带 `viz` 状态）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12）；mcap 可一并提交确认过的字段映射 `viz_mapping`，任何格式可一并挂外部标注文件 `annotations_upload`（设计 18） |
+| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选；`viz=true` 只列可视化读得了的格式，每条带 `viz` 状态）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12）；mcap 可一并提交确认过的字段映射 `viz_mapping`（预检就按它读），任何格式可一并挂外部标注文件 `annotations_upload`（设计 18） |
 | GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
 | POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
@@ -77,7 +77,7 @@
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、fMP4 转封装、`?transcode=1` 的 H.264 转码），带 Range，准备中 202 |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | JPEG 帧包（各帧原字节首尾相接，Range 读） |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度 |
-| GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json） |
+| GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2） |
 | PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
 | POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |
 | GET / POST | `/api/v1/viz/templates` | 映射模版库：内置在前、站点的在后 / 另存为模版 |

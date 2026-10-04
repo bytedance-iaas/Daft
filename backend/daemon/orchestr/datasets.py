@@ -16,6 +16,7 @@ Keys reach the CLI through the environment only (W8's ``build_env``).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import pathlib
 import tempfile
@@ -112,9 +113,10 @@ class DatasetOps:
     # -- preflight and listing -----------------------------------------------------------
     def preflight(self, src: Source, owner: str, *, vlm_backend: str | None = None,
                   embodiment_id: str | None = None, modules: list[str] | None = None,
-                  params: list[str] | None = None) -> dict:
-        """``modules`` narrows the report; ``params`` are ``--param MODULE.KEY=VALUE`` (registry 1.4)."""
-        argv = ["preflight", *self._input_args(src)]
+                  params: list[str] | None = None, mapping: dict | None = None) -> dict:
+        """``modules`` narrows the report; ``params`` are ``--param MODULE.KEY=VALUE`` (registry 1.4);
+        ``mapping`` an mcap mapping not yet stored (the registration's own is used otherwise)."""
+        argv = ["preflight", *self._input_args(src), *self.mapping_args(src, owner, mapping)]
         if vlm_backend:
             argv += ["--vlm-backend", vlm_backend]
         if embodiment_id:
@@ -128,6 +130,19 @@ class DatasetOps:
         if not outcome.ok:
             self._raise(outcome, "预检", src)
         return outcome.doc
+
+    def mapping_args(self, src: Source, owner: str, mapping: dict | None = None) -> list[str]:
+        """``--set ingest.mcap_mapping=...``: the check reader's mapping derived from ``mapping`` (one
+        being registered) or the registration's confirmed mcap mapping (C7, D62); nothing for a
+        dataset without one (the site default)."""
+        if mapping is None:
+            ds = self.orch.repo.find_dataset(source=src.source, uri=src.uri, region=src.region, owner=owner)
+            mapping = ds.viz_mapping if ds is not None else None
+        if not isinstance(mapping, dict):
+            return []
+        from curation.viz.mcap_mapping import check_mapping
+
+        return ["--set", "ingest.mcap_mapping=" + json.dumps(check_mapping(mapping), ensure_ascii=False)]
 
     def listing(self, src: Source, owner: str, out: pathlib.Path) -> dict:
         """``curation snapshot`` of every episode into ``out``; the manifest document."""
@@ -173,8 +188,9 @@ class DatasetOps:
 
     # -- registration ----------------------------------------------------------------
     def register(self, src: Source, owner: str, *, name: str | None = None,
-                 note: str | None = None) -> tuple[P.Dataset, bool, dict | None]:
-        """Get or create the registration of ``src``; returns (dataset, created, listing)."""
+                 note: str | None = None, mapping: dict | None = None) -> tuple[P.Dataset, bool, dict | None]:
+        """Get or create the registration of ``src``; returns (dataset, created, listing). ``mapping``
+        is an mcap mapping confirmed in the add drawer: the preflight reads with it."""
         repo = self.orch.repo
         found = repo.find_dataset(source=src.source, uri=src.uri, region=src.region, owner=owner)
         if found is not None:
@@ -183,7 +199,7 @@ class DatasetOps:
                                             credential_id=src.credential_id)
             return found, False, None
         now = self.orch.clock()
-        preflight = self.preflight(src, owner)
+        preflight = self.preflight(src, owner, mapping=mapping)
         listing_doc = None
         if format_supported(preflight):
             listing_doc = self.fresh_listing(src, owner)
