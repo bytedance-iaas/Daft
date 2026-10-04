@@ -12,6 +12,8 @@ import type {
   Task,
   TaskListItem,
   TimelineEntry,
+  VizMapping,
+  VizTemplate,
   VlmBackend,
 } from '../api/types';
 import {
@@ -34,6 +36,7 @@ import {
   taskText,
 } from './world';
 import { FINDINGS_TASK, findingsTask, withCodes } from './findings';
+import { seedVizMappings } from './vizWorld';
 
 export interface StoredPreflight {
   id: string;
@@ -62,6 +65,12 @@ export interface MockDb {
   extraQuestions: Map<string, Map<number, AdjudicationCard['questions']>>;
   /** Module records a test adds to a task's episode views: task id → episode → module → record. */
   extraRecords: Map<string, Map<number, Record<string, ResultRecord>>>;
+  /** design doc 18: the confirmed mcap field mappings, by dataset id (C7, versioned). */
+  vizMappings: Map<string, { mapping: VizMapping; version: number; updatedAt: number }>;
+  /** design doc 18 §6: the site's own mapping templates (the built-ins are code). */
+  vizTemplates: VizTemplate[];
+  /** design doc 18 §4.2: transcodes that were asked for once (the next ask finds them ready). */
+  vizTranscodes: Set<string>;
 }
 
 export const db: MockDb = {
@@ -80,6 +89,9 @@ export const db: MockDb = {
   extraReviewLines: [],
   extraQuestions: new Map(),
   extraRecords: new Map(),
+  vizMappings: new Map(),
+  vizTemplates: [],
+  vizTranscodes: new Set(),
 };
 
 export function resetDb(now: number = Date.now()): MockDb {
@@ -103,6 +115,9 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.extraReviewLines = [];
   db.extraQuestions = new Map();
   db.extraRecords = new Map();
+  db.vizMappings = seedVizMappings(now);
+  db.vizTemplates = [];
+  db.vizTranscodes = new Set();
   db.seq = 100;
   // Datasets know their tasks (newest first) and their last task.
   for (const d of db.datasets) {

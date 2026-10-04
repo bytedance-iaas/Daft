@@ -312,3 +312,19 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   按文件名 `episode_<N>.mcap` 编号的 mcap），写法同 `--episodes`，`schema_version` 不变；`plan`、规划库、Daemon 的条目选择与建任务 / 重新预检的
   校验、控制台表单都从这些编号里选。C4 的 `PreflightResponse.result` 引用 C2 的预检 Schema，随之多这个字段（openapi 本身不变，前端类型重新生成）；
   报告 2.0 的 `overview.dataset`（开放对象）编号不连续时也带上它。
+
+## 十六、数据可视化（2026-10-04，F13.1，设计 18，D60–D64）
+
+- **C7 字段映射（新）** `viz-mapping.schema.json`（`viz-mapping/1.0`，示例 `examples/viz-mapping.json`）：mcap 数据集的哪些 topic 是相机、
+  哪些是曲线（`role` state / action / other，`pair_with` 叠画，`fields` 点路径，`labels` 每维的名字，`transforms` 只用于显示）、任务描述与分段在哪、
+  帧号以哪个 topic 为准。它是可视化 mcap 读取器的配置，也是质检读取器 `ingest.mcap_mapping` 的来源（action 组 → action，没有 action 组时 state 组顶上；
+  cameras → video_topics；`builtin:umi` 带 `profile: umi_das`）；内置 UMI 模版派生的结果与 `_umi_mapping` 相同，判决不变。episode 的编号不进映射。
+- **C4 2.4.0**：标签 `viz`。数据集级（`/datasets/{id}/viz`、`/viz/episodes`、`/viz/meta`、`/episodes/{index}/viz|series`、相机 `.mp4|.frames|.json`）
+  给可视化页，任务级（`/tasks/{id}/viz`、`/tasks/{id}/episodes/{index}/viz|series|cameras/…`）给迷你播放器，读任务冻结的输入；
+  `VizDataset` / `VizEpisode` / `VizSeries` 是统一展示模型。mcap 映射 `GET` / `PUT /datasets/{id}/mapping`（有版本，任务开始时冻结）、
+  `POST /viz/mcap-probe`（登记前后都能探测起草）、模版库 `/viz/templates`。外部标注：上传种类 `viz_annotations`（zip 以 `application/zip` 发），
+  `PUT /datasets/{id}/annotations`，登记时可带 `annotations_upload`、`viz_mapping`。`DatasetItem.viz`、`DatasetDetail.viz_mapping` / `annotations`、
+  `GET /datasets?viz=true`、`EpisodeView.fps` / `dataset_id`。任务级的 `.mp4` 路由原来就有（mcap 相机），这一版补进契约。
+- **C2**：预检的数据集块只加可选字段，仍是 1.0——`features`、`camera_info`（与 `cameras` 同序；`cameras` 仍是短名数组）、`segment_sources`、mcap 的 `topics`。
+- **C5**：`Dataset` 多 `viz_mapping` / `viz_mapping_version` / `viz_mapping_updated_at` / `display_config` / `annotations_upload`，
+  `set_dataset_viz_mapping` 每次确认加一版；新实体 `VizTemplate`（`vt-…`，名称唯一）与增删查；SQLite 迁移第 7 步。

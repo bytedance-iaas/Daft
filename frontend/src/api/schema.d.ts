@@ -378,6 +378,232 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/viz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The presentation model of a registered dataset for the visualizer (design doc 18 §4.0)
+         * @description Cameras and how each one is served, curve groups, annotation sources and the field tree,
+         *     read by the format's reader from the registration's metadata (LeRobot `meta/`, an mcap
+         *     file's summary and the dataset's confirmed mapping) - never from the samples - and cached
+         *     by the metadata fingerprint. A format without a reader in this phase (lance) answers with
+         *     `format.reader` null; an mcap dataset whose mapping is not confirmed answers
+         *     `mapping.state: none` with no cameras or streams and a warning.
+         */
+        get: operations["getDatasetViz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/viz/episodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** The episodes of the visualizer's side rail - number, length, task text, and steps when the episode table has them */
+        get: operations["listDatasetVizEpisodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/viz/meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** A metadata file the field tree names (meta/*, README), for its preview; cut at 256 KiB */
+        get: operations["getDatasetVizMeta"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/viz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /**
+         * One episode for the player - its clock, cameras with their URLs, task text and annotations
+         * @description Presigned URLs expire (`cameras[].expires_at`); ask again to renew them. Opening an episode
+         *     starts preparing the cameras the Daemon serves (remux, frame packs, transcoding) in the
+         *     background.
+         */
+        get: operations["getDatasetEpisodeViz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /** One curve group of an episode, min / max thinned to at most `points` (design doc 18 §4.3) */
+        get: operations["getDatasetEpisodeSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/cameras/{camera}.mp4": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /** A camera served by the Daemon - a local dataset's file, a fragmented-mp4 remux or an H.264 transcode - with Range */
+        get: operations["getDatasetCameraVideo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/cameras/{camera}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /** The JPEG frame pack of a camera - the frames' own bytes back to back, read by Range with the index */
+        get: operations["getDatasetCameraFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/cameras/{camera}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /** The index of a camera's JPEG frame pack - time, offset and size of every frame */
+        get: operations["getDatasetCameraFrameIndex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** The dataset's mcap field mapping (C7) and the check reader's mapping derived from it */
+        get: operations["getDatasetMapping"];
+        /**
+         * Confirm a new version of the mapping (validated against C7 and the dataset's topics)
+         * @description Only for mcap datasets. Tasks started before keep the version frozen into their run.json
+         *     (D62); tasks started after read this one. A mapping that names topics the dataset does not
+         *     have, pairs series that are not of opposite roles or names a frame reference that is not
+         *     a camera or series fails with `validation_failed` and `details.errors` per item.
+         */
+        put: operations["putDatasetMapping"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/annotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Attach an external annotation file (a `viz_annotations` upload) to the dataset, replace it or remove it (null) */
+        put: operations["putDatasetAnnotations"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/preflight": {
         parameters: {
             query?: never;
@@ -423,7 +649,7 @@ export interface paths {
         put?: never;
         /**
          * Store the input file of a module parameter after validating it (registry 1.5)
-         * @description The body is the file itself, sent as JSON like every write: a trajectory.json as it is (kind eef_trajectory), or the seed rows as a JSON array (kind eef_observation_seeds; the console turns a .jsonl file into that array). Up to 64 MiB. An invalid file is not stored: 400 validation_failed with details.errors, each located as precisely as the file allows (field = JSON path, plus sample_id / episode_index / frame_index / camera_id / point_id). The dataset is not known yet, so media are checked when a task uses the file.
+         * @description The body is the file itself, sent as JSON like every write: a trajectory.json as it is (kind eef_trajectory), or the seed rows as a JSON array (kind eef_observation_seeds; the console turns a .jsonl file into that array). Kind viz_annotations also takes a zip of per-episode JSON files named by episode index, sent as application/zip (still not a CORS-safelisted type, so cross-site writes stay refused). Up to 64 MiB. An invalid file is not stored: 400 validation_failed with details.errors, each located as precisely as the file allows (field = JSON path, plus sample_id / episode_index / frame_index / camera_id / point_id). The dataset is not known yet, so media are checked when a task uses the file.
          */
         post: operations["createUpload"];
         delete?: never;
@@ -444,6 +670,68 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/viz/mcap-probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe an mcap dataset and draft its mapping (design doc 18 §6.4) - before registering it or after
+         * @description Reads the summary section of one episode file (the first, or `file`) and the first message
+         *     of every topic with ranged reads: schema and encodings, rate, count, picture size and
+         *     codec, numeric fields. The draft comes from `template` when given, else from the best
+         *     matching template (site templates and the built-ins, coverage >= 80 %), else from
+         *     builtin:foxglove / builtin:ros2 by the message encoding. A dataset whose files disagree on
+         *     their topics gets a warning.
+         */
+        post: operations["probeMcap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/viz/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mapping templates - the built-ins first, then the site's own, newest first */
+        get: operations["listVizTemplates"];
+        put?: never;
+        /** Save a mapping as a site template (另存为模版); the name must be unique (409 name_taken) */
+        post: operations["createVizTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/viz/templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["schemas"]["VizTemplateId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a site template (built-ins cannot be deleted); datasets keep the mappings drafted from it */
+        delete: operations["deleteVizTemplate"];
         options?: never;
         head?: never;
         patch?: never;
@@ -949,6 +1237,147 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/viz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The presentation model of a task's input as the task saw it (the mini player, design doc 18 §2)
+         * @description Read like `getDatasetViz`, but from the task's frozen input (D27): its address and input
+         *     key, `preflight.json`, `source_manifest.json` and the mcap mapping frozen into run.json.
+         *     A deleted or changed registration does not change it; `dataset_id` is the task's
+         *     registration while it exists.
+         */
+        get: operations["getTaskViz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/viz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /** One episode of the task's input for the mini player, with the check clock to place findings */
+        get: operations["getTaskEpisodeViz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /** One curve group of an episode of the task's input (as getDatasetEpisodeSeries) */
+        get: operations["getTaskEpisodeSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/cameras/{camera}.mp4": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A camera of the task's input served by the Daemon (as getDatasetCameraVideo)
+         * @description Also what `GET /media/sign` resolves an mcap episode's virtual camera path to (the
+         *     episode view's `videos`): without `transcode`, a JPEG camera is muxed into an MJPEG mp4 in
+         *     memory as before 2.4.0.
+         */
+        get: operations["getTaskCameraVideo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/cameras/{camera}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /** The JPEG frame pack of a camera of the task's input (as getDatasetCameraFrames) */
+        get: operations["getTaskCameraFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/cameras/{camera}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        /** The index of a camera's JPEG frame pack (as getDatasetCameraFrameIndex) */
+        get: operations["getTaskCameraFrameIndex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/perf": {
         parameters: {
             query?: {
@@ -1431,10 +1860,15 @@ export interface components {
             preflighted_at: number;
             created_at: number;
             last_task: null | components["schemas"]["TaskRef"];
+            viz: components["schemas"]["VizStatus"];
         };
         DatasetItem: components["schemas"]["DatasetItemFields"];
         DatasetDetail: components["schemas"]["DatasetItemFields"] & {
             note: string | null;
+            /** @description the mcap field mapping (C7); null for other formats */
+            viz_mapping: null | components["schemas"]["DatasetMappingInfo"];
+            /** @description the external annotation file attached to it (a viz_annotations upload), if any */
+            annotations: null | components["schemas"]["DatasetAnnotationsInfo"];
             /** @description access key name; null for the public bucket, or once the key is deleted */
             credential: string | null;
             preflight: components["schemas"]["preflight.schema"];
@@ -1457,6 +1891,10 @@ export interface components {
             /** @description defaults to the last path segment */
             name?: string;
             note?: string;
+            /** @description mcap only - the field mapping confirmed in the add drawer (kept as version 1) */
+            viz_mapping?: components["schemas"]["viz-mapping.schema"];
+            /** @description an external annotation file (a viz_annotations upload) to attach */
+            annotations_upload?: components["schemas"]["UploadId"];
         };
         DatasetPatch: {
             name?: string;
@@ -1590,10 +2028,10 @@ export interface components {
             credential: string | null;
         };
         /**
-         * @description the x-upload-kind of a file parameter (registry 1.5)
+         * @description the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external annotation file (design doc 18 §4.5), not a module parameter
          * @enum {unknown}
          */
-        UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template" | "eef_record_mapping";
+        UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template" | "eef_record_mapping" | "viz_annotations";
         /** @description upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits */
         UploadId: string;
         UploadIssue: {
@@ -2057,6 +2495,10 @@ export interface components {
             }[];
             /** @description findings revisions (C2 2.0, 2.3.0): every finding of the episode, every module, with the level it has in this revision (its list entry's: the task's policy after the applied human decisions) */
             findings?: components["schemas"]["EpisodeFinding"][];
+            /** @description 2.4.0: the dataset's fps from the task's preflight, to read a finding's frames as seconds; null for mcap (its checks run at each episode's action rate: getTaskEpisodeViz check_clock) */
+            fps?: number | null;
+            /** @description 2.4.0, the task's registration while it exists (the mini player's 在可视化页打开) */
+            dataset_id?: string | null;
         };
         EpisodeFinding: {
             module: components["schemas"]["ModuleId"];
@@ -2315,6 +2757,531 @@ export interface components {
             subtask_id?: string | null;
             reason?: string | null;
         };
+        /** @description whether the visualizer can open the dataset */
+        VizStatus: {
+            /**
+             * @description mapping_pending: an mcap dataset whose field mapping is not confirmed (映射待确认)
+             * @enum {unknown}
+             */
+            state: "ready" | "mapping_pending" | "unsupported";
+            /** @description why not, in Chinese */
+            reason: string | null;
+        };
+        VizFormat: {
+            /** @enum {unknown} */
+            kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "unknown";
+            /** @enum {unknown} */
+            version: "v2" | "v3" | null;
+            /**
+             * @description the reader serving it; null = none in this phase (lance: phase two, design doc 18 §10)
+             * @enum {unknown}
+             */
+            reader: "lerobot" | "mcap" | null;
+        };
+        /**
+         * @description How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
+         *     public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
+         *     Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+         *     drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
+         *     player tags it 平台转码); unsupported: cannot be shown, `reason` says why.
+         * @enum {unknown}
+         */
+        VizAccess: "direct" | "local" | "remux" | "frames" | "transcode" | "unsupported";
+        /** @description URL-safe camera key (LeRobot short name; mcap topic with / turned into _) */
+        VizCameraKey: string;
+        VizCamera: {
+            key: components["schemas"]["VizCameraKey"];
+            name: string;
+            /** @description the LeRobot feature key or the mcap topic */
+            source: string;
+            /**
+             * @description video: an mp4 for <video>; frames: a JPEG frame pack
+             * @enum {unknown}
+             */
+            kind: "video" | "frames";
+            access: components["schemas"]["VizAccess"];
+            /** @description av1, h264, hevc, mpeg4, jpeg, png, raw ... */
+            codec: string | null;
+            /** @description RFC 6381 codecs parameter for the player's decoding check (av01..., avc1..., hvc1...) */
+            codec_string: string | null;
+            width: number | null;
+            height: number | null;
+            fps: number | null;
+            pix_fmt?: string | null;
+            /** @description the Daemon re-encodes it (access transcode) */
+            transcoded: boolean;
+            /** @description why transcode or unsupported, in Chinese */
+            reason: string | null;
+        };
+        VizLine: {
+            name: string;
+            /**
+             * @description state solid, action dashed
+             * @enum {unknown}
+             */
+            role: "state" | "action" | "other";
+            /** @description the feature key or topic */
+            source?: string;
+            /** @description its position in the source's vector */
+            dim?: number | null;
+            unit?: string | null;
+        };
+        VizStream: {
+            key: string;
+            /** @enum {unknown} */
+            kind: "series" | "depth" | "pointcloud" | "transform" | "text" | "event" | "image_sequence";
+            name: string;
+            unit: string | null;
+            /** @description series: one per drawn number, state and action of the same name together */
+            lines: components["schemas"]["VizLine"][];
+            /** @description placed by the smart layout */
+            smart: boolean;
+            /** @description false: listed (field tree, + menu) but not drawable in this phase */
+            available: boolean;
+            reason: string | null;
+            /** @description feature keys or topics it is read from */
+            sources: string[];
+            rate_hz?: number | null;
+        };
+        VizAnnotationSource: {
+            key: string;
+            /** @enum {unknown} */
+            kind: "segments" | "events" | "labels";
+            /** @description the track's name (子任务, 机器人分步, 外部标注 ...) */
+            name: string;
+            /** @description the recognised layout (design doc 18 §4.5): subtask_index, language_persistent, language_events, task_index, index_table, string_column, bool_segments, quality, episode_labels, argus, mcap_topic, mcap_attachment; open for later readers */
+            format: string;
+            /** @description where it is read from, shown as 来源 */
+            source: string;
+            /** @description false: something looks like annotations but its layout is unknown (标注格式不支持) */
+            supported: boolean;
+            reason: string | null;
+            /** @description the track the subtitle bar shows first */
+            primary: boolean;
+        };
+        VizFieldNode: {
+            id: string;
+            name: string;
+            /** @enum {unknown} */
+            kind: "group" | "camera" | "series" | "depth" | "text" | "table" | "file" | "topic" | "metadata" | "attachment" | "other";
+            dtype?: string | null;
+            shape?: number[] | null;
+            names?: string[] | null;
+            /** @description attributes shown in the detail pane */
+            detail?: {
+                [key: string]: string | number | boolean | null;
+            };
+            camera?: components["schemas"]["VizCameraKey"];
+            /** @description the VizStream it is drawn as */
+            stream?: string;
+            /** @description a metadata file getDatasetVizMeta can read */
+            file?: string;
+            children?: components["schemas"]["VizFieldNode"][];
+        };
+        VizMappingState: {
+            /**
+             * @description not_needed: not mcap; none: an mcap dataset without a confirmed mapping; frozen: a task's (run.json)
+             * @enum {unknown}
+             */
+            state: "not_needed" | "none" | "confirmed" | "frozen";
+            version: number | null;
+            name: string | null;
+        };
+        VizWarning: {
+            code: string;
+            /** @description Chinese */
+            message: string;
+        };
+        VizDataset: {
+            /** @enum {unknown} */
+            scope: "dataset" | "task";
+            /** @description the dataset id, or the task id for scope task */
+            id: string;
+            /** @description the registration; for scope task the task's, while it exists */
+            dataset_id: string | null;
+            name: string;
+            format: components["schemas"]["VizFormat"];
+            /** @description null for mcap: every topic keeps its own rate */
+            fps: number | null;
+            episode_count: number;
+            /** @description every index in the grammar of --episodes when they are not 0 .. count-1 */
+            episode_indices: string | null;
+            total_frames: number | null;
+            robot_type: string | null;
+            bytes?: number | null;
+            cameras: components["schemas"]["VizCamera"][];
+            streams: components["schemas"]["VizStream"][];
+            annotation_sources: components["schemas"]["VizAnnotationSource"][];
+            field_tree: components["schemas"]["VizFieldNode"][];
+            mapping: components["schemas"]["VizMappingState"];
+            transcode: {
+                /** @description CURATOR_VIZ_TRANSCODE */
+                enabled: boolean;
+            };
+            warnings: components["schemas"]["VizWarning"][];
+            /** @description the metadata fingerprint the model and its caches belong to */
+            fingerprint: string;
+        };
+        VizEpisodeItem: {
+            index: number;
+            duration_s: number | null;
+            frames: number | null;
+            /** @description empty when there is none */
+            task: string;
+            /** @description the primary track's segments when the episode table has them (not read from the frames) */
+            steps?: {
+                start_s: number;
+                end_s: number;
+                unqualified?: boolean;
+            }[] | null;
+        };
+        VizEpisodePage: components["schemas"]["CursorPage"] & {
+            items?: components["schemas"]["VizEpisodeItem"][];
+            /** @description matches of the filter */
+            total: number;
+        };
+        VizTimeline: {
+            /**
+             * @description frame: frame = round(t x fps); timestamp: frame k sits at frame_times[k]
+             * @enum {unknown}
+             */
+            kind: "frame" | "timestamp";
+            fps: number | null;
+            /** @description mcap: the topic whose messages number the frames */
+            frame_reference: string | null;
+            /** @description mcap: the episode time of every frame */
+            frame_times: number[] | null;
+        };
+        /** @description the checks' clock on the episode clock (task scope): t = offset_s + time_s, t = offset_s + frame / fps */
+        VizCheckClock: {
+            offset_s: number;
+            fps: number | null;
+        };
+        VizEpisodeCamera: {
+            key: components["schemas"]["VizCameraKey"];
+            /** @enum {unknown} */
+            kind: "video" | "frames";
+            access: components["schemas"]["VizAccess"];
+            /** @description video: what <video> plays; frames: the frame pack; null when unsupported */
+            url: string | null;
+            /** @description frames: the frame pack's index */
+            index_url: string | null;
+            /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one */
+            transcode_url: string | null;
+            /** @description LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts) */
+            from_ts: number | null;
+            to_ts: number | null;
+            /** @description episode time of the camera's first frame (video time 0 after from_ts) */
+            offset_s: number;
+            transcoded: boolean;
+            /** @description epoch ms when a presigned url stops working */
+            expires_at: number | null;
+            reason: string | null;
+        };
+        VizSegment: {
+            start_s: number;
+            end_s: number;
+            label: string;
+            /** @enum {unknown} */
+            quality?: "qualified" | "unqualified" | null;
+            /** @description Argus: advancing / wasteful / idle */
+            contribution?: string | null;
+            arm?: string | null;
+            /** @description boolean segment columns that hold (is_intervention_segment ...) */
+            flags?: string[];
+        };
+        VizTrack: {
+            key: string;
+            name: string;
+            source: string;
+            primary: boolean;
+            segments: components["schemas"]["VizSegment"][];
+        };
+        VizEvent: {
+            t_s: number;
+            label: string;
+            outcome?: string | null;
+            source: string;
+        };
+        VizLabel: {
+            key: string;
+            name: string;
+            value: string;
+            source: string;
+        };
+        VizAnnotations: {
+            tracks: components["schemas"]["VizTrack"][];
+            events: components["schemas"]["VizEvent"][];
+            /** @description episode labels: success, rating, task_status ... */
+            labels: components["schemas"]["VizLabel"][];
+            warnings: components["schemas"]["VizWarning"][];
+        };
+        VizEpisode: {
+            /** @enum {unknown} */
+            scope: "dataset" | "task";
+            id: string;
+            index: number;
+            duration_s: number;
+            frames: number;
+            fps: number | null;
+            task: null | {
+                text: string;
+                /** @description 原始标注 / 人工改标 / 自产描述 */
+                source: string;
+            };
+            timeline: components["schemas"]["VizTimeline"];
+            cameras: components["schemas"]["VizEpisodeCamera"][];
+            annotations: components["schemas"]["VizAnnotations"];
+            check_clock: null | components["schemas"]["VizCheckClock"];
+            warnings: components["schemas"]["VizWarning"][];
+        };
+        VizSeries: {
+            stream: string;
+            unit: string | null;
+            from_s: number;
+            to_s: number;
+            /** @description episode seconds, shared by every line */
+            t: number[];
+            lines: {
+                name: string;
+                /** @enum {unknown} */
+                role: "state" | "action" | "other";
+                values: (number | null)[];
+            }[];
+            /** @description raw samples in the window */
+            total_points: number;
+            downsampled: boolean;
+        };
+        VizFrameIndex: {
+            camera: components["schemas"]["VizCameraKey"];
+            /** @enum {unknown} */
+            codec: "jpeg" | "png";
+            width: number | null;
+            height: number | null;
+            count: number;
+            /** @description episode seconds of every frame */
+            t: number[];
+            /** @description byte offset of every frame in the pack */
+            offset: number[];
+            size: number[];
+            /** @description the pack's size */
+            bytes: number;
+        };
+        VizMediaPending: {
+            /** @enum {unknown} */
+            state: "pending" | "failed";
+            progress: number | null;
+            message: string;
+        };
+        VizMetaFile: {
+            path: string;
+            size: number;
+            truncated: boolean;
+            /** @enum {unknown} */
+            kind: "json" | "jsonl" | "text" | "markdown";
+            text: string;
+        };
+        VizMapping: components["schemas"]["viz-mapping.schema"];
+        DatasetMapping: {
+            dataset_id: string;
+            /** @enum {unknown} */
+            state: "none" | "confirmed";
+            mapping: null | components["schemas"]["viz-mapping.schema"];
+            /** @description 0 = never confirmed */
+            version: number;
+            updated_at: number | null;
+            /** @description the check reader's ingest.mcap_mapping derived from it (read-only, design doc 18 §6.2) */
+            check_mapping: Record<string, unknown> | null;
+            warnings: components["schemas"]["VizWarning"][];
+        };
+        DatasetMappingPut: {
+            mapping: components["schemas"]["viz-mapping.schema"];
+        };
+        DatasetMappingInfo: {
+            /** @enum {unknown} */
+            state: "none" | "confirmed";
+            version: number;
+            updated_at: number | null;
+            name: string | null;
+        };
+        DatasetAnnotationsInfo: {
+            upload_id: components["schemas"]["UploadId"];
+            name: string;
+            /** @description argus */
+            format: string;
+            episodes: number;
+            uploaded_at: number;
+        };
+        DatasetAnnotationsPut: {
+            upload_id: null | components["schemas"]["UploadId"];
+        };
+        McapProbeRequest: {
+            input: components["schemas"]["InputSpec"];
+            /** @description an episode file to probe instead of the first */
+            file?: string;
+            template?: components["schemas"]["VizTemplateId"];
+        };
+        McapTopic: {
+            topic: string;
+            schema: string | null;
+            schema_encoding: string | null;
+            message_encoding: string | null;
+            count: number | null;
+            rate_hz: number | null;
+            /** @description first message, seconds after the file's first message */
+            start_s: number | null;
+            end_s: number | null;
+            image: null | {
+                codec: string;
+                width: number | null;
+                height: number | null;
+            };
+            /** @description the numeric leaves of its first message */
+            fields: {
+                path: string;
+                size: number;
+            }[] | null;
+            /**
+             * @description what the draft does with it
+             * @enum {unknown}
+             */
+            use: "camera" | "series" | "task" | "segments" | "ignore" | "unmapped";
+            /** @enum {unknown} */
+            role: "state" | "action" | "other" | null;
+            name: string;
+            /** @description Chinese: high rate, unsupported encoding ... */
+            notes: string[];
+        };
+        McapProbe: {
+            file: string;
+            /** @description episode files in the dataset */
+            files: number;
+            topics: components["schemas"]["McapTopic"][];
+            /** @description metadata records, by name, then key */
+            metadata: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+            attachments: {
+                name: string;
+                media_type: string;
+                size: number;
+            }[];
+            draft: components["schemas"]["viz-mapping.schema"];
+            matched: null | {
+                template_id: components["schemas"]["VizTemplateId"];
+                name: string;
+                coverage: number;
+            };
+            warnings: components["schemas"]["VizWarning"][];
+        };
+        VizTemplateId: string;
+        VizTemplate: {
+            id: components["schemas"]["VizTemplateId"];
+            name: string;
+            description: string;
+            builtin: boolean;
+            /** @description null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping */
+            mapping: null | components["schemas"]["viz-mapping.schema"];
+            created_at: number | null;
+            updated_at: number | null;
+        };
+        VizTemplateCreate: {
+            name: string;
+            description?: string;
+            mapping: components["schemas"]["viz-mapping.schema"];
+        };
+        topic: string;
+        /** @description a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element of a list or every field of a message */
+        path: string;
+        camera: {
+            topic: components["schemas"]["topic"];
+            name: string;
+            /** @description the schema name seen when it was mapped (informational; encoding and picture size come from probing) */
+            schema?: string;
+        };
+        series: {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+            /** @description the numbers to draw, flattened in order (a message field expands to its numeric leaves); absent or empty = the whole message read as a vector by its shape (position, data, a bare list), as the check reader does */
+            fields?: components["schemas"]["path"][];
+            /** @description one name per flattened number; the check reader's action_names / state names come from these. Absent = from names_field, else <topic>_<i> */
+            labels?: string[];
+            /** @description a field holding the dimension names in every message (sensor_msgs/JointState.name) */
+            names_field?: components["schemas"]["path"];
+            /** @description display-only conversions of fields named in fields (a quaternion becomes roll, pitch, yaw in radians); the check reader always reads the raw numbers */
+            transforms?: {
+                [key: string]: "quat_xyzw_to_rpy" | "quat_wxyz_to_rpy" | "deg_to_rad" | "rad_to_deg";
+            };
+            /** @description the y axis unit (m, rad, N, ...) */
+            unit?: string | null;
+            /**
+             * @description solid lines for state, dashed for action; also what the check reader takes it for
+             * @enum {unknown}
+             */
+            role: "state" | "action" | "other";
+            /** @description the series of the opposite role drawn in the same group (/left-arm-action with /left-arm-state) */
+            pair_with?: null | components["schemas"]["topic"];
+            /**
+             * @description shown by the smart layout; false = only offered in the + / 更换 menus (high-rate or auxiliary curves)
+             * @default true
+             */
+            smart?: boolean;
+        };
+        /**
+         * viz-mapping/1.0 - the field mapping of an mcap dataset (C7, design doc 18 §6)
+         * @description Which topics of an mcap dataset are cameras, which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.
+         */
+        "viz-mapping.schema": {
+            /** @constant */
+            schema_version: "viz-mapping/1.0";
+            /** @description shown in the template picker and on the dataset page */
+            name?: string;
+            /**
+             * @description the built-in template it was drafted from; null = written by hand or imported. builtin:umi also sets the check reader's embodiment profile (umi_das)
+             * @enum {unknown}
+             */
+            base?: "builtin:foxglove" | "builtin:ros2" | "builtin:umi" | null;
+            timeline?: {
+                /**
+                 * @description which time of a message places it on the episode clock; message_timestamp reads timestamp_field of every message
+                 * @default log_time
+                 * @enum {unknown}
+                 */
+                source?: "log_time" | "publish_time" | "message_timestamp";
+                /** @description the message's own time field (seconds, or a {sec, nsec} / {seconds, nanos} message), for source=message_timestamp */
+                timestamp_field?: components["schemas"]["path"];
+                /** @description the topic whose messages number the frames (the frame box of the player, design doc 18 §4.4); null = the first role=action series (the check reader's rows), else the first camera */
+                frame_reference?: null | components["schemas"]["topic"];
+            };
+            /** @description in display order; compressed images (JPEG, PNG) and compressed video (H.264, H.265) */
+            cameras: components["schemas"]["camera"][];
+            /** @description curve groups, in display order; a state and an action topic of the same thing are paired with pair_with and drawn in one group */
+            series: components["schemas"]["series"][];
+            /** @description where the episode's task text is; null = none (the player shows 无任务描述) */
+            task?: null | {
+                /** @description a key of the file's metadata records (any record name) */
+                metadata_key: string;
+            } | {
+                topic: components["schemas"]["topic"];
+                /** @description the text field; absent = the message itself is the text (std_msgs/String data, a JSON string) */
+                field?: components["schemas"]["path"];
+            };
+            /** @description where the segment annotations are; null = none (nothing is shown and nothing is warned about) */
+            segments?: null | {
+                topic: components["schemas"]["topic"];
+                start_field: components["schemas"]["path"];
+                end_field: components["schemas"]["path"];
+                label_field: components["schemas"]["path"];
+            } | {
+                /** @description the name of an mcap attachment holding Argus-style JSON (timeline / key_events / completion) */
+                attachment: string;
+            };
+            /** @description topics left out on purpose (calibration, system info, high-rate IMU ...); other unnamed topics are reported as unmapped */
+            ignore?: components["schemas"]["topic"][];
+        };
         module_id: string;
         draft_note: {
             code: string;
@@ -2411,6 +3378,44 @@ export interface components {
                     matched: string;
                     by: string;
                 };
+                /** @description LeRobot (design doc 18 §7, F13.1): every feature of info.json as declared, for the visualizer's field tree; names flattened to a list (a {"motors": [...]} dict gives its list), null when info.json has none */
+                features?: {
+                    key: string;
+                    dtype: string;
+                    shape: number[] | null;
+                    names: string[] | null;
+                }[];
+                /** @description one per entry of cameras, same order and names: picture size, codec and fps from info.json's video info (mcap: from the first frame), and whether no browser plays the codec so the visualizer serves an H.264 transcode (design doc 18 §4.2, D60) */
+                camera_info?: {
+                    /** @description the short name, as in cameras */
+                    name: string;
+                    /** @description the feature key, or the mcap topic */
+                    key: string;
+                    codec: string | null;
+                    pix_fmt?: string | null;
+                    width: number | null;
+                    height: number | null;
+                    fps: number | null;
+                    needs_transcode: boolean;
+                }[];
+                /** @description segment annotations the visualizer recognises (design doc 18 §4.5, D64); supported false = something looks like annotations in a layout it does not know (标注格式不支持) */
+                segment_sources?: {
+                    /** @enum {unknown} */
+                    kind: "segments" | "events" | "labels";
+                    format: string;
+                    name: string;
+                    source: string;
+                    supported: boolean;
+                    reason?: string | null;
+                }[];
+                /** @description mcap: the topics in the first episode file's summary; which of them are cameras and curves is the dataset's field mapping (C7) */
+                topics?: {
+                    topic: string;
+                    schema: string | null;
+                    message_encoding: string | null;
+                    count: number | null;
+                    rate_hz: number | null;
+                }[];
             };
             modules: components["schemas"]["module_availability"][];
             /** @description the listing fingerprint (source-manifest summary.digest) computed over the metadata objects only */
@@ -2866,6 +3871,51 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description the whole video (Accept-Ranges bytes) */
+        VizVideo: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "video/mp4": string;
+            };
+        };
+        /** @description the requested byte range (Content-Range) */
+        VizVideoRange: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "video/mp4": string;
+            };
+        };
+        /** @description the whole frame pack (Accept-Ranges bytes) */
+        VizFrames: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        /** @description the requested byte range of the frame pack (Content-Range) */
+        VizFramesRange: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        /** @description still being prepared (transcoding, building the frame pack); ask again shortly */
+        VizPending: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["VizMediaPending"];
+            };
+        };
     };
     parameters: {
         PathId: string;
@@ -2880,6 +3930,22 @@ export interface components {
         Region: components["schemas"]["Region"];
         /** @description access key name (not needed for source=public) */
         CredentialName: string;
+        /** @description the episode's own index (preflight `episode_indices`) */
+        PathIndex: number;
+        /** @description the camera's `key` in the presentation model */
+        PathCamera: components["schemas"]["VizCameraKey"];
+        /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+        RangeHeader: string;
+        /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
+        VizTranscode: boolean;
+        /** @description the curve group's `key` (VizStream.key) */
+        VizStream: string;
+        /** @description start of the window in episode seconds (default 0) */
+        VizFrom: number;
+        /** @description end of the window in episode seconds (default the episode's end) */
+        VizTo: number;
+        /** @description at most this many points per line; more raw points are thinned by min / max per bucket */
+        VizPoints: number;
     };
     requestBodies: never;
     headers: never;
@@ -3323,6 +4389,8 @@ export interface operations {
                 q?: string;
                 format?: components["schemas"]["DatasetFormat"];
                 check_state?: "ok" | "changed";
+                /** @description true = only datasets a visualizer reader serves (LeRobot, mcap), for the visualize page's picker */
+                viz?: boolean;
             };
             header?: never;
             path?: never;
@@ -3606,6 +4674,322 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getDatasetViz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the dataset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDataset"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDatasetVizEpisodes: {
+        parameters: {
+            query?: {
+                /** @description an episode number (`12`, `ep12`) or words of the task text */
+                q?: string;
+                /** @description `steps`: episodes without known steps first */
+                sort?: "index" | "duration" | "steps";
+                order?: "asc" | "desc";
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizEpisodePage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetVizMeta: {
+        parameters: {
+            query: {
+                /** @description relative to the dataset, e.g. `meta/info.json` */
+                path: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizMetaFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetEpisodeViz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the episode */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizEpisode"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetEpisodeSeries: {
+        parameters: {
+            query: {
+                /** @description the curve group's `key` (VizStream.key) */
+                stream: components["parameters"]["VizStream"];
+                /** @description start of the window in episode seconds (default 0) */
+                from?: components["parameters"]["VizFrom"];
+                /** @description end of the window in episode seconds (default the episode's end) */
+                to?: components["parameters"]["VizTo"];
+                /** @description at most this many points per line; more raw points are thinned by min / max per bucket */
+                points?: components["parameters"]["VizPoints"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the curves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizSeries"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetCameraVideo: {
+        parameters: {
+            query?: {
+                /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
+                transcode?: components["parameters"]["VizTranscode"];
+            };
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizVideo"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizVideoRange"];
+            /** @description the range is outside the file */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetCameraFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetCameraFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the mapping */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetMapping"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putDatasetMapping: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetMappingPut"];
+            };
+        };
+        responses: {
+            /** @description confirmed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetMapping"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putDatasetAnnotations: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetAnnotationsPut"];
+            };
+        };
+        responses: {
+            /** @description the dataset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     preflight: {
         parameters: {
             query?: never;
@@ -3679,6 +5063,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": unknown;
+                "application/zip": string;
             };
         };
         responses: {
@@ -3713,6 +5098,109 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Upload"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    probeMcap: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McapProbeRequest"];
+            };
+        };
+        responses: {
+            /** @description the probe and the draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McapProbe"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listVizTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description templates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["VizTemplate"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createVizTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VizTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizTemplate"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteVizTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                template_id: components["schemas"]["VizTemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -4480,6 +5968,181 @@ export interface operations {
                     "application/json": components["schemas"]["SyncCurves"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskViz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the task's input */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDataset"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskEpisodeViz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the episode */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizEpisode"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskEpisodeSeries: {
+        parameters: {
+            query: {
+                /** @description the curve group's `key` (VizStream.key) */
+                stream: components["parameters"]["VizStream"];
+                /** @description start of the window in episode seconds (default 0) */
+                from?: components["parameters"]["VizFrom"];
+                /** @description end of the window in episode seconds (default the episode's end) */
+                to?: components["parameters"]["VizTo"];
+                /** @description at most this many points per line; more raw points are thinned by min / max per bucket */
+                points?: components["parameters"]["VizPoints"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the curves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizSeries"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskCameraVideo: {
+        parameters: {
+            query?: {
+                /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
+                transcode?: components["parameters"]["VizTranscode"];
+            };
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizVideo"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizVideoRange"];
+            /** @description the range is outside the file */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskCameraFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskCameraFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the camera's `key` in the presentation model */
+                camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
             default: components["responses"]["Error"];
         };
     };

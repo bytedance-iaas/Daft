@@ -501,6 +501,65 @@ def test_update_dataset_renames_or_refreshes(repo, clock):
         repo.update_dataset("ds_missing", name="x")
 
 
+UMI_MAPPING = {"schema_version": "viz-mapping/1.0", "base": "builtin:umi",
+               "cameras": [{"topic": "/robot0/sensor/camera0/compressed", "name": "robot0 相机"}],
+               "series": [{"topic": "/robot0/vio/eef_pose", "name": "末端位姿", "fields": ["pose"],
+                           "role": "action"}]}
+
+
+def test_dataset_viz_mapping_is_versioned(repo, clock):
+    """D62: every confirmation is a new version; tasks freeze the one they start with."""
+    ds, _ = repo.register_dataset(_dataset())
+    assert (ds.viz_mapping, ds.viz_mapping_version, ds.viz_mapping_updated_at) == (None, 0, None)
+    clock.advance(10)
+    v1 = repo.set_dataset_viz_mapping(ds.id, UMI_MAPPING)
+    assert (v1.viz_mapping, v1.viz_mapping_version, v1.viz_mapping_updated_at) == (UMI_MAPPING, 1, T0 + 10)
+    clock.advance(10)
+    changed = dict(UMI_MAPPING, name="改过的")
+    v2 = repo.set_dataset_viz_mapping(ds.id, changed)
+    assert (v2.viz_mapping["name"], v2.viz_mapping_version, v2.viz_mapping_updated_at) == ("改过的", 2, T0 + 20)
+    assert repo.get_dataset(ds.id).viz_mapping_version == 2
+    with pytest.raises(P.NotFound):
+        repo.set_dataset_viz_mapping(ds.id, UMI_MAPPING, owner=OTHER)
+    with pytest.raises(P.NotFound):
+        repo.set_dataset_viz_mapping("ds_missing", UMI_MAPPING)
+
+    # registered with a mapping confirmed in the add drawer: version 1 from the start
+    other, created = repo.register_dataset(dataclasses.replace(
+        _dataset("tos://bucket/datasets/umi"), viz_mapping=UMI_MAPPING, annotations_upload="upl-abcdefghi"))
+    assert created and (other.viz_mapping_version, other.annotations_upload) == (1, "upl-abcdefghi")
+
+
+def test_dataset_display_config_and_annotations(repo):
+    ds, _ = repo.register_dataset(_dataset())
+    u = repo.update_dataset(ds.id, display_config={"track": "subtask_index", "cameras": ["wrist", "front"]},
+                            annotations_upload="upl-abcdefghi")
+    assert u.display_config == {"track": "subtask_index", "cameras": ["wrist", "front"]}
+    assert u.annotations_upload == "upl-abcdefghi"
+    cleared = repo.update_dataset(ds.id, display_config=None, annotations_upload=None)
+    assert (cleared.display_config, cleared.annotations_upload) == (None, None)
+
+
+def test_viz_templates(repo, clock):
+    a = repo.create_viz_template(P.VizTemplate(id="", name="UMI 双臂", mapping=UMI_MAPPING))
+    assert a.id.startswith("vt-") and a.mapping == UMI_MAPPING and a.description == ""
+    clock.advance(5)
+    b = repo.create_viz_template(P.VizTemplate(id="", name="ABC", mapping=UMI_MAPPING, description="d"))
+    assert [t.name for t in repo.list_viz_templates()] == ["ABC", "UMI 双臂"]       # newest first
+    assert repo.list_viz_templates(owner=OTHER) == []
+    with pytest.raises(P.Conflict) as err:
+        repo.create_viz_template(P.VizTemplate(id="", name="ABC", mapping={}))
+    assert err.value.code == "name_taken"
+    assert repo.create_viz_template(P.VizTemplate(id="", name="ABC", mapping={}, owner_id=OTHER)).name == "ABC"
+    assert repo.get_viz_template(b.id).description == "d"
+    with pytest.raises(P.NotFound):
+        repo.get_viz_template(b.id, owner=OTHER)
+    repo.delete_viz_template(b.id)
+    with pytest.raises(P.NotFound):
+        repo.delete_viz_template(b.id)
+    assert [t.id for t in repo.list_viz_templates()] == [a.id]
+
+
 def test_dataset_checks_are_the_change_history(repo):
     ds, _ = repo.register_dataset(_dataset())
     change = {"meta_changed": False, "added": 12, "removed": 0, "modified": 1,

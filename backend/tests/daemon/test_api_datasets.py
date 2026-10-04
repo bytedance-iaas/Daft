@@ -81,6 +81,8 @@ def test_dataset_list_pages_filters_and_last_task(client_for, clock):
     assert (body["page"], body["page_size"], body["total"]) == (1, 10, 14)
     assert [x["id"] for x in body["items"]] == [broken.id, umi.id] + ids[::-1][:8]
     item = body["items"][1]
+    assert item.pop("viz") == {"state": "ready", "reason": None}           # C4 2.4.0
+    assert body["items"][0]["viz"]["state"] == "unsupported"
     assert item == {"id": umi.id, "name": "UMI 640", "source": "tos",
                     "uri": "tos://bucket/other/umi_640", "region": "cn-beijing",
                     "format": "lerobot_v3", "episode_count": 640, "robot_type": None,
@@ -101,6 +103,7 @@ def test_dataset_list_pages_filters_and_last_task(client_for, clock):
     assert ids_of(format="lerobot_v3") == [umi.id]
     assert ids_of(format="unsupported") == [broken.id]
     assert ids_of(check_state="changed") == [ids[0]]
+    assert broken.id not in ids_of(viz="true") and umi.id in ids_of(viz="true")   # C4 2.4.0
     page2 = c.get("/curation/api/v1/datasets", params={"page": 2, "page_size": 10}).json()
     assert [x["id"] for x in page2["items"]] == ids[::-1][8:] and page2["total"] == 14
     for params in ({"page_size": 7}, {"page": 0}, {"format": "rrd"}, {"check_state": "unknown"}):

@@ -118,7 +118,10 @@ dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Da
 | `CURATOR_MASTER_KEY_VERSION` | Secret 的 `curator_master_key_version` | secretKeyRef，可缺（没有 = 第 1 版） |
 
 镜像里还固定了 `CURATOR_STATIC_DIR=/app/web`（网页控制台）和 `CURATOR_CONTRACTS_DIR=/app/docs/contracts`（契约文件），Chart 不改它们。
-Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数、同时运行的任务数）用 Daemon 的缺省：同时运行 3 个任务，
+Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数、同时运行的任务数、数据可视化的转码与缓存）用 Daemon 的缺省：
+可视化允许平台转码（`CURATOR_VIZ_TRANSCODE=1`，2 路并发 `CURATOR_VIZ_TRANSCODE_WORKERS`），转封装、帧包与转码产物放临时盘
+`/scratch/viz-cache`（`CURATOR_VIZ_CACHE_DIR` 缺省为临时盘下的 `viz-cache`，上限 `CURATOR_VIZ_CACHE_GB=20`，LRU，丢了按需重做；设计 18 §4.1、§4.2，D60），
+要关转码用 `extraEnv` 设 `CURATOR_VIZ_TRANSCODE=0`；同时运行 3 个任务，
 CPU worker 总数是容器 CPU 配额（`resources.limits.cpu`）减 2，由 Daemon 的全局 CPU 池在任务之间分（D54，04 篇 §2.1、§2.3）。
 早于 D54 的 dataverse 写进 site.yaml 的 `concurrency.cpu` / `cpuMax` 会被忽略并在日志里告警，不影响启动；VCI 上按 limits 计费。
 

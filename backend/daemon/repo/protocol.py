@@ -20,7 +20,7 @@ Rules every implementation keeps:
 * Times are integer epoch milliseconds. Secrets are stored encrypted by the
   caller (``payload_enc``); the repository never sees plaintext keys.
 * **Ids are random** (D45): new rows get ``<prefix>-<9 lowercase letters>``
-  (``task``, ``sub``, ``ds``, ``pf``, ``cred``, ``vb``, ``vm``); rows made before
+  (``task``, ``sub``, ``ds``, ``pf``, ``cred``, ``vb``, ``vm``, ``vt``); rows made before
   keep their ``<prefix>_<26 Crockford base32 characters>`` id, and every method
   takes both. An id the repository makes never collides with an existing row (it
   draws again); an id the caller chose that is already taken raises
@@ -246,6 +246,27 @@ class Dataset:
     manifest_path: str | None = None         # the kept file listing, to tell which files changed
     check_state: DatasetCheckState = "ok"
     checked_at: int | None = None
+    owner_id: str = DEFAULT_OWNER
+    created_at: int = 0
+    updated_at: int = 0
+    #: the mcap field mapping (C7 ``viz-mapping/1.0``, D62); None = not confirmed (or not mcap)
+    viz_mapping: dict | None = None
+    viz_mapping_version: int = 0             # 0 = never confirmed; each confirmation adds one
+    viz_mapping_updated_at: int | None = None
+    #: the visualizer's display configuration (design doc 18 §6.5): annotation track, camera order
+    display_config: dict | None = None
+    annotations_upload: str | None = None    # the external annotation file (a viz_annotations upload id)
+
+
+@dataclass
+class VizTemplate:
+    """A site template of the mcap field mapping (design doc 18 §6, 另存为模版); the built-ins
+    live in code, not here."""
+
+    id: str
+    name: str
+    mapping: dict                            # C7 viz-mapping/1.0
+    description: str = ""
     owner_id: str = DEFAULT_OWNER
     created_at: int = 0
     updated_at: int = 0
@@ -531,14 +552,23 @@ class Repository(Protocol):
 
     def list_datasets(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                       q: str | None = None, fmt: str | None = None,
-                      check_state: DatasetCheckState | None = None) -> PagedResult[Dataset]:
+                      check_state: DatasetCheckState | None = None,
+                      formats: Iterable[str] | None = None) -> PagedResult[Dataset]:
         """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | mcap | lance | unsupported, read
-        from the preflight (mcap and lance since schema step 4, C4 1.11)."""
+        from the preflight (mcap and lance since schema step 4, C4 1.11); ``formats`` keeps any
+        of several (the visualizer's picker, C4 2.4.0)."""
 
     def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
-        """Name and note (PATCH), a replacement access key, or a refreshed preflight: a
-        repreflight gives ``preflight``, ``meta_fingerprint``, ``source_fingerprint`` and
-        ``preflighted_at`` together and sets ``check_state`` back to ``ok``."""
+        """Name and note (PATCH), a replacement access key, the visualizer's ``display_config``
+        and ``annotations_upload``, or a refreshed preflight: a repreflight gives ``preflight``,
+        ``meta_fingerprint``, ``source_fingerprint`` and ``preflighted_at`` together and sets
+        ``check_state`` back to ``ok``."""
+
+    def set_dataset_viz_mapping(self, dataset_id: str, mapping: dict, *,
+                                owner: str = DEFAULT_OWNER) -> Dataset:
+        """Confirms a new version of the mcap field mapping (D62): stores it, adds one to
+        ``viz_mapping_version`` and stamps ``viz_mapping_updated_at``, in one step. The caller
+        has validated it (C7 and the dataset's topics)."""
 
     def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
         """Appends the check and sets the dataset's check_state and checked_at in one step. A
@@ -558,6 +588,20 @@ class Repository(Protocol):
 
     def credential_dataset_references(self, cred_id: str) -> int:
         """Registrations that use this access key; deleting the key clears their reference."""
+
+    # -- visualizer templates (design doc 18 §6) ------------------------------------------
+    def create_viz_template(self, template: VizTemplate) -> VizTemplate:
+        """The id is generated (``vt-…``); raises Conflict('name_taken') when the owner already
+        has a template of that name."""
+
+    def list_viz_templates(self, *, owner: str = DEFAULT_OWNER) -> list[VizTemplate]:
+        """Newest first."""
+
+    def get_viz_template(self, template_id: str, *, owner: str = DEFAULT_OWNER) -> VizTemplate:
+        """Raises NotFound."""
+
+    def delete_viz_template(self, template_id: str, *, owner: str = DEFAULT_OWNER) -> None:
+        """Raises NotFound; datasets keep the mappings drafted from it."""
 
     # -- tasks --------------------------------------------------------------------
     def create_task(self, spec: TaskCreate) -> Task:

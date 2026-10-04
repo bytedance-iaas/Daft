@@ -122,6 +122,9 @@ curation preflight --input ...
    ├─ ④ 读 meta：episode 数、相机、fps、robot_type、features、有/无任务标注的条数
    │     匹配数据集语义 profile（`ingest/dataset_profiles/*.yaml`，按 robot_type 等命中），回报命中了哪个
    │     编号不是 0 … count-1 时（保留源编号的子集、按文件名编号的 mcap）另写 `episode_indices`，选择都从它里面选（F12.8）
+   │     给数据可视化另写几项（设计 18 §7，C2 只加可选字段）：`features`（info.json 的特征表，names 摊平成列表）、
+   │     `camera_info`（与 `cameras` 同序：分辨率、编码、fps、`needs_transcode`——mpeg4 等浏览器放不了的标出来）、
+   │     `segment_sources`（认出来的分段标注来源，认不出的写 supported=false 与原因：「标注格式不支持」）、mcap 的 `topics`
    │
    ├─ ⑤ 逐模块算 availability（三态）
    │

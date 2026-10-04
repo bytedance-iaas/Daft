@@ -66,6 +66,7 @@ from .protocol import (
     TaskModule,
     UsageBucket,
     UsageDelta,
+    VizTemplate,
     VlmBackend,
     VlmModel,
 )
@@ -115,10 +116,10 @@ _MODEL_FIELDS = frozenset({"model_name", "reasoning_effort", "max_concurrency", 
 _USAGE_COUNTERS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
                    "requests", "requests_unknown_usage")
 #: ``update_dataset``: what PATCH may change, and what a re-preflight refreshes together.
-_DATASET_FIELDS = frozenset({"name", "note", "credential_id"})
+_DATASET_FIELDS = frozenset({"name", "note", "credential_id", "display_config", "annotations_upload"})
 _DATASET_REFRESH = frozenset({"preflight", "meta_fingerprint", "source_fingerprint",
                               "preflighted_at"})
-_DATASET_JSON = frozenset({"preflight", "source_fingerprint"})
+_DATASET_JSON = frozenset({"preflight", "source_fingerprint", "display_config"})
 _DATASET_REQUIRED = frozenset({"name"}) | _DATASET_REFRESH
 #: Dataset ids are the repository's own (``new_id("ds")``); the REST path only routes these.
 #: Registrations made before D45 keep their ``ds_<letters and digits>`` ids.
@@ -437,7 +438,16 @@ def _dataset(row) -> Dataset:
         preflighted_at=row["preflighted_at"], note=row["note"], region=row["region"],
         credential_id=row["credential_id"], manifest_path=row["manifest_path"],
         check_state=row["check_state"], checked_at=row["checked_at"], owner_id=row["owner_id"],
-        created_at=row["created_at"], updated_at=row["updated_at"])
+        created_at=row["created_at"], updated_at=row["updated_at"],
+        viz_mapping=_loads(row["viz_mapping"]), viz_mapping_version=row["viz_mapping_version"],
+        viz_mapping_updated_at=row["viz_mapping_updated_at"],
+        display_config=_loads(row["display_config"]), annotations_upload=row["annotations_upload"])
+
+
+def _viz_template(row) -> VizTemplate:
+    return VizTemplate(id=row["id"], name=row["name"], mapping=_loads(row["mapping"]) or {},
+                       description=row["description"], owner_id=row["owner_id"],
+                       created_at=row["created_at"], updated_at=row["updated_at"])
 
 
 def _dataset_check(row) -> DatasetCheck:
@@ -984,17 +994,24 @@ class SqliteRepository:
                 return found, False
             ds_id = _row_id(c, "dataset", "ds", dataset.id)
             self._check_access_key(c, dataset.credential_id, dataset.owner_id)
+            mapped = dataset.viz_mapping is not None
             c.execute(
                 "INSERT INTO dataset (id, owner_id, name, note, source, uri, region, credential_id,"
                 " preflight, format, meta_fingerprint, source_fingerprint, manifest_path,"
-                " check_state, checked_at, preflighted_at, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " check_state, checked_at, preflighted_at, created_at, updated_at,"
+                " viz_mapping, viz_mapping_version, viz_mapping_updated_at, display_config,"
+                " annotations_upload)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ds_id, dataset.owner_id, dataset.name, dataset.note, dataset.source, dataset.uri,
                  region, dataset.credential_id, _dumps(dataset.preflight or {}),
                  dataset_format(dataset.preflight), dataset.meta_fingerprint,
                  _dumps(dataset.source_fingerprint or {}), dataset.manifest_path,
                  dataset.check_state, dataset.checked_at, dataset.preflighted_at,
-                 dataset.created_at or now, dataset.updated_at or now))
+                 dataset.created_at or now, dataset.updated_at or now,
+                 _dumps(dataset.viz_mapping) if mapped else None, 1 if mapped else 0,
+                 (dataset.created_at or now) if mapped else None,
+                 _dumps(dataset.display_config) if dataset.display_config is not None else None,
+                 dataset.annotations_upload))
             return self._get_dataset(c, ds_id, dataset.owner_id), True
 
         return self._write(op)
@@ -1004,7 +1021,8 @@ class SqliteRepository:
 
     def list_datasets(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                       q: str | None = None, fmt: str | None = None,
-                      check_state: str | None = None) -> PagedResult[Dataset]:
+                      check_state: str | None = None,
+                      formats: Iterable[str] | None = None) -> PagedResult[Dataset]:
         page, page_size = int(page), int(page_size)
         if page < 1 or page_size < 1:
             raise ValueError("page and page_size start at 1")
@@ -1015,6 +1033,10 @@ class SqliteRepository:
         if fmt is not None:
             where.append("format=?")
             args.append(fmt)
+        if formats is not None:
+            wanted = sorted(set(formats))
+            where.append(f"format IN ({_placeholders(len(wanted))})" if wanted else "0")
+            args += wanted
         if check_state is not None:
             where.append("check_state=?")
             args.append(check_state)
@@ -1050,7 +1072,8 @@ class SqliteRepository:
         nulls = sorted(k for k in _DATASET_REQUIRED & set(fields) if fields[k] is None)
         if nulls:
             raise ValueError(f"cannot clear {nulls}")
-        values = {k: (_dumps(v or {}) if k in _DATASET_JSON else v) for k, v in fields.items()}
+        values = {k: ((None if v is None and k == "display_config" else _dumps(v or {}))
+                      if k in _DATASET_JSON else v) for k, v in fields.items()}
         if refresh:
             values["format"] = dataset_format(fields["preflight"])
             values["check_state"] = "ok"
@@ -1068,6 +1091,65 @@ class SqliteRepository:
             return self._get_dataset(c, dataset_id, owner)
 
         return self._write(op)
+
+    def set_dataset_viz_mapping(self, dataset_id: str, mapping: dict, *,
+                                owner: str = DEFAULT_OWNER) -> Dataset:
+        """A new confirmed version of the mcap field mapping (D62): version + 1, stamped now."""
+        if not isinstance(mapping, dict):
+            raise ValueError("a mapping is a C7 document (dict)")
+        now = self._clock()
+
+        def op(c):
+            self._get_dataset(c, dataset_id, owner)
+            c.execute("UPDATE dataset SET viz_mapping=?, viz_mapping_version=viz_mapping_version + 1,"
+                      " viz_mapping_updated_at=?, updated_at=MAX(?, updated_at + 1) WHERE id=?",
+                      (_dumps(mapping), now, now, dataset_id))
+            return self._get_dataset(c, dataset_id, owner)
+
+        return self._write(op)
+
+    # -- visualizer templates (design doc 18 §6) -------------------------------------------
+    def create_viz_template(self, template: VizTemplate) -> VizTemplate:
+        now = self._clock()
+
+        def op(c):
+            vt_id = _row_id(c, "viz_template", "vt", template.id)
+            try:
+                c.execute("INSERT INTO viz_template (id, owner_id, name, description, mapping,"
+                          " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                          (vt_id, template.owner_id, template.name, template.description or "",
+                           _dumps(template.mapping or {}), template.created_at or now,
+                           template.updated_at or now))
+            except sqlite3.IntegrityError as err:
+                if _is_unique_violation(err):
+                    raise Conflict("name_taken",
+                                   f"template name {template.name!r} exists") from None
+                raise
+            return self._get_viz_template(c, vt_id, template.owner_id)
+
+        return self._write(op)
+
+    @staticmethod
+    def _get_viz_template(c, template_id: str, owner: str) -> VizTemplate:
+        row = c.execute("SELECT * FROM viz_template WHERE id=? AND owner_id=?",
+                        (template_id, owner)).fetchone()
+        if row is None:
+            raise NotFound(f"template {template_id}")
+        return _viz_template(row)
+
+    def list_viz_templates(self, *, owner: str = DEFAULT_OWNER) -> list[VizTemplate]:
+        return self._read(lambda c: [_viz_template(r) for r in c.execute(
+            "SELECT * FROM viz_template WHERE owner_id=? ORDER BY created_at DESC, rowid DESC",
+            (owner,)).fetchall()])
+
+    def get_viz_template(self, template_id: str, *, owner: str = DEFAULT_OWNER) -> VizTemplate:
+        return self._read(lambda c: self._get_viz_template(c, template_id, owner))
+
+    def delete_viz_template(self, template_id: str, *, owner: str = DEFAULT_OWNER) -> None:
+        def op(c):
+            self._get_viz_template(c, template_id, owner)
+            c.execute("DELETE FROM viz_template WHERE id=?", (template_id,))
+        self._write(op)
 
     def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
         """Appends the check; the dataset's ``checked_at`` becomes ``check.at`` and its

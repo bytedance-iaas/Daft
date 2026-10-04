@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.3.0
+  version: 2.4.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -189,6 +189,23 @@ info:
     module the episodes judged, failed on and with a finding (`modules`). The report (C2) adds
     the rejects per item (`overview.reject_items`) and per module the episodes with a finding,
     in all and per level (`summary.flagged_episodes`, `summary.levels`).
+
+    2.4.0 (2026-10-04): the data visualizer (design doc 18, D60-D64). Two sets of readers share one
+    presentation model (`VizDataset`, `VizEpisode`, `VizSeries`): the dataset scope for the
+    visualize page (`/datasets/{id}/viz`, `/viz/episodes`, `/viz/meta`,
+    `/datasets/{id}/episodes/{index}/viz|series`, the cameras the Daemon serves:
+    `.../cameras/{camera}.mp4|.frames|.json`) and the task scope for the mini player of the report,
+    the adjudication cards and the live episodes (`/tasks/{id}/viz`,
+    `/tasks/{id}/episodes/{index}/viz|series|cameras/...`, read from the task's frozen input; the
+    `.mp4` route existed undeclared for mcap cameras). mcap datasets get a field mapping (C7
+    `viz-mapping.schema.json`): `POST /viz/mcap-probe` drafts it, `GET`/`PUT /datasets/{id}/mapping`
+    keep it per dataset (versioned, frozen into a task's run.json when it starts), `/viz/templates`
+    is the site's template library. External annotation files are a new upload kind
+    `viz_annotations` (JSON, or a zip of per-episode JSON sent as `application/zip`), attached with
+    `PUT /datasets/{id}/annotations` or at registration (`DatasetCreate.annotations_upload`, with
+    `viz_mapping`). `DatasetItem.viz` says whether a dataset can be visualized and
+    `GET /datasets?viz=true` lists only those; `DatasetDetail` names its `viz_mapping` and
+    `annotations`; `EpisodeView` gains `fps` and `dataset_id`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -218,6 +235,10 @@ tags:
     description: media signing, events, probes
   - name: uploads
     description: input files of module parameters (registry 1.5, format upload), validated on arrival
+  - name: viz
+    description: >-
+      the data visualizer (design doc 18): the presentation model of a registered dataset or of a
+      task's input, curves, the cameras the Daemon serves, mcap field mappings and templates
 
 paths:
   # ---------------------------------------------------------------- credentials
@@ -533,6 +554,10 @@ paths:
         - name: check_state
           in: query
           schema: {enum: [ok, changed]}
+        - name: viz
+          in: query
+          description: true = only datasets a visualizer reader serves (LeRobot, mcap), for the visualize page's picker
+          schema: {type: boolean}
       responses:
         "200":
           description: one page
@@ -736,6 +761,233 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/DatasetSignResponse"}
         default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/viz:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetViz
+      summary: The presentation model of a registered dataset for the visualizer (design doc 18 §4.0)
+      description: |
+        Cameras and how each one is served, curve groups, annotation sources and the field tree,
+        read by the format's reader from the registration's metadata (LeRobot `meta/`, an mcap
+        file's summary and the dataset's confirmed mapping) - never from the samples - and cached
+        by the metadata fingerprint. A format without a reader in this phase (lance) answers with
+        `format.reader` null; an mcap dataset whose mapping is not confirmed answers
+        `mapping.state: none` with no cameras or streams and a warning.
+      responses:
+        "200":
+          description: the dataset
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDataset"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/viz/episodes:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: listDatasetVizEpisodes
+      summary: The episodes of the visualizer's side rail - number, length, task text, and steps when the episode table has them
+      parameters:
+        - name: q
+          in: query
+          description: an episode number (`12`, `ep12`) or words of the task text
+          schema: {type: string, maxLength: 200}
+        - name: sort
+          in: query
+          description: "`steps`: episodes without known steps first"
+          schema: {enum: [index, duration, steps], default: index}
+        - name: order
+          in: query
+          schema: {enum: [asc, desc], default: asc}
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: one page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizEpisodePage"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/viz/meta:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetVizMeta
+      summary: A metadata file the field tree names (meta/*, README), for its preview; cut at 256 KiB
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: relative to the dataset, e.g. `meta/info.json`
+          schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        "200":
+          description: the file
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizMetaFile"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/viz:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getDatasetEpisodeViz
+      summary: One episode for the player - its clock, cameras with their URLs, task text and annotations
+      description: |
+        Presigned URLs expire (`cameras[].expires_at`); ask again to renew them. Opening an episode
+        starts preparing the cameras the Daemon serves (remux, frame packs, transcoding) in the
+        background.
+      responses:
+        "200":
+          description: the episode
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizEpisode"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/series:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getDatasetEpisodeSeries
+      summary: One curve group of an episode, min / max thinned to at most `points` (design doc 18 §4.3)
+      parameters:
+        - $ref: "#/components/parameters/VizStream"
+        - $ref: "#/components/parameters/VizFrom"
+        - $ref: "#/components/parameters/VizTo"
+        - $ref: "#/components/parameters/VizPoints"
+      responses:
+        "200":
+          description: the curves
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizSeries"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/cameras/{camera}.mp4:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getDatasetCameraVideo
+      summary: A camera served by the Daemon - a local dataset's file, a fragmented-mp4 remux or an H.264 transcode - with Range
+      parameters:
+        - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizVideo"
+        "206":
+          $ref: "#/components/responses/VizVideoRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the file
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/cameras/{camera}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getDatasetCameraFrames
+      summary: The JPEG frame pack of a camera - the frames' own bytes back to back, read by Range with the index
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/cameras/{camera}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getDatasetCameraFrameIndex
+      summary: The index of a camera's JPEG frame pack - time, offset and size of every frame
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/mapping:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetMapping
+      summary: The dataset's mcap field mapping (C7) and the check reader's mapping derived from it
+      responses:
+        "200":
+          description: the mapping
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetMapping"}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      tags: [viz]
+      operationId: putDatasetMapping
+      summary: Confirm a new version of the mapping (validated against C7 and the dataset's topics)
+      description: |
+        Only for mcap datasets. Tasks started before keep the version frozen into their run.json
+        (D62); tasks started after read this one. A mapping that names topics the dataset does not
+        have, pairs series that are not of opposite roles or names a frame reference that is not
+        a camera or series fails with `validation_failed` and `details.errors` per item.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetMappingPut"}
+      responses:
+        "200":
+          description: confirmed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetMapping"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/annotations:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    put:
+      tags: [viz]
+      operationId: putDatasetAnnotations
+      summary: Attach an external annotation file (a `viz_annotations` upload) to the dataset, replace it or remove it (null)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetAnnotationsPut"}
+      responses:
+        "200":
+          description: the dataset
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
+        default: {$ref: "#/components/responses/Error"}
   /preflight:
     post:
       tags: [datasets]
@@ -784,7 +1036,9 @@ paths:
       description: >-
         The body is the file itself, sent as JSON like every write: a trajectory.json as it is
         (kind eef_trajectory), or the seed rows as a JSON array (kind eef_observation_seeds; the
-        console turns a .jsonl file into that array). Up to 64 MiB. An invalid file is not stored:
+        console turns a .jsonl file into that array). Kind viz_annotations also takes a zip of
+        per-episode JSON files named by episode index, sent as application/zip (still not a
+        CORS-safelisted type, so cross-site writes stay refused). Up to 64 MiB. An invalid file is not stored:
         400 validation_failed with details.errors, each located as precisely as the file allows
         (field = JSON path, plus sample_id / episode_index / frame_index / camera_id / point_id).
         The dataset is not known yet, so media are checked when a task uses the file.
@@ -804,6 +1058,8 @@ paths:
         content:
           application/json:
             schema: {description: "the file content (see above)"}
+          application/zip:
+            schema: {type: string, format: binary, description: "viz_annotations only"}
       responses:
         "201":
           description: stored and validated
@@ -827,6 +1083,83 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Upload"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /viz/mcap-probe:
+    post:
+      tags: [viz]
+      operationId: probeMcap
+      summary: Probe an mcap dataset and draft its mapping (design doc 18 §6.4) - before registering it or after
+      description: |
+        Reads the summary section of one episode file (the first, or `file`) and the first message
+        of every topic with ranged reads: schema and encodings, rate, count, picture size and
+        codec, numeric fields. The draft comes from `template` when given, else from the best
+        matching template (site templates and the built-ins, coverage >= 80 %), else from
+        builtin:foxglove / builtin:ros2 by the message encoding. A dataset whose files disagree on
+        their topics gets a warning.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/McapProbeRequest"}
+      responses:
+        "200":
+          description: the probe and the draft
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/McapProbe"}
+        default: {$ref: "#/components/responses/Error"}
+  /viz/templates:
+    get:
+      tags: [viz]
+      operationId: listVizTemplates
+      summary: Mapping templates - the built-ins first, then the site's own, newest first
+      responses:
+        "200":
+          description: templates
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/VizTemplate"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [viz]
+      operationId: createVizTemplate
+      summary: Save a mapping as a site template (另存为模版); the name must be unique (409 name_taken)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VizTemplateCreate"}
+      responses:
+        "201":
+          description: saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizTemplate"}
+        default: {$ref: "#/components/responses/Error"}
+  /viz/templates/{template_id}:
+    parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/VizTemplateId"}
+    delete:
+      tags: [viz]
+      operationId: deleteVizTemplate
+      summary: Delete a site template (built-ins cannot be deleted); datasets keep the mappings drafted from it
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": {description: deleted}
         default: {$ref: "#/components/responses/Error"}
 
   # ---------------------------------------------------------------- tasks
@@ -1483,6 +1816,125 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/SyncCurves"}
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/viz:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getTaskViz
+      summary: The presentation model of a task's input as the task saw it (the mini player, design doc 18 §2)
+      description: |
+        Read like `getDatasetViz`, but from the task's frozen input (D27): its address and input
+        key, `preflight.json`, `source_manifest.json` and the mcap mapping frozen into run.json.
+        A deleted or changed registration does not change it; `dataset_id` is the task's
+        registration while it exists.
+      responses:
+        "200":
+          description: the task's input
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDataset"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/viz:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getTaskEpisodeViz
+      summary: One episode of the task's input for the mini player, with the check clock to place findings
+      responses:
+        "200":
+          description: the episode
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizEpisode"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/series:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getTaskEpisodeSeries
+      summary: One curve group of an episode of the task's input (as getDatasetEpisodeSeries)
+      parameters:
+        - $ref: "#/components/parameters/VizStream"
+        - $ref: "#/components/parameters/VizFrom"
+        - $ref: "#/components/parameters/VizTo"
+        - $ref: "#/components/parameters/VizPoints"
+      responses:
+        "200":
+          description: the curves
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizSeries"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/cameras/{camera}.mp4:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getTaskCameraVideo
+      summary: A camera of the task's input served by the Daemon (as getDatasetCameraVideo)
+      description: |
+        Also what `GET /media/sign` resolves an mcap episode's virtual camera path to (the
+        episode view's `videos`): without `transcode`, a JPEG camera is muxed into an MJPEG mp4 in
+        memory as before 2.4.0.
+      parameters:
+        - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizVideo"
+        "206":
+          $ref: "#/components/responses/VizVideoRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the file
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/cameras/{camera}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getTaskCameraFrames
+      summary: The JPEG frame pack of a camera of the task's input (as getDatasetCameraFrames)
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/cameras/{camera}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathCamera"
+    get:
+      tags: [viz]
+      operationId: getTaskCameraFrameIndex
+      summary: The index of a camera's JPEG frame pack (as getDatasetCameraFrameIndex)
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
+        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/perf:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -1750,6 +2202,52 @@ components:
       in: query
       description: access key name (not needed for source=public)
       schema: {type: string}
+    PathIndex:
+      name: index
+      in: path
+      required: true
+      description: the episode's own index (preflight `episode_indices`)
+      schema: {type: integer, minimum: 0}
+    PathCamera:
+      name: camera
+      in: path
+      required: true
+      description: the camera's `key` in the presentation model
+      schema: {$ref: "#/components/schemas/VizCameraKey"}
+    RangeHeader:
+      name: Range
+      in: header
+      description: one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`)
+      schema: {type: string}
+    VizTranscode:
+      name: transcode
+      in: query
+      description: >-
+        true: the H.264 transcode of the camera, for a browser that cannot decode the original
+        (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when
+        CURATOR_VIZ_TRANSCODE is off
+      schema: {type: boolean, default: false}
+    VizStream:
+      name: stream
+      in: query
+      required: true
+      description: the curve group's `key` (VizStream.key)
+      schema: {type: string, minLength: 1, maxLength: 128}
+    VizFrom:
+      name: from
+      in: query
+      description: start of the window in episode seconds (default 0)
+      schema: {type: number, minimum: 0}
+    VizTo:
+      name: to
+      in: query
+      description: end of the window in episode seconds (default the episode's end)
+      schema: {type: number, minimum: 0}
+    VizPoints:
+      name: points
+      in: query
+      description: at most this many points per line; more raw points are thinned by min / max per bucket
+      schema: {type: integer, minimum: 100, maximum: 20000, default: 2000}
 
   responses:
     Error:
@@ -1761,6 +2259,31 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
+    VizVideo:
+      description: the whole video (Accept-Ranges bytes)
+      content:
+        video/mp4:
+          schema: {type: string, format: binary}
+    VizVideoRange:
+      description: the requested byte range (Content-Range)
+      content:
+        video/mp4:
+          schema: {type: string, format: binary}
+    VizFrames:
+      description: the whole frame pack (Accept-Ranges bytes)
+      content:
+        application/octet-stream:
+          schema: {type: string, format: binary}
+    VizFramesRange:
+      description: the requested byte range of the frame pack (Content-Range)
+      content:
+        application/octet-stream:
+          schema: {type: string, format: binary}
+    VizPending:
+      description: still being prepared (transcoding, building the frame pack); ask again shortly
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/VizMediaPending"}
 
   schemas:
     # ---------- common
@@ -2217,7 +2740,7 @@ components:
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
-                 preflighted_at, created_at, last_task]
+                 preflighted_at, created_at, last_task, viz]
       properties:
         id:
           type: string
@@ -2238,6 +2761,7 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/TaskRef"
+        viz: {$ref: "#/components/schemas/VizStatus"}
     DatasetItem:
       allOf:
         - $ref: "#/components/schemas/DatasetItemFields"
@@ -2246,9 +2770,19 @@ components:
       allOf:
         - $ref: "#/components/schemas/DatasetItemFields"
         - type: object
-          required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links]
+          required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links, viz_mapping, annotations]
           properties:
             note: {type: [string, "null"]}
+            viz_mapping:
+              description: the mcap field mapping (C7); null for other formats
+              oneOf:
+                - type: "null"
+                - $ref: "#/components/schemas/DatasetMappingInfo"
+            annotations:
+              description: the external annotation file attached to it (a viz_annotations upload), if any
+              oneOf:
+                - type: "null"
+                - $ref: "#/components/schemas/DatasetAnnotationsInfo"
             credential: {type: [string, "null"], description: "access key name; null for the public bucket, or once the key is deleted"}
             preflight: {$ref: "./cli/preflight.schema.json"}
             meta_fingerprint: {type: string}
@@ -2272,6 +2806,12 @@ components:
         input: {$ref: "#/components/schemas/InputRef"}
         name: {type: string, minLength: 1, maxLength: 128, description: "defaults to the last path segment"}
         note: {type: string, maxLength: 2000}
+        viz_mapping:
+          $ref: "#/components/schemas/VizMapping"
+          description: mcap only - the field mapping confirmed in the add drawer (kept as version 1)
+        annotations_upload:
+          $ref: "#/components/schemas/UploadId"
+          description: an external annotation file (a viz_annotations upload) to attach
     DatasetPatch:
       type: object
       additionalProperties: false
@@ -2468,8 +3008,10 @@ components:
         region: {$ref: "#/components/schemas/Region"}
         credential: {type: [string, "null"], description: "access key name; null in responses once the key was deleted"}
     UploadKind:
-      enum: [eef_trajectory, eef_observation_seeds, eef_gripper_template, eef_record_mapping]
-      description: the x-upload-kind of a file parameter (registry 1.5)
+      enum: [eef_trajectory, eef_observation_seeds, eef_gripper_template, eef_record_mapping, viz_annotations]
+      description: >-
+        the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external
+        annotation file (design doc 18 §4.5), not a module parameter
     UploadId:
       type: string
       pattern: "^(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$"
@@ -3057,6 +3599,14 @@ components:
             findings revisions (C2 2.0, 2.3.0): every finding of the episode, every module, with the
             level it has in this revision (its list entry's: the task's policy after the applied human
             decisions)
+        fps:
+          type: [number, "null"]
+          description: >-
+            2.4.0: the dataset's fps from the task's preflight, to read a finding's frames as seconds;
+            null for mcap (its checks run at each episode's action rate: getTaskEpisodeViz check_clock)
+        dataset_id:
+          type: [string, "null"]
+          description: 2.4.0, the task's registration while it exists (the mini player's 在可视化页打开)
     EpisodeFinding:
       type: object
       additionalProperties: false
@@ -3406,3 +3956,515 @@ components:
         failed_modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}}
         subtask_id: {type: [string, "null"]}
         reason: {type: [string, "null"]}
+    # ---------- the data visualizer (design doc 18, 2.4.0)
+    VizStatus:
+      type: object
+      additionalProperties: false
+      required: [state, reason]
+      description: whether the visualizer can open the dataset
+      properties:
+        state:
+          enum: [ready, mapping_pending, unsupported]
+          description: "mapping_pending: an mcap dataset whose field mapping is not confirmed (映射待确认)"
+        reason: {type: [string, "null"], description: "why not, in Chinese"}
+    VizFormat:
+      type: object
+      additionalProperties: false
+      required: [kind, version, reader]
+      properties:
+        kind: {enum: [lerobot, mcap, lance, lancedb, rrd, unknown]}
+        version: {enum: [v2, v3, null]}
+        reader: {enum: [lerobot, mcap, null], description: "the reader serving it; null = none in this phase (lance: phase two, design doc 18 §10)"}
+    VizAccess:
+      enum: [direct, local, remux, frames, transcode, unsupported]
+      description: |
+        How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
+        public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
+        Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+        drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
+        player tags it 平台转码); unsupported: cannot be shown, `reason` says why.
+    VizCameraKey:
+      type: string
+      pattern: "^[0-9A-Za-z_-]{1,96}$"
+      description: URL-safe camera key (LeRobot short name; mcap topic with / turned into _)
+    VizCamera:
+      type: object
+      additionalProperties: false
+      required: [key, name, source, kind, access, codec, codec_string, width, height, fps, transcoded, reason]
+      properties:
+        key: {$ref: "#/components/schemas/VizCameraKey"}
+        name: {type: string}
+        source: {type: string, description: "the LeRobot feature key or the mcap topic"}
+        kind: {enum: [video, frames], description: "video: an mp4 for <video>; frames: a JPEG frame pack"}
+        access: {$ref: "#/components/schemas/VizAccess"}
+        codec: {type: [string, "null"], description: "av1, h264, hevc, mpeg4, jpeg, png, raw ..."}
+        codec_string: {type: [string, "null"], description: "RFC 6381 codecs parameter for the player's decoding check (av01..., avc1..., hvc1...)"}
+        width: {type: [integer, "null"]}
+        height: {type: [integer, "null"]}
+        fps: {type: [number, "null"]}
+        pix_fmt: {type: [string, "null"]}
+        transcoded: {type: boolean, description: "the Daemon re-encodes it (access transcode)"}
+        reason: {type: [string, "null"], description: "why transcode or unsupported, in Chinese"}
+    VizLine:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      properties:
+        name: {type: string}
+        role: {enum: [state, action, other], description: "state solid, action dashed"}
+        source: {type: string, description: "the feature key or topic"}
+        dim: {type: [integer, "null"], description: "its position in the source's vector"}
+        unit: {type: [string, "null"]}
+    VizStream:
+      type: object
+      additionalProperties: false
+      required: [key, kind, name, unit, lines, smart, available, reason, sources]
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_.-]{1,128}$"}
+        kind: {enum: [series, depth, pointcloud, transform, text, event, image_sequence]}
+        name: {type: string}
+        unit: {type: [string, "null"]}
+        lines: {type: array, items: {$ref: "#/components/schemas/VizLine"}, description: "series: one per drawn number, state and action of the same name together"}
+        smart: {type: boolean, description: "placed by the smart layout"}
+        available: {type: boolean, description: "false: listed (field tree, + menu) but not drawable in this phase"}
+        reason: {type: [string, "null"]}
+        sources: {type: array, items: {type: string}, description: "feature keys or topics it is read from"}
+        rate_hz: {type: [number, "null"]}
+    VizAnnotationSource:
+      type: object
+      additionalProperties: false
+      required: [key, kind, name, format, source, supported, reason, primary]
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_.:-]{1,96}$"}
+        kind: {enum: [segments, events, labels]}
+        name: {type: string, description: "the track's name (子任务, 机器人分步, 外部标注 ...)"}
+        format:
+          type: string
+          description: >-
+            the recognised layout (design doc 18 §4.5): subtask_index, language_persistent,
+            language_events, task_index, index_table, string_column, bool_segments, quality,
+            episode_labels, argus, mcap_topic, mcap_attachment; open for later readers
+        source: {type: string, description: "where it is read from, shown as 来源"}
+        supported: {type: boolean, description: "false: something looks like annotations but its layout is unknown (标注格式不支持)"}
+        reason: {type: [string, "null"]}
+        primary: {type: boolean, description: "the track the subtitle bar shows first"}
+    VizFieldNode:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {enum: [group, camera, series, depth, text, table, file, topic, metadata, attachment, other]}
+        dtype: {type: [string, "null"]}
+        shape: {type: [array, "null"], items: {type: integer}}
+        names: {type: [array, "null"], items: {type: string}}
+        detail:
+          type: object
+          description: attributes shown in the detail pane
+          additionalProperties: {type: [string, number, boolean, "null"]}
+        camera: {$ref: "#/components/schemas/VizCameraKey"}
+        stream: {type: string, description: "the VizStream it is drawn as"}
+        file: {type: string, description: "a metadata file getDatasetVizMeta can read"}
+        children: {type: array, items: {$ref: "#/components/schemas/VizFieldNode"}}
+    VizMappingState:
+      type: object
+      additionalProperties: false
+      required: [state, version, name]
+      properties:
+        state:
+          enum: [not_needed, none, confirmed, frozen]
+          description: "not_needed: not mcap; none: an mcap dataset without a confirmed mapping; frozen: a task's (run.json)"
+        version: {type: [integer, "null"], minimum: 1}
+        name: {type: [string, "null"]}
+    VizWarning:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string, description: "Chinese"}
+    VizDataset:
+      type: object
+      additionalProperties: false
+      required: [scope, id, dataset_id, name, format, fps, episode_count, episode_indices, total_frames,
+                 robot_type, cameras, streams, annotation_sources, field_tree, mapping, transcode, warnings, fingerprint]
+      properties:
+        scope: {enum: [dataset, task]}
+        id: {type: string, description: "the dataset id, or the task id for scope task"}
+        dataset_id: {type: [string, "null"], description: "the registration; for scope task the task's, while it exists"}
+        name: {type: string}
+        format: {$ref: "#/components/schemas/VizFormat"}
+        fps: {type: [number, "null"], description: "null for mcap: every topic keeps its own rate"}
+        episode_count: {type: integer, minimum: 0}
+        episode_indices: {type: [string, "null"], description: "every index in the grammar of --episodes when they are not 0 .. count-1"}
+        total_frames: {type: [integer, "null"]}
+        robot_type: {type: [string, "null"]}
+        bytes: {type: [integer, "null"]}
+        cameras: {type: array, items: {$ref: "#/components/schemas/VizCamera"}}
+        streams: {type: array, items: {$ref: "#/components/schemas/VizStream"}}
+        annotation_sources: {type: array, items: {$ref: "#/components/schemas/VizAnnotationSource"}}
+        field_tree: {type: array, items: {$ref: "#/components/schemas/VizFieldNode"}}
+        mapping: {$ref: "#/components/schemas/VizMappingState"}
+        transcode:
+          type: object
+          additionalProperties: false
+          required: [enabled]
+          properties:
+            enabled: {type: boolean, description: "CURATOR_VIZ_TRANSCODE"}
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+        fingerprint: {type: string, description: "the metadata fingerprint the model and its caches belong to"}
+    VizEpisodeItem:
+      type: object
+      additionalProperties: false
+      required: [index, duration_s, frames, task]
+      properties:
+        index: {type: integer, minimum: 0}
+        duration_s: {type: [number, "null"]}
+        frames: {type: [integer, "null"]}
+        task: {type: string, description: "empty when there is none"}
+        steps:
+          type: [array, "null"]
+          description: the primary track's segments when the episode table has them (not read from the frames)
+          items:
+            type: object
+            additionalProperties: false
+            required: [start_s, end_s]
+            properties:
+              start_s: {type: number}
+              end_s: {type: number}
+              unqualified: {type: boolean}
+    VizEpisodePage:
+      allOf:
+        - $ref: "#/components/schemas/CursorPage"
+        - type: object
+          required: [total]
+          properties:
+            items: {type: array, items: {$ref: "#/components/schemas/VizEpisodeItem"}}
+            total: {type: integer, minimum: 0, description: "matches of the filter"}
+    VizTimeline:
+      type: object
+      additionalProperties: false
+      required: [kind, fps, frame_reference, frame_times]
+      properties:
+        kind: {enum: [frame, timestamp], description: "frame: frame = round(t x fps); timestamp: frame k sits at frame_times[k]"}
+        fps: {type: [number, "null"]}
+        frame_reference: {type: [string, "null"], description: "mcap: the topic whose messages number the frames"}
+        frame_times: {type: [array, "null"], items: {type: number}, description: "mcap: the episode time of every frame"}
+    VizCheckClock:
+      type: object
+      additionalProperties: false
+      required: [offset_s, fps]
+      description: "the checks' clock on the episode clock (task scope): t = offset_s + time_s, t = offset_s + frame / fps"
+      properties:
+        offset_s: {type: number}
+        fps: {type: [number, "null"]}
+    VizEpisodeCamera:
+      type: object
+      additionalProperties: false
+      required: [key, kind, access, url, index_url, transcode_url, from_ts, to_ts, offset_s, transcoded, expires_at, reason]
+      properties:
+        key: {$ref: "#/components/schemas/VizCameraKey"}
+        kind: {enum: [video, frames]}
+        access: {$ref: "#/components/schemas/VizAccess"}
+        url: {type: [string, "null"], description: "video: what <video> plays; frames: the frame pack; null when unsupported"}
+        index_url: {type: [string, "null"], description: "frames: the frame pack's index"}
+        transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one"}
+        from_ts: {type: [number, "null"], description: "LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts)"}
+        to_ts: {type: [number, "null"]}
+        offset_s: {type: number, description: "episode time of the camera's first frame (video time 0 after from_ts)"}
+        transcoded: {type: boolean}
+        expires_at: {type: [integer, "null"], description: "epoch ms when a presigned url stops working"}
+        reason: {type: [string, "null"]}
+    VizSegment:
+      type: object
+      additionalProperties: false
+      required: [start_s, end_s, label]
+      properties:
+        start_s: {type: number}
+        end_s: {type: number}
+        label: {type: string}
+        quality: {enum: [qualified, unqualified, null]}
+        contribution: {type: [string, "null"], description: "Argus: advancing / wasteful / idle"}
+        arm: {type: [string, "null"]}
+        flags: {type: array, items: {type: string}, description: "boolean segment columns that hold (is_intervention_segment ...)"}
+    VizTrack:
+      type: object
+      additionalProperties: false
+      required: [key, name, source, primary, segments]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        source: {type: string}
+        primary: {type: boolean}
+        segments: {type: array, items: {$ref: "#/components/schemas/VizSegment"}}
+    VizEvent:
+      type: object
+      additionalProperties: false
+      required: [t_s, label, source]
+      properties:
+        t_s: {type: number}
+        label: {type: string}
+        outcome: {type: [string, "null"]}
+        source: {type: string}
+    VizLabel:
+      type: object
+      additionalProperties: false
+      required: [key, name, value, source]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        value: {type: string}
+        source: {type: string}
+    VizAnnotations:
+      type: object
+      additionalProperties: false
+      required: [tracks, events, labels, warnings]
+      properties:
+        tracks: {type: array, items: {$ref: "#/components/schemas/VizTrack"}}
+        events: {type: array, items: {$ref: "#/components/schemas/VizEvent"}}
+        labels: {type: array, items: {$ref: "#/components/schemas/VizLabel"}, description: "episode labels: success, rating, task_status ..."}
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    VizEpisode:
+      type: object
+      additionalProperties: false
+      required: [scope, id, index, duration_s, frames, fps, task, timeline, cameras, annotations, check_clock, warnings]
+      properties:
+        scope: {enum: [dataset, task]}
+        id: {type: string}
+        index: {type: integer, minimum: 0}
+        duration_s: {type: number, minimum: 0}
+        frames: {type: integer, minimum: 0}
+        fps: {type: [number, "null"]}
+        task:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [text, source]
+              properties:
+                text: {type: string}
+                source: {type: string, description: "原始标注 / 人工改标 / 自产描述"}
+        timeline: {$ref: "#/components/schemas/VizTimeline"}
+        cameras: {type: array, items: {$ref: "#/components/schemas/VizEpisodeCamera"}}
+        annotations: {$ref: "#/components/schemas/VizAnnotations"}
+        check_clock:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizCheckClock"
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    VizSeries:
+      type: object
+      additionalProperties: false
+      required: [stream, unit, from_s, to_s, t, lines, total_points, downsampled]
+      properties:
+        stream: {type: string}
+        unit: {type: [string, "null"]}
+        from_s: {type: number}
+        to_s: {type: number}
+        t: {type: array, items: {type: number}, description: "episode seconds, shared by every line"}
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, role, values]
+            properties:
+              name: {type: string}
+              role: {enum: [state, action, other]}
+              values: {type: array, items: {type: [number, "null"]}}
+        total_points: {type: integer, minimum: 0, description: "raw samples in the window"}
+        downsampled: {type: boolean}
+    VizFrameIndex:
+      type: object
+      additionalProperties: false
+      required: [camera, codec, width, height, count, t, offset, size, bytes]
+      properties:
+        camera: {$ref: "#/components/schemas/VizCameraKey"}
+        codec: {enum: [jpeg, png]}
+        width: {type: [integer, "null"]}
+        height: {type: [integer, "null"]}
+        count: {type: integer, minimum: 0}
+        t: {type: array, items: {type: number}, description: "episode seconds of every frame"}
+        offset: {type: array, items: {type: integer}, description: "byte offset of every frame in the pack"}
+        size: {type: array, items: {type: integer}}
+        bytes: {type: integer, minimum: 0, description: "the pack's size"}
+    VizMediaPending:
+      type: object
+      additionalProperties: false
+      required: [state, progress, message]
+      properties:
+        state: {enum: [pending, failed]}
+        progress: {type: [number, "null"], minimum: 0, maximum: 1}
+        message: {type: string}
+    VizMetaFile:
+      type: object
+      additionalProperties: false
+      required: [path, size, truncated, kind, text]
+      properties:
+        path: {type: string}
+        size: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+        kind: {enum: [json, jsonl, text, markdown]}
+        text: {type: string}
+    VizMapping:
+      $ref: "./viz-mapping.schema.json"
+    DatasetMapping:
+      type: object
+      additionalProperties: false
+      required: [dataset_id, state, mapping, version, updated_at, check_mapping, warnings]
+      properties:
+        dataset_id: {type: string}
+        state: {enum: [none, confirmed]}
+        mapping:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizMapping"
+        version: {type: integer, minimum: 0, description: "0 = never confirmed"}
+        updated_at: {type: [integer, "null"]}
+        check_mapping:
+          type: [object, "null"]
+          description: the check reader's ingest.mcap_mapping derived from it (read-only, design doc 18 §6.2)
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    DatasetMappingPut:
+      type: object
+      additionalProperties: false
+      required: [mapping]
+      properties:
+        mapping: {$ref: "#/components/schemas/VizMapping"}
+    DatasetMappingInfo:
+      type: object
+      additionalProperties: false
+      required: [state, version, updated_at, name]
+      properties:
+        state: {enum: [none, confirmed]}
+        version: {type: integer, minimum: 0}
+        updated_at: {type: [integer, "null"]}
+        name: {type: [string, "null"]}
+    DatasetAnnotationsInfo:
+      type: object
+      additionalProperties: false
+      required: [upload_id, name, format, episodes, uploaded_at]
+      properties:
+        upload_id: {$ref: "#/components/schemas/UploadId"}
+        name: {type: string}
+        format: {type: string, description: "argus"}
+        episodes: {type: integer, minimum: 0}
+        uploaded_at: {type: integer}
+    DatasetAnnotationsPut:
+      type: object
+      additionalProperties: false
+      required: [upload_id]
+      properties:
+        upload_id:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/UploadId"
+    McapProbeRequest:
+      type: object
+      additionalProperties: false
+      required: [input]
+      properties:
+        input: {$ref: "#/components/schemas/InputSpec"}
+        file: {type: string, minLength: 1, maxLength: 512, description: "an episode file to probe instead of the first"}
+        template: {$ref: "#/components/schemas/VizTemplateId"}
+    McapTopic:
+      type: object
+      additionalProperties: false
+      required: [topic, schema, schema_encoding, message_encoding, count, rate_hz, start_s, end_s, image, fields, use, role, name, notes]
+      properties:
+        topic: {type: string}
+        schema: {type: [string, "null"]}
+        schema_encoding: {type: [string, "null"]}
+        message_encoding: {type: [string, "null"]}
+        count: {type: [integer, "null"]}
+        rate_hz: {type: [number, "null"]}
+        start_s: {type: [number, "null"], description: "first message, seconds after the file's first message"}
+        end_s: {type: [number, "null"]}
+        image:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [codec, width, height]
+              properties:
+                codec: {type: string}
+                width: {type: [integer, "null"]}
+                height: {type: [integer, "null"]}
+        fields:
+          type: [array, "null"]
+          description: the numeric leaves of its first message
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, size]
+            properties:
+              path: {type: string}
+              size: {type: integer, minimum: 1}
+        use: {enum: [camera, series, task, segments, ignore, unmapped], description: "what the draft does with it"}
+        role: {enum: [state, action, other, null]}
+        name: {type: string}
+        notes: {type: array, items: {type: string}, description: "Chinese: high rate, unsupported encoding ..."}
+    McapProbe:
+      type: object
+      additionalProperties: false
+      required: [file, files, topics, metadata, attachments, draft, matched, warnings]
+      properties:
+        file: {type: string}
+        files: {type: integer, minimum: 0, description: "episode files in the dataset"}
+        topics: {type: array, items: {$ref: "#/components/schemas/McapTopic"}}
+        metadata:
+          type: object
+          description: metadata records, by name, then key
+          additionalProperties:
+            type: object
+            additionalProperties: {type: string}
+        attachments:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, media_type, size]
+            properties:
+              name: {type: string}
+              media_type: {type: string}
+              size: {type: integer, minimum: 0}
+        draft: {$ref: "#/components/schemas/VizMapping"}
+        matched:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [template_id, name, coverage]
+              properties:
+                template_id: {$ref: "#/components/schemas/VizTemplateId"}
+                name: {type: string}
+                coverage: {type: number, minimum: 0, maximum: 1}
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    VizTemplateId:
+      type: string
+      pattern: "^(builtin:[a-z0-9]+|vt-[a-z]{9})$"
+    VizTemplate:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, builtin, mapping, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/VizTemplateId"}
+        name: {type: string}
+        description: {type: string}
+        builtin: {type: boolean}
+        mapping:
+          description: null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizMapping"
+        created_at: {type: [integer, "null"]}
+        updated_at: {type: [integer, "null"]}
+    VizTemplateCreate:
+      type: object
+      additionalProperties: false
+      required: [name, mapping]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 2000}
+        mapping: {$ref: "#/components/schemas/VizMapping"}

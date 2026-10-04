@@ -1,6 +1,6 @@
 # 18 · 数据可视化：独立的「可视化」页面、报告里的迷你播放器与 mcap 字段映射
 
-> 状态：**定稿 v1.0（2026-10-03）**—— 需求方三轮答复（§8.1–§8.3）与给定的架构都已并入，决策 D60–D64 在 `00-overview.md` §7；ReRun 的参考版本定为 0.38.1（§3.1）；第二期的内容先记在 §10。实现从 F13.1 开始（§9）。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
+> 状态：**定稿 v1.1（2026-10-04）**—— 需求方三轮答复（§8.1–§8.3）与给定的架构都已并入，决策 D60–D64 在 `00-overview.md` §7；ReRun 的参考版本定为 0.38.1（§3.1）；第二期的内容先记在 §10。v1.1 是开工前对着代码的核对（§8.4）：迷你版改走任务级接口、mcap 的时钟与质检对齐、预检描述符只加不改、URL 安全的相机 key、外部标注 zip 的上传、浏览器解码能力的兜底、v3 曲线按行组读，契约细节以 §7 为准。实现从 F13.1 开始（§9）。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
 > 需求账本：阶段 13（F13.0–F13.8）。
 > 静态稿：`frontend/mockups/visualize.html`（完整版，独立页面）、`episode-visualize-mini.html`（报告里的迷你版）、`dataset-add-mcap.html`（添加数据集的 mcap 配置），手动验证步骤在 `frontend/mockups/README.md`「第三批」。
 
@@ -13,11 +13,11 @@
 
 | 组件 | 位置 | 要做的 |
 |---|---|---|
-| 契约 | `docs/contracts/openapi.yaml`（C4）、`docs/contracts/cli/preflight.schema.json`（C2）、新增 `docs/contracts/viz-mapping.schema.json`（C7）与 `examples/` | §7 的端点、预检描述符扩展、映射模版 Schema；升版本、刷新锁、`npm run gen:api` |
-| Daemon | `backend/daemon/routes/`（新 `viz.py`）、`results/`（新 `viz/`：读取器、展示模型、曲线、帧包、转封装与转码）、`repo/`（数据集的 `viz_mapping`、模版表、迁移）、`orchestr/browse.py` | 统一展示模型与两个读取器、索引与曲线接口、相机供给（直连 / 转封装 / 帧包 / 转码）、mcap 探测与映射存储、转码开关 `CURATOR_VIZ_TRANSCODE` |
+| 契约 | `docs/contracts/openapi.yaml`（C4）、`docs/contracts/cli/preflight.schema.json`（C2）、新增 `docs/contracts/viz-mapping.schema.json`（C7）与 `examples/viz-mapping.json` | §7 的端点、预检描述符扩展、映射模版 Schema；升版本、刷新锁、`npm run gen:api` |
+| Daemon | `backend/daemon/routes/viz.py`（新）、`backend/daemon/viz/`（新包：数据源、读取器、展示模型、曲线、标注、帧包、转封装与转码、缓存、映射与模版）、`repo/`（数据集的 `viz_mapping`、模版表、迁移）、`uploads.py`（`viz_annotations`）、`results/episode.py`（`EpisodeView.fps` / `dataset_id`） | 统一展示模型与两个读取器；数据集级（完整版）与任务级（迷你版）两组接口共用读取器；相机供给（直连 / 本地 / 转封装 / 帧包 / 转码）、mcap 探测与映射存储、转码开关 `CURATOR_VIZ_TRANSCODE` |
 | 内核 | `backend/curation/ingest/mcap_reader.py`、`cli/containers.py`、`streams/clip.py`、`cli/lerobot_meta.py` | summary 里补 schema 与编码；按映射模版解消息；JPEG 帧包与 fMP4 转封装；预检写出 features / 相机编码 / 分段候选 |
 | 前端 | `frontend/src/features/visualizer/`（新）、`pages/visualize/`（新路由 `/visualize`）、`components/AppLayout.tsx`（侧栏「数据集 › 可视化」）、`pages/report/EpisodesTab.tsx`、`pages/adjudication/EpisodeCard.tsx`、`pages/datasets/*`（「可视化」新窗口、「可视化（旧）」）、`features/datasets/AddDatasetDrawer.tsx`、`locales/zh.ts`、`mocks/` | 播放器、独立页面与左侧栏、报告与裁决的弹窗、mcap 配置表单 |
-| 部署 | `docs/design/09-deployment.md` §2.1、rerun 仓库 dataverse Chart 的模板 | 环境变量 `CURATOR_VIZ_TRANSCODE`（缺省开）、转码缓存目录与上限 |
+| 部署 | `docs/design/09-deployment.md` §2.1 | 环境变量 `CURATOR_VIZ_TRANSCODE`（缺省开）、`CURATOR_VIZ_CACHE_DIR`（缺省临时盘下的 `viz-cache`）、`CURATOR_VIZ_CACHE_GB`、`CURATOR_VIZ_TRANSCODE_WORKERS`；都有 Daemon 缺省，Chart 不用改，要关转码用 `extraEnv` |
 | 文档 | 本篇、`07-frontend.md` §2 / §4.4 / §5 / §6、`03-rest-api.md`、`05-registry-and-preflight.md`、`00-overview.md` §7（已有 D60–D64）、各 README | 实现时同步 |
 
 ## 1. 背景与目标
@@ -44,7 +44,7 @@
 | 交付面 | 在哪 | 内容 |
 |---|---|---|
 | 完整版 | 侧栏「数据集」分组下的二级项「可视化」（另一项是「数据集列表」），路由 `/visualize?dataset=<id>&ep=<n>`；数据集列表 / 详情的「可视化」在新窗口打开它 | 左侧可收起的侧栏（选数据集 → 列 episode）+ 播放器 + 「数据集信息」树状浏览 |
-| 迷你版 | 质检报告 Episode 明细抽屉、人工裁决卡片、任务详情的 Episode 流水线 → 「可视化」弹窗 | 只有播放器；布局由发现决定；进度条标出发现的区间；可跳到完整版 |
+| 迷你版 | 质检报告 Episode 明细抽屉、人工裁决卡片、任务详情的 Episode 流水线 → 「可视化」弹窗 | 只有播放器；布局由发现决定；进度条标出发现的区间；可跳到完整版。数据走**任务级**接口（§7）：读任务冻结的输入（D27）、用任务的输入密钥和冻结在 `run.json` 里的映射，所以登记被删、数据集变了或任务没有登记（`dataset_id` 为空）都不影响报告；没有登记或登记已删时「在可视化页打开」置灰并写原因 |
 | mcap 配置 | 添加数据集抽屉（格式识别为 mcap 时出现）；数据集详情的「mcap 配置」入口 | 探测 → 模版起草 → 表格确认 → 保存 / 另存为模版 / 导入导出 |
 | 外部标注文件 | 添加数据集抽屉（任何格式，选填）；数据集详情可换 | 上传一个 JSON 或按 episode 编号命名的 zip（Argus 风格），存为上传件挂在数据集上，读取器合并成一条「外部标注」轨 |
 
@@ -93,7 +93,7 @@
 | 分辨率 / 编码 | 96×96 到 1280×720；绝大多数 `av1 yuv420p`；**FastUMI 是 `mpeg4`（MPEG-4 Part 2，浏览器放不了）** | 需要「播不了就由 Daemon 转码」的兜底（§4.2，D60） |
 | 深度 | `observation.images.front.depth`、`observation.depths.*` 为 `uint16` 列（不是视频） | 本期不渲染，树里可见、「+」里置灰 |
 | state / action | 维度 2–29；`names` 有列表（`shoulder_pan.pos …`）、字典（`{"motors": [...]}`）、缺失（RH20T 全部 `null`）三种；RH20T 另有 `observation.state.ee_pose / joint / gripper`、`force / torque / robot_ft`；HABIT 有 60 多个 `robot0.* / robot1.*` 字段；Galaxea 把 state / action 拆成 `observation.state.left_arm`、`action.left_arm` 等十几列 | 曲线分组规则要能处理没有名字（用 `dim_i`）、字段很多（默认只上 state / action，其余在「+」里）和拆列（按前缀合成一组）的情况 |
-| 任务与分段 | 任务文本在 `tasks.jsonl / parquet`；分段的写法五花八门（§3.4） | 分段标注要「预检探测 + 用户确认」，不能硬编码一种字段名 |
+| 任务与分段 | 任务文本在 `tasks.jsonl / parquet`；分段的写法五花八门（§3.4） | 不能硬编码一种字段名：已知的几种写法自动识别，识别不出的警告「标注格式不支持」（§4.5，D64） |
 | mcap（GenRobot UMI） | foxglove protobuf：`/robotN/sensor/camera0/compressed`（`CompressedImage` JPEG 1280×720 30 Hz）、`/robotN/vio/eef_pose`（`PoseInFrame` 30 Hz）、`/robotN/sensor/magnetic_encoder`（50 Hz）、IMU 200 Hz、`camera_info`、`robot_info`、`system_info`；没有任务字段 | 内置 UMI 模版（已有识别逻辑）；JPEG 相机要用帧包（§4.2） |
 | mcap（ABC-130k） | `foxglove.CompressedVideo`：顶部双目 **H.265**、腕部 H.264，30 Hz；自定义 schema `RobotState / GripperState`（200–270 Hz，`/left-arm-state`、`/left-arm-action`…）；`/instruction` topic 与 `episode-metadata`（`task_name`、相机型号与分辨率） | 自定义 protobuf 要按描述符展开数值叶子让用户确认；state / action 成对的 topic 叠画；H.265 要看浏览器能力 |
 
@@ -132,7 +132,8 @@ flowchart LR
     G --> H["视频、曲线、三维场景<br/>字段浏览、片段与标注"]
 ```
 
-- **读取器**（Daemon 内，`results/viz/readers/<format>.py`）只认自己的格式，产出统一展示模型；每个读取器实现同一个接口：
+- **数据源**（`daemon/viz/source.py`）：读取器不关心字节从哪来。数据集级（完整版）的数据源是登记：登记的地址、绑定的访问密钥、最近一次预检与文件清单、数据集上的映射；任务级（迷你版）的数据源是任务冻结的输入：任务的输入地址与输入密钥、`preflight.json` 与 `source_manifest.json`（D27）、`run.json` 里冻结的映射。两者都给出同样的几样东西：读对象 / 区间读、对象大小、浏览器能直接播的地址（私有桶预签名、公开桶原地址、本地挂载没有）、缓存用的指纹。
+- **读取器**（Daemon 内，`daemon/viz/readers/<format>.py`）只认自己的格式，产出统一展示模型；每个读取器实现同一个接口：
   - `probe(dataset)`：数据集级描述（相机、数值流、任务文本来源、分段候选、字段树）；读 meta / summary，不读数据本体；
   - `episode(dataset, index)`：一条 episode 的记录：时间轴、每路相机的来源与时间范围、每个数值流的读取句柄、标注；
   - `series(dataset, index, stream, from, to, points)`：数值流的采样；
@@ -143,9 +144,10 @@ flowchart LR
 | 实体 | 字段 | 说明 |
 |---|---|---|
 | 记录 `Dataset` | `id`、`format`（kind、version、reader）、`fps`、`episode_indices`、`cameras[]`、`streams[]`、`annotation_sources[]`、`field_tree` | 数据集级，按 meta 指纹缓存 |
-| 记录 `Episode` | `index`、`duration_s`、`frames`、`task`、`cameras[]`（key、media 方式、url、from_ts、to_ts、transcoded）、`streams[]`、`annotations` | 一条 episode |
-| 时间轴 `Timeline` | `kind`（`frame` / `timestamp`）、`fps`、`t0`、`frame_reference` | episode 时间为唯一时钟（D64） |
-| 数据流 `Stream` | `key`、`kind`（`video` / `image_sequence` / `series` / `depth` / `pointcloud` / `transform` / `text` / `event`）、`name`、`unit`、`dims[]`、`role`（state / action / other）、`pair_with`、`source` | 相机是 `video` 或 `image_sequence`（JPEG 帧包）；曲线是 `series`；`depth` / `pointcloud` / `transform` 本期只进字段树，供第二期的三维场景与深度图 |
+| 记录 `Episode` | `index`、`duration_s`、`frames`、`task`、`cameras[]`（key、media 方式、url、from_ts、to_ts、transcoded）、`streams[]`、`annotations`；任务级另有 `check_clock` | 一条 episode |
+| 时间轴 `Timeline` | `kind`（`frame` / `timestamp`）、`fps`、`t0`、`frame_reference`、`frame_times`（mcap：帧号基准 topic 每条消息的时刻） | episode 时间为唯一时钟（D64） |
+| 质检时钟 `check_clock`（任务级） | `offset_s`、`fps` | 把发现的 `time_s` / `frames` 换到 episode 时间：`t = offset_s + time_s`、`t = offset_s + frame / fps`（§4.4、§4.6） |
+| 数据流 `Stream` | `key`、`kind`（`video` / `image_sequence` / `series` / `depth` / `pointcloud` / `transform` / `text` / `event`）、`name`、`unit`、`dims[]`、`role`（state / action / other）、`pair_with`、`source` | 相机是 `video` 或 `image_sequence`（JPEG 帧包）；曲线是 `series`；`depth` / `pointcloud` / `transform` 本期只进字段树，供第二期的三维场景与深度图。`key` 是 URL 安全的短名（`[0-9A-Za-z_-]`，LeRobot 用去掉 `observation.images.` 前缀的短名、mcap 用今天 `clips.stream_path` 的 `safe_name(topic)`，重名加序号），接口路径里用它，原始的 feature 键 / topic 放在 `source` |
 | 标注 `Annotations` | `segments[]`（`start_s`, `end_s`, `label`, `quality`, `contribution`, `arm`, `source`）、`events[]`（`t_s`, `label`, `outcome`, `source`）、`labels{}`（成败、评分、`task_status` …）、`tracks[]`（多套分段时每套一条轨） | §4.5 |
 | 字段树 `FieldTree` | 节点 `{path, kind, dtype, shape, names, detail, stream_key?}` | 完整版的「数据集信息」 |
 
@@ -154,7 +156,7 @@ flowchart LR
 ### 4.1 原则
 
 - 沿用 D16：**浏览器能直接播的媒体直连 TOS**（预签名，D55 的签名接口与现有续签逻辑）；Daemon 不中转能直连的字节。
-- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`<CURATOR_DATA_DIR>/viz/<dataset_id>/<meta 指纹>/ep<N>/…`，指纹变了即作废）。缓存与转码产物只放本地数据盘，不上 TOS（需求方 2026-10-03）。
+- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`——集群上是可丢的临时盘 `/scratch`，不占数据库所在的数据盘；按 `<范围>/<编号>/<指纹>/ep<N>/…` 存，指纹变了即作废，总量按 `CURATOR_VIZ_CACHE_GB` LRU 淘汰）。缓存与转码产物只放本地盘，不上 TOS（需求方 2026-10-03）。
 - 一切都是**按需、首次打开时生成**；可选的「预生成」放第二期（登记后后台跑一遍，给大数据集）。
 
 ### 4.2 相机供给矩阵（D60）
@@ -168,23 +170,26 @@ flowchart LR
 | mcap `CompressedVideo` h264 | h264 | 能（要 fMP4） | Daemon 转封装为 fMP4（无重编码；现有 `_mux_annexb` 做成流式、带 Range） | — |
 | mcap `CompressedVideo` h265 | hevc | 看平台（Safari 能；Chrome 要硬解） | 转封装为 `hvc1` fMP4；播放器探测 `canPlayType`，不能播时向 Daemon 要转码版本 | 转了才标「平台转码」 |
 | mcap `RawImage` / PNG | — | 不能 | 本期不支持；预检与映射表里标出 | — |
-| 本地挂载的数据集（任一格式） | 同上各行 | 同上 | 没有预签名可用：Daemon 直接出本地文件的字节（`access: local`，带 Range），再按上面各行决定是否转封装 / 帧包 / 转码 | 同上 |
+| 本地挂载的数据集（任一格式） | 同上各行 | 同上 | 没有预签名可用：Daemon 直接出本地文件的字节（`access: local`，带 Range；路径只能落在数据集目录之内，与 `taskspec.local_path` 同一套检查），再按上面各行决定是否转封装 / 帧包 / 转码 | 同上 |
 
-转码开关：容器环境变量 `CURATOR_VIZ_TRANSCODE`（缺省 `1`，开；设 `0` 关闭后播不了的相机在格子里显示原因）。转码由 Daemon 调 ffmpeg 子进程，单独的小并发池（缺省 2 路），不占质检的 CPU 名额池（阶段 9）；磁盘缓存有上限（缺省 20 GB，LRU），产物只在本地数据盘、不上 TOS（需求方 2026-10-03 确认）。凡是转过码的画面，格子左上角相机名旁边标橙色「平台转码」，侧栏「读取方式」也写明原始编码。
+「浏览器能不能播」最终由浏览器说了算：AV1 在没有硬解的 Safari（M3 之前的 Mac）上放不了，HEVC 在 Chrome 上要看硬件，`canPlayType` 对 HEVC 也可能答「probably」却解不出来。所以直连与转封装的相机都带 `codec`（RFC 6381 的写法），播放器先用 `MediaCapabilities.decodingInfo`（没有时退回 `canPlayType`）判，判不能播、或者 `<video>` 报解码错误，就改要同一路相机的转码版（`?transcode=1`，与 H.265 同一条路），转码关闭时格子里写明原因。服务端只对「哪个浏览器都放不了」的编码（mpeg4 part 2 等）直接给转码。
+
+转码开关：容器环境变量 `CURATOR_VIZ_TRANSCODE`（缺省 `1`，开；设 `0` 关闭后播不了的相机在格子里显示原因）。转码由 Daemon 起子进程用 PyAV（镜像里已有，自带 libx264；镜像里没有 ffmpeg 可执行文件）完成，原生库出问题只带走子进程；单独的小并发池（缺省 2 路），不占质检的 CPU 名额池（阶段 9）；磁盘缓存有上限（缺省 20 GB，LRU），产物只在本地数据盘、不上 TOS（需求方 2026-10-03 确认）。凡是转过码的画面，格子左上角相机名旁边标橙色「平台转码」，侧栏「读取方式」也写明原始编码。
 
 ### 4.3 曲线供给
 
 `GET /datasets/{id}/episodes/{index}/series?stream=<key>&from=<s>&to=<s>&points=<n>` → 列式 JSON（`t[]`、`series[{name, role, values[]}]`、`unit`、`total_points`）。
 
 - 缺省 `points=2000`：按 min / max 抽稀保峰值；放大某段时按区间再取，到全精度为止。曲线组是读取器预先定义的数据流（§5.3），一次请求一组。
-- LeRobot：读 parquet 列（v2 整文件、v3 行窗 `dataset_from/to_index`），复用现有 `dsfs.read_parquet`，但要**列投影**（今天是整表读）；拆成多列的（Galaxea 的 `observation.state.left_arm` 等）按前缀合成一个流。
+- LeRobot：读 parquet 列（v2 整文件、v3 行窗 `dataset_from/to_index`）。v3 的一个数据文件装很多条 episode（几十到几百 MB），不能整文件下载：先区间读 parquet 尾部的元数据，按行组的 `index` / `episode_index` 统计定位到这条 episode 所在的行组，只读这几个行组里要的列（列投影 + 区间读，TOS 与本地同一套）；读到的这条 episode 的数值表进内存缓存，同一条的几组曲线共用。拆成多列的（Galaxea 的 `observation.state.left_arm` 等）按前缀合成一个流。
 - mcap：按映射解消息（现有 `_extract_source` 的字段展开），重采样到参考时间轴（§4.4），`pair_with` 的 state / action topic 对齐后同组输出。
 - 体量：一条 20 s × 30 fps × 14 维 × 两套 = 约 70 KB JSON；没必要上 Arrow，先 JSON。
 
 ### 4.4 时间轴与帧号（D64）
 
-- 播放器只有一个时钟：**episode 时间 t（秒）**，从 episode 的第一帧算起。视频、曲线、字幕、进度条都用它。
-- 帧号：LeRobot `frame = round(t × fps)`；mcap `frame` = 帧号基准 topic（缺省第一路相机）的消息序号。跳帧输入框按这个定义。
+- 播放器只有一个时钟：**episode 时间 t（秒）**，从 episode 的第一帧算起（mcap：映射里所有相机与曲线 topic 的第一条消息中最早的那条）。视频、曲线、字幕、进度条都用它。
+- 帧号：LeRobot `frame = round(t × fps)`；mcap `frame` = 帧号基准 topic 的消息序号，基准缺省是**质检用的动作 topic**（映射里 `role=action` 的第一组，与质检读取器的行、发现的 `frames` 同一口径），没有动作 topic 才用第一路相机。跳帧输入框按这个定义。
+- 质检的时钟与之对齐：mcap 的质检以第一条动作消息为零点、以动作速率为 fps（`ingest.mcap_reader`、`streams/clip.py`），所以任务级的 episode 记录给出 `check_clock{offset_s, fps}`（LeRobot 为 `{0, 数据集 fps}`），迷你版用它把发现的 `time_s` / `frames` 换到 episode 时间。
 - 相机帧率与数据 fps 不同（或 mcap 各 topic 各有节奏）时，每路按自己的时间戳取 ≤ t 的最近一帧；曲线按自己的采样时刻画，不插值。
 - v3 的 `from_ts`：直连视频的 `currentTime = t + from_ts`（现有 `SyncController` 的做法）。
 
@@ -200,7 +205,7 @@ flowchart LR
 
 ### 4.6 迷你版的证据来源
 
-- `EpisodeView.findings[].finding` 的 `frames` / `time_s` / `scope.camera(s)`（记录 2.0，设计 17 §1.2）→ 进度条下方的色段，颜色按级别（blocking `#F53F3F`、review `#FF7D00`、info `#86909C`），聚焦的那条加外圈；单帧用点标。`frames` 换算成秒需要 fps —— C4 的 `EpisodeView` 补 `fps`（§7）。
+- `EpisodeView.findings[].finding` 的 `frames` / `time_s` / `scope.camera(s)`（记录 2.0，设计 17 §1.2）→ 进度条下方的色段，颜色按级别（blocking `#F53F3F`、review `#FF7D00`、info `#86909C`），聚焦的那条加外圈；单帧用点标。换算用任务级 episode 记录的 `check_clock`（§4.4）；`EpisodeView` 也补 `fps`（LeRobot 为数据集 fps，mcap 为 null），供不开播放器时把帧号写成秒。旧任务读不到 fps 时，色段只按 `time_s` 画，只有 `frames` 的发现列在芯片里、写明「无法定位」，不报错。
 - `EpisodeView.evidence[]`（证据帧）→ 进度条上的点标，点开跳到那一帧。
 - 智能布局（按发现所属模块）：
 
@@ -232,7 +237,7 @@ flowchart LR
 ### 5.2 格子
 
 - CSS grid，列数 1–3，行数 1–3；格子高度随可用宽度变（约 0.66 倍格子宽，160–420 px）；信息侧栏或左侧栏打开 / 收起时格子跟着变，智能布局不够放三列就降到两列。
-- 视频格：4:3 画面在格子里等比居中（黑边），左上角相机名芯片（带相机色点；转码的带橙色「平台转码」），左下角 `mm:ss.s · 帧 N`。
+- 视频格：画面按原始宽高比在格子里等比居中（黑边），左上角相机名芯片（带相机色点；转码的带橙色「平台转码」），左下角 `mm:ss.s · 帧 N`。
 - 曲线格：标题 `曲线组名 · 单位`；图区（网格、x 轴秒、y 轴自适应）；每个维度一种颜色，**实线状态、虚线动作**；竖线光标 + 时间标签；点图跳转；下方图例：色样、名字、状态值 / 动作值，点图例隐藏 / 显示该维度。调色板：Arco 的蓝 / 青 / 橙 / 紫 / 绿 / 品红 / 金 / 青柠 8 色循环。
 - 空格子（仅完整版）：虚线框 + 「+ 选择要看的内容」。
 - 格子工具（悬停或聚焦时出现在右上角）：更换（弹出菜单：相机 / 运动曲线 / 其他——深度图、末端轨迹等置灰并写明原因）、放大 / 还原（占满播放器区域，其他格子隐藏）、清空（仅完整版）。
@@ -286,21 +291,24 @@ flowchart LR
 
 ### 6.2 数据模型
 
+C7 `viz-mapping/1.0`（`docs/contracts/viz-mapping.schema.json`，示例 `docs/contracts/examples/viz-mapping.json`）：
+
 ```json
 {
   "schema_version": "viz-mapping/1.0",
   "name": "GenRobot UMI（robot0 / robot1）",
   "base": "builtin:umi",
-  "episode_files": "episode_{index}.mcap",
-  "timeline": { "source": "log_time", "frame_reference": "/robot0/sensor/camera0/compressed" },
+  "timeline": { "source": "log_time", "frame_reference": null },
   "cameras": [
     { "topic": "/robot0/sensor/camera0/compressed", "name": "robot0 相机", "schema": "foxglove.CompressedImage" }
   ],
   "series": [
-    { "topic": "/robot0/vio/eef_pose", "name": "robot0 末端位姿", "schema": "foxglove.PoseInFrame",
-      "fields": ["pose.position.x", "pose.position.y", "pose.position.z", "pose.orientation"],
-      "transforms": { "pose.orientation": "quat_xyzw_to_rpy" }, "units": { "position": "m", "angle": "rad" }, "role": "state" },
-    { "topic": "/left-arm-action", "name": "左臂关节", "fields": ["q"], "role": "action", "pair_with": "/left-arm-state" }
+    { "topic": "/robot0/vio/eef_pose", "name": "robot0 末端位姿", "schema": "foxglove.PoseInFrame", "fields": ["pose"],
+      "labels": ["robot0_x", "robot0_y", "robot0_z", "robot0_qx", "robot0_qy", "robot0_qz", "robot0_qw"], "role": "action" },
+    { "topic": "/robot0/sensor/magnetic_encoder", "name": "robot0 夹爪开度", "fields": ["value"], "labels": ["robot0_gripper"], "role": "action" },
+    { "topic": "/left-arm-state", "name": "左臂关节", "fields": ["q"], "unit": "rad", "role": "state", "pair_with": "/left-arm-action" },
+    { "topic": "/left-arm-pose", "name": "左臂末端", "fields": ["pose.position.*", "pose.orientation"],
+      "transforms": { "pose.orientation": "quat_xyzw_to_rpy" }, "role": "other", "smart": false }
   ],
   "task": { "metadata_key": "task_name" },
   "segments": null,
@@ -310,16 +318,26 @@ flowchart LR
 
 | 字段 | 含义 |
 |---|---|
-| `base` | 起草用的内置模版（`builtin:foxglove` / `builtin:ros2` / `builtin:umi`）或 `null`（纯自带） |
-| `timeline.source` | `log_time`（缺省）/ `publish_time` / `message_timestamp`（消息里的时间戳字段） |
-| `timeline.frame_reference` | 帧号基准 topic（§4.4） |
+| `base` | 起草用的内置模版（`builtin:foxglove` / `builtin:ros2` / `builtin:umi`）或 `null`（纯自带）；`builtin:umi` 还给质检带上本体画像 `umi_das` |
+| `timeline.source` | `log_time`（缺省）/ `publish_time` / `message_timestamp`（读 `timestamp_field`：秒，或 `{sec, nsec}` 一类消息） |
+| `timeline.frame_reference` | 帧号基准 topic（§4.4）；`null` = 第一组 `role=action`（与质检的行同一口径），没有才用第一路相机 |
 | `cameras[]` | 相机 topic、显示名、可选 `schema`；编码与尺寸由探测得出，不写进模版 |
-| `series[]` | 曲线组：topic、显示名、要展开的字段（点路径，支持 `*`）、可选变换（四元数转欧拉角、deg→rad）、单位、`role`（`state` / `action` / `other`）、`pair_with`（叠画的另一 topic） |
-| `task` | `{ "metadata_key" }` / `{ "topic", "field" }` / `null` |
-| `segments` | `{ "topic", "start_field", "end_field", "label_field" }` / `{ "attachment" }` / `null` |
-| `ignore[]` | 明确忽略的 topic（没列的 topic 按「未映射」提示） |
+| `series[]` | 曲线组：topic、显示名、`fields`（点路径，支持列表下标与 `*`；不写 = 整条消息按形状读成向量，与质检读取器相同）、`labels`（每个数一个名字，质检的 `action_names` 也取它）、`names_field`（JointState 的 `name`）、`transforms`（只用于显示：四元数转欧拉角、角度弧度互换）、`unit`（y 轴单位）、`role`（`state` / `action` / `other`）、`pair_with`（叠画的另一 topic，角色要相反）、`smart`（是否进智能布局，缺省是） |
+| `task` | `{ "metadata_key" }` / `{ "topic", "field"? }` / `null` |
+| `segments` | `{ "topic", "start_field", "end_field", "label_field" }` / `{ "attachment" }`（mcap 附件里的 Argus 风格 JSON）/ `null` |
+| `ignore[]` | 明确忽略的 topic（没列、也没映射的 topic 按「未映射」提示） |
 
-质检用的 `ingest.mcap_mapping`（action / state / task / video）由它派生：`role=action` 的组 → `action`，`role=state` → `state`，`cameras` → `video_topics`。站点配置里的 `ingest.mcap_mapping` 降级为「没有数据集映射时的缺省」。
+episode 文件的编号不进映射：沿用 v1 的规则（`episode_<N>.mcap` 按 N，否则按文件名排序），质检与可视化同一套。
+
+质检用的 `ingest.mcap_mapping` 由它派生（`check_mapping`，`GET /datasets/{id}/mapping` 一并给出，只读）：
+
+- `action` = `role=action` 各组按顺序，每个 `fields` 路径一个来源 `{topic, fields}`（没写 `fields` 的组给整条消息 `topic`）；**没有 action 组时由 state 组顶上**（质检要一个时间锚，与今天 UMI 识别把末端位姿当动作一致），此时 `state` 为空；
+- `state` = `role=state` 各组（有 action 组时）；`action_names` 取各组的 `labels`；
+- `task` = `task.topic`（话题写法）或缺省 `/task`（metadata 写法由读取器自己从 `task` / `instruction` / `language_instruction` 键里找，自定义键质检读不到，列为已知差距）；
+- `video_topics` = `cameras` 的 topic；`base` 为 `builtin:umi` 时加 `profile: umi_das`；
+- `transforms` 只影响显示，质检永远读原始数。
+
+对账约束：内置 UMI 模版起草出的映射，派生结果必须与 `mcap_reader._umi_mapping` 逐字段相同（单测守着），所以按内置模版确认、没改过的 UMI 数据集判决不变；只有人改了用途或字段，判决才可能变——改映射前后要跑对账回放。站点配置里的 `ingest.mcap_mapping` 降级为「没有数据集映射时的缺省」。读取器的已知差距（A 类文件，不在本期改）：protobuf 的 repeated 数值字段与 ROS 2 嵌套消息拍不平，质检读不到这类字段（ABC-130k 的 `q`），可视化走自己的解码不受影响。
 
 ### 6.3 内置模版
 
@@ -327,8 +345,8 @@ flowchart LR
 |---|---|
 | `builtin:foxglove`（ReRun 同款） | 按 schema 归类：`CompressedImage` / `CompressedVideo` / `RawImage` → 相机；`PoseInFrame(s)` → 位置 + 姿态曲线；`JointState`（如经 ROS 桥）→ position / velocity / effort；`IMUMeasurement`、`MagneticEncoderMeasurement`、`Float*` → 曲线（高频的默认忽略，可改）；`CameraCalibration`、`FrameTransform(s)`、`Log`、`RobotInfo`、`SystemInfo` → 忽略；`Instructions` / `/instruction` / metadata 的 `task*` → 任务描述 |
 | `builtin:ros2` | `sensor_msgs/Image`、`CompressedImage` → 相机；`JointState` → 曲线（`name` 作标签）；`geometry_msgs/PoseStamped`、`TwistStamped`、`WrenchStamped` → 曲线；`std_msgs/String` 的 `/task`、`/instruction` → 任务描述；`tf`、`CameraInfo` → 忽略 |
-| `builtin:umi` | 现有的 UMI 识别：`/robotN/sensor/cameraN/compressed`、`/robotN/vio/eef_pose`、`/robotN/sensor/magnetic_encoder` |
-| 自定义 protobuf schema（如 ABC-130k 的 `RobotState`） | 按描述符反射展开数值叶子（现有 `_extract_source` 的做法），表里列出候选字段让用户勾选；`*-state` / `*-action` 成对的 topic 自动 `pair_with` |
+| `builtin:umi` | 现有的 UMI 识别：`/robotN/sensor/cameraN/compressed` → 相机；每个 robotN 的 `/robotN/vio/eef_pose`（`fields: ["pose"]`，七维 xyz + 四元数）与 `/robotN/sensor/magnetic_encoder`（`value`）→ `role=action` 的曲线组（UMI 手持夹爪没有指令流，末端轨迹就是它的动作，质检也这么读），`labels` 为 `robotN_x … robotN_qw`、`robotN_gripper`；IMU、标定、系统信息 → 忽略。派生的质检映射与 `_umi_mapping` 相同 |
+| 自定义 protobuf schema（如 ABC-130k 的 `RobotState`） | 按描述符反射展开数值叶子（可视化自己的解码，repeated 数值字段与嵌套消息都展开），表里列出候选字段让用户勾选；`*-state` / `*-action` 成对的 topic 自动 `pair_with` |
 
 自动匹配：探测到的 topic 集合先与站点模版库（内置 + 团队）逐个比对（覆盖率最高且 ≥ 80% 的中）；都不中就用 `builtin:foxglove` 或 `builtin:ros2`（看消息编码）起草。
 
@@ -338,7 +356,7 @@ flowchart LR
 2. **探测**：读第一个（或指定的）文件的 summary 段 + 每个 topic 的首条消息：topic、schema 名与编码、频率、消息数、起止时间、画面尺寸与编码；多文件 topic 布局不一致时提示（现有 `_mapping_signature`）。TOS 上只有几次区间读，不下载整文件。
 3. **起草**：按 §6.3 自动匹配，填好表格（用途、显示名、字段）。
 4. **确认**：用户改用途 / 显示名 / 字段；时间轴、帧号基准、任务描述来源、分段标注来源四个下拉；摘要行与警告（没有相机、没有曲线、高频 topic、不支持的编码）。
-5. **保存**：写到数据集（`Dataset.viz_mapping`，带版本号与更新时间）；「另存为模版」进站点模版库（名称、可见范围）；「导出 JSON」/「从 JSON 导入」支持自带模版（导入时按 C7 校验，不通过逐条报错）。
+5. **保存**：添加数据集时随登记一起提交（`DatasetCreate.viz_mapping`，记为第 1 版）；登记后在详情页改（`PUT /datasets/{id}/mapping`，每次确认加一版，带更新时间）；「另存为模版」进站点模版库（`POST /viz/templates`，名称唯一；单租户没有可见范围之分）；「导出 JSON」/「从 JSON 导入」支持自带模版（导入时按 C7 校验，不通过逐条报错）。
 6. 质检任务开始时把映射冻结进 `run.json`；改映射只影响之后的新任务；数据集详情有「mcap 配置」入口可改。
 7. 没确认映射的 mcap 数据集：列表里标「映射待确认」，「可视化」置灰，建任务时按站点缺省（与今天一致）。
 
@@ -348,29 +366,34 @@ LeRobot 不需要字段映射（`info.json` 已经够），但完整版允许保
 
 ## 7. 契约与接口改动
 
-C4（`openapi.yaml`，升小版本）：
+C4 升 **2.4.0**（`openapi.yaml`，标签 `viz`）。同一套读取器挂两组接口：数据集级给完整版，任务级给迷你版（读任务冻结的输入，§2）。
 
 | 端点 | 用途 |
 |---|---|
-| `GET /datasets/{id}/viz` | 统一展示模型的数据集级记录：`cameras[{key, name, width, height, codec, fps, access: direct｜local｜remux｜frames｜transcode｜unsupported}]`、`streams[]`、`fps`、`episode_indices`、`annotation_sources[]`（含 `unsupported` 的警告）、`mapping_version`、`field_tree` |
-| `GET /datasets/{id}/episodes/{index}/viz` | episode 级：`duration_s`、`frames`、`task`、`annotations`、`cameras[{key, url, from_ts, to_ts, kind: video｜frames, transcoded, expires_at}]` |
-| `GET /datasets/{id}/episodes/{index}/series` | §4.3 |
-| `GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4` / `.frames` | 转封装 / 转码 / 帧包，带 Range（把今天任务级那条未声明的路由一并声明）；转码未就绪时返回 202 + 进度 |
-| `GET` / `PUT /datasets/{id}/mapping`、`POST /datasets/{id}/mapping/probe` | 映射的读写与探测 |
-| `GET` / `POST` / `DELETE /viz-templates` | 站点模版库 |
-| `POST /uploads?kind=viz_annotations`、`PUT /datasets/{id}/annotations` | 外部标注文件：上传件（JSON 或 zip，按已知格式校验）与挂到数据集上 / 换掉 |
-| `GET /datasets?viz=1` | 左侧栏的数据集下拉：只列格式支持的，带「映射待确认」状态 |
-| `EpisodeView` 补 `fps` 与 `dataset_id` | 迷你版把 `frames` 换算成秒、「在可视化页打开」 |
+| `GET /datasets/{id}/viz`、`GET /tasks/{id}/viz` | 统一展示模型的数据集级记录 `VizDataset`：`cameras[{key, name, source, kind: video｜frames, access: direct｜local｜remux｜frames｜transcode｜unsupported, codec, codec_string, width, height, fps, transcoded, reason}]`、`streams[]`（曲线组：`lines[{name, role, source, dim}]`、`smart`、`available`）、`annotation_sources[]`（含 `supported: false` 的「标注格式不支持」）、`field_tree`、`mapping{state, version}`、`transcode.enabled`、`fingerprint` |
+| `GET /datasets/{id}/viz/episodes` | 左侧栏的 episode 列表：编号、时长、帧数、任务描述、分步（只取 episode 表里现成的，不读逐帧数据）；`q`（编号或任务描述）、`sort`（index / duration / steps）、`order`、游标分页、`total` |
+| `GET /datasets/{id}/viz/meta?path=` | 字段树里列出的元数据文件（`meta/*`、README）的预览，256 KiB 截断 |
+| `GET /datasets/{id}/episodes/{index}/viz`、`GET /tasks/{id}/episodes/{index}/viz` | episode 级 `VizEpisode`：`duration_s`、`frames`、`fps`、`task{text, source}`、`timeline{kind, fps, frame_reference, frame_times}`、`cameras[{key, kind, access, url, index_url, transcode_url, from_ts, to_ts, offset_s, transcoded, expires_at, reason}]`、`annotations{tracks, events, labels, warnings}`；任务级另有 `check_clock{offset_s, fps}` |
+| `GET …/episodes/{index}/series?stream=&from=&to=&points=` | §4.3 的 `VizSeries`：`t[]` 与 `lines[{name, role, values[]}]`、`total_points`、`downsampled` |
+| `GET …/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频：本地数据集的文件、转封装的 fMP4、`?transcode=1` 的 H.264 转码版；带 Range；准备中回 202 + `VizMediaPending{state, progress, message}`。任务级的这条路由原来就有（mcap 相机，未写进 C4），现在声明；不带 `transcode` 的 JPEG 相机仍按旧做法封成 MJPEG mp4，给「各机位视频」退役前用 |
+| `GET …/episodes/{index}/cameras/{camera}.frames`、`.json` | JPEG 帧包：正文是各帧原字节首尾相接（Range 读），`.json` 是索引 `VizFrameIndex{count, t[], offset[], size[], width, height}` |
+| `GET` / `PUT /datasets/{id}/mapping` | 映射的读（含派生的 `check_mapping`）与确认新版本（按 C7 与数据集的 topic 校验，逐条报错） |
+| `POST /viz/mcap-probe` | 探测并起草（`input` 是登记的 `dataset_id` 或来源 + 地址，添加数据集时还没登记也能用；可指定 `file`、`template`）→ `McapProbe{topics[{topic, schema, encodings, count, rate_hz, image, fields, use, role, name, notes}], metadata, attachments, draft, matched}` |
+| `GET` / `POST /viz/templates`、`DELETE /viz/templates/{template_id}` | 站点模版库；内置模版（`builtin:*`）列在前面、`mapping` 为空、不能删；新模版编号 `vt-<9 个小写字母>` |
+| `POST /uploads?kind=viz_annotations`、`PUT /datasets/{id}/annotations` | 外部标注文件：JSON 照常以 `application/json` 发，zip 以 `application/zip` 发（不是 CORS 简单类型，跨站写照样被拒）；挂到数据集上 / 换掉 / 摘掉（`upload_id: null`） |
+| `GET /datasets?viz=true` | 可视化页的数据集下拉：只列有读取器的格式；每个条目都带 `viz{state: ready｜mapping_pending｜unsupported, reason}` |
+| `DatasetCreate.viz_mapping` / `annotations_upload`；`DatasetDetail.viz_mapping` / `annotations` | 添加时一并提交映射（记第 1 版）与外部标注；详情里给映射的状态、版本与外部标注文件 |
+| `EpisodeView` 补 `fps`（可空）与 `dataset_id`（可空） | 不开播放器时把帧号写成秒；「在可视化页打开」 |
 
-C2（`preflight.schema.json`，升小版本）：`dataset` 补 `features[{key, dtype, shape, names}]`、`cameras[]` 由短名改为对象（短名 + 分辨率 + 编码 + fps + `needs_transcode`，兼容旧字段）、`segment_sources[]`（识别到的分段来源，或 `unsupported` + 原因）；mcap 补 `topics[{topic, schema, encoding, rate_hz, count}]`。
+C2（`preflight.schema.json`，只加可选字段，仍是 1.0，旧文档照常有效）：`dataset` 补 `features[{key, dtype, shape, names}]`、`camera_info[]`（与 `cameras` 同序同名：`key`、`codec`、`pix_fmt`、`width`、`height`、`fps`、`needs_transcode`；`cameras` 仍是短名数组，库里存着的预检与读它的代码都不受影响）、`segment_sources[]`（识别到的分段来源，或 `supported: false` + 原因）、`topics[{topic, schema, message_encoding, count, rate_hz}]`（mcap）。
 
-C7（新）：`viz-mapping.schema.json` + `examples/viz-mapping/{umi,abc130k,invalid-*}.json`。
+C7（新）：`viz-mapping.schema.json` + `examples/viz-mapping.json`（合法 4 个：UMI、ABC-130k、ROS 2、只有附件分段；不合法 12 个），`curation.contracts` 的锁一并收录。
 
-C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_config`、`annotations_upload`（上传件编号，可空）；新表 `viz_templates`；迁移。
+C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mapping_updated_at`、`display_config`、`annotations_upload`；`set_dataset_viz_mapping`（每次确认加一版）；新实体 `VizTemplate` 与 `create / list / get / delete_viz_template`；SQLite 迁移第 7 步（加列 + `viz_template` 表）。
 
-部署（09 §2.1 的环境变量表）：`CURATOR_VIZ_TRANSCODE`（缺省 `1`）、`CURATOR_VIZ_CACHE_GB`（缺省 20）、`CURATOR_VIZ_TRANSCODE_WORKERS`（缺省 2）；Chart 模板同步。
+部署（09 §2.1）：`CURATOR_VIZ_TRANSCODE`（缺省 `1`）、`CURATOR_VIZ_CACHE_DIR`（缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`）、`CURATOR_VIZ_CACHE_GB`（缺省 20）、`CURATOR_VIZ_TRANSCODE_WORKERS`（缺省 2），都是 Daemon 的缺省，Chart 的环境变量约定表不变（要关转码时用 `extraEnv`）；转码用镜像里已有的 PyAV（自带 libx264，生产的视频输入已在用），在子进程里跑，不另装 ffmpeg。
 
-设计文档：03（端点）、05（预检描述符）、07（§2 侧栏与路由、§4.4 数据集页的两个「可视化」、§5 Episode 明细改为「可视化」弹窗、§6 裁决卡片同、§9 懒加载）、09 §2.1、00 §7（已加 D60–D64）。
+设计文档：03（端点）、05（预检描述符）、07（§2 侧栏与路由、§4.4 数据集页的两个「可视化」、§5 Episode 明细改为「可视化」弹窗、§6 裁决卡片同、§9 懒加载）、09 §2.1、00 §7（已有 D60–D64）。
 
 ## 8. 已定的决策与三轮答复
 
@@ -407,6 +430,23 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 | 外部标注文件的放置 | 登记时上传，选填 | §2、§4.5、§7（`viz_annotations` 上传件、`Dataset.annotations_upload`）、F13.7、静态稿的「外部标注文件」上传框 |
 | 自己的标注标准何时立项 | 不急，放到第二期一起 | §10 |
 
+### 8.4 开工前对着代码的核对（2026-10-04，v1.1，不改需求）
+
+| 问题 | 怎么改 | 落在 |
+|---|---|---|
+| 迷你版只走数据集级接口：任务可以没有登记（`dataset_id` 为空），登记也可能被删或已变，报告应展示任务当时看到的数据（D27） | 同一套读取器再挂一组任务级接口，读任务冻结的输入、输入密钥与 `run.json` 里的映射；没有登记时「在可视化页打开」置灰 | §2、§4.0、§7 |
+| mcap 的帧号基准缺省第一路相机，而质检以第一条动作消息为零点、动作 topic 的行为帧——迷你版换算发现会错位 | 帧号基准缺省改为质检的动作 topic；任务级记录给 `check_clock{offset_s, fps}` | §4.4、§4.6 |
+| C2 `dataset.cameras` 由字符串改对象做不到兼容（库里存的预检、Daemon、前端都按字符串读） | `cameras` 不动，另加 `camera_info[]`；C2 只加可选字段，不升版本 | §7 |
+| `/cameras/{camera}.mp4` 里放 mcap topic（带斜杠）路由不成立 | 展示模型给每路相机 URL 安全的 `key`（沿用 `safe_name`），接口用 key | §4.0、§7 |
+| `POST /uploads` 只收 JSON（CSRF 防线），外部标注允许 zip | `kind=viz_annotations` 另收 `application/zip`（不是 CORS 简单类型，防线不变） | §7 |
+| 只考虑了 H.265 的浏览器兼容；AV1 在没有硬解的 Safari 上放不了 | 相机带 `codec_string`，播放器先判能不能解，不能就要转码版（`transcode_url`） | §4.2 |
+| v3 的曲线会整文件下载数据 parquet | 按行组定位、列投影、区间读 | §4.3 |
+| 镜像里没有 ffmpeg | 转码用 PyAV（已在镜像里），子进程里跑 | §4.2、§7 |
+| C7 示例里 `episode_files`、`units` 语义含糊；UMI 的末端位姿在质检里是动作 | 去掉 `episode_files`（编号沿用 v1 规则）；`units` 改为每组一个 `unit`，各维名字用 `labels`；内置 UMI 模版的两组曲线为 `role=action`，派生的质检映射与 `_umi_mapping` 相同（判决不变） | §6.2、§6.3 |
+| 文中两处还写着「候选 + 用户确认」，与 D64 冲突；「4:3 画面」 | 改为「已知格式自动识别、识别不出的警告」；画面按原始宽高比 | §3.2、§5.2、§9 |
+
+提醒（不改设计）：升级后已登记的 mcap 数据集都没有映射，按 §6.4 第 7 条在可视化页置灰，需要逐个确认一次；改了用途或字段的映射会改变 mcap 的判决，确认前后要跑对账回放。
+
 ## 9. 工作包与风险
 
 | # | 内容 | 依赖 |
@@ -426,7 +466,7 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 - 编码兼容：mpeg4 / H.265 / JPEG 三类都不能直接当 `<video>` 播，Daemon 侧要三种供给方式；转码的 CPU 与磁盘要有上限（8.2 第 3 条）。
 - 浏览器直连 TOS 的 CORS 与预签名有效期（同设计 15 §6 的风险）；播放中续签。
 - 大数据集：曲线组多（HABIT 60 多字段）、相机多（RH20T 10 路）时的首屏请求数，靠懒加载与「智能布局只上必要的」控制。
-- 分段标注没有标准，探测规则会漏；靠「候选 + 用户确认」兜底。
+- 分段标注没有标准，识别规则会漏；识别不出的只警告「标注格式不支持」（D64），漏掉的写法在 F13.8 的 gap 清单里补规则，或走外部标注文件。
 - 与 ReRun 并存期间两个入口的解释成本（已用「可视化（旧）」区分）。
 
 ## 10. 第二期（另立阶段，先记在这里）

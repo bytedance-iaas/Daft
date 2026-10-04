@@ -24,6 +24,7 @@ from ..errors import ApiError
 from ..repo import protocol as P
 from ..repo.extras import DATASET_FORMATS
 from ..util import id_regex
+from ..viz.status import READERS
 from .common import (
     check_page_size,
     idempotency_key,
@@ -60,16 +61,34 @@ def _tasks_on(rt, ds: P.Dataset, owner: str, n: int) -> list[P.Task]:
     return rt.repo.list_tasks(owner=owner, page=1, page_size=n, dataset_id=ds.id).items
 
 
+def annotations_info(rt, ds: P.Dataset, owner: str) -> dict | None:
+    """C4 ``DatasetAnnotationsInfo`` of the attached external annotation file (design doc 18
+    §4.5); None without one, or when the upload is gone from the data volume."""
+    if not ds.annotations_upload:
+        return None
+    from ..orchestr.service import orchestrator_of
+
+    try:
+        up = orchestrator_of(rt).uploads.get(owner, ds.annotations_upload)
+    except ApiError:
+        return None
+    summary = (up.get("validation") or {}).get("summary") or {}
+    return {"upload_id": up["upload_id"], "name": up.get("name") or "",
+            "format": str(summary.get("format") or "argus"),
+            "episodes": int(summary.get("episodes") or 0), "uploaded_at": int(up.get("created_at") or 0)}
+
+
 def _detail(rt, ds: P.Dataset, owner: str) -> dict:
     return views.dataset_detail(ds, tasks=_tasks_on(rt, ds, owner, SHOWN),
                                 checks=rt.repo.list_dataset_checks(ds.id, limit=SHOWN),
-                                names=views.Names(rt.repo, owner))
+                                names=views.Names(rt.repo, owner),
+                                annotations=annotations_info(rt, ds, owner))
 
 
 @router.get("/datasets")
 def list_datasets(request: Request, page: int = Query(1, ge=1), page_size: int = Query(20),
                   q: str | None = None, fmt: str | None = Query(None, alias="format"),
-                  check_state: str | None = None):
+                  check_state: str | None = None, viz: bool = False):
     check_page_size(page_size)
     if fmt is not None and fmt not in DATASET_FORMATS:
         raise ApiError("validation_failed",
@@ -80,7 +99,8 @@ def list_datasets(request: Request, page: int = Query(1, ge=1), page_size: int =
                        details={"errors": [{"field": "check_state", "problem": "unknown state"}]})
     rt, owner = runtime(request), principal(request).owner_id
     result = rt.repo.list_datasets(owner=owner, page=page, page_size=page_size,
-                                   q=(q or "").strip() or None, fmt=fmt, check_state=check_state)
+                                   q=(q or "").strip() or None, fmt=fmt, check_state=check_state,
+                                   formats=tuple(READERS) if viz else None)
     items = []
     for ds in result.items:
         last = _tasks_on(rt, ds, owner, 1)

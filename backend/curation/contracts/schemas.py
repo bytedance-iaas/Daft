@@ -20,7 +20,7 @@ CONTRACTS_ENV = "CURATOR_CONTRACTS_DIR"
 
 #: Every contract file, relative to the contracts directory, grouped by kind.
 JSON_SCHEMA_GLOBS = ("cli/*.schema.json", "parity/*.schema.json", "progress.schema.json",
-                     "eef/*.schema.json", "taxonomy.schema.json")
+                     "eef/*.schema.json", "taxonomy.schema.json", "viz-mapping.schema.json")
 OPENAPI = "openapi.yaml"
 MODULES_JSON = "modules.json"
 #: C6, the taxonomy of check items the registry binds (design doc 17 §1.3)

@@ -323,7 +323,19 @@ CREATE TABLE dataset (
   check_state     TEXT NOT NULL DEFAULT 'ok',  -- 'ok' 一致 | 'changed' 有变化待重新预检
   checked_at      INTEGER,                  -- 最近一次核对指纹的时间
   preflighted_at  INTEGER NOT NULL,
+  viz_mapping     TEXT,                     -- JSON（C7 viz-mapping/1.0）：mcap 的字段映射，没确认为空（设计 18，D62）
+  viz_mapping_version    INTEGER NOT NULL DEFAULT 0,   -- 每确认一次加一；任务开始时把那一版冻结进 run.json
+  viz_mapping_updated_at INTEGER,
+  display_config  TEXT,                     -- JSON：可视化的展示配置（分段轨、相机顺序，设计 18 §6.5）
+  annotations_upload TEXT,                  -- 外部标注文件（viz_annotations 上传件编号，设计 18 §4.5）
   UNIQUE(owner_id, source, uri, region)
+);
+CREATE TABLE viz_template (               -- 映射模版库（站点的；内置模版在代码里，设计 18 §6）
+  id TEXT PRIMARY KEY,                      -- vt-<9 位小写字母>
+  owner_id TEXT NOT NULL DEFAULT 'default', name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  mapping TEXT NOT NULL,                    -- JSON（C7）
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  UNIQUE(owner_id, name)
 );
 CREATE TABLE dataset_check (              -- 指纹核对记录：数据集详情页的「变化记录」
   id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
@@ -340,6 +352,8 @@ CREATE TABLE dataset_check (              -- 指纹核对记录：数据集详�
   一致就沿用已有的预检结果，同一份清单固化为任务的 `source_fingerprint`；不一致就不开始，把变化写进 `dataset_check`，
   `check_state` 置为 `changed`，等用户确认后重新预检。重新预检会刷新 `preflight` 和两个指纹，`check_state` 回到 `ok`。
 - 运行中的核对不变：任务的每一步读源数据都按它自己固化的 `source_manifest.json` 校验（D27）。
+- 可视化的几列（schema 第 7 步，C4 2.4.0，设计 18）：mcap 的字段映射有版本，每次确认加一版（`set_dataset_viz_mapping`），
+  任务开始时冻结当时那一版，之后改映射不影响运行中与已完成的任务；外部标注文件是 Daemon 的上传件，登记上只记编号。
 - 实现里另有一列 `format`（C4 `DatasetFormat`，由预检结果推出，列表按它筛选）。mcap / Lance 自 schema 第 4 步起可取
   （C4 1.11，D44）：SQLite 不能原地放宽 CHECK 约束，第 4 步照 SQLite 的做法重建 `dataset` 表（关外键、建新表、复制、删旧表、改名、
   重建索引），id 不变，引用它的任务与核对记录不受影响。之前登记的 mcap / Lance 数据集当时预检为不支持，重新预检后才变成新格式。

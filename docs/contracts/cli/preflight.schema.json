@@ -52,6 +52,73 @@
                   "properties": {"matched": {"type": "string"}, "by": {"type": "string"}}
                 }
               ]
+            },
+            "features": {
+              "type": "array",
+              "description": "LeRobot (design doc 18 §7, F13.1): every feature of info.json as declared, for the visualizer's field tree; names flattened to a list (a {\"motors\": [...]} dict gives its list), null when info.json has none",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "dtype", "shape", "names"],
+                "properties": {
+                  "key": {"type": "string"},
+                  "dtype": {"type": "string"},
+                  "shape": {"type": ["array", "null"], "items": {"type": "integer"}},
+                  "names": {"type": ["array", "null"], "items": {"type": "string"}}
+                }
+              }
+            },
+            "camera_info": {
+              "type": "array",
+              "description": "one per entry of cameras, same order and names: picture size, codec and fps from info.json's video info (mcap: from the first frame), and whether no browser plays the codec so the visualizer serves an H.264 transcode (design doc 18 §4.2, D60)",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "key", "codec", "width", "height", "fps", "needs_transcode"],
+                "properties": {
+                  "name": {"type": "string", "description": "the short name, as in cameras"},
+                  "key": {"type": "string", "description": "the feature key, or the mcap topic"},
+                  "codec": {"type": ["string", "null"]},
+                  "pix_fmt": {"type": ["string", "null"]},
+                  "width": {"type": ["integer", "null"]},
+                  "height": {"type": ["integer", "null"]},
+                  "fps": {"type": ["number", "null"]},
+                  "needs_transcode": {"type": "boolean"}
+                }
+              }
+            },
+            "segment_sources": {
+              "type": "array",
+              "description": "segment annotations the visualizer recognises (design doc 18 §4.5, D64); supported false = something looks like annotations in a layout it does not know (标注格式不支持)",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "format", "name", "source", "supported"],
+                "properties": {
+                  "kind": {"enum": ["segments", "events", "labels"]},
+                  "format": {"type": "string"},
+                  "name": {"type": "string"},
+                  "source": {"type": "string"},
+                  "supported": {"type": "boolean"},
+                  "reason": {"type": ["string", "null"]}
+                }
+              }
+            },
+            "topics": {
+              "type": "array",
+              "description": "mcap: the topics in the first episode file's summary; which of them are cameras and curves is the dataset's field mapping (C7)",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["topic", "schema", "message_encoding", "count", "rate_hz"],
+                "properties": {
+                  "topic": {"type": "string"},
+                  "schema": {"type": ["string", "null"]},
+                  "message_encoding": {"type": ["string", "null"]},
+                  "count": {"type": ["integer", "null"]},
+                  "rate_hz": {"type": ["number", "null"]}
+                }
+              }
             }
           }
         }

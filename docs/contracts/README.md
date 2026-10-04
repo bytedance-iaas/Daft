@@ -12,6 +12,7 @@
 | C4 | REST API | `openapi.yaml`（报告、计划、预检等直接引用 C2 的 Schema） | 前端、Agent、`curation task …` |
 | C5 | Repository 接口与状态机 | `backend/daemon/repo/protocol.py` | Daemon 内部 |
 | C6 | 检测项分类表（设计 17 §1.3，D56）：注册表的细码与覆盖都指向它的编号 | `taxonomy.json`（Schema `taxonomy.schema.json`） | 注册表、报告、前端（经 `GET /api/v1/modules` 的 `taxonomy`）、评估工具 |
+| C7 | mcap 字段映射（设计 18 §6，D62）：哪些 topic 是相机、曲线、任务描述与分段，可视化与质检共用 | `viz-mapping.schema.json` | Daemon（数据集的映射、模版库、可视化的 mcap 读取器、任务开始时冻结）、前端（「mcap 配置」）、质检（派生 `ingest.mcap_mapping`） |
 | EEF | EEF–视频一致性的输入格式（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器），规范正文 `eef/format.md`、迁移规则 `eef/migration.md` | `eef/*.schema.json` | `check` 的 EEF runner、预检、（F5.5 起）Daemon 上传校验 |
 
 C2 各文件对应的命令与产物：
@@ -70,6 +71,12 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
   （`PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry`）。
 - 2.0 与 1.0 两种写法：`examples/result-record.json`、`report.json`、`plan.json` 等改过的六份里，`valid` 同时有 2.0 与 1.0 的实例，
   `invalid` 里有把两种写法混用的（2.0 记录带 `verdict`、1.0 计划带 `block`）。
+- 数据可视化（C4 2.4.0、C7，设计 18）：`examples/viz-mapping.json` 的四个合法映射（UMI、ABC-130k、ROS 2、只有附件分段）通过、
+  十二个不合法的被拒（版本不对、少 `series`、相机没名字、`role` 不认识、点路径写错、不认识的变换、`message_timestamp` 没给字段、
+  任务两种写法混用、分段少字段、不认识的内置模版、多出 `episode_files`、`ignore` 重复）。起 Daemon 后
+  `curl -s 'localhost:8080/curation/api/v1/datasets?viz=true' | jq '.items[] | {name, format, viz}'` 只列 LeRobot 与 mcap，
+  每条带 `viz.state`（`ready`；mcap 没确认映射时 `mapping_pending` 并写原因）；`jq '.viz_mapping, .annotations'` 看单个数据集的详情
+  （非 mcap 的 `viz_mapping` 为 null）。可视化的数据接口在 F13.2 / F13.3 落地之前回 404（`daemon/operations.py` 的 `PENDING`）。
 
 ## EEF 输入格式（F5.1 冻结，2026-09-23）
 

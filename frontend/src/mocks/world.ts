@@ -30,6 +30,7 @@ import type {
   UsageTotals,
   VlmBackend,
 } from '../api/types';
+import { WAREHOUSE_MAPPING, mappingInfoOf, vizStatusOf } from './vizWorld';
 
 export const registry = modulesJson as ModuleRegistry;
 
@@ -556,6 +557,9 @@ function datasetDetail(
     checks: [check],
     tasks: [],
     links: [],
+    viz: vizStatusOf(datasetFormatOf(p.format), id === 'ds_mcap'),
+    viz_mapping: mappingInfoOf(datasetFormatOf(p.format), id === 'ds_mcap' ? { mapping: WAREHOUSE_MAPPING, version: 1, updatedAt: now - 4 * DAY } : undefined),
+    annotations: null,
     ...extra,
   };
 }

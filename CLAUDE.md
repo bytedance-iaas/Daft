@@ -101,13 +101,14 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | C4 | REST API | `openapi.yaml` |
 | C5 | 仓储接口与状态机 | `backend/daemon/repo/protocol.py` |
 | C6 | 检测项分类表（细码与覆盖都指向它的编号） | `taxonomy.json`（Schema `taxonomy.schema.json`） |
+| C7 | mcap 字段映射（可视化与质检共用，设计 18 §6） | `viz-mapping.schema.json` |
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 
 改契约：改文件，不兼容的改动升版本号（`registry_version` / `schema_version` / `info.version`）；在 `examples/` 补合法与不合法示例；
 `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）再 `… lock`；改了 C4 在 `frontend/` 跑
 `npm run gen:api`。`CONTRACTS.lock` 没刷新、生成的类型没更新，CI 都会红。
 
-文档和提交里的编号：W 是工作包（设计 11），F 是需求账本条目，D、P 是冻结决策（设计 00 §7），C1–C6 是契约。
+文档和提交里的编号：W 是工作包（设计 11），F 是需求账本条目，D、P 是冻结决策（设计 00 §7），C1–C7 是契约。
 
 ## 各组件怎么开发
 

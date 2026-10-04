@@ -53,7 +53,7 @@
 |---|---|---|
 | GET | `/api/v1/modules` | 模块注册表：id、中文名、所属档、参数 schema。前端的模块清单只从这里来 |
 | GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、所选时间段的统计（`?days=7\|30\|90\|365`，D36，§12） |
-| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12） |
+| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选；`viz=true` 只列可视化读得了的格式，每条带 `viz` 状态）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12）；mcap 可一并提交确认过的字段映射 `viz_mapping`，任何格式可一并挂外部标注文件 `annotations_upload`（设计 18） |
 | GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
 | POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
@@ -61,9 +61,27 @@
 | GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名） |
 | GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选；给 `dataset_id`，或来源 + 地址，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
-| POST | `/api/v1/uploads` | 上传模块参数里的输入文件（注册表 1.5 的 `format: upload`，现为 EEF 的 trajectory.json 与观测种子），上传即校验、错误定位到样本 / 帧 / 字段，返回句柄 `upload:<id>` 与 sha256（12 篇 §11.1，F5.5） |
+| POST | `/api/v1/uploads` | 上传模块参数里的输入文件（注册表 1.5 的 `format: upload`，现为 EEF 的 trajectory.json 与观测种子），上传即校验、错误定位到样本 / 帧 / 字段，返回句柄 `upload:<id>` 与 sha256（12 篇 §11.1，F5.5）；`kind=viz_annotations` 是数据集的外部标注文件（JSON，或以 `application/zip` 发的每条 episode 一个 JSON 的 zip，设计 18 §4.5） |
 | GET | `/api/v1/uploads/{id}` | 读回上传件的元数据与校验摘要 |
 | POST | `/api/v1/deliveries/probe` | 交付目录写探针：用指定的访问密钥真实写一个对象再删掉。新建页交付目录失焦时调 |
+
+**数据可视化**（设计 18，C4 2.4.0；数据集级给「可视化」页，任务级给报告 / 裁决 / 任务详情里的迷你播放器，读任务冻结的输入）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/datasets/{id}/viz`、`/api/v1/tasks/{id}/viz` | 统一展示模型：相机与各自的供给方式、曲线组、标注来源、字段树、映射状态 |
+| GET | `/api/v1/datasets/{id}/viz/episodes` | 可视化页左侧栏的 episode 列表（编号 / 任务描述筛选，按编号 / 时长 / 有无分步排序，游标分页） |
+| GET | `/api/v1/datasets/{id}/viz/meta` | 字段树里元数据文件的预览（`meta/*`、README，256 KiB 截断） |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/viz`、`/api/v1/tasks/{id}/episodes/{index}/viz` | 一条 episode：时钟、相机地址、任务描述、分段 / 事件 / 条目标签；任务级另有把发现换到 episode 时间的 `check_clock` |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/series`、`/api/v1/tasks/{id}/episodes/{index}/series` | 一个曲线组，按 min / max 抽稀到 `points` 以内，可按区间再取 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、fMP4 转封装、`?transcode=1` 的 H.264 转码），带 Range，准备中 202 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | JPEG 帧包（各帧原字节首尾相接，Range 读） |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度 |
+| GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json） |
+| PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
+| POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |
+| GET / POST | `/api/v1/viz/templates` | 映射模版库：内置在前、站点的在后 / 另存为模版 |
+| DELETE | `/api/v1/viz/templates/{template_id}` | 删除站点模版（内置的不能删） |
 
 **任务**
 

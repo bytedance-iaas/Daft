@@ -1,0 +1,86 @@
+{
+ "schema": "viz-mapping.schema.json",
+ "valid": [
+  {
+   "schema_version": "viz-mapping/1.0",
+   "name": "GenRobot UMI（robot0 / robot1）",
+   "base": "builtin:umi",
+   "timeline": {"source": "log_time", "frame_reference": null},
+   "cameras": [
+    {"topic": "/robot0/sensor/camera0/compressed", "name": "robot0 相机", "schema": "foxglove.CompressedImage"},
+    {"topic": "/robot1/sensor/camera0/compressed", "name": "robot1 相机", "schema": "foxglove.CompressedImage"}
+   ],
+   "series": [
+    {"topic": "/robot0/vio/eef_pose", "name": "robot0 末端位姿", "schema": "foxglove.PoseInFrame", "fields": ["pose"],
+     "labels": ["robot0_x", "robot0_y", "robot0_z", "robot0_qx", "robot0_qy", "robot0_qz", "robot0_qw"], "unit": null, "role": "action"},
+    {"topic": "/robot0/sensor/magnetic_encoder", "name": "robot0 夹爪开度", "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": ["value"], "labels": ["robot0_gripper"], "unit": null, "role": "action"},
+    {"topic": "/robot1/vio/eef_pose", "name": "robot1 末端位姿", "schema": "foxglove.PoseInFrame", "fields": ["pose"],
+     "labels": ["robot1_x", "robot1_y", "robot1_z", "robot1_qx", "robot1_qy", "robot1_qz", "robot1_qw"], "unit": null, "role": "action"},
+    {"topic": "/robot1/sensor/magnetic_encoder", "name": "robot1 夹爪开度", "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": ["value"], "labels": ["robot1_gripper"], "unit": null, "role": "action"},
+    {"topic": "/robot0/sensor/imu", "name": "robot0 IMU", "schema": "foxglove.IMUMeasurement",
+     "fields": ["linear_acceleration", "angular_velocity"], "role": "other", "smart": false}
+   ],
+   "task": null,
+   "segments": null,
+   "ignore": ["/robot0/sensor/camera0/camera_info", "/robot0/sim/robot_info", "/robot0/system_info",
+              "/robot1/sensor/camera0/camera_info", "/robot1/sensor/imu", "/robot1/sim/robot_info", "/robot1/system_info"]
+  },
+  {
+   "schema_version": "viz-mapping/1.0",
+   "name": "ABC-130k 双臂（自定义 protobuf）",
+   "base": "builtin:foxglove",
+   "timeline": {"source": "log_time", "frame_reference": "/left-arm-action"},
+   "cameras": [
+    {"topic": "/camera/top/left", "name": "顶部左", "schema": "foxglove.CompressedVideo"},
+    {"topic": "/camera/wrist/left", "name": "左腕", "schema": "foxglove.CompressedVideo"}
+   ],
+   "series": [
+    {"topic": "/left-arm-state", "name": "左臂关节", "schema": "RobotState", "fields": ["q"], "unit": "rad", "role": "state",
+     "pair_with": "/left-arm-action"},
+    {"topic": "/left-arm-action", "name": "左臂关节", "schema": "RobotState", "fields": ["q"], "unit": "rad", "role": "action",
+     "pair_with": "/left-arm-state"},
+    {"topic": "/left-gripper-state", "name": "左夹爪", "schema": "GripperState", "fields": ["position"], "role": "state"},
+    {"topic": "/left-arm-pose", "name": "左臂末端", "fields": ["pose.position.*", "pose.orientation"],
+     "transforms": {"pose.orientation": "quat_xyzw_to_rpy"}, "unit": null, "role": "other", "smart": false}
+   ],
+   "task": {"metadata_key": "task_name"},
+   "segments": null,
+   "ignore": []
+  },
+  {
+   "schema_version": "viz-mapping/1.0",
+   "base": "builtin:ros2",
+   "timeline": {"source": "message_timestamp", "timestamp_field": "header.stamp"},
+   "cameras": [{"topic": "/camera/color/image_raw/compressed", "name": "彩色"}],
+   "series": [
+    {"topic": "/joint_states", "name": "关节", "fields": ["position"], "names_field": "name", "unit": "rad", "role": "state"},
+    {"topic": "/action", "name": "动作", "role": "action"}
+   ],
+   "task": {"topic": "/task", "field": "data"},
+   "segments": {"topic": "/subtask", "start_field": "start", "end_field": "end", "label_field": "label"}
+  },
+  {
+   "schema_version": "viz-mapping/1.0",
+   "cameras": [],
+   "series": [],
+   "segments": {"attachment": "labels.json"}
+  }
+ ],
+ "invalid": [
+  {"schema_version": "viz-mapping/2.0", "cameras": [], "series": []},
+  {"schema_version": "viz-mapping/1.0", "cameras": []},
+  {"schema_version": "viz-mapping/1.0", "cameras": [{"topic": "/cam"}], "series": []},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [{"topic": "/arm", "name": "臂", "role": "command"}]},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [{"topic": "/arm", "name": "臂", "role": "state", "fields": ["q..x"]}]},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [{"topic": "/arm", "name": "臂", "role": "state",
+   "transforms": {"pose.orientation": "euler_to_quat"}}]},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "timeline": {"source": "message_timestamp"}},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "task": {"topic": "/task", "metadata_key": "task"}},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "segments": {"topic": "/subtask", "start_field": "start"}},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "base": "builtin:rerun"},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "episode_files": "episode_{index}.mcap"},
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "ignore": ["/imu", "/imu"]}
+ ]
+}

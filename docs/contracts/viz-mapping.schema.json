@@ -1,0 +1,134 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "viz-mapping/1.0 - the field mapping of an mcap dataset (C7, design doc 18 §6)",
+ "description": "Which topics of an mcap dataset are cameras, which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": ["schema_version", "cameras", "series"],
+ "properties": {
+  "schema_version": {"const": "viz-mapping/1.0"},
+  "name": {"type": "string", "minLength": 1, "maxLength": 128, "description": "shown in the template picker and on the dataset page"},
+  "base": {
+   "enum": ["builtin:foxglove", "builtin:ros2", "builtin:umi", null],
+   "description": "the built-in template it was drafted from; null = written by hand or imported. builtin:umi also sets the check reader's embodiment profile (umi_das)"
+  },
+  "timeline": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "source": {
+     "enum": ["log_time", "publish_time", "message_timestamp"],
+     "default": "log_time",
+     "description": "which time of a message places it on the episode clock; message_timestamp reads timestamp_field of every message"
+    },
+    "timestamp_field": {"$ref": "#/$defs/path", "description": "the message's own time field (seconds, or a {sec, nsec} / {seconds, nanos} message), for source=message_timestamp"},
+    "frame_reference": {
+     "oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}],
+     "description": "the topic whose messages number the frames (the frame box of the player, design doc 18 §4.4); null = the first role=action series (the check reader's rows), else the first camera"
+    }
+   },
+   "if": {"properties": {"source": {"const": "message_timestamp"}}, "required": ["source"]},
+   "then": {"required": ["timestamp_field"]}
+  },
+  "cameras": {
+   "type": "array",
+   "maxItems": 32,
+   "items": {"$ref": "#/$defs/camera"},
+   "description": "in display order; compressed images (JPEG, PNG) and compressed video (H.264, H.265)"
+  },
+  "series": {
+   "type": "array",
+   "maxItems": 128,
+   "items": {"$ref": "#/$defs/series"},
+   "description": "curve groups, in display order; a state and an action topic of the same thing are paired with pair_with and drawn in one group"
+  },
+  "task": {
+   "oneOf": [
+    {"type": "null"},
+    {"type": "object", "additionalProperties": false, "required": ["metadata_key"],
+     "properties": {"metadata_key": {"type": "string", "minLength": 1, "maxLength": 128, "description": "a key of the file's metadata records (any record name)"}}},
+    {"type": "object", "additionalProperties": false, "required": ["topic"],
+     "properties": {"topic": {"$ref": "#/$defs/topic"}, "field": {"$ref": "#/$defs/path", "description": "the text field; absent = the message itself is the text (std_msgs/String data, a JSON string)"}}}
+   ],
+   "description": "where the episode's task text is; null = none (the player shows 无任务描述)"
+  },
+  "segments": {
+   "oneOf": [
+    {"type": "null"},
+    {"type": "object", "additionalProperties": false, "required": ["topic", "start_field", "end_field", "label_field"],
+     "properties": {
+      "topic": {"$ref": "#/$defs/topic"},
+      "start_field": {"$ref": "#/$defs/path"},
+      "end_field": {"$ref": "#/$defs/path"},
+      "label_field": {"$ref": "#/$defs/path"}
+     }},
+    {"type": "object", "additionalProperties": false, "required": ["attachment"],
+     "properties": {"attachment": {"type": "string", "minLength": 1, "maxLength": 256, "description": "the name of an mcap attachment holding Argus-style JSON (timeline / key_events / completion)"}}}
+   ],
+   "description": "where the segment annotations are; null = none (nothing is shown and nothing is warned about)"
+  },
+  "ignore": {
+   "type": "array",
+   "maxItems": 512,
+   "items": {"$ref": "#/$defs/topic"},
+   "uniqueItems": true,
+   "description": "topics left out on purpose (calibration, system info, high-rate IMU ...); other unnamed topics are reported as unmapped"
+  }
+ },
+ "$defs": {
+  "topic": {"type": "string", "minLength": 1, "maxLength": 512},
+  "path": {
+   "type": "string",
+   "maxLength": 256,
+   "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.([A-Za-z_][A-Za-z0-9_]*|[0-9]+|\\*))*$",
+   "description": "a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element of a list or every field of a message"
+  },
+  "camera": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name"],
+   "properties": {
+    "topic": {"$ref": "#/$defs/topic"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema": {"type": "string", "maxLength": 256, "description": "the schema name seen when it was mapped (informational; encoding and picture size come from probing)"}
+   }
+  },
+  "series": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name", "role"],
+   "properties": {
+    "topic": {"$ref": "#/$defs/topic"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema": {"type": "string", "maxLength": 256},
+    "fields": {
+     "type": "array",
+     "maxItems": 64,
+     "items": {"$ref": "#/$defs/path"},
+     "description": "the numbers to draw, flattened in order (a message field expands to its numeric leaves); absent or empty = the whole message read as a vector by its shape (position, data, a bare list), as the check reader does"
+    },
+    "labels": {
+     "type": "array",
+     "maxItems": 512,
+     "items": {"type": "string", "minLength": 1, "maxLength": 64},
+     "description": "one name per flattened number; the check reader's action_names / state names come from these. Absent = from names_field, else <topic>_<i>"
+    },
+    "names_field": {"$ref": "#/$defs/path", "description": "a field holding the dimension names in every message (sensor_msgs/JointState.name)"},
+    "transforms": {
+     "type": "object",
+     "maxProperties": 64,
+     "propertyNames": {"$ref": "#/$defs/path"},
+     "additionalProperties": {"enum": ["quat_xyzw_to_rpy", "quat_wxyz_to_rpy", "deg_to_rad", "rad_to_deg"]},
+     "description": "display-only conversions of fields named in fields (a quaternion becomes roll, pitch, yaw in radians); the check reader always reads the raw numbers"
+    },
+    "unit": {"type": ["string", "null"], "maxLength": 32, "description": "the y axis unit (m, rad, N, ...)"},
+    "role": {"enum": ["state", "action", "other"], "description": "solid lines for state, dashed for action; also what the check reader takes it for"},
+    "pair_with": {
+     "oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}],
+     "description": "the series of the opposite role drawn in the same group (/left-arm-action with /left-arm-state)"
+    },
+    "smart": {"type": "boolean", "default": true, "description": "shown by the smart layout; false = only offered in the + / 更换 menus (high-rate or auxiliary curves)"}
+   }
+  }
+ }
+}

@@ -26,6 +26,7 @@ import type {
   TaskState,
   TimelineEntry,
   UsageRow,
+  VizMapping,
   VlmBackend,
   VlmModel,
 } from '../api/types';
@@ -58,73 +59,13 @@ import { producesAdjudication } from '../lib/registry';
 import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsView } from './findings';
 import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
+import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
+import { vizHandlers } from './viz';
+import { mappingInfoOf, vizStatusOf } from './vizWorld';
 
-// ------------------------------------------------------------------ plumbing
+// ------------------------------------------------------------------ plumbing (mocks/plumbing.ts)
 
-type Validator = (operationId: string, body: unknown) => void;
-let requestValidator: Validator | null = null;
-
-/** Tests install a validator that checks request bodies against the contract. */
-export function setRequestValidator(v: Validator | null): void {
-  requestValidator = v;
-}
-
-const API = '*/api/v1';
-
-function err(status: number, code: string, message: string, details?: Record<string, unknown>) {
-  return HttpResponse.json({ error: details ? { code, message, details } : { code, message } }, { status });
-}
-
-async function body<T>(request: Request, operationId: string): Promise<T> {
-  const text = await request.text();
-  const parsed = text ? (JSON.parse(text) as T) : ({} as T);
-  requestValidator?.(operationId, parsed);
-  return parsed;
-}
-
-/** Idempotency-Key (doc 03 §8): the same key returns the first response. */
-async function idempotent(request: Request, run: () => Promise<Response> | Response): Promise<Response> {
-  const key = request.headers.get('Idempotency-Key');
-  if (key && db.idempotency.has(key)) {
-    const first = db.idempotency.get(key)!;
-    return HttpResponse.json(first.body as never, { status: first.status });
-  }
-  const res = await run();
-  if (key) {
-    const clone = res.clone();
-    const text = await clone.text();
-    db.idempotency.set(key, { status: res.status, body: text ? JSON.parse(text) : null });
-  }
-  return res;
-}
-
-function page<T>(items: T[], url: URL): { items: T[]; page: number; page_size: number; total: number } {
-  const size = Number(url.searchParams.get('page_size') ?? 20);
-  const pageNo = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const start = (pageNo - 1) * size;
-  return { items: items.slice(start, start + size), page: pageNo, page_size: size, total: items.length };
-}
-
-function encodeCursor(obj: unknown): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
-}
-
-function decodeCursor<T>(c: string | null): T | null {
-  if (!c) return null;
-  try {
-    return JSON.parse(decodeURIComponent(escape(atob(c)))) as T;
-  } catch {
-    return null;
-  }
-}
-
-function cursorPage<T>(items: T[], url: URL, defLimit = 50): { items: T[]; next_cursor: string | null; has_more: boolean } {
-  const limit = Math.min(Number(url.searchParams.get('limit') ?? defLimit), 500);
-  const offset = decodeCursor<{ o: number }>(url.searchParams.get('cursor'))?.o ?? 0;
-  const slice = items.slice(offset, offset + limit);
-  const more = offset + limit < items.length;
-  return { items: slice, next_cursor: more ? encodeCursor({ o: offset + limit }) : null, has_more: more };
-}
+export { setRequestValidator } from './plumbing';
 
 const NON_TERMINAL: TaskState[] = ['created', 'queued', 'running', 'pausing', 'paused', 'stopping'];
 const TERMINAL: TaskState[] = ['stopped', 'succeeded', 'completed_with_errors', 'failed'];
@@ -424,17 +365,19 @@ const datasets = [
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
     const format = url.searchParams.get('format');
     const check = url.searchParams.get('check_state');
+    const viz = url.searchParams.get('viz') === 'true';
     const items = db.datasets
       .filter((d) => !q || d.name.toLowerCase().includes(q) || d.uri.toLowerCase().includes(q))
       .filter((d) => !format || d.format === format)
       .filter((d) => !check || d.check_state === check)
+      .filter((d) => !viz || ['lerobot_v2', 'lerobot_v3', 'mcap'].includes(d.format))
       .sort((a, b) => b.created_at - a.created_at)
       .map(toDatasetItem);
     return HttpResponse.json(page(items, url));
   }),
   http.post(`${API}/datasets`, async ({ request }) =>
     idempotent(request, async () => {
-      const b = await body<{ input: InputRef; name?: string; note?: string }>(request, 'createDataset');
+      const b = await body<{ input: InputRef; name?: string; note?: string; viz_mapping?: VizMapping; annotations_upload?: string }>(request, 'createDataset');
       const r = resolveInput(b.input);
       if (r instanceof Response) return r;
       const bad = readCheck(r.ref);
@@ -466,7 +409,17 @@ const datasets = [
         checks: [{ at: now, trigger: 'add', result: 'same', change: null }],
         tasks: [],
         links: [],
+        viz: vizStatusOf(formatOf(result), false),
+        viz_mapping: mappingInfoOf(formatOf(result)),
+        annotations: null,
       };
+      if (b.viz_mapping && d.format === 'mcap') {
+        const stored = { mapping: b.viz_mapping, version: 1, updatedAt: now };
+        db.vizMappings.set(d.id, stored);
+        d.viz = vizStatusOf(d.format, true);
+        d.viz_mapping = mappingInfoOf(d.format, stored);
+      }
+      if (b.annotations_upload) d.annotations = { upload_id: b.annotations_upload, name: 'labels.zip', format: 'argus', episodes: d.episode_count ?? 0, uploaded_at: now };
       db.datasets.push(d);
       return HttpResponse.json(d, { status: 201 });
     }),
@@ -592,6 +545,7 @@ function toDatasetItem(d: DatasetDetail) {
     preflighted_at: d.preflighted_at,
     created_at: d.created_at,
     last_task: d.last_task,
+    viz: d.viz,
   };
 }
 
@@ -1275,6 +1229,10 @@ const report = [
     const total = t.summary?.total ?? 50;
     if (!Number.isInteger(ep) || ep < 0 || ep >= Math.max(total, 50)) return err(404, 'not_found', `没有 ep ${String(params.index)}`);
     const view = t.id === FINDINGS_TASK ? findingsView(ep, rev) : episodeView(ep, rev);
+    // C4 2.4.0: the mini player reads frames as seconds and links to the visualize page
+    const ds = db.datasets.find((d) => d.id === t.dataset_id);
+    view.fps = ds?.preflight.dataset?.fps ?? null;
+    view.dataset_id = ds?.id ?? null;
     const extra = db.extraRecords.get(t.id)?.get(ep) ?? {};
     for (const [module, rec] of Object.entries(extra)) {
       view.modules[module] = rec;
@@ -1510,8 +1468,17 @@ const uploadHandlers = [
     const url = new URL(request.url);
     const kind = url.searchParams.get('kind') ?? '';
     const name = url.searchParams.get('name') ?? 'upload.json';
+    if (kind === 'viz_annotations' && (request.headers.get('content-type') ?? '').startsWith('application/zip')) {
+      // design doc 18 §4.5: a zip of per-episode Argus JSON; the mock trusts it
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return err(400, 'validation_failed', '不是 zip 文件', { errors: [{ field: null, problem: 'not a zip' }] });
+      const id = nextId('upl');
+      const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: '0'.repeat(64), size_bytes: bytes.length, created_at: clock(), validation: { valid: true, summary: { format: 'argus', episodes: 12, files: 12 }, warnings: [] } };
+      uploads.set(id, up);
+      return HttpResponse.json(up, { status: 201 });
+    }
     const text = await request.text();
-    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template', 'eef_record_mapping'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
+    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template', 'eef_record_mapping', 'viz_annotations'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
     let doc: unknown;
     try {
       doc = JSON.parse(text);
@@ -1537,6 +1504,12 @@ const uploadHandlers = [
         return err(400, 'validation_failed', '夹爪外观模板不合格：schema_version 应为 gripper-template/1.0', { errors: [{ field: null, problem: 'expected gripper-template/1.0', code: 'template_invalid' }] });
       const entries = t.entries ?? [];
       summary = { entries: entries.length, usable_entries: entries.length, cameras: [...new Set(entries.map((e) => e.camera_id).filter(Boolean))].sort() };
+    } else if (kind === 'viz_annotations') {
+      // design doc 18 §4.5: one Argus-style episode (timeline / key_events / completion, or event_labels)
+      const a = doc as { timeline?: unknown[]; key_events?: unknown[]; event_labels?: unknown[] };
+      if (!Array.isArray(a.timeline) && !Array.isArray(a.event_labels))
+        return err(400, 'validation_failed', '标注格式不支持：认得出的是 Argus 风格的 timeline / key_events / completion（或 event_labels）', { errors: [{ field: null, problem: 'no timeline or event_labels', code: 'annotation_unsupported' }] });
+      summary = { format: 'argus', episodes: 1, segments: (a.timeline ?? a.event_labels ?? []).length, events: (a.key_events ?? []).length };
     } else if (kind === 'eef_record_mapping') {
       // as the Daemon summarizes a dataset-record mapping (daemon/uploads.py, design doc 12 §8.7)
       const m = doc as { schema_version?: string; record?: Record<string, Record<string, unknown> | undefined> };
@@ -1561,4 +1534,4 @@ const uploadHandlers = [
   }),
 ];
 
-export const handlers = [...credentials, ...backends, ...datasets, ...tasks, ...report, ...system, ...uploadHandlers];
+export const handlers = [...credentials, ...backends, ...datasets, ...tasks, ...report, ...system, ...uploadHandlers, ...vizHandlers];

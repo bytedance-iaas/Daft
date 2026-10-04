@@ -373,6 +373,29 @@ ALTER TABLE credential ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_credential_default ON credential(owner_id) WHERE is_default = 1;
 """
 
+# Step 7 (C4 2.4.0, design doc 18): the data visualizer. A dataset keeps its mcap field mapping
+# (C7, versioned: tasks freeze the version they start with, D62), the visualizer's display
+# configuration and the external annotation file attached to it; the site's mapping templates
+# get a table of their own (the built-ins live in code).
+_V7 = """
+ALTER TABLE dataset ADD COLUMN viz_mapping TEXT;
+ALTER TABLE dataset ADD COLUMN viz_mapping_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE dataset ADD COLUMN viz_mapping_updated_at INTEGER;
+ALTER TABLE dataset ADD COLUMN display_config TEXT;
+ALTER TABLE dataset ADD COLUMN annotations_upload TEXT;
+CREATE TABLE viz_template (
+  id          TEXT PRIMARY KEY,
+  owner_id    TEXT NOT NULL DEFAULT 'default',
+  name        TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+  description TEXT NOT NULL DEFAULT '',
+  mapping     TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_viz_template_name ON viz_template(owner_id, name);
+CREATE INDEX idx_viz_template_list ON viz_template(owner_id, created_at DESC, id DESC);
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
@@ -381,6 +404,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (4, _V4),
     (5, _V5),
     (6, _V6),
+    (7, _V7),
 )
 
 #: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for

@@ -675,6 +675,274 @@
    ],
    "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
    "warnings": []
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lerobot",
+    "version": "v2",
+    "supported": true,
+    "detail": "LeRobot v2, 200 episodes, 3 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 200,
+    "cameras": [
+     "exterior_1",
+     "exterior_2",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": null,
+    "total_frames": 51200,
+    "labels": {
+     "with_task": 112,
+     "without_task": 88
+    },
+    "profile": {
+     "matched": "droid",
+     "by": "robot_type"
+    },
+    "features": [
+     {
+      "key": "observation.state",
+      "dtype": "float32",
+      "shape": [
+       7
+      ],
+      "names": [
+       "j1",
+       "j2",
+       "j3",
+       "j4",
+       "j5",
+       "j6",
+       "gripper"
+      ]
+     },
+     {
+      "key": "action",
+      "dtype": "float32",
+      "shape": [
+       7
+      ],
+      "names": null
+     },
+     {
+      "key": "observation.images.exterior_1",
+      "dtype": "video",
+      "shape": [
+       180,
+       320,
+       3
+      ],
+      "names": [
+       "height",
+       "width",
+       "channels"
+      ]
+     },
+     {
+      "key": "subtask_index",
+      "dtype": "int64",
+      "shape": [
+       1
+      ],
+      "names": null
+     }
+    ],
+    "camera_info": [
+     {
+      "name": "exterior_1",
+      "key": "observation.images.exterior_1",
+      "codec": "av1",
+      "pix_fmt": "yuv420p",
+      "width": 320,
+      "height": 180,
+      "fps": 15.0,
+      "needs_transcode": false
+     },
+     {
+      "name": "exterior_2",
+      "key": "observation.images.exterior_2",
+      "codec": "av1",
+      "pix_fmt": "yuv420p",
+      "width": 320,
+      "height": 180,
+      "fps": 15.0,
+      "needs_transcode": false
+     },
+     {
+      "name": "wrist",
+      "key": "observation.images.wrist",
+      "codec": "mpeg4",
+      "pix_fmt": "yuv420p",
+      "width": 320,
+      "height": 180,
+      "fps": 15.0,
+      "needs_transcode": true
+     }
+    ],
+    "segment_sources": [
+     {
+      "kind": "segments",
+      "format": "subtask_index",
+      "name": "子任务",
+      "source": "subtask_index + meta/subtasks.parquet",
+      "supported": true,
+      "reason": null
+     },
+     {
+      "kind": "segments",
+      "format": "string_column",
+      "name": "subtask",
+      "source": "subtask",
+      "supported": false,
+      "reason": "subtask 列全是占位文字 TODO"
+     }
+    ]
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "needs_input",
+     "reason": "robot_type not found in info.json; pick a model or skip this module",
+     "input_hint": {
+      "field": "embodiment_id",
+      "options": [
+       "agibot",
+       "aloha",
+       "franka",
+       "google_robot",
+       "pusht",
+       "so100",
+       "so101",
+       "ur5",
+       "widowx"
+      ]
+     },
+     "reason_code": "robot_type_unknown",
+     "reason_args": {
+      "robot_type": null
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "88 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "warnings": [
+    "episodes_stats.json missing; per-episode stats will be recomputed"
+   ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "mcap",
+    "version": null,
+    "supported": true,
+    "detail": "mcap, 8 episodes, 2 cameras; time axis from the action topic's log_time"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 8,
+    "cameras": [
+     "exterior",
+     "wrist"
+    ],
+    "fps": null,
+    "robot_type": "franka",
+    "total_frames": 516,
+    "labels": {
+     "with_task": 6,
+     "without_task": 2
+    },
+    "profile": null,
+    "topics": [
+     {
+      "topic": "/robot0/sensor/camera0/compressed",
+      "schema": "foxglove.CompressedImage",
+      "message_encoding": "protobuf",
+      "count": 1541,
+      "rate_hz": 29.9
+     },
+     {
+      "topic": "/robot0/vio/eef_pose",
+      "schema": "foxglove.PoseInFrame",
+      "message_encoding": "protobuf",
+      "count": 1535,
+      "rate_hz": 29.8
+     }
+    ]
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "available"
+    },
+    {
+     "id": "motion_quality",
+     "availability": "available"
+    },
+    {
+     "id": "visual_quality",
+     "availability": "available"
+    },
+    {
+     "id": "video_action_sync",
+     "availability": "available"
+    },
+    {
+     "id": "eef_video_consistency",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "dedup",
+     "availability": "available"
+    },
+    {
+     "id": "skill_profile",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
+   "warnings": []
   }
  ],
  "invalid": [
@@ -1352,6 +1620,150 @@
      "by": "robot_type"
     },
     "episode_indices": "5, 9,-3"
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "needs_input",
+     "reason": "robot_type not found in info.json; pick a model or skip this module",
+     "input_hint": {
+      "field": "embodiment_id",
+      "options": [
+       "agibot",
+       "aloha",
+       "franka",
+       "google_robot",
+       "pusht",
+       "so100",
+       "so101",
+       "ur5",
+       "widowx"
+      ]
+     },
+     "reason_code": "robot_type_unknown",
+     "reason_args": {
+      "robot_type": null
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "88 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "warnings": [
+    "episodes_stats.json missing; per-episode stats will be recomputed"
+   ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lerobot",
+    "version": "v2",
+    "supported": true,
+    "detail": "LeRobot v2, 200 episodes, 3 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 200,
+    "cameras": [
+     "exterior_1",
+     "exterior_2",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": null,
+    "total_frames": 51200,
+    "labels": {
+     "with_task": 112,
+     "without_task": 88
+    },
+    "profile": {
+     "matched": "droid",
+     "by": "robot_type"
+    },
+    "camera_info": [
+     {
+      "name": "wrist",
+      "codec": "mpeg4"
+     }
+    ]
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "needs_input",
+     "reason": "robot_type not found in info.json; pick a model or skip this module",
+     "input_hint": {
+      "field": "embodiment_id",
+      "options": [
+       "agibot",
+       "aloha",
+       "franka",
+       "google_robot",
+       "pusht",
+       "so100",
+       "so101",
+       "ur5",
+       "widowx"
+      ]
+     },
+     "reason_code": "robot_type_unknown",
+     "reason_args": {
+      "robot_type": null
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "88 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "warnings": [
+    "episodes_stats.json missing; per-episode stats will be recomputed"
+   ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lerobot",
+    "version": "v2",
+    "supported": true,
+    "detail": "LeRobot v2, 200 episodes, 3 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 200,
+    "cameras": [
+     {
+      "name": "wrist"
+     }
+    ],
+    "fps": 15.0,
+    "robot_type": null,
+    "total_frames": 51200,
+    "labels": {
+     "with_task": 112,
+     "without_task": 88
+    },
+    "profile": {
+     "matched": "droid",
+     "by": "robot_type"
+    }
    },
    "modules": [
     {

@@ -33,6 +33,15 @@ function loadCliSchemas(): Record<string, Json> {
   return out;
 }
 
+/** The JSON Schemas next to openapi.yaml it refers to (C7 viz-mapping.schema.json). */
+function loadTopSchemas(): Record<string, Json> {
+  const out: Record<string, Json> = {};
+  for (const f of readdirSync(CONTRACTS)) {
+    if (f.endsWith('.schema.json')) out[f] = JSON.parse(readFileSync(`${CONTRACTS}${f}`, 'utf8')) as Json;
+  }
+  return out;
+}
+
 export interface ContractDefect {
   id: 'DatasetDetail' | 'Decision' | 'Task.vlm';
   what: string;
@@ -101,6 +110,8 @@ export interface Contract {
   validator(ref: string): ValidateFunction;
   schemaRef(name: string): string;
   responseRef(operationId: string, status: number): string | null;
+  /** The media types a response of that status declares (binary routes: video/mp4 ...). */
+  responseTypes(operationId: string, status: number): string[];
   requestRef(operationId: string): string | null;
   operations(): { operationId: string; path: string; method: string }[];
 }
@@ -109,6 +120,7 @@ export function makeContract(doc: Json = patchedOpenApi()): Contract {
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   addFormats(ajv);
   for (const [file, schema] of Object.entries(loadCliSchemas())) ajv.addSchema({ ...schema, $id: `${BASE}cli/${file}` });
+  for (const [file, schema] of Object.entries(loadTopSchemas())) ajv.addSchema({ ...schema, $id: `${BASE}${file}` });
   ajv.addSchema({ ...doc, $id: `${BASE}openapi.yaml` });
   const ops: { operationId: string; path: string; method: string }[] = [];
   for (const [path, item] of Object.entries(doc.paths as Json)) {
@@ -140,6 +152,15 @@ export function makeContract(doc: Json = patchedOpenApi()): Contract {
       const content = res.content as Json | undefined;
       if (!content?.['application/json']) return null;
       return `${BASE}openapi.yaml#/paths/${ptr(op.path)}/${op.method}/responses/${key}/content/application~1json/schema`;
+    },
+    responseTypes(operationId, status) {
+      const op = ops.find((o) => o.operationId === operationId);
+      if (!op) throw new Error(`unknown operation ${operationId}`);
+      const responses = (((doc.paths as Json)[op.path] as Json)[op.method] as Json).responses as Json;
+      const key = String(status) in responses ? String(status) : 'default';
+      let res = responses[key] as Json | undefined;
+      if (res && typeof res.$ref === 'string') res = ((doc.components as Json).responses as Json)[(res.$ref as string).replace('#/components/responses/', '')] as Json;
+      return Object.keys((res?.content as Json | undefined) ?? {});
     },
     requestRef(operationId) {
       const op = ops.find((o) => o.operationId === operationId);

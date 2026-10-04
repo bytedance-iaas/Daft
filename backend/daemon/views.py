@@ -14,6 +14,7 @@ from curation.contracts import modules as registry
 
 from .repo import protocol as P
 from .repo.extras import dataset_format
+from .viz.status import mapping_info, viz_status
 
 _STAGE_KEYS = ("id", "block", "full_set", "state", "done", "total", "elapsed_s", "eta_s", "note",
                "pipeline")
@@ -277,7 +278,8 @@ def dataset_item(ds: P.Dataset, last_task: P.Task | None) -> dict:
             "robot_type": robot if isinstance(robot, str) else None,
             "check_state": ds.check_state, "checked_at": ds.checked_at,
             "preflighted_at": ds.preflighted_at, "created_at": ds.created_at,
-            "last_task": task_ref(last_task) if last_task is not None else None}
+            "last_task": task_ref(last_task) if last_task is not None else None,
+            "viz": viz_status(ds)}
 
 
 def dataset_check(check: P.DatasetCheck) -> dict:
@@ -295,17 +297,19 @@ def listing(fp: dict | None) -> dict:
 
 
 def dataset_detail(ds: P.Dataset, *, tasks: list[P.Task], checks: list[P.DatasetCheck],
-                   names: Names) -> dict:
+                   names: Names, annotations: dict | None = None) -> dict:
     """C4 ``DatasetDetail``: ``tasks`` newest first (the first is ``last_task``).
 
-    ``links`` stays empty: C4 ``Link.rel`` has no value for a dataset page yet.
+    ``links`` stays empty: C4 ``Link.rel`` has no value for a dataset page yet. ``annotations``
+    is the attached external annotation file (``DatasetAnnotationsInfo``), looked up by the route.
     """
     return {**dataset_item(ds, tasks[0] if tasks else None),
             "note": ds.note, "credential": names.credential(ds.credential_id),
             "preflight": ds.preflight, "meta_fingerprint": ds.meta_fingerprint,
             "listing": listing(ds.source_fingerprint),
             "checks": [dataset_check(c) for c in checks],
-            "tasks": [task_ref(t) for t in tasks], "links": []}
+            "tasks": [task_ref(t) for t in tasks], "links": [],
+            "viz_mapping": mapping_info(ds), "annotations": annotations}
 
 
 def is_under(path: pathlib.Path, root: pathlib.Path) -> bool:

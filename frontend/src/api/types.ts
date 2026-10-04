@@ -122,6 +122,44 @@ export type SignedUrl = S['SignedUrl'];
 export type DatasetSignRequest = S['DatasetSignRequest'];
 export type DatasetSignResponse = S['DatasetSignResponse'];
 
+// the data visualizer (design doc 18, C4 2.4.0)
+export type VizStatus = S['VizStatus'];
+export type VizFormat = S['VizFormat'];
+export type VizAccess = S['VizAccess'];
+export type VizCamera = S['VizCamera'];
+export type VizLine = S['VizLine'];
+export type VizStream = S['VizStream'];
+export type VizAnnotationSource = S['VizAnnotationSource'];
+export type VizFieldNode = S['VizFieldNode'];
+export type VizMappingState = S['VizMappingState'];
+export type VizWarning = S['VizWarning'];
+export type VizDataset = S['VizDataset'];
+export type VizEpisodeItem = S['VizEpisodeItem'];
+export type VizEpisodePage = S['VizEpisodePage'];
+export type VizTimeline = S['VizTimeline'];
+export type VizCheckClock = S['VizCheckClock'];
+export type VizEpisodeCamera = S['VizEpisodeCamera'];
+export type VizSegment = S['VizSegment'];
+export type VizTrack = S['VizTrack'];
+export type VizEvent = S['VizEvent'];
+export type VizLabel = S['VizLabel'];
+export type VizAnnotations = S['VizAnnotations'];
+export type VizEpisode = S['VizEpisode'];
+export type VizSeries = S['VizSeries'];
+export type VizFrameIndex = S['VizFrameIndex'];
+export type VizMediaPending = S['VizMediaPending'];
+export type VizMetaFile = S['VizMetaFile'];
+/** C7 viz-mapping/1.0 - an mcap dataset's field mapping. */
+export type VizMapping = S['viz-mapping.schema'];
+export type DatasetMapping = S['DatasetMapping'];
+export type DatasetMappingInfo = S['DatasetMappingInfo'];
+export type DatasetAnnotationsInfo = S['DatasetAnnotationsInfo'];
+export type McapProbeRequest = S['McapProbeRequest'];
+export type McapTopic = S['McapTopic'];
+export type McapProbe = S['McapProbe'];
+export type VizTemplate = S['VizTemplate'];
+export type VizTemplateCreate = S['VizTemplateCreate'];
+
 export type SseState = S['SseState'];
 export type SseProgress = S['SseProgress'];
 export type SseLog = S['SseLog'];

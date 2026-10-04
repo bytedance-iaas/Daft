@@ -296,9 +296,70 @@ const uploadCalls = async (): Promise<Call[]> => {
   ];
 };
 
+const MCAP_MAPPING = {
+  schema_version: 'viz-mapping/1.0',
+  base: 'builtin:foxglove',
+  cameras: [{ topic: '/observation.images.front', name: 'front' }],
+  series: [{ topic: '/action', name: '关节', role: 'action' }],
+};
+
+const vizCalls = async (): Promise<Call[]> => {
+  // C4 2.4.0 (design doc 18): the visualizer's dataset scope, task scope, mappings and templates.
+  const tpl = await (await fetch('http://localhost/api/v1/viz/templates', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '待删模版', mapping: MCAP_MAPPING }) })).json();
+  const ep = (ds: string, i: number) => `/datasets/${ds}/episodes/${i}`;
+  return [
+    { op: 'getDatasetViz', method: 'GET', path: '/datasets/ds_droid100/viz' },
+    { op: 'getDatasetViz', method: 'GET', path: '/datasets/ds_droid200/viz' },
+    { op: 'getDatasetViz', method: 'GET', path: '/datasets/ds_mcap/viz' },
+    { op: 'getDatasetViz', method: 'GET', path: '/datasets/ds_missing/viz' },
+    { op: 'listDatasetVizEpisodes', method: 'GET', path: '/datasets/ds_droid100/viz/episodes?limit=5&sort=duration&order=desc' },
+    { op: 'listDatasetVizEpisodes', method: 'GET', path: '/datasets/ds_droid100/viz/episodes?q=ep3' },
+    { op: 'getDatasetVizMeta', method: 'GET', path: '/datasets/ds_droid100/viz/meta?path=meta/info.json' },
+    { op: 'getDatasetVizMeta', method: 'GET', path: '/datasets/ds_droid100/viz/meta?path=data/chunk-000/file-000.parquet' },
+    { op: 'getDatasetEpisodeViz', method: 'GET', path: `${ep('ds_droid100', 3)}/viz` },
+    { op: 'getDatasetEpisodeViz', method: 'GET', path: `${ep('ds_droid200', 1)}/viz` },
+    { op: 'getDatasetEpisodeViz', method: 'GET', path: `${ep('ds_mcap', 2)}/viz` },
+    { op: 'getDatasetEpisodeViz', method: 'GET', path: `${ep('ds_droid100', 9999)}/viz` },
+    { op: 'getDatasetEpisodeSeries', method: 'GET', path: `${ep('ds_droid100', 3)}/series?stream=observation_state&points=200` },
+    { op: 'getDatasetEpisodeSeries', method: 'GET', path: `${ep('ds_droid100', 3)}/series?stream=observation_state&from=2&to=4` },
+    { op: 'getDatasetEpisodeSeries', method: 'GET', path: `${ep('ds_droid100', 3)}/series?stream=nope` },
+    { op: 'getDatasetEpisodeSeries', method: 'GET', path: `${ep('ds_droid100', 3)}/series?stream=observation_state&points=50` },
+    { op: 'getDatasetCameraVideo', method: 'GET', path: `${ep('ds_droid200', 1)}/cameras/wrist.mp4` },
+    { op: 'getDatasetCameraVideo', method: 'GET', path: `${ep('ds_droid200', 1)}/cameras/wrist.mp4`, headers: { Range: 'bytes=0-99' } },
+    { op: 'getDatasetCameraVideo', method: 'GET', path: `${ep('ds_mcap', 2)}/cameras/observation_images_wrist.mp4` },
+    { op: 'getDatasetCameraVideo', method: 'GET', path: `${ep('ds_droid100', 3)}/cameras/wrist_image_left.mp4` },
+    { op: 'getDatasetCameraFrames', method: 'GET', path: `${ep('ds_mcap', 2)}/cameras/observation_images_front.frames`, headers: { Range: 'bytes=0-631' } },
+    { op: 'getDatasetCameraFrames', method: 'GET', path: `${ep('ds_mcap', 2)}/cameras/observation_images_front.frames` },
+    { op: 'getDatasetCameraFrameIndex', method: 'GET', path: `${ep('ds_mcap', 2)}/cameras/observation_images_front.json` },
+    { op: 'getDatasetCameraFrameIndex', method: 'GET', path: `${ep('ds_mcap', 2)}/cameras/observation_images_wrist.json` },
+    { op: 'getDatasetMapping', method: 'GET', path: '/datasets/ds_mcap/mapping' },
+    { op: 'getDatasetMapping', method: 'GET', path: '/datasets/ds_droid100/mapping' },
+    { op: 'putDatasetMapping', method: 'PUT', path: '/datasets/ds_mcap/mapping', body: { mapping: MCAP_MAPPING } },
+    { op: 'putDatasetMapping', method: 'PUT', path: '/datasets/ds_mcap/mapping', body: { mapping: { ...MCAP_MAPPING, cameras: [{ topic: '/nope', name: 'x' }] } } },
+    { op: 'putDatasetAnnotations', method: 'PUT', path: '/datasets/ds_droid100/annotations', body: { upload_id: 'upl-abcdefghi' } },
+    { op: 'putDatasetAnnotations', method: 'PUT', path: '/datasets/ds_droid100/annotations', body: { upload_id: null } },
+    { op: 'getTaskViz', method: 'GET', path: `/tasks/${T}/viz` },
+    { op: 'getTaskEpisodeViz', method: 'GET', path: `/tasks/${T}/episodes/3/viz` },
+    { op: 'getTaskEpisodeSeries', method: 'GET', path: `/tasks/${T}/episodes/3/series?stream=observation_state` },
+    { op: 'getTaskCameraVideo', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.mp4?transcode=1` },
+    { op: 'getTaskCameraVideo', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.mp4?transcode=1` },
+    { op: 'getTaskCameraFrames', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.frames` },
+    { op: 'getTaskCameraFrameIndex', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.json` },
+    { op: 'probeMcap', method: 'POST', path: '/viz/mcap-probe', body: { input: { dataset_id: 'ds_mcap' } } },
+    { op: 'probeMcap', method: 'POST', path: '/viz/mcap-probe', body: { input: { dataset_id: 'ds_droid100' } } },
+    { op: 'probeMcap', method: 'POST', path: '/viz/mcap-probe', body: { input: { source: 'tos', uri: 'tos://pai-kit-datasets/raw/genrobot_p2', credential: 'readonly-tos' }, template: 'builtin:foxglove' } },
+    { op: 'listVizTemplates', method: 'GET', path: '/viz/templates' },
+    { op: 'createVizTemplate', method: 'POST', path: '/viz/templates', body: { name: '团队模版', description: 'ABC', mapping: MCAP_MAPPING } },
+    { op: 'createVizTemplate', method: 'POST', path: '/viz/templates', body: { name: '团队模版', mapping: MCAP_MAPPING } },
+    { op: 'deleteVizTemplate', method: 'DELETE', path: `/viz/templates/${tpl.id}` },
+    { op: 'deleteVizTemplate', method: 'DELETE', path: '/viz/templates/builtin:umi' },
+    { op: 'listDatasets', method: 'GET', path: '/datasets?viz=true' },
+  ];
+};
+
 describe('every mocked operation answers what the contract says', () => {
   it('responses validate against the operation schema for their status', async () => {
-    const all = [...calls(), ...(await createAndRepreflight()), ...(await uploadCalls())];
+    const all = [...calls(), ...(await createAndRepreflight()), ...(await uploadCalls()), ...(await vizCalls())];
     const seen = new Set<string>();
     for (const c of all) {
       const res = await fetch(`http://localhost/api/v1${c.path}`, {
@@ -308,6 +369,12 @@ describe('every mocked operation answers what the contract says', () => {
       });
       seen.add(c.op);
       if (res.status === 204) continue;
+      const type = (res.headers.get('content-type') ?? '').split(';')[0].trim();
+      if (type && type !== 'application/json') {
+        // the cameras the Daemon serves: bytes, checked by their declared media type (C4 2.4.0)
+        expect(contract.responseTypes(c.op, res.status), `${c.op} ${res.status}`).toContain(type);
+        continue;
+      }
       const json = await res.json();
       const ref = contract.responseRef(c.op, res.status);
       expect(ref, `${c.op} ${res.status}`).toBeTruthy();
