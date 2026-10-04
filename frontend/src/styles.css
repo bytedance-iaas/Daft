@@ -903,6 +903,11 @@ button.video-placeholder {
   font-size: inherit;
 }
 
+/* the title shrinks (and clips) before it runs into 分数 / 耗时 on the right in a narrow card */
+.episode-block > .arco-card-header > .arco-card-header-title {
+  min-width: 0;
+  margin-right: 12px;
+}
 .episode-block .arco-card-header-extra {
   font-size: 12px;
   color: var(--c-text-2);

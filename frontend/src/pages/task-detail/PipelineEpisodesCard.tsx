@@ -3,9 +3,10 @@ import { IconLoading } from '@arco-design/web-react/icon';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
+import { qk } from '../../api/queries';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import type { operations } from '../../api/schema';
-import type { PipelineEpisode, Task } from '../../api/types';
+import type { EpisodeView, PipelineEpisode, Task } from '../../api/types';
 import { rowStages, rowState } from '../../lib/pipelineRow';
 
 type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
@@ -38,6 +39,24 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
  */
 /** Rows a page (sixth round: 20, was 30 - the page grew too long). */
 export const PIPELINE_PAGE = 20;
+
+/**
+ * The mini player of a pipeline row: the episode's findings as chips and bands, read from the task's
+ * current results the way the report's Episode 明细 reads them (requester, 2026-10-04); none while a run
+ * has no results yet.
+ */
+function PipelineMini({ task, index, onClose }: { task: Task; index: number; onClose: () => void }) {
+  const [focus, setFocus] = useState<number | null>(null);
+  const rev = task.result_rev > 0 ? task.result_rev : null;
+  const view = useQuery({
+    queryKey: qk.episode(task.id, index, rev),
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: task.id, index }, query: { rev: rev ?? undefined } } }))) as EpisodeView,
+    enabled: rev !== null,
+    retry: false,
+  });
+  const v = view.data ?? { episode_index: index, findings: [], dataset_id: task.dataset_id ?? null };
+  return <MiniPlayerModal taskId={task.id} view={v} focus={focus} onFocus={setFocus} onClose={onClose} />;
+}
 
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
@@ -112,15 +131,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
       ) : page.isLoading ? (
         <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>{zh.common.loading}</div>
       ) : <Empty description={copy.empty} />}
-      {mini !== null ? (
-        <MiniPlayerModal
-          taskId={task.id}
-          view={{ episode_index: mini, findings: [], dataset_id: task.dataset_id ?? null }}
-          focus={null}
-          onFocus={() => undefined}
-          onClose={() => setMini(null)}
-        />
-      ) : null}
+      {mini !== null ? <PipelineMini task={task} index={mini} onClose={() => setMini(null)} /> : null}
     </Card>
   );
 }

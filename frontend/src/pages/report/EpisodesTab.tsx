@@ -358,7 +358,9 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
             className="episode-block"
             data-testid={`episode-module-${id}`}
             title={
-              <Space size={8} wrap>
+              // no wrap: a wrapping Space gives every item an 8px bottom margin, which lifted the title
+              // 4px above the header's middle (requester, 2026-10-04)
+              <Space size={8} align="center">
                 <b>{moduleName(reg.data, id)}</b>
                 {findingsView ? (
                   <FindingTags view={view} id={id} />

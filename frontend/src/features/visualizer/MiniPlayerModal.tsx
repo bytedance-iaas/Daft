@@ -71,9 +71,6 @@ export function MiniPlayerModal({
       }
       data-testid="vz-mini"
     >
-      <p className="muted" style={{ margin: '0 0 8px', fontSize: 12 }}>
-        {zh.viz.mini.hint}
-      </p>
       <Player
         source={source}
         index={view.episode_index}

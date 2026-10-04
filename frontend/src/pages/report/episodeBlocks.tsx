@@ -175,8 +175,9 @@ function VisualBlock({ record }: BlockProps) {
           data={rows}
           data-testid="episode-visual"
           rowClassName={(r: CameraScoreRow) => (r.low ? 'row-warn' : '')}
+          scroll={{ x: 640 }}
           columns={[
-            { title: C.camera, dataIndex: 'camera', render: (v: string) => <span className="mono">{v}</span> },
+            { title: C.camera, dataIndex: 'camera', width: 190, render: (v: string) => <OneLine text={v} /> },
             { title: C.score, dataIndex: 'score', align: 'right' },
             { title: C.sharpness, dataIndex: 'sharpness', align: 'right' },
             { title: C.exposure, dataIndex: 'exposure', align: 'right' },
@@ -464,6 +465,8 @@ function IntegrityBlock({ record }: BlockProps) {
             size="small"
             pagination={false}
             data={files}
+            // a narrow card scrolls the table sideways rather than squeezing the paths to a few letters a line
+            scroll={{ x: 760 }}
             data-testid="integrity-files"
             columns={[
               { title: K.cols.file, dataIndex: 'file', render: (v: string) => <span className="mono" style={{ overflowWrap: 'anywhere' }}>{v}</span> },

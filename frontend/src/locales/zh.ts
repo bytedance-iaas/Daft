@@ -2107,8 +2107,8 @@ export const zh = {
     gridTitle: '格子数',
     overflow: (n: number) => `另有 ${n} 路相机没放上来，在格子的「更换」里选`,
     grid: (cols: number, rows: number) => `${cols} × ${rows}`,
-    info: '信息',
-    infoTitle: '显示 / 隐藏信息侧栏',
+    info: '详细信息',
+    infoTitle: '显示 / 隐藏详细信息侧栏',
     task: '任务',
     noTask: '无任务描述',
     fps: (v: number) => `${Number.isInteger(v) ? v : v.toFixed(2)} fps`,
@@ -2245,7 +2245,6 @@ export const zh = {
       whole: '整条',
       wholeTitle: '这条发现说的是整条 episode，没有具体时段',
       seekTitle: '在可视化里看这一段',
-      hint: '点发现芯片跳到那一段；格子按这条发现所属的模块挑相机与曲线',
     },
   },
   // the visualize page (design doc 18 §5.0, §5.7)

@@ -144,6 +144,20 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
     expect(document.body).not.toHaveTextContent('数值档拦下了');
   });
 
+  it('an episode of Episode 流水线 opens the mini player with its findings as chips, as Episode 明细 does (2026-10-04)', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
+    const card = await screen.findByTestId('pipeline-episodes');
+    // ep 44: the duplicate the dedup module rejected (the newest 20 rows are eps 30-49)
+    await user.click(await within(card).findByRole('button', { name: 'ep 44' }));
+    const mini = await screen.findByTestId('vz-mini');
+    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/44`)).toBe(true));
+    const chips = await within(mini).findAllByTestId('vz-chip');
+    expect(chips.length).toBeGreaterThan(0);
+    // no line of instructions above the player
+    expect(mini).not.toHaveTextContent('点发现芯片');
+  });
+
   it('模块 is one row per module with what it assessed and found; unfolded, its findings charts; 去报告 opens its section', async () => {
     const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
     const row = await screen.findByTestId('module-stat-task_success');

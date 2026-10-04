@@ -287,6 +287,7 @@ class LeRobotReader:
         for c in m.cameras:
             detail = {"分辨率": f"{c['width']}×{c['height']}" if c["width"] else None, "编码": c["codec"],
                       "帧率": c["fps"], "读取方式": {"direct": "直连", "local": "本地", "transcode": "平台转码",
+                                                    "blob": "Lance 表内（Daemon 出字节）", "frames": "帧包",
                                                     "unsupported": "播不了"}.get(c["access"], c["access"]),
                       "字段": c["source"]}
             cam_nodes.append({"id": f"camera:{c['key']}", "name": c["name"], "kind": "camera", "camera": c["key"],

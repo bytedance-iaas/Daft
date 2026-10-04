@@ -14,6 +14,9 @@
 .vz-head .task { flex: 1 1 0; min-width: 0; font-size: 13px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vz-head .task .k { color: var(--c-text-3); margin-right: 6px; }
 .vz-head .task.none { color: var(--c-text-4); }
+/* the mini player: the task text on a second line, same font (requester, 2026-10-04: one line was crowded) */
+.vz.is-mini .vz-head { flex-wrap: wrap; row-gap: 2px; }
+.vz.is-mini .vz-head .task { order: 10; flex: 1 0 100%; }
 .vz-head .ctl { display: flex; gap: 8px; align-items: center; flex: none; }
 .vz-head .ctl .on { background: rgb(var(--primary-1)); color: var(--c-primary); }
 .vz-head .waiting { font-size: 12px; color: var(--c-warning); white-space: nowrap; }
@@ -33,11 +36,10 @@
 .vz-cell .vz-cap .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .vz-cell .vz-cap .vz-tc { margin-left: 4px; padding: 0 5px; border-radius: 2px; font-size: 11px; line-height: 16px; background: var(--c-warning); color: #fff; }
 .vz-cell .vz-tools { position: absolute; right: 8px; top: 8px; display: none; gap: 4px; z-index: 3; }
-.vz-cell:hover .vz-tools, .vz-cell.is-focus .vz-tools { display: flex; }
+/* the tools show while the pointer is over the cell (or a tool has the keyboard focus), never stuck on a focused cell (requester, 2026-10-04) */
+.vz-cell:hover .vz-tools, .vz-cell .vz-tools:focus-within { display: flex; }
 .vz-cell .vz-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 24px; padding: 0 7px; border: 0; border-radius: 2px; background: rgba(29, 33, 41, 0.6); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
 .vz-cell .vz-tools button:hover { background: rgba(29, 33, 41, 0.85); }
-.vz-cell.kind-curve .vz-tools button { background: var(--color-fill-2); color: var(--c-text-2); }
-.vz-cell.kind-curve .vz-tools button:hover { background: var(--c-border); }
 /* narrow cells (more than nine, design doc 19 §2.2): the tools keep their icons, the words go to the tooltip */
 .vz-grid.is-narrow .vz-tools .t { display: none; }
 .vz-grid.is-narrow .vz-tools button { padding: 0 5px; }
@@ -56,7 +58,8 @@
 /* 曲线格 */
 .vz-cell.kind-curve { background: var(--color-bg-2); }
 .vz-cell.kind-curve .plot { position: absolute; left: 0; right: 0; top: 0; cursor: crosshair; }
-.vz-cell.kind-curve svg { display: block; width: 100%; height: 100%; }
+/* the plot's own svg only: the tools' icons are svgs too, and stretched they made the buttons twice as wide */
+.vz-cell.kind-curve .plot > svg { display: block; width: 100%; height: 100%; }
 .vz-cell.kind-curve .legend { position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 0 10px; padding: 3px 10px 5px; font-size: 11px; line-height: 17px; color: var(--c-text-2); border-top: 1px solid var(--color-fill-2); background: var(--color-bg-2); max-height: 44%; overflow: auto; }
 .vz-cell.kind-curve .legend .li { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; cursor: pointer; border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: left; }
 .vz-cell.kind-curve .legend .li.off { opacity: 0.4; }
