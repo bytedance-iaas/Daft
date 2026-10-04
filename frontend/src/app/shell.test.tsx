@@ -16,10 +16,12 @@ describe('app shell', () => {
     renderApp('/');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const items = within(nav).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集', '系统和资源配置', '使用文档']);
+    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集列表', '可视化', '系统和资源配置', '使用文档']);
     expect(within(nav).getByText('帮助')).toBeInTheDocument();
     // 质检 holds the two, open from the start (third round; 质检报告 dropped in the fourth)
     expect(within(nav).getByText('质检')).toBeInTheDocument();
+    // so does 数据集: 数据集列表 and 可视化 (design doc 18 §5.0, D63)
+    expect(within(nav).getByText('数据集')).toBeInTheDocument();
     await waitFor(() => expect(currentLocation()).toBe('/overview'));
   });
 

@@ -11,7 +11,7 @@ import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { StateTag } from '../../components/StateTag';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
-import { VisualizeButton } from '../../features/datasets/VisualizeButton';
+import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { bytes, grouped } from '../../lib/format';
 import { reasonText, withVlmBackends } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
@@ -84,6 +84,7 @@ export function DatasetDetailPage() {
               {zh.datasets.newTask}
             </Button>
             <VisualizeButton d={d} type="secondary" size="default" />
+            <LegacyVisualizeButton d={d} type="secondary" size="default" />
             {d.check_state === 'changed' ? <Button onClick={() => actions.repreflight(d)}>{zh.datasets.repreflight}</Button> : null}
             <Button onClick={() => actions.recheck(d)}>{zh.datasets.recheck}</Button>
             <Dropdown

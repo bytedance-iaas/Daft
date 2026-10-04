@@ -14,7 +14,7 @@ import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
-import { VisualizeButton } from '../../features/datasets/VisualizeButton';
+import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { grouped } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
@@ -103,11 +103,12 @@ export function DatasetListPage() {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
-      width: 250,
+      width: 330,
       // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page.
       render: (_: unknown, d) => (
         <Space size={4}>
           <VisualizeButton d={d} />
+          <LegacyVisualizeButton d={d} />
           <Button type="text" size="small" disabled={d.format === 'unsupported'} onClick={() => actions.newTask(d)}>
             {zh.datasets.newTaskShort}
           </Button>

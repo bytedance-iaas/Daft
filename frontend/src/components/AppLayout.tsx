@@ -13,6 +13,7 @@ interface NavItem {
 }
 
 const QC_KEY = 'qc';
+const DS_KEY = 'ds';
 
 const NAV: readonly NavItem[] = [
   { key: '/overview', label: zh.nav.overview, icon: <IconDashboard /> },
@@ -25,7 +26,15 @@ const NAV: readonly NavItem[] = [
       { key: '/adjudication', label: zh.nav.adjudication },
     ],
   },
-  { key: '/datasets', label: zh.nav.datasets, icon: <IconStorage /> },
+  {
+    key: DS_KEY,
+    label: zh.nav.datasets,
+    icon: <IconStorage />,
+    children: [
+      { key: '/datasets', label: zh.nav.datasetList },
+      { key: '/visualize', label: zh.nav.visualize },
+    ],
+  },
   { key: '/credentials', label: zh.nav.credentials, icon: <IconLock /> },
 ];
 
@@ -53,8 +62,8 @@ function openDocs(): void {
 }
 
 /**
- * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集、系统和资源配置, then 帮助;
- * doc 07 §2) around the routed page.
+ * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集 with 数据集列表 / 可视化、
+ * 系统和资源配置, then 帮助; doc 07 §2, design doc 18 §5.0) around the routed page.
  */
 export function AppLayout() {
   const { pathname } = useLocation();
@@ -75,7 +84,7 @@ export function AppLayout() {
         <nav className="app-sider" aria-label={zh.nav.groupMain}>
           <Menu
             selectedKeys={[selected]}
-            defaultOpenKeys={[QC_KEY]}
+            defaultOpenKeys={[QC_KEY, DS_KEY]}
             onClickMenuItem={(key) => (key === DOCS_KEY ? openDocs() : navigate(key))}
           >
             <Menu.ItemGroup title={zh.nav.groupMain}>

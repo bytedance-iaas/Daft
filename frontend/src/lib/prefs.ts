@@ -23,6 +23,10 @@ export interface Prefs {
   overviewDays?: number;
   /** Report sections folded away, by module id (F6.2). */
   collapsedSections?: string[];
+  /** The dataset the visualize page showed last (design doc 18 §5.0). */
+  lastVizDataset?: string;
+  /** The visualize page's left rail folded away. */
+  vizRailCollapsed?: boolean;
 }
 
 function storage(): Storage | null {

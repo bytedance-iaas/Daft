@@ -9,6 +9,7 @@ const named = <K extends string>(load: () => Promise<Record<K, React.ComponentTy
 const OverviewPage = named(() => import('../pages/overview/OverviewPage'), 'OverviewPage');
 const DatasetListPage = named(() => import('../pages/datasets/DatasetListPage'), 'DatasetListPage');
 const DatasetDetailPage = named(() => import('../pages/datasets/DatasetDetailPage'), 'DatasetDetailPage');
+const VisualizePage = named(() => import('../pages/visualize/VisualizePage'), 'VisualizePage');
 const TaskListPage = named(() => import('../pages/tasks/TaskListPage'), 'TaskListPage');
 const TaskFormPage = named(() => import('../pages/task-form/TaskFormPage'), 'TaskFormPage');
 const TaskDetailPage = named(() => import('../pages/task-detail/TaskDetailPage'), 'TaskDetailPage');
@@ -37,6 +38,7 @@ export function AppRoutes() {
         <Route path="overview" element={<OverviewPage />} />
         <Route path="datasets" element={<DatasetListPage />} />
         <Route path="datasets/:id" element={<DatasetDetailPage />} />
+        <Route path="visualize" element={<VisualizePage />} />
         <Route path="tasks" element={<TaskListPage />} />
         <Route path="tasks/new" element={<TaskFormPage />} />
         <Route path="tasks/:id" element={<TaskDetailPage />} />
