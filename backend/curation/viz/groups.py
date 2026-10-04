@@ -15,6 +15,8 @@
 6. Every other float feature (``observation.force``, HABIT's ``robot0.*``) becomes groups too, but
    only the paired groups (and a lone ``observation.state`` / ``action``) are ``smart``: the smart
    layout shows those, the rest are offered in the + / 更换 menus.
+7. Names are the dataset's own (requester, 2026-10-04: nothing translated): ``observation.state /
+   action``, a part after `` · `` (``left_joint``, ``gripper``), a feature key.
 """
 from __future__ import annotations
 
@@ -208,7 +210,7 @@ def curve_groups(info: dict, *, exclude: set[str] | frozenset = frozenset()) -> 
             while key in seen_keys:
                 key, n = f"{base_key}.{slug(part) or 'x'}_{n}", n + 1
             seen_keys.add(key)
-            label = base_name if not part else ("夹爪" if part == "gripper" else f"{base_name} · {part}")
+            label = base_name if not part else f"{base_name} · {part}"
             lines = [ln for _, ls in members for ln in ls]
             if lines:
                 groups.append(Group(key, label, lines, smart, list(sources)))
@@ -221,7 +223,7 @@ def curve_groups(info: dict, *, exclude: set[str] | frozenset = frozenset()) -> 
         paired = sk is not None and ak is not None
         root = pre == "" and suf == ""
         if root:
-            name = "状态与动作" if paired else ("状态" if sk else "动作")
+            name = f"{sk} / {ak}" if paired else (sk or ak)
         else:
             name = ".".join(x for x in (pre, suf) if x)
         base_key = slug(f"{pre}_{_STATE}_{suf}".strip("_").replace(".", "_")) if paired else slug(
@@ -229,9 +231,9 @@ def curve_groups(info: dict, *, exclude: set[str] | frozenset = frozenset()) -> 
         slots = _slots((sk, feats[sk]) if sk else None, (ak, feats[ak]) if ak else None)
         if paired and not any(len(ls) == 2 for _, ls in slots):
             # nothing pairs up (15 state numbers, 8 action numbers, no names): two groups, not one
-            for role, key, label in (("state", sk, "状态"), ("action", ak, "动作")):
+            for role, key in (("state", sk), ("action", ak)):
                 mine = [(lbl, ls) for lbl, ls in slots if ls and ls[0].role == role]
-                add(f"{base_key}.{role}", f"{name} · {label}" if not root else label, mine, True, [key])
+                add(f"{base_key}.{role}", key, mine, True, [key])
         else:
             add(base_key, name, slots, paired or (root and not any_pair), [x for x in (sk, ak) if x])
         used.update(x for x in (sk, ak) if x)

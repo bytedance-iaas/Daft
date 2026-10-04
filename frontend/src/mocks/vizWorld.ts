@@ -167,8 +167,9 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
         reason: null,
       };
     });
-    const arm = seriesGroup('observation_state', '关节', JOINTS().slice(0, 7), { unit: 'rad', sources: ['/observation.state', '/action'], rate_hz: 30 });
-    const gripper = seriesGroup('observation_state.gripper', '夹爪', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 });
+    // the dataset's own names (2026-10-04: nothing translated)
+    const arm = seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad', sources: ['/observation.state', '/action'], rate_hz: 30 });
+    const gripper = seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 });
     const imu: VizStream = {
       key: 'imu', kind: 'series', name: 'IMU', unit: 'm/s²', smart: false, available: true, reason: null, sources: ['/imu'], rate_hz: 200,
       lines: ['x', 'y', 'z'].map((n, i) => ({ name: n, role: 'other' as const, source: '/imu', dim: i, unit: 'm/s²' })),
@@ -184,18 +185,18 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
   const sources: VizAnnotationSource[] = [];
   if (p.name.startsWith('umi')) {
     const pose = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'];
-    streams.push(seriesGroup('left', '左手末端', pose.map((n) => `left_${n}`)));
-    streams.push(seriesGroup('right', '右手末端', pose.map((n) => `right_${n}`)));
-    streams.push(seriesGroup('gripper', '夹爪', ['left_gripper', 'right_gripper']));
+    streams.push(seriesGroup('left', 'observation.state / action · left', pose.map((n) => `left_${n}`)));
+    streams.push(seriesGroup('right', 'observation.state / action · right', pose.map((n) => `right_${n}`)));
+    streams.push(seriesGroup('gripper', 'observation.state / action · gripper', ['left_gripper', 'right_gripper']));
   } else if (p.name === 'pusht') {
-    streams.push(seriesGroup('observation_state', '位置', ['x', 'y']));
+    streams.push(seriesGroup('observation_state', 'observation.state / action', ['x', 'y']));
   } else {
-    streams.push(seriesGroup('observation_state', '关节', JOINTS().slice(0, 7), { unit: 'rad' }));
-    streams.push(seriesGroup('observation_state.gripper', '夹爪', ['gripper']));
+    streams.push(seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad' }));
+    streams.push(seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper']));
   }
   if (p.name === 'droid_100') {
     streams.push({
-      key: 'observation_eef_pose', kind: 'series', name: '末端位姿', unit: null, smart: false, available: true, reason: null,
+      key: 'observation_eef_pose', kind: 'series', name: 'observation.eef_pose', unit: null, smart: false, available: true, reason: null,
       sources: ['observation.eef_pose'], rate_hz: null,
       lines: ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].map((n, i) => ({ name: n, role: 'other' as const, source: 'observation.eef_pose', dim: i, unit: null })),
     });
@@ -630,7 +631,7 @@ export function mcapProbe(file: string, files: number, template: string | null, 
       fields: topic.includes('eef_pose') ? [{ path: 'pose.position', size: 3 }, { path: 'pose.orientation', size: 4 }] : topic.includes('encoder') ? [{ path: 'value', size: 1 }] : null,
       use: draftUse as McapTopic['use'],
       role: draftUse === 'series' ? 'action' : null,
-      name: asCamera ? 'robot0 相机' : topic.includes('eef_pose') ? 'robot0 末端位姿' : topic.includes('encoder') ? 'robot0 夹爪开度' : '',
+      name: asCamera ? 'robot0 camera0' : topic.includes('eef_pose') ? 'robot0 vio eef_pose' : topic.includes('encoder') ? 'robot0 magnetic_encoder' : '',
       notes: rate > 150 ? ['高频：作曲线时下采样到 ≤ 2000 点'] : [],
     };
   });

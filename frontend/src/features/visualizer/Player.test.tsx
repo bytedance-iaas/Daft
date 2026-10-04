@@ -43,7 +43,8 @@ describe('Player (design doc 18 §5)', () => {
     const tags = player.querySelectorAll('.vz-tc');
     expect(tags).toHaveLength(1);
     expect(tags[0].closest('.vz-cell')?.textContent).toContain('wrist');
-    expect(within(player).getByText('关节 · rad')).toBeInTheDocument();
+    // the dataset's own names, not translated (2026-10-04)
+    expect(within(player).getByText('observation.state / action · rad')).toBeInTheDocument();
     // no native controls, no full screen (the <video> comes a render after its cell: the URL is chosen in an effect)
     const v = await waitFor(() => {
       const el = player.querySelector('video');
@@ -76,7 +77,7 @@ describe('Player (design doc 18 §5)', () => {
     await user.click(within(player).getByText(zh.viz.cell.choose));
     const menu = await screen.findByTestId('vz-menu');
     expect(within(menu).getByText(zh.viz.menu.cameras)).toBeInTheDocument();
-    await user.click(within(menu).getByText('夹爪'));
+    await user.click(within(menu).getByText('observation.state / action · gripper'));
     await waitFor(() => expect(player.querySelector('.vz-cell')?.classList.contains('kind-curve')).toBe(true));
     expect(screen.queryByTestId('vz-menu')).toBeNull();
   });
@@ -97,7 +98,7 @@ describe('Player (design doc 18 §5)', () => {
     expect(within(side).getByText(zh.viz.side.codecTranscoded('mpeg4'))).toBeInTheDocument();
     expect(within(side).getByText(zh.viz.access.transcode)).toBeInTheDocument();
     fireEvent.pointerDown(player.querySelectorAll('.vz-cell.kind-curve')[0]);
-    await waitFor(() => expect(within(side).getByText(zh.viz.side.curve('关节'))).toBeInTheDocument());
+    await waitFor(() => expect(within(side).getByText(zh.viz.side.curve('observation.state / action'))).toBeInTheDocument());
     expect(within(side).getAllByRole('checkbox').length).toBe(7);
     await user.click(within(side).getByLabelText(zh.viz.side.close));
     expect(screen.queryByTestId('vz-side')).toBeNull();

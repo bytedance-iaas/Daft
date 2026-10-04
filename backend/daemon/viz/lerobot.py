@@ -304,7 +304,8 @@ class LeRobotReader:
         for d in L.image_features(m.info):
             stream_nodes.append({"id": f"image:{d}", "name": d, "kind": "other", "dtype": "image",
                                  "shape": L.shape_of(feats.get(d) or {}), "detail": {"说明": "图片帧序列本期不显示"}})
-        ann_nodes = [{"id": f"annotation:{s.key}", "name": s.name, "kind": "table",
+        # the dataset's own names (requester, 2026-10-04): the columns a source reads, not what we call it
+        ann_nodes = [{"id": f"annotation:{s.key}", "name": _raw_source(s), "kind": "table",
                       "detail": {"来源": s.source, "格式": s.format, "支持": s.supported, "原因": s.reason}}
                      for s in m.sources]
         tasks_file = next((f for f in ("meta/tasks.jsonl", "meta/tasks.parquet") if f in m.meta_files), None)
@@ -507,6 +508,13 @@ def _meta_listing(src: VizSource, st) -> list[str]:
     if listing is None:
         return sorted(st.list("meta/"))
     return sorted(k for k in listing if k.startswith("meta/"))
+
+
+def _raw_source(s) -> str:
+    """An annotation source by the dataset's own names: its columns, else its episode-table field."""
+    if s.columns:
+        return "、".join(s.columns)
+    return s.key.split(":", 1)[1] if s.key.startswith("episode:") else s.name
 
 
 def _clean_tree(nodes: list[dict]) -> list[dict]:

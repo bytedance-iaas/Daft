@@ -246,6 +246,8 @@ flowchart LR
 
 ### 5.3 曲线分组（缺省规则）
 
+> 2026-10-04 需求方：组名不再翻译，一律用数据集自己的元数据（`observation.state / action`、`… · left`、`… · gripper`、特征键；mcap 起草的名字是 topic 名），见 `curation/viz/groups.py` 第 7 条与 07 §4.5。
+
 1. 只对数值数据流建组；`observation.state` 与 `action` 同名维度叠成一组。
 2. 维度 ≤ 8：一组；更多的按 `names` 的公共前缀切（`left_* / right_*`、`arm_left_* / arm_right_*`、`kLeft* / kRight*`），切不开的每 7 维一组。
 3. 夹爪维度（名字含 `gripper`）单独一组。

@@ -71,12 +71,12 @@ def draft_umi(probe: FileProbe) -> dict | None:
             m["cameras"].append({"topic": t, "name": _display(t), **_schema(probe, t)})
     for r in robots:
         pose = f"/{r}/vio/eef_pose"
-        m["series"].append({"topic": pose, "name": f"{r} 末端位姿", **_schema(probe, pose), "fields": ["pose"],
+        m["series"].append({"topic": pose, "name": _display(pose), **_schema(probe, pose), "fields": ["pose"],
                             "labels": [f"{r}_{n}" for n in ("x", "y", "z", "qx", "qy", "qz", "qw")],
                             "unit": None, "role": "action"})
         enc = f"/{r}/sensor/magnetic_encoder"
         if enc in probe.topics:
-            m["series"].append({"topic": enc, "name": f"{r} 夹爪开度", **_schema(probe, enc), "fields": ["value"],
+            m["series"].append({"topic": enc, "name": _display(enc), **_schema(probe, enc), "fields": ["value"],
                                 "labels": [f"{r}_gripper"], "unit": None, "role": "action"})
     used = {c["topic"] for c in m["cameras"]} | {s["topic"] for s in m["series"]}
     m["ignore"] = [t for t in topics if t not in used]
@@ -93,11 +93,12 @@ def draft_default(probe: FileProbe) -> dict | None:
         if t.startswith(DEFAULT_VIDEO):
             m["cameras"].append({"topic": t, "name": t[len(DEFAULT_VIDEO):] or t, **_schema(probe, t)})
     state = DEFAULT_STATE in probe.topics
-    m["series"].append({"topic": DEFAULT_ACTION, "name": "动作" if not state else "状态与动作",
+    pair_name = f"{DEFAULT_STATE.strip('/')} / {DEFAULT_ACTION.strip('/')}"            # the topics' own names
+    m["series"].append({"topic": DEFAULT_ACTION, "name": DEFAULT_ACTION.strip("/") if not state else pair_name,
                         **_schema(probe, DEFAULT_ACTION), "role": "action",
                         "pair_with": DEFAULT_STATE if state else None})
     if state:
-        m["series"].append({"topic": DEFAULT_STATE, "name": "状态与动作", **_schema(probe, DEFAULT_STATE),
+        m["series"].append({"topic": DEFAULT_STATE, "name": pair_name, **_schema(probe, DEFAULT_STATE),
                             "role": "state", "pair_with": DEFAULT_ACTION})
     if DEFAULT_TASK in probe.topics:
         m["task"] = {"topic": DEFAULT_TASK}

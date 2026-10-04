@@ -63,7 +63,7 @@ def test_dataset_model_v2(app):
     assert cams["front"]["access"] == "local" and cams["front"]["codec"] == "h264"
     assert cams["wrist"]["access"] == "transcode" and cams["wrist"]["transcoded"] and "mpeg4" in cams["wrist"]["reason"]
     streams = {s["key"]: s for s in body["streams"]}
-    assert streams["observation_state"]["smart"] and streams["observation_state.gripper"]["name"] == "夹爪"
+    assert streams["observation_state"]["smart"] and streams["observation_state.gripper"]["name"] == "observation.state / action · gripper"
     assert not streams["observation_force"]["smart"]
     sources = {s["key"]: s for s in body["annotation_sources"]}
     assert sources["low_level_task_index"]["primary"] and sources["subtask"]["format"] == "string_column"

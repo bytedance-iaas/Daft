@@ -68,7 +68,9 @@ def test_groups_pair_state_action_split_by_prefix_and_gripper():
     assert [g.key for g in groups] == ["observation_state.left", "observation_state.right",
                                        "observation_state.gripper", "observation_force"]
     assert [(ln.name, ln.role) for ln in by["observation_state.left"].lines][:2] == [("left_x", "state"), ("left_x", "action")]
-    assert by["observation_state.gripper"].name == "夹爪" and len(by["observation_state.gripper"].lines) == 4
+    # the dataset's own names (2026-10-04: nothing translated)
+    assert by["observation_state.left"].name == "observation.state / action · left"
+    assert by["observation_state.gripper"].name == "observation.state / action · gripper" and len(by["observation_state.gripper"].lines) == 4
     assert by["observation_force"].smart is False and [ln.role for ln in by["observation_force"].lines] == ["other"] * 3
 
 
@@ -89,8 +91,8 @@ def test_groups_split_columns_pair_by_suffix_and_unpaired_are_not_smart():
 
 def test_groups_without_names_chunk_by_seven_and_long_names_by_family():
     groups = curve_groups({"features": {"observation.state": _f(15), "action": _f(8)}})        # RH20T
-    assert [(g.name, len(g.lines)) for g in groups] == [("状态 · 1–7", 7), ("状态 · 8–14", 7), ("状态 · 15–15", 1),
-                                                       ("动作", 8)]          # no names, no lengths alike: not paired
+    assert [(g.name, len(g.lines)) for g in groups] == [("observation.state · 1–7", 7), ("observation.state · 8–14", 7),
+                                                       ("observation.state · 15–15", 1), ("action", 8)]   # no names, no lengths alike: not paired
     hiw = [f"k{side}{j}.q" for side in ("Left", "Right") for j in ("HipPitch", "HipRoll", "Knee", "Ankle", "Shoulder")] + ["kWaistYaw.q"]
     groups = curve_groups({"features": {"observation.state": _f(len(hiw), hiw)}})
     names = [g.name for g in groups]

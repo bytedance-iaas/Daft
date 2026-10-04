@@ -16,6 +16,8 @@ export interface MediaLike extends EventTarget {
   readonly paused: boolean;
   readonly seeking: boolean;
   readonly error?: unknown;
+  /** played to its end: play() would start it over from 0 */
+  readonly ended?: boolean;
   playbackRate: number;
   play(): Promise<void> | void;
   pause(): void;
@@ -76,6 +78,7 @@ interface Attached {
 }
 
 function start(el: MediaLike): void {
+  if (el.ended) return; // play() on an ended element starts it over from 0
   const p = el.play();
   if (p && typeof (p as Promise<void>).catch === 'function') (p as Promise<void>).catch(() => undefined);
 }
@@ -251,11 +254,13 @@ export class PlayerClock {
   };
 
   // -- keeping the videos on the clock
-  /** A video's time for the clock's t, or null when the clock is outside the video. */
+  /** A video's time for the clock's t, or null when the clock is outside the video - before its first
+   * frame, or at its very end, where it is parked on its last frame (playing it there would end it, and
+   * play() on an ended video starts it over from 0). */
   private target(m: Attached): number | null {
     const target = this.snap.t - m.b.offset + m.b.from;
     const end = m.b.end ?? (Number.isFinite(m.el.duration) ? m.el.duration : null);
-    if (target < m.b.from - 1e-3 || (end !== null && target > end + 1e-3)) return null;
+    if (target < m.b.from - 1e-3 || (end !== null && target >= end - 1e-3)) return null;
     return target;
   }
 
@@ -278,8 +283,11 @@ export class PlayerClock {
     if (el.readyState < HAVE_METADATA || el.seeking) return; // 'loadedmetadata' / 'seeked' come back here
     const raw = this.snap.t - m.b.offset + m.b.from;
     const end = m.b.end ?? (Number.isFinite(el.duration) ? el.duration : raw);
-    const target = Math.max(m.b.from, Math.min(end, raw));
-    const want = inside ? target + this.cfg.frameEpsS : target;
+    // the last frame is just before the end, never the end itself: a seek past a video's end is clamped and
+    // every 'seeked' asked again (a shaking last frame), and a v3 window's end is the next episode's first frame
+    const last = Math.min(end, Number.isFinite(el.duration) ? el.duration : end) - this.cfg.frameEpsS;
+    const target = Math.max(m.b.from, Math.min(last, raw));
+    const want = Math.min(inside ? target + this.cfg.frameEpsS : target, last);
     if (Math.abs(el.currentTime - want) > this.cfg.frameEpsS / 2) el.currentTime = want;
   }
 

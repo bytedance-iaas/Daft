@@ -2103,7 +2103,7 @@ export const zh = {
   // the data visualizer's player (design doc 18 §5)
   viz: {
     layoutTitle: '布局模版',
-    layouts: { smart: '智能展示', video: '仅展示视频', curve: '仅展示运动曲线', custom: '自定义' } as Record<'smart' | 'video' | 'curve' | 'custom', string>,
+    layouts: { smart: '智能布局', video: '仅展示视频', curve: '仅展示运动曲线', custom: '自定义' } as Record<'smart' | 'video' | 'curve' | 'custom', string>,
     gridTitle: '格子数',
     overflow: (n: number) => `另有 ${n} 路相机没放上来，在格子的「更换」里选`,
     grid: (cols: number, rows: number) => `${cols} × ${rows}`,
@@ -2237,7 +2237,7 @@ export const zh = {
     mini: {
       open: '可视化',
       openTitle: '在弹窗里看这条 episode 的相机与曲线，发现标在进度条上',
-      title: (ep: number) => `可视化 · ep ${ep}`,
+      title: (ep: number) => `ep ${ep}`,
       openFull: '在可视化页打开',
       openFullTitle: '在新窗口打开完整的可视化页（数据集登记还在时）',
       unlocatable: '无法定位',

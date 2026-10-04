@@ -39,6 +39,9 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
     const mini = await screen.findByTestId('vz-mini');
     const chips = await within(mini).findAllByTestId('vz-chip', {}, { timeout: 5000 });
     expect(chips).toHaveLength(view.findings!.length);
+    // the title bar says which episode, plainly; the player's head does not repeat it (2026-10-04)
+    expect(mini.querySelector('.arco-modal-title')).toHaveTextContent(/^ep 6$/);
+    expect(mini.querySelector('.vz-head .ep small')).toBeNull();
     expect(chips[0]).toHaveClass('on');
     expect(chips[0]).toHaveTextContent(view.findings![0].finding.item ?? view.findings![0].finding.code);
     // a finding with a moment is drawn on the progress bar

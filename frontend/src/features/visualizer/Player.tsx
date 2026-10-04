@@ -296,10 +296,10 @@ function PlayerView({
       }}
       data-testid="vz-player"
     >
-      <Head model={model} ep={ep} clock={clock} loadingNext={loadingNext}>
+      <Head model={model} ep={ep} clock={clock} loadingNext={loadingNext} full={full}>
         {full ? (
           <>
-            <Select size="small" style={{ width: 210 }} value={template} onChange={(v: LayoutTemplate) => setTemplate(v)} aria-label={zh.viz.layoutTitle}>
+            <Select size="small" style={{ width: 132 }} value={template} onChange={(v: LayoutTemplate) => setTemplate(v)} aria-label={zh.viz.layoutTitle}>
               {(['smart', 'video', 'curve', 'custom'] as const).map((k) => (
                 <Select.Option key={k} value={k}>
                   {zh.viz.layouts[k]}
@@ -535,14 +535,15 @@ export function formatLabel(f: VizDataset['format']): string {
   return f.kind;
 }
 
-function Head({ model, ep, clock, loadingNext, children }: { model: VizDataset; ep: VizEpisode; clock: PlayerClock; loadingNext: boolean; children: React.ReactNode }) {
+function Head({ model, ep, clock, loadingNext, full, children }: { model: VizDataset; ep: VizEpisode; clock: PlayerClock; loadingNext: boolean; full: boolean; children: React.ReactNode }) {
   const waiting = useClockValue(clock, (s) => s.playing && s.waiting);
   const fps = ep.fps ?? ep.timeline.fps ?? model.fps;
   return (
     <div className="vz-head">
       <span className="ep" title={model.name}>
         {model.name}
-        <small>{`ep ${ep.index}`}</small>
+        {/* the mini player's title bar already says which episode (2026-10-04) */}
+        {full ? <small>{`ep ${ep.index}`}</small> : null}
       </span>
       <span className="meta">
         {formatLabel(model.format)}
