@@ -1,6 +1,6 @@
 # 18 · 数据可视化：独立的「可视化」页面、报告里的迷你播放器与 mcap 字段映射
 
-> 状态：草案 v0.2（2026-10-03 第二稿）—— 需求方对第一稿五个问题的答复与给定的架构已并入，决策 D60–D64 已写进 `00-overview.md` §7；§8 列出新的待确认问题。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
+> 状态：草案 v0.3（2026-10-03 第三稿）—— 需求方两轮答复（§8.1、§8.2）与给定的架构都已并入，决策 D60–D64 在 `00-overview.md` §7；ReRun 的参考版本定为 0.38.1（§3.1）；§8.3 只剩三个小问题。分支 `feat/data-visualizer`（从 `feat/curator-v2` 分出，worktree `~/ws/daft-viz`）。
 > 需求账本：阶段 13（F13.0–F13.8）。
 > 静态稿：`frontend/mockups/visualize.html`（完整版，独立页面）、`episode-visualize-mini.html`（报告里的迷你版）、`dataset-add-mcap.html`（添加数据集的 mcap 配置），手动验证步骤在 `frontend/mockups/README.md`「第三批」。
 
@@ -37,14 +37,14 @@
 4. 架构上是**读取器 → 统一展示模型 → 视图**（D61），以后加格式只加读取器；
 5. 做完后报告 Episode 明细里的「各机位视频」退役；跳 ReRun 的旧入口保留一个版本，文字改为「可视化（旧）」。
 
-本期不做（放第二期，但模型与接口按全集定）：Lance 读取器、三维场景（末端轨迹、点云、URDF）、深度图渲染、浏览器内解 mcap / 解 parquet、ReRun 入口的最终下线。
+本期不做（另立后续阶段，不在本篇的 F13 范围里；但统一展示模型与读取器接口按全集定，留好位）：Lance 读取器、三维场景（末端轨迹、点云、URDF）、深度图渲染、浏览器内解 mcap / 解 parquet、我们自己的标注标准、ReRun 入口的最终下线。
 
 ## 2. 范围：三个交付面与两种布局
 
 | 交付面 | 在哪 | 内容 |
 |---|---|---|
-| 完整版 | 侧栏「数据集 › 可视化」，路由 `/visualize?dataset=<id>&ep=<n>`；数据集列表 / 详情的「可视化」在新窗口打开它 | 左侧可收起的侧栏（选数据集 → 列 episode）+ 播放器 + 「数据集信息」树状浏览 |
-| 迷你版 | 质检报告 Episode 明细抽屉、人工裁决卡片 → 「可视化」弹窗 | 只有播放器；布局由发现决定；进度条标出发现的区间；可跳到完整版 |
+| 完整版 | 侧栏「数据集」分组下的二级项「可视化」（另一项是「数据集列表」），路由 `/visualize?dataset=<id>&ep=<n>`；数据集列表 / 详情的「可视化」在新窗口打开它 | 左侧可收起的侧栏（选数据集 → 列 episode）+ 播放器 + 「数据集信息」树状浏览 |
+| 迷你版 | 质检报告 Episode 明细抽屉、人工裁决卡片、任务详情的 Episode 流水线 → 「可视化」弹窗 | 只有播放器；布局由发现决定；进度条标出发现的区间；可跳到完整版 |
 | mcap 配置 | 添加数据集抽屉（格式识别为 mcap 时出现）；数据集详情的「mcap 配置」入口 | 探测 → 模版起草 → 表格确认 → 保存 / 另存为模版 / 导入导出 |
 
 两种布局的功能对照（编号对应需求原文 4.2 的 (1)–(8)）：
@@ -78,10 +78,11 @@
 
 - **HF `lerobot/visualize_dataset`**：上排相机、语言指令卡、走带（上一条 / 播放 / 下一条 / 循环、滑杆、`24 / 24` 帧计数、空格与方向键）、下排按关节分组的曲线：同名的 `action`（虚线）与 `observation.state`（实线）叠画，图例里带当前值，勾选可隐藏某条。本篇的曲线格就是这个样子。
 - **Pantheon data-board**：双机位 + 深色时间线上的「字幕」（`both grippers · settle above table · idle`）+ 关键事件列表（时刻 + 事件 + 标签）+ 右侧评估侧栏。本篇的字幕栏与进度条上的分段色段来自这里；它的标注格式见 §3.4。
-- **ReRun**（`~/ws/rerun`，注意：这个检出是 `main @ 107beb60f2`，`Cargo.toml` 写 `0.39.0-alpha.1+dev`，比 0.38.1 发布点多 138 个提交；LeRobot 部分改动很大，mcap 基本没变）：
+- **ReRun**（参考版本 **0.38.1**：`~/ws/rerun` 已切到分支 `ref-0.38.1` = 「Release 0.38.1」提交 `5c524e9e19`，它的 `main`（fork `bytedance-iaas/rerun`，`107beb60f2`，`0.39.0-alpha.1+dev`）比发布点多 138 个提交，其中 mcap 相关的只有 lens 选择器支持字符串字面量、`Lenses::apply` 改签名、错误信息带完整上下文（#12942）这类重构，没有功能修复；LeRobot 多了导入诊断汇总与 `LargeUtf8` 任务文本。下面的描述以 0.38.1 为准，两版在这些点上一致）：
   - LeRobot：只认目录结构判版本；feature 键原样作实体路径（点不是分隔符）；`float32/64` → `Scalars` + 一次性的 `SeriesLines.names`；`video` 在 v2 是整文件 `AssetVideo` + 逐帧引用，在 v3 是 `VideoStream` 按 `[from, to)` 切 GOP（H.264 / H.265 有 B 帧或不在 GOP 边界要 ffmpeg）；时间轴只有 `frame_index`（有就只用它）或 `timestamp`；`string` / `task_index` / `subtask_index` / `language` → 文本；`int16`、其他 `int64`、`bool` 跳过；不读 `stats.json`、`robot_type`。默认布局不是导入器给的，是查看器的启发式：子树里不止一张彩图就每个相机一个 2D 视图，每个 `Scalars` 实体一个时序视图，超过 12 个视图改页签。
   - mcap：decoders（`ros2msg` 手写的 JointState / Imu / … → `ros2_reflection` → `protobuf` → `raw` 兜底）+ lenses（foxglove 13 个：CompressedImage、CompressedVideo（h264 / h265 / av1 / vp8 / vp9 → `VideoStream`）、RawImage、PoseInFrame(s)、FrameTransform(s)、PointCloud…；ROS 的 Image / CompressedImage（jpeg / png → `EncodedImage`，h264 → `VideoStream`）/ JointState（→ `<topic>/position|velocity|effort`，名字作标签）…）；实体路径 = topic；每条消息两个时间轴 `message_log_time` / `message_publish_time`，另加消息里的时间戳。**没有声明式的字段映射**，用户只能选 decoder、过滤 topic、设时间窗；网页端整文件下载后单线程解析。
   - 结论：我们要的「字段映射模版」就是 lenses 的声明式版本 —— 默认模版按 schema 自动归类（等价于 foxglove / ros2 lenses），再允许按 topic 覆盖；这也正是 ReRun 做不到而客户需要的。
+  - 火山网关上现网的 ReRun（2026-10-03 用 Chrome 看了 `so101-pick-place-v2`）：左侧「数据来源」树按 episode 列出（每条是一个预转好的 RRD，`来源 RRD 版本 0.36.0`，3–4 MiB / 条，`File via SDK`），中间是启发式蓝图——`action`、`observation.state` 两个时序视图 + 每路相机一个 2D 视图 + `task` 文本，右侧选择面板，底部 `frame_index` 时间轴与数据流树。我们的完整版布局与它一一对应：左侧栏 ≈ 数据来源树，格子 ≈ 蓝图视图，信息侧栏 ≈ 选择面板，「数据集信息」树 ≈ 数据流树。
 
 ### 3.2 样本集的真实元数据（桶 `curation-robo-anchor`，anchor 63 子集 + anchor-nc 25 子集）
 
@@ -152,7 +153,7 @@ flowchart LR
 ### 4.1 原则
 
 - 沿用 D16：**浏览器能直接播的媒体直连 TOS**（预签名，D55 的签名接口与现有续签逻辑）；Daemon 不中转能直连的字节。
-- Daemon 只做两类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`<CURATOR_DATA_DIR>/viz/<dataset_id>/<meta 指纹>/ep<N>/…`，指纹变了即作废）。
+- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`<CURATOR_DATA_DIR>/viz/<dataset_id>/<meta 指纹>/ep<N>/…`，指纹变了即作废）。缓存与转码产物只放本地数据盘，不上 TOS（需求方 2026-10-03）。
 - 一切都是**按需、首次打开时生成**；可选的「预生成」放第二期（登记后后台跑一遍，给大数据集）。
 
 ### 4.2 相机供给矩阵（D60）
@@ -166,8 +167,9 @@ flowchart LR
 | mcap `CompressedVideo` h264 | h264 | 能（要 fMP4） | Daemon 转封装为 fMP4（无重编码；现有 `_mux_annexb` 做成流式、带 Range） | — |
 | mcap `CompressedVideo` h265 | hevc | 看平台（Safari 能；Chrome 要硬解） | 转封装为 `hvc1` fMP4；播放器探测 `canPlayType`，不能播时向 Daemon 要转码版本 | 转了才标「平台转码」 |
 | mcap `RawImage` / PNG | — | 不能 | 本期不支持；预检与映射表里标出 | — |
+| 本地挂载的数据集（任一格式） | 同上各行 | 同上 | 没有预签名可用：Daemon 直接出本地文件的字节（`access: local`，带 Range），再按上面各行决定是否转封装 / 帧包 / 转码 | 同上 |
 
-转码开关：容器环境变量 `CURATOR_VIZ_TRANSCODE`（缺省 `1`，开；设 `0` 关闭后播不了的相机在格子里显示原因）。转码由 Daemon 调 ffmpeg 子进程，单独的小并发池（缺省 2），不占质检的 CPU 名额池（阶段 9）；磁盘缓存有上限（缺省 20 GB，LRU）—— 这两个缺省值见 §8 待确认。凡是转过码的画面，格子左上角相机名旁边标橙色「平台转码」，侧栏「读取方式」也写明原始编码。
+转码开关：容器环境变量 `CURATOR_VIZ_TRANSCODE`（缺省 `1`，开；设 `0` 关闭后播不了的相机在格子里显示原因）。转码由 Daemon 调 ffmpeg 子进程，单独的小并发池（缺省 2 路），不占质检的 CPU 名额池（阶段 9）；磁盘缓存有上限（缺省 20 GB，LRU），产物只在本地数据盘、不上 TOS（需求方 2026-10-03 确认）。凡是转过码的画面，格子左上角相机名旁边标橙色「平台转码」，侧栏「读取方式」也写明原始编码。
 
 ### 4.3 曲线供给
 
@@ -189,11 +191,11 @@ flowchart LR
 
 - 任务文本：LeRobot 用现有 `tasktext` 的优先级（人工改标 > 原始标注 > 自动补标；数据集页里只有原始标注）；Galaxea 这类整条任务在 `coarse_task_index` 的按读取器规则取；mcap 按映射的 `task`。没有就显示「无任务描述」。
 - 统一标注模型：**片段**（起止、名称、质量 / 贡献、执行部位、来源）、**事件**（时刻、名称、结果、来源）、**条目标签**（成败、评分、`task_status` 等），多套分段并存时各成一条「轨」（如 HABIT 的机器人分步与人的分步），字幕栏显示用户选定的那条轨，其他轨在进度条上方以细条叠放（最多 3 条）。
-- 来源与适配（§3.4 的表）：
-  - LeRobot 读取器按优先级探测：`subtask_index` + `meta/subtasks.*` → `language_persistent`（`style=subtask`）→ 逐帧 `task_index` 在一条里有变化 → 其他 `*_index` + 同名 `meta/*.jsonl` 查表（HABIT 的 `low_level_task_index`）→ 逐帧字符串列（RSS 的 `subtask`，全是占位不算）；布尔 `is_*_segment` 列 → 带标志的片段；`language_events` → 事件；`*quality_index` / `task_status` / `next.success` / `meta.rating` → 片段质量或条目标签。候选写进预检描述符（`segment_candidates`），用户在可视化页的「分段标注来源」里确认哪个当字幕（缺省取优先级最高的）。
-  - mcap 读取器按映射里的 `segments`（topic 的 start / end / label 字段，或附件 JSON）。
-  - 外部标注文件（第二期，§8 待确认）：与数据集一起登记一份 Argus 风格的 JSON（`timeline` / `key_events` / `completion`）或我们定义的 `annotations.json`（就是统一标注模型的序列化），读取器把它合并成一条轨。
-  - 质检任务产出的区间（TASK-1 动作起止、ACT-7 人工接管…）本期不进字幕栏，只作为「发现」色段出现在迷你版里；以后可以合并成一条轨。
+- 来源与适配（§3.4 的表）。口径（需求方 2026-10-03）：**已知格式直接支持、自动识别；识别不出的只警告「标注格式不支持」，不显示字幕；我们自己的标注标准后续另立**，不在本篇：
+  - LeRobot 读取器按优先级识别：`subtask_index` + `meta/subtasks.*` → `language_persistent`（`style=subtask`）→ 逐帧 `task_index` 在一条里有变化 → 其他 `*_index` + 同名 `meta/*.jsonl` 查表（HABIT 的 `low_level_task_index`）→ 逐帧字符串列（RSS 的 `subtask`，全是占位不算）；布尔 `is_*_segment` 列 → 带标志的片段；`language_events` → 事件；`*quality_index` / `task_status` / `next.success` / `meta.rating` → 片段质量或条目标签。识别到的来源写进预检描述符（`segment_sources`），几套并存时各成一轨，字幕栏取优先级最高的一轨，其他轨在信息侧栏里切；有疑似分段字段但对不上这些写法的（比如字符串列全是占位、索引列没有查表文件），预检与播放器警告「标注格式不支持」。
+  - mcap 读取器按映射里的 `segments`（topic 的 start / end / label 字段，或附件 JSON）；映射没写就不显示，不警告。
+  - 外部标注文件也算已知格式：Pantheon Argus 风格的每条 episode 一个 JSON（`timeline` / `key_events` / `completion`，或已发布标注里的 `event_labels`），放在数据集前缀下的 `annotations/<episode>.json`（放置约定见 §8.3），读取器合并成一条轨「外部标注」。
+  - 质检任务产出的区间（TASK-1 动作起止、ACT-7 人工接管…）本期不进字幕栏，只作为「发现」色段出现在迷你版里；以后与自己的标注标准一起定。
 
 ### 4.6 迷你版的证据来源
 
@@ -217,7 +219,7 @@ flowchart LR
 
 ### 5.0 完整版页面（`/visualize`，D63）
 
-- 侧栏「数据集」组里新增子项「可视化」；路由 `/visualize?dataset=<id>&ep=<n>`，没有参数时选最近打开的数据集。
+- 侧栏「数据集」变成有二级的分组（像「质检」）：「数据集列表」与「可视化」；路由 `/visualize?dataset=<id>&ep=<n>`，没有参数时选最近打开的数据集。
 - 页面左侧是**可收起的侧栏**（292 px，收起成一个把手）：顶部数据集下拉（可搜索，列出已登记且格式支持的数据集；mcap 映射未确认的置灰并写原因）→ 数据集摘要一行（episode 数、相机路数、fps、帧数、体积、分段来源）→ episode 筛选（编号 / 任务描述）与排序（编号 / 时长 / 无分步在前）→ episode 列表（编号、时长、任务描述一行、分步小色块；当前条高亮）。点一条即播放。
 - 右侧主区：播放器 + 「数据集信息」树（§5.7）。页头有「新建质检任务」（带着当前数据集）与「数据集详情」。
 - 数据集列表与详情页头的「可视化」用 `target=_blank` 打开这一页并带 `dataset`；旁边是「可视化（旧）」。
@@ -349,7 +351,7 @@ C4（`openapi.yaml`，升小版本）：
 
 | 端点 | 用途 |
 |---|---|
-| `GET /datasets/{id}/viz` | 统一展示模型的数据集级记录：`cameras[{key, name, width, height, codec, fps, access: direct｜remux｜frames｜transcode｜unsupported}]`、`streams[]`、`fps`、`episode_indices`、`annotation_sources[]`、`mapping_version`、`field_tree` |
+| `GET /datasets/{id}/viz` | 统一展示模型的数据集级记录：`cameras[{key, name, width, height, codec, fps, access: direct｜local｜remux｜frames｜transcode｜unsupported}]`、`streams[]`、`fps`、`episode_indices`、`annotation_sources[]`（含 `unsupported` 的警告）、`mapping_version`、`field_tree` |
 | `GET /datasets/{id}/episodes/{index}/viz` | episode 级：`duration_s`、`frames`、`task`、`annotations`、`cameras[{key, url, from_ts, to_ts, kind: video｜frames, transcoded, expires_at}]` |
 | `GET /datasets/{id}/episodes/{index}/series` | §4.3 |
 | `GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4` / `.frames` | 转封装 / 转码 / 帧包，带 Range（把今天任务级那条未声明的路由一并声明）；转码未就绪时返回 202 + 进度 |
@@ -358,7 +360,7 @@ C4（`openapi.yaml`，升小版本）：
 | `GET /datasets?viz=1` | 左侧栏的数据集下拉：只列格式支持的，带「映射待确认」状态 |
 | `EpisodeView` 补 `fps` 与 `dataset_id` | 迷你版把 `frames` 换算成秒、「在可视化页打开」 |
 
-C2（`preflight.schema.json`，升小版本）：`dataset` 补 `features[{key, dtype, shape, names}]`、`cameras[]` 由短名改为对象（短名 + 分辨率 + 编码 + fps + `needs_transcode`，兼容旧字段）、`segment_candidates[]`；mcap 补 `topics[{topic, schema, encoding, rate_hz, count}]`。
+C2（`preflight.schema.json`，升小版本）：`dataset` 补 `features[{key, dtype, shape, names}]`、`cameras[]` 由短名改为对象（短名 + 分辨率 + 编码 + fps + `needs_transcode`，兼容旧字段）、`segment_sources[]`（识别到的分段来源，或 `unsupported` + 原因）；mcap 补 `topics[{topic, schema, encoding, rate_hz, count}]`。
 
 C7（新）：`viz-mapping.schema.json` + `examples/viz-mapping/{umi,abc130k,invalid-*}.json`。
 
@@ -381,30 +383,39 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`display_co
 | ReRun 入口去留 | 先保留，链接文字改成「旧」 | D63；静态稿里写作「可视化（旧）」（见 8.2 第 2 条） |
 | 架构 | 需求方给定：各格式读取器 → 统一展示模型（记录、时间轴、数据流、标注）→ 视频、曲线、三维场景、字段浏览、片段与标注 | D61；§4.0 |
 
-### 8.2 新的待确认问题
+### 8.2 需求方对第二稿八个问题的答复（2026-10-03，已落实）
 
-1. **侧栏结构**：本稿把「数据集」「可视化」做成同一组「数据」下的两个子项（像「质检」下的「质检任务」「人工裁决」）；还是「可视化」作为一级入口？
-2. **旧入口的文字**：本稿写「可视化（旧）」；如果就要两个字「旧」，列表操作列会是「可视化 · 旧 · 新建任务 · 删除」，请定。
-3. **转码的资源与缺省值**：单独的小并发池（缺省 2 路同时转）而不占质检的 CPU 名额池；磁盘缓存上限缺省 20 GB、LRU 淘汰；H.265 只在浏览器不能硬解时才转。这三个缺省可以吗？转码产物要不要也放到 TOS（多副本 / 重启不丢）而不是只在数据盘？
-4. **分段标注的轨与外部标注文件**：统一标注模型的三类（片段 / 事件 / 条目标签）加「多条轨」够不够？要不要支持与数据集一起登记一份外部标注文件（Argus 风格 JSON 或我们定义的 `annotations.json`）——h200-14 上已有 Pantheon 发布的 3,546 条标注，可以直接作为接入样本。
-5. **本地挂载的数据集**：旧入口不支持；新播放器要不要支持（Daemon 要直接出本地文件的字节，和 D16 的「不中转」不冲突，但是新的供给方式）。
-6. **第二期的范围确认**：Lance 读取器、三维场景（末端轨迹 / 点云 / URDF）、深度图、可选的预生成索引、按 GOP 切 v3 片段。
-7. **公共数据集（HuggingFace 缓存桶）**：匿名直连 TOS，不需要签名；确认。
-8. **迷你版除了报告与裁决**，要不要也挂到任务详情的 Episode 流水线里（点一条就能看）。
+| 问题 | 答复 | 落在 |
+|---|---|---|
+| 侧栏结构 | 「可视化」作为「数据集」下面的二级项 | §5.0；D63；静态稿侧栏「数据集 › 数据集列表 / 可视化」 |
+| 旧入口文字 | 「可视化（旧）」可以 | 不变 |
+| 转码资源缺省 | 可以；产物不上 TOS，放本地缓存 | §4.1、§4.2；D60 |
+| 标注轨与外部标注 | 已知格式（§3.4 的几类）直接支持；不支持的警告「标注格式不支持」；我们自己的标注标准回头另立 | §4.5；D64 |
+| 本地挂载的数据集 | 旧入口不管，新入口支持 | §4.1、§4.2 的 `access: local`；D60 |
+| 第二期范围 | 可以；「第二期」指另立的后续阶段，不是本篇（已在 §1 写明） | §1、§9 |
+| 公共数据集 | 匿名直连，可以 | §4.1 |
+| 任务详情的 Episode 流水线 | 也挂迷你版 | §2；F13.6 |
+| ReRun 参考版本 | 与 0.38.1 比对后无 mcap 功能修复；`~/ws/rerun` 切到 `ref-0.38.1`，以稳定版为准 | §3.1 |
+
+### 8.3 还剩的小问题
+
+1. 「数据集」分组下第一个子项的名字：本稿叫「数据集列表」（避免与分组同名）；也可以仍叫「数据集」。
+2. 外部标注文件（Argus 风格 JSON）的放置约定：数据集前缀下的 `annotations/<episode>.json`（本稿），还是在登记 / 详情页上传一个压缩包？h200-14 上 Pantheon 发布的 3,546 条可以直接当接入样本。
+3. 我们自己的标注标准什么时候立项：建议在 F13.8 验收后，与质检产出的区间（TASK-1、ACT-7）一起定，另开设计篇。
 
 ## 9. 工作包与风险
 
 | # | 内容 | 依赖 |
 |---|---|---|
-| F13.1 | 本篇定稿（8.2 的答复并入）；C4 / C2 / C7 契约与示例、锁；设计 03 / 05 / 07 / 09 同步 | 需求方答复 8.2 |
-| F13.2 | Daemon：统一展示模型与 LeRobot 读取器（v2 / v3）、可视化索引与曲线接口、`EpisodeView.fps`；缓存目录；转码开关与 ffmpeg 池、「平台转码」标记 | F13.1 |
+| F13.1 | 本篇定稿（8.3 的答复并入）；C4 / C2 / C7 契约与示例、锁；设计 03 / 05 / 07 / 09 同步 | 需求方答复 8.3（不阻塞开工） |
+| F13.2 | Daemon：统一展示模型与 LeRobot 读取器（v2 / v3）、可视化索引与曲线接口、`EpisodeView.fps`；本地挂载数据集的字节供给；缓存目录；转码开关与 ffmpeg 池、「平台转码」标记；分段来源识别与「标注格式不支持」警告 | F13.1 |
 | F13.3 | 内核 + Daemon：mcap 读取器——探测（summary 补 schema / 编码）、映射存储与模版库、按映射解曲线、JPEG 帧包、fMP4 转封装、转码兜底 | F13.1 |
 | F13.4 | 前端：播放器核心（格子、模版、走带、进度条、曲线、同步、信息侧栏、字幕、键盘、「平台转码」标签） | F13.1 |
 | F13.5 | 前端：独立的「可视化」页面（侧栏子项、路由、左侧可收起的数据集 / episode 栏、数据集信息树）；数据集列表 / 详情头的「可视化」新窗口打开 + 「可视化（旧）」 | F13.2、F13.4 |
-| F13.6 | 前端：报告 Episode 明细与裁决卡片的迷你版弹窗、证据色段、「在可视化页打开」；`SyncedVideos` 退役 | F13.4 |
+| F13.6 | 前端：报告 Episode 明细、裁决卡片与任务详情 Episode 流水线的迷你版弹窗、证据色段、「在可视化页打开」；`SyncedVideos` 退役 | F13.4 |
 | F13.7 | 前端：添加数据集的 mcap 配置（探测表、模版、导入导出、另存为模版）与详情页入口 | F13.3 |
 | F13.8 | 验收：样本集 88 个子集逐个打开（含 RH20T 10 路、FastUMI mpeg4 转码、ABC-130k H.265、深度列、无 names、Galaxea 拆列与分步、HABIT 多轨）；首帧时间与曲线接口时延指标；README 手动验证步骤 | 全部 |
-| 第二期 | Lance 读取器、三维场景与深度图视图、外部标注文件、预生成索引 | F13.8 后另立 |
+| 后续阶段（不在本篇） | Lance 读取器、三维场景与深度图视图、预生成索引、按 GOP 切 v3 片段、我们自己的标注标准 | F13.8 后另立设计与账本阶段 |
 
 风险：
 
