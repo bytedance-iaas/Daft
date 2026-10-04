@@ -358,6 +358,31 @@ API 返回的 `links` 数组（见 `03-rest-api.md` §1）指向的就是上面�
   开始任务时的核对是同一套比较（D37，见 §3）。
 - **删除**只删平台里的登记，不动 TOS 上的数据；有非终态任务在用时不能删。
 
+### 4.5 可视化（设计 18 §5，D63；F13.4、F13.5）
+
+- **页面**（`pages/visualize/`）：左栏 `EpisodeRail.tsx` 是数据集下拉（`GET /datasets?viz=true`，mcap 映射待确认的带橙色标签）、摘要一行、
+  筛选与排序、episode 列表（`GET /datasets/{id}/viz/episodes`，一次 100 条，「加载更多」）；点一条改地址 `?dataset=&ep=`，
+  「上一条 / 下一条」按列表的顺序走。主区是播放器和 `DatasetInfo.tsx`（模型的字段树、元数据文件预览 `GET /datasets/{id}/viz/meta`、
+  相机与曲线组「加入播放器」——放进第一个空格子，没有空格子就换掉最后一个）。地址没带数据集时打开上次看的（浏览器偏好
+  `lastVizDataset`），左栏收起也记在偏好里。mcap 映射没确认：主区提示原因，给「去确认映射」（到数据集详情）。页头「新建质检任务」
+  带着当前数据集，「数据集详情」进详情页。
+- **播放器**（`features/visualizer/`，完整版与迷你版共用，`mode` 区分）：
+  - `clock.ts` 统一时钟：episode 时间是唯一的钟，随墙钟推进；每路视频按「媒体时间 = t − offset + from」挂上去，
+    小偏差微调 `playbackRate`，大偏差（> 0.3 s）seek；开播、播放中 seek、任何一路缓冲不足时先停钟（顶栏「缓冲中…」）、
+    等每路都有数据再一起开始，钟从视频实际走到的位置接着走；暂停时每路精确落在当前帧；加载失败的一路不参与。
+  - `cells/VideoCell.tsx`：先做解码能力检测（`MediaSource.isTypeSupported` / `canPlayType`），解不了且有 `transcode_url`
+    就等平台转码（202 期间显示进度），播放出错也退到转码；地址续签时原地换源；没有原生控件、不能全屏、不能画中画。
+  - `cells/FramesCell.tsx`：mcap 的 JPEG / PNG 帧包，按帧号区间读，相邻的帧合成一次请求，解码后缓存，播放时预取后面一秒。
+  - `cells/CurveCell.tsx`：SVG；路径只在数据、尺寸、隐藏集变化时重画，光标和图例里的当前值各自订阅时钟，不让整张图跟着每帧重绘。
+  - `Transport.tsx`（走带、进度条：选定轨的分段、其他轨叠在上方、发现色段、事件点、悬停提示、拖动跳转）、`SidePanel.tsx`、
+    `CellMenu.tsx`；纯逻辑在 `lib/vizTime.ts`（时间与帧号、发现区间）、`lib/vizLayout.ts`（模版、智能规则、格子尺寸）、
+    `lib/vizCurves.ts`（图例、纵轴、路径、刻度），都有单测。
+  - 开发时 React 的 StrictMode 会把 effect 执行两遍：时钟与帧包的清理只停、不销毁（测试按 StrictMode 渲染）。开发构建把当前的
+    时钟挂在 `window.__vizClock`，供漂移检查用（`drift()` 拿外推到此刻的时钟时间比）。
+- **实测**（本机 Daemon，F13.4 验收②）：三路 1280×720 H.264 直连视频加两组曲线，1x 下各路视频与时钟的偏差最大 0.3 ms，
+  2x 下约 6 ms（一帧 33 ms）；打开页面到三路都有画面 0.23 s。ABC-130k 四路 1920×1200 H.265 转封装，偏差 < 1 ms；
+  mpeg4 的一路显示「平台转码」，转码完成前格子里是进度。
+
 ## 5. 质检报告页
 
 > 2026-10-02（设计 17 §5.2、§5.4，F12.5 已实现）：报告 2.0（`schema_version` 2.0）的任务——

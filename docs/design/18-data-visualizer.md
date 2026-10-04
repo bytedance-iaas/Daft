@@ -507,6 +507,22 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
   直接解码逐点一致；42 条与质检读取器对账（派生映射读出的行与内置识别相同、`check_clock` 等于质检的锚与速率、动作曲线等于质检读出的 action）。内置浏览器（Chromium）
   播放 Daemon 转封装的 GenRobot H.264 与 ABC-130k H.265，跳到任意时刻画面正常。
 
+### 9.3 F13.4 / F13.5 落地时的细化（2026-10-04）
+
+前端代码在 `frontend/src/features/visualizer/`（播放器，完整版与迷你版共用）与 `frontend/src/pages/visualize/`（页面），实现说明在设计 07 §4.5：
+
+- **时钟**：episode 时间是唯一的钟，随墙钟推进；每路 `<video>` 按「媒体时间 = t − offset + from」挂上去，偏差小于 8 ms 不动，再大就按偏差微调 `playbackRate`（每秒偏差 3 倍、
+  最多 ±15%），超过 0.3 s 才 seek。开播、播放中 seek、任何一路缓冲不足时先停钟、等每路都有数据再一起开始，钟从各路实际位置的中位数接着走，避免开播那一下的跳动；
+  暂停时每路落在当前帧内 1 ms。帧包与曲线只读钟。**量漂移要用外推到此刻的钟**：钟每个屏幕帧（16.7 ms）才动一次，而 `video.currentTime` 连续走，拿上一帧的钟去比，
+  会多算出一个 0–33 ms 的锯齿。
+- 实测（本机 Daemon，验收②）：三路 1280×720 H.264 加两组曲线，1x 下各路与钟的偏差最大 0.3 ms，2x 下稳定领先约 6 ms（在 8 ms 的不动区内），一帧是 33 ms；
+  页面打开到三路都有画面 0.23 s。真实 ABC-130k 四路 1920×1200 H.265（转封装）偏差 < 1 ms；mpeg4 的一路「平台转码」1.8 s 后可播。
+- **能力检测**先于播放：`MediaSource.isTypeSupported` / `canPlayType` 解不了且有 `transcode_url` 的直接走平台转码；播放出错再退到转码一次。
+- 开发时 React StrictMode 会把 effect 跑两遍：时钟、帧包这种在 `useMemo` 里建的对象，清理时只能停、不能一次性销毁，否则格子拿到的是已销毁的钟（播不动）；
+  播放器的测试按 StrictMode 渲染守着这一条。
+- 曲线组的标题单独占一行，光标的时间标签画在它下面（episode 开头时两者在同一角落，会叠在一起）。播放器顶栏窄时先让出格式与帧率，再让出任务描述，数据集名最少留 120 px。
+- 页面的数据集下拉用 `GET /datasets?viz=true`；质检按缺省读不了的 mcap（登记的格式是 `unsupported`）也在里面（按预检的 `format.kind` 认，§9.2），映射未确认的带「映射待确认」。
+
 ## 10. 第二期（另立阶段，先记在这里）
 
 需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。

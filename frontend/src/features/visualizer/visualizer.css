@@ -1,0 +1,157 @@
+/* The data visualizer's player (design doc 18 §5), from the mockup frontend/mockups/viz-src/parts/player.css. */
+.vz { position: relative; background: var(--color-bg-2); border: 1px solid var(--c-border); border-radius: 4px; }
+.vz.is-mini { border: 0; }
+.vz:focus { outline: none; }
+.vz:focus-visible { box-shadow: 0 0 0 2px rgb(var(--primary-2)); }
+
+/* 顶栏 */
+.vz-head { display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--c-border); }
+/* a narrow head gives up the meta first, then the task, and the name last (it keeps 120 px) */
+.vz-head .ep { flex: 0 0.2 auto; min-width: 120px; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vz-head .ep small { font-weight: 400; color: var(--c-text-3); margin-left: 6px; }
+.vz-head .meta { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--c-text-3); white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.vz-head .meta i { display: inline-block; width: 1px; height: 12px; background: var(--c-border); margin: 0 2px; }
+.vz-head .task { flex: 1 1 0; min-width: 0; font-size: 13px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-head .task .k { color: var(--c-text-3); margin-right: 6px; }
+.vz-head .task.none { color: var(--c-text-4); }
+.vz-head .ctl { display: flex; gap: 8px; align-items: center; flex: none; }
+.vz-head .ctl .on { background: rgb(var(--primary-1)); color: var(--c-primary); }
+.vz-head .waiting { font-size: 12px; color: var(--c-warning); white-space: nowrap; }
+
+/* 主体：格子 + 信息侧栏（打开时挤压格子） */
+.vz-body { display: flex; align-items: stretch; }
+.vz-grid-wrap { flex: 1; min-width: 0; padding: 12px; position: relative; }
+.vz-grid { display: grid; gap: 10px; }
+.vz-cell { position: relative; background: var(--color-fill-1); border: 1px solid var(--c-border); border-radius: 4px; overflow: hidden; min-height: 120px; }
+.vz-cell.is-focus { border-color: var(--c-primary); box-shadow: 0 0 0 2px rgb(var(--primary-1)); }
+.vz-cell.is-hidden { display: none; }
+.vz-cell.kind-video { background: #0f141b; }
+.vz-cell.kind-video video, .vz-cell.kind-video canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: contain; background: #0f141b; }
+.vz-cell.kind-video .vz-stamp { position: absolute; left: 10px; bottom: 8px; font: 11px/1 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: rgba(255, 255, 255, 0.85); background: rgba(0, 0, 0, 0.35); padding: 4px 6px; border-radius: 2px; z-index: 2; }
+.vz-cell .vz-cap { position: absolute; left: 10px; top: 8px; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 2px; font-size: 12px; z-index: 2; background: rgba(29, 33, 41, 0.6); color: #fff; max-width: calc(100% - 130px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vz-cell.kind-curve .vz-cap { background: transparent; color: var(--c-text-1); font-weight: 500; left: 12px; top: 8px; padding: 0; }
+.vz-cell .vz-cap .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.vz-cell .vz-cap .vz-tc { margin-left: 4px; padding: 0 5px; border-radius: 2px; font-size: 11px; line-height: 16px; background: var(--c-warning); color: #fff; }
+.vz-cell .vz-tools { position: absolute; right: 8px; top: 8px; display: none; gap: 4px; z-index: 3; }
+.vz-cell:hover .vz-tools, .vz-cell.is-focus .vz-tools { display: flex; }
+.vz-cell .vz-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 24px; padding: 0 7px; border: 0; border-radius: 2px; background: rgba(29, 33, 41, 0.6); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.vz-cell .vz-tools button:hover { background: rgba(29, 33, 41, 0.85); }
+.vz-cell.kind-curve .vz-tools button { background: var(--color-fill-2); color: var(--c-text-2); }
+.vz-cell.kind-curve .vz-tools button:hover { background: var(--c-border); }
+.vz-cell .vz-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: rgba(255, 255, 255, 0.85); font-size: 13px; line-height: 1.6; z-index: 1; pointer-events: none; }
+.vz-cell .vz-overlay.veil { background: rgba(15, 20, 27, 0.55); }
+.vz-cell .vz-overlay .why { display: block; margin-top: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.6); max-width: 420px; }
+.vz-cell.kind-curve .vz-overlay { color: var(--c-text-3); }
+.vz-cell.kind-empty { display: grid; place-items: center; border-style: dashed; background: var(--color-bg-2); }
+.vz-cell.kind-empty .plus { display: grid; place-items: center; gap: 6px; color: var(--c-text-3); font-size: 13px; cursor: pointer; background: none; border: 0; font-family: inherit; }
+.vz-cell.kind-empty .plus .ring { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--c-border); display: grid; place-items: center; color: var(--c-text-2); background: var(--color-bg-2); }
+.vz-cell.kind-empty .plus:hover { color: var(--c-primary); }
+.vz-cell.kind-empty .plus:hover .ring { border-color: var(--c-primary); color: var(--c-primary); }
+
+/* 曲线格 */
+.vz-cell.kind-curve { background: var(--color-bg-2); }
+.vz-cell.kind-curve .plot { position: absolute; left: 0; right: 0; top: 0; cursor: crosshair; }
+.vz-cell.kind-curve svg { display: block; width: 100%; height: 100%; }
+.vz-cell.kind-curve .legend { position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 0 10px; padding: 3px 10px 5px; font-size: 11px; line-height: 17px; color: var(--c-text-2); border-top: 1px solid var(--color-fill-2); background: var(--color-bg-2); max-height: 44%; overflow: auto; }
+.vz-cell.kind-curve .legend .li { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; cursor: pointer; border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: left; }
+.vz-cell.kind-curve .legend .li.off { opacity: 0.4; }
+.vz-cell.kind-curve .legend .sw, .vz-side .sl .sw { width: 14px; height: 0; border-top: 2px solid currentColor; flex: none; }
+.vz-cell.kind-curve .legend .nm { overflow: hidden; text-overflow: ellipsis; }
+.vz-cell.kind-curve .legend .val { margin-left: auto; font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--c-text-1); }
+.vz-cell.kind-curve .legend .val.a { margin-left: 4px; color: var(--c-text-3); }
+.vz-cell.kind-curve .axis text { font-size: 10px; fill: var(--c-text-3); }
+.vz-cell.kind-curve .grid line { stroke: var(--color-fill-2); stroke-width: 1; }
+.vz-cell.kind-curve .cursor { stroke: var(--c-text-1); stroke-width: 1; }
+.vz-cell.kind-curve .cursor-label { font-size: 10px; fill: var(--c-text-1); }
+.vz-cell.kind-curve .band { fill: rgba(245, 63, 63, 0.08); }
+.vz-cell.kind-curve .band.focus { fill: rgba(245, 63, 63, 0.18); }
+.vz-cell.kind-curve .band.review { fill: rgba(255, 125, 0, 0.1); }
+.vz-cell.kind-curve .band.review.focus { fill: rgba(255, 125, 0, 0.22); }
+.vz-cell.kind-curve .band.info { fill: rgba(134, 144, 156, 0.1); }
+.vz-cell.kind-curve .band.info.focus { fill: rgba(134, 144, 156, 0.22); }
+.vz-cell.kind-curve .vz-note { position: absolute; right: 10px; top: 10px; font-size: 11px; color: var(--c-text-3); z-index: 2; }
+.vz-cell.kind-curve:hover .vz-note, .vz-cell.kind-curve.is-focus .vz-note { display: none; }
+
+/* 信息侧栏 */
+.vz-side { width: 300px; flex: none; border-left: 1px solid var(--c-border); display: flex; flex-direction: column; background: var(--color-bg-2); }
+.vz-side-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--c-border); font-weight: 500; font-size: 13px; }
+.vz-side-head .spacer { flex: 1; }
+.vz-side-head .x { border: 0; background: none; color: var(--c-text-3); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+.vz-side-body { flex: 1; overflow: auto; padding: 10px 14px 14px; font-size: 12px; }
+.vz-side .kv { display: grid; grid-template-columns: 76px 1fr; gap: 6px 10px; padding: 6px 0; border-bottom: 1px solid var(--color-fill-2); }
+.vz-side .kv .k { color: var(--c-text-3); }
+.vz-side .kv .v { color: var(--c-text-1); overflow-wrap: anywhere; }
+.vz-side .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
+.vz-side .sec { font-size: 12px; font-weight: 600; color: var(--c-text-2); margin: 14px 0 6px; }
+.vz-side .sec:first-child { margin-top: 0; }
+.vz-side .sl { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.vz-side .sl .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-side .sl .val { font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--c-text-1); }
+.vz-side .sl input { accent-color: var(--c-primary); margin: 0; }
+.vz-side .empty { color: var(--c-text-4); padding: 24px 0; text-align: center; }
+.vz-side .note { color: var(--c-text-3); line-height: 1.6; }
+
+/* 走带与进度条 */
+.vz-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-top: 1px solid var(--c-border); }
+.vz-transport .tb { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 2px; background: transparent; color: var(--c-text-1); cursor: pointer; font-size: 16px; }
+.vz-transport .tb:hover { background: var(--color-fill-2); }
+.vz-transport .tb.play { width: 34px; height: 34px; background: var(--c-primary); color: #fff; border-radius: 50%; }
+.vz-transport .tb.play:hover { background: rgb(var(--primary-5)); }
+.vz-transport .time { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--c-text-2); white-space: nowrap; min-width: 118px; text-align: center; }
+.vz-transport .frame { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--c-text-3); white-space: nowrap; }
+.vz-transport .frame input { width: 64px; height: 28px; font-size: 12px; text-align: center; font-family: "SF Mono", ui-monospace, Menlo, monospace; border: 1px solid var(--c-border); border-radius: 2px; background: var(--color-bg-2); color: var(--c-text-1); }
+.vz-transport .loop { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--c-text-3); white-space: nowrap; }
+.vz-transport .epnav { display: inline-flex; gap: 6px; margin-left: 4px; }
+
+.vz-prog { flex: 1; min-width: 220px; position: relative; height: 34px; cursor: pointer; user-select: none; touch-action: none; }
+.vz-prog .steps { position: absolute; left: 0; right: 0; top: 4px; height: 6px; }
+.vz-prog .steps span { position: absolute; top: 0; height: 6px; border-radius: 3px; background: rgb(var(--primary-1)); border: 1px solid #bedaff; box-sizing: border-box; }
+.vz-prog .steps span:nth-child(odd) { background: #e8f7ff; border-color: #9fd4fd; }
+.vz-prog .steps span.unq { background: rgb(var(--warning-1)); border-color: #ffcf8b; }
+.vz-prog .steps span:hover { filter: brightness(0.95); }
+.vz-prog .track { position: absolute; left: 0; right: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--color-fill-2); overflow: hidden; }
+.vz-prog .track .fill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; background: var(--c-primary); }
+.vz-prog .knob { position: absolute; top: 11px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--color-bg-2); border: 2px solid var(--c-primary); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); z-index: 2; box-sizing: border-box; }
+.vz-prog .ev { position: absolute; left: 0; right: 0; top: 24px; height: 8px; }
+.vz-prog .ev span { position: absolute; top: 1px; height: 5px; border-radius: 2px; opacity: 0.85; }
+.vz-prog .ev span.blocking { background: var(--c-danger); color: var(--c-danger); }
+.vz-prog .ev span.review { background: var(--c-warning); color: var(--c-warning); }
+.vz-prog .ev span.info { background: var(--c-text-3); color: var(--c-text-3); }
+.vz-prog .ev span.focus { top: 0; height: 7px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px currentColor; }
+.vz-prog .ev span.pt { width: 3px !important; margin-left: -1px; }
+.vz-prog .ev span.event { background: var(--c-text-2); color: var(--c-text-2); width: 3px !important; margin-left: -1px; }
+.vz-prog .tip { position: absolute; top: -26px; transform: translateX(-50%); padding: 2px 6px; border-radius: 2px; background: rgba(29, 33, 41, 0.9); color: #fff; font-size: 11px; white-space: nowrap; display: none; pointer-events: none; z-index: 5; }
+.vz-prog:hover .tip { display: block; }
+
+/* 字幕栏 */
+.vz-sub { display: flex; align-items: center; gap: 10px; padding: 8px 16px 10px; font-size: 13px; color: var(--c-text-1); border-top: 1px solid var(--color-fill-2); background: var(--color-fill-1); }
+.vz-sub .idx { font-size: 12px; color: var(--c-text-3); white-space: nowrap; }
+.vz-sub .lab { font-weight: 500; }
+.vz-sub .rng { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--c-text-3); }
+.vz-sub .src { margin-left: auto; font-size: 12px; color: var(--c-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+
+/* 选择 / 更换内容的菜单 */
+.vz-pop { position: absolute; z-index: 50; min-width: 220px; max-height: 360px; overflow: auto; background: var(--color-bg-2); border: 1px solid var(--c-border); border-radius: 4px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); padding: 6px 0; font-size: 13px; }
+.vz-pop .grp { padding: 6px 12px 2px; font-size: 12px; color: var(--c-text-3); }
+.vz-pop .it { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; color: var(--c-text-1); border: 0; background: none; width: 100%; font: inherit; text-align: left; }
+.vz-pop .it:hover { background: var(--color-fill-1); }
+.vz-pop .it.dis { color: var(--c-text-4); cursor: not-allowed; }
+.vz-pop .it .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.vz-pop .it .sub { margin-left: auto; padding-left: 12px; font-size: 11px; color: var(--c-text-3); white-space: nowrap; }
+.vz-pop .it.cur { color: var(--c-primary); background: rgb(var(--primary-1)); }
+
+/* 发现芯片（迷你版） */
+.vz-evlist { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--c-border); font-size: 12px; }
+.vz-evlist .k { color: var(--c-text-3); }
+.vz-evlist .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--c-border); background: var(--color-bg-2); cursor: pointer; color: var(--c-text-2); font: inherit; }
+.vz-evlist .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+.vz-evlist .chip.blocking .dot { background: var(--c-danger); }
+.vz-evlist .chip.review .dot { background: var(--c-warning); }
+.vz-evlist .chip.info .dot { background: var(--c-text-3); }
+.vz-evlist .chip.on { border-color: var(--c-primary); color: var(--c-primary); background: rgb(var(--primary-1)); }
+.vz-evlist .chip code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
+
+.vz-keys { font-size: 11px; color: var(--c-text-4); white-space: nowrap; }
+.vz-keys kbd { display: inline-block; min-width: 16px; padding: 0 4px; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 3px; background: var(--color-bg-2); font: 10px/16px "SF Mono", ui-monospace, Menlo, monospace; color: var(--c-text-3); text-align: center; }
+.vz-warn { padding: 6px 16px; font-size: 12px; color: var(--c-warning); background: rgb(var(--warning-1)); border-bottom: 1px solid var(--c-border); }
+.vz-skeleton { display: grid; place-items: center; min-height: 240px; color: var(--c-text-3); font-size: 13px; }
