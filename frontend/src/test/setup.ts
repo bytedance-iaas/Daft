@@ -4,12 +4,17 @@
 import './polyfills';
 import '@testing-library/jest-dom/vitest';
 import { Message, Modal } from '@arco-design/web-react';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { resetDb } from '../mocks/db';
 import { setRequestValidator } from '../mocks/handlers';
 import { server } from '../mocks/server';
 import { formatErrors, makeContract } from './contract';
+
+// Every page is a lazy route and a CI runner is two to four times slower than a laptop: the first find
+// in a file waits for the page's chunk to load and render (the report page, with ECharts and the
+// visualizer, took 1.2 s under Node 22 in CI), so finds and waitFor give up after 5 s, not 1 s.
+configure({ asyncUtilTimeout: 5000 });
 
 export const contract = makeContract();
 

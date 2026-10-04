@@ -2,7 +2,8 @@
 
 Curator v2 是 Physical AI Kit 的机器人数据质检平台。它读入机器人操作数据集（LeRobot v2 / v3、mcap、Lance；来源是私有 TOS、
 HuggingFace 缓存桶，或站点开放的本地挂载路径），逐条 episode 跑一串质检模块，给出通过 / 拒绝 / 待定的判决和待人工复核的清单；
-人工裁决后重判受影响的条目，生成质检报告，并把通过的数据导出成交付数据集写回 TOS。
+人工裁决后重判受影响的条目，生成质检报告，并把通过的数据导出成交付数据集写回 TOS。控制台还内置数据可视化：一条进度条同步播放多路相机
+与运动曲线，完整版是「数据集 › 可视化」页，报告、人工裁决与任务详情里的迷你版定位到每条发现（设计 18、19）。
 产品是「网页控制台 + REST API + 命令行」三件套，打成一个镜像，作为 rerun 仓库 dataverse Helm Chart 的一个组件部署在火山引擎 VKE 上（D53）。
 
 ## 架构
@@ -19,18 +20,19 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 
 | 组件 | 位置 | 做什么 |
 |---|---|---|
-| 前端控制台 | `frontend/` | 概览、数据集、质检任务（新建 / 列表 / 详情）、质检报告、人工裁决、系统和资源配置；构建产物由 Daemon 托管 |
-| API Daemon | `backend/daemon/` | REST 与 SSE、SQLite 仓储、鉴权、任务编排（排队、逐档流水线、暂停 / 停止 / 继续、崩溃恢复、子任务、发布到交付目录）、密钥与 VLM 后端管理、结果读取 |
+| 前端控制台 | `frontend/` | 概览、数据集（列表、详情、「可视化」页）、质检任务（新建 / 列表 / 详情）、质检报告、人工裁决、系统和资源配置，报告、裁决与任务详情里的迷你播放器；构建产物由 Daemon 托管 |
+| API Daemon | `backend/daemon/` | REST 与 SSE、SQLite 仓储、鉴权、任务编排（排队、逐档流水线、暂停 / 停止 / 继续、崩溃恢复、子任务、发布到交付目录）、密钥与 VLM 后端管理、结果读取、数据可视化（`viz/`：LeRobot / mcap / Lance 读取器 → 统一展示模型，曲线、帧包与样本包、转封装 / 转码，按区间读 TOS） |
 | 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → autolabel → check（逐档）→ aggregate → report → export → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分档、并发、八把 VLM 闸门、请求合并；`curation plan` 与 Daemon 共用 |
-| 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入 |
+| 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
 | 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（按检测项的 precision / recall、与基线比较） |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
 
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
-（设计 00 §2.1）。
+（设计 00 §2.1）。数据可视化是例外：它只读、不碰判决，`daemon/viz` 在进程内调 `curation/viz` 读数据集，只有转码在子进程里
+（`python -m curation.viz.transcode`）。
 
 **两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
 → `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `autolabel` → `vlm`（eef_video_consistency、task_success，camera_defects 骑在
@@ -48,13 +50,13 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 
 | 路径 | 内容 |
 |---|---|
-| `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`；内核单测在包内 `tests/` |
-| `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）；`python -m daemon` 或 `curator-daemon` |
+| `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`、可视化的格式解析 `viz/`；内核单测在包内 `tests/` |
+| `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）、`viz/`（数据可视化：数据源、读取器、缓存与转码池，说明见 `viz/README.md`）；`python -m daemon` 或 `curator-daemon` |
 | `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`export`、`eef`、`optimizations`、`deploy`、`viz` |
-| `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装 |
+| `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装；可视化的样例数据（`make_cams_dataset.py` 多路相机、`make_lance_dataset.py` Lance 三种布局）与样本集实测（`viz_sample_check.py`） |
 | `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
-| `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
-| `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
+| `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`）；播放器在 `src/features/visualizer/`（完整版与迷你版共用），「可视化」页在 `src/pages/visualize/` |
+| `frontend/mockups/` | 静态 HTML 预览稿（只读参考；可视化的三页由 `viz-src/` 生成：改 `viz-src/`，再在该目录跑 `python3 viz-src/build.py .`） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
 | `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` 给平台结果打分（2.0 直接读发现，`finding_map.json` 只用于旧格式的运行目录），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
@@ -88,8 +90,8 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（`15-rerun-presigned-access.md`，D55；首节是开工指引，涉及 rerun 仓库） |
 | 16 | 回归测试样本集（`16-regression-samples.md`：检测项分类表、评测集、期望值与打分；样本与真值在 TOS） |
 | 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；取代了逐档漏斗的执行短路与硬门 / 软分判决，§7 末尾是各 feature 落地时的细化） |
-| 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——数据集「可视化」页签的完整版与报告 / 裁决里的迷你版、mcap 字段映射模版 C7；决策 D60–D64；首节是开工指引，静态稿在 `frontend/mockups/`（`visualize.html`、`episode-visualize-mini.html`、`dataset-add-mcap.html`）） |
-| 19 | 可视化第二期先行三项（`19-visualizer-phase-two.md`：相机多于 9 路、浏览器内解码（WebCodecs）、Lance 读取器；首节是开工指引，§6 是待需求方确认的取舍） |
+| 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——独立的「可视化」页（完整版）与报告 / 裁决 / 任务详情里的迷你版、读取器与统一展示模型、mcap 字段映射模版 C7；决策 D60–D64；首节是开工指引，§9 是各 feature 落地时的细化与样本集实测，§10 是第二期清单；静态稿在 `frontend/mockups/`（`visualize.html`、`episode-visualize-mini.html`、`dataset-add-mcap.html`）） |
+| 19 | 可视化第二期先行三项（`19-visualizer-phase-two.md`：相机多于 9 路、浏览器内解码（WebCodecs）、Lance 读取器；决策 D65–D67；首节是开工指引） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：
@@ -131,6 +133,17 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 - `npm run dev` 默认接 MSW 模拟数据（`src/mocks/`，每个 C4 接口都有处理器，改接口时一起改）；接真 Daemon 用 `VITE_API_TARGET=http://127.0.0.1:8080 npm run dev`。
 - 改界面要同步更新设计 07 和 README 的手动验证步骤。
 
+**数据可视化**（设计 18、19；后端说明见 `backend/daemon/viz/README.md`，界面见设计 07 §4.5 与前端 README）
+- 分层是「读取器 → 统一展示模型 → 视图」（D61）：每种格式一个读取器（`daemon/viz/` 的 `lerobot.py`、`mcap.py`、`lance.py`，格式解析在
+  `curation/viz/`），都产出 C4 的 `VizDataset` / `VizEpisode`（相机、曲线组、标注、字段树），前端只认展示模型、不认格式。加一种格式就是
+  加一个读取器、在 `service.py` 与 `status.py`（`READERS`）里登记，测试放 `tests/viz`（夹具造 LeRobot / mcap / Lance 数据集与最小本地 S3）。
+- 只读、不改判决：mcap 的字段映射（C7）确认后派生质检读取用的映射，开跑时冻结进 `run.json`（D62）；迷你版走任务级接口，读任务冻结的输入。
+- 视频能直连就直连（预签名地址、本地字节），浏览器放不了的由 Daemon 转封装或转码（D60，缓存只放本地盘）；mcap 的 H.264 / H.265
+  缺省由浏览器 WebCodecs 解，失败退回转封装（D66）。开关与缓存都是 `CURATOR_VIZ_*`（Daemon README「配置」）。
+- 前端：时钟只有一份（`features/visualizer/clock.ts`），格子都跟它走；开发构建是 StrictMode，解码器这类要释放的资源在同一个 effect 里建和放。
+  本机看效果：`curator-frontend-dev` 是模拟世界（`src/mocks/vizWorld.ts`）；看真数据用 `curator-daemon-local`（它托管 `frontend/dist`，先 `npm run build`），
+  数据集放在 `$TMPDIR/curator-local/inputs` 下、从「添加数据集」的本地挂载路径登记。
+
 **质检模块与判定**
 - 新模块放 `extensions/<模块>/`。要动哪些地方（C1 注册表、预检、`check`、planner 与 Daemon 的档、前端、测试与对账基线），照设计 12、14 的开工指引做，它们是现成的样板。
 - VLM 输入是多机位连续视频（设计 13）；出厂默认模型只在 `pipeline/default.yaml` 的 `checks.task_success.vlm.model` 一处，线上按任务选的后端和模型由 Daemon 的「VLM 后端」管理。
@@ -160,6 +173,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 | 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
 写端到端用例别靠时序：流水线下各档交叠执行，模型的快慢用假端点的 `delay_s`、`hold(needle)`、`fail` 控制，等条件满足再动作。
+前端用例的 `findBy` / `waitFor` 缺省等 5 秒（`src/test/setup.ts`）：页面都是按需加载的，CI 比本机慢两到四倍，首次渲染只等 1 秒会偶发超时。
 
 ### CI 门禁
 
@@ -190,3 +204,4 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 - 仓库原是 daft 的 fork，上游 daft 源码已在 2026-09-20 删除（F1.2）；开发分支是 `feat/curator-v2`。
 - 在运的 v1 代码在 `release_v1` 分支。v1 的子命令（`curation run`、`rejudge` 等）原样转交给 `cli/legacy.py`。
 - 对账工具的 `dump-v1`、`v1_manifest.json` 留作工具自身与 v1 行为的离线回归；设计 13 起判定基线改为 v2 自录（`run-v2 --fake-vlm` 录，`--replay` 回放）。
+- 「可视化」原先跳 ReRun（设计 15，D55）；内置播放器（设计 18、19，2026-10-04 合入）上线后，ReRun 入口暂留作「可视化（旧）」，下线列在第二期清单（设计 18 §10）。
