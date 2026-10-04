@@ -6,6 +6,8 @@ import { bisectRight } from './vizTime';
 
 /** Arco blue / cyan / orange / purple / green / magenta / gold / lime, in turn. */
 export const PALETTE = ['#165DFF', '#14C9C9', '#FF7D00', '#722ED1', '#00B42A', '#F5319D', '#F7BA1E', '#9FDB1D'] as const;
+/** Camera dots: the eight above, then their darker shades - sixteen cameras without a repeat (design doc 19 §2.2). */
+export const CAMERA_PALETTE = [...PALETTE, '#0E42D2', '#0DA5AA', '#D25F00', '#551DB0', '#009A29', '#CB1E83', '#CC9213', '#7EB712'] as const;
 
 export interface LegendEntry {
   name: string;

@@ -2105,6 +2105,7 @@ export const zh = {
     layoutTitle: '布局模版',
     layouts: { smart: '智能展示', video: '仅展示视频', curve: '仅展示运动曲线', custom: '自定义' } as Record<'smart' | 'video' | 'curve' | 'custom', string>,
     gridTitle: '格子数',
+    overflow: (n: number) => `另有 ${n} 路相机没放上来，在格子的「更换」里选`,
     grid: (cols: number, rows: number) => `${cols} × ${rows}`,
     info: '信息',
     infoTitle: '显示 / 隐藏信息侧栏',

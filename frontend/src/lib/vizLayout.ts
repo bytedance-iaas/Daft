@@ -1,5 +1,5 @@
-// The player's grid (design doc 18 §5.1–§5.3): layout templates, the smart rule and cell sizes.
-// Pure functions over the presentation model; the player keeps the cells in its state.
+// The player's grid (design doc 18 §5.1–§5.3, design doc 19 §2): layout templates, the smart rule
+// and cell sizes. Pure functions over the presentation model; the player keeps the cells in its state.
 import type { VizDataset } from '../api/types';
 
 export type CellContent = { kind: 'video'; key: string } | { kind: 'curve'; key: string } | { kind: 'empty' };
@@ -18,12 +18,21 @@ export const GRID_SIZES: readonly GridShape[] = [
   { cols: 2, rows: 2 },
   { cols: 3, rows: 2 },
   { cols: 3, rows: 3 },
+  { cols: 4, rows: 3 },
+  { cols: 4, rows: 4 },
 ];
 
-export const MAX_COLS = 3;
-export const MAX_ROWS = 3;
+export const MAX_COLS = 4;
+export const MAX_ROWS = 4;
+/** Up to this many cells a template lays out as in phase one (at most 3 × 3, design doc 19 §2.2). */
+export const SMALL_CELLS = 9;
+const SMALL_MAX = 3;
 /** The smart layout uses three columns from this grid width (px) on, two below. */
 export const WIDE_GRID_PX = 1000;
+/** More than nine cells: four columns from this grid width on, three below. */
+export const WIDER_GRID_PX = 1240;
+/** The mini player's cells in its one row (design doc 18 §4.6). */
+export const MINI_MAX_CELLS = 3;
 /** Curve groups the smart layout adds after the cameras. */
 export const SMART_CURVES = 2;
 export const CELL_GAP_PX = 10;
@@ -33,14 +42,14 @@ export function gridKey(g: GridShape): string {
 }
 
 export function parseGridKey(key: string): GridShape | null {
-  const m = /^([1-3])x([1-3])$/.exec(key);
+  const m = /^([1-4])x([1-4])$/.exec(key);
   return m ? { cols: Number(m[1]), rows: Number(m[2]) } : null;
 }
 
-/** The smallest grid that holds n cells with at most `cols` columns (at least one cell). */
-export function shapeFor(n: number, cols: number): GridShape {
+/** The smallest grid that holds n cells with at most `cols` columns and `maxRows` rows (at least one cell). */
+export function shapeFor(n: number, cols: number, maxRows: number = MAX_ROWS): GridShape {
   const c = Math.max(1, Math.min(cols, MAX_COLS, Math.max(1, n)));
-  return { cols: c, rows: Math.max(1, Math.min(MAX_ROWS, Math.ceil(Math.max(1, n) / c))) };
+  return { cols: c, rows: Math.max(1, Math.min(maxRows, MAX_ROWS, Math.ceil(Math.max(1, n) / c))) };
 }
 
 /** Pads with empty cells / cuts to exactly cols × rows. */
@@ -63,41 +72,66 @@ function curveCells(model: Pick<VizDataset, 'streams'>, smartOnly: boolean): Cel
 
 /**
  * The cells of a template at a given grid width. Smart: every camera, then the first two smart curve
- * groups, three columns on a wide grid and two otherwise (it follows the width as side panels open
- * and close); video / curve: only those. Custom keeps whatever the user arranged (null here).
+ * groups; up to nine cells three columns on a wide grid and two otherwise (it follows the width as side
+ * panels open and close), more than nine four columns on a wider grid and three otherwise, up to four
+ * rows. Video / curve: only those. What does not fit drops cameras from the end, never the curves;
+ * `overflow` counts them (they stay a pick in 「+」/「更换」). Custom keeps the user's arrangement (null).
  */
 export function templateLayout(
   template: LayoutTemplate,
   model: Pick<VizDataset, 'cameras' | 'streams'>,
   gridWidth: number,
-): { cells: CellContent[]; shape: GridShape } | null {
-  let cells: CellContent[];
+): { cells: CellContent[]; shape: GridShape; overflow: number } | null {
+  let cameras: CellContent[] = [];
+  let curves: CellContent[] = [];
   let cols: number;
   if (template === 'video') {
-    cells = cameraCells(model);
-    cols = Math.min(MAX_COLS, Math.max(1, cells.length));
+    cameras = cameraCells(model);
+    cols = cameras.length > SMALL_CELLS ? manyColumns(gridWidth) : Math.min(SMALL_MAX, Math.max(1, cameras.length));
   } else if (template === 'curve') {
-    cells = curveCells(model, false);
-    cols = cells.length > 1 ? 2 : 1;
+    curves = curveCells(model, false);
+    cols = curves.length > 1 ? 2 : 1;
   } else if (template === 'smart') {
-    cells = [...cameraCells(model), ...curveCells(model, true).slice(0, SMART_CURVES)];
-    cols = smartColumns(gridWidth);
+    cameras = cameraCells(model);
+    curves = curveCells(model, true).slice(0, SMART_CURVES);
+    cols = smartColumns(gridWidth, cameras.length + curves.length);
   } else {
     return null;
   }
-  const shape = shapeFor(cells.length, cols);
-  return { cells: fitCells(cells, shape), shape };
+  const n = cameras.length + curves.length;
+  const shape = shapeFor(n, cols, n > SMALL_CELLS ? MAX_ROWS : SMALL_MAX);
+  const room = Math.max(0, shape.cols * shape.rows - curves.length);
+  const shown = cameras.slice(0, room);
+  return { cells: fitCells([...shown, ...curves], shape), shape, overflow: cameras.length - shown.length };
 }
 
-/** Columns of the smart layout at a grid width. */
-export function smartColumns(gridWidth: number): number {
+/** Columns of the smart layout at a grid width, for `cells` cells. */
+export function smartColumns(gridWidth: number, cells = 0): number {
+  if (cells > SMALL_CELLS) return manyColumns(gridWidth);
   return gridWidth >= WIDE_GRID_PX ? 3 : 2;
+}
+
+function manyColumns(gridWidth: number): number {
+  return gridWidth >= WIDER_GRID_PX ? 4 : 3;
+}
+
+/** The grid widths the templates tell apart: a layout is redone only when the width crosses one. */
+export function widthClass(gridWidth: number): number {
+  if (gridWidth >= WIDER_GRID_PX) return WIDER_GRID_PX;
+  return gridWidth >= WIDE_GRID_PX ? WIDE_GRID_PX : WIDE_GRID_PX - 100;
+}
+
+/** Below this width (px) a cell's tools show icons only (design doc 19 §2.2). */
+export const NARROW_CELL_PX = 280;
+
+/** A cell's width in a grid of `cols` columns. */
+export function cellWidth(gridWidth: number, cols: number): number {
+  return (gridWidth - CELL_GAP_PX * (cols - 1)) / Math.max(1, cols);
 }
 
 /** A cell's height: about two thirds of its width, 160–420 px (design doc 18 §5.2). */
 export function cellHeight(gridWidth: number, cols: number): number {
-  const w = (gridWidth - CELL_GAP_PX * (cols - 1)) / Math.max(1, cols);
-  return Math.max(160, Math.min(420, Math.round(w * 0.66)));
+  return Math.max(160, Math.min(420, Math.round(cellWidth(gridWidth, cols) * 0.66)));
 }
 
 /** Resizes the grid keeping the arranged cells in order (empty ones dropped first). */
@@ -168,12 +202,12 @@ export function miniLayout(module: string | null, scope: FindingScope | null | u
     const curve = armStream(scope, model.streams);
     cells = [...(scoped ? [{ kind: 'video' as const, key: scoped }] : []), ...(curve ? [{ kind: 'curve' as const, key: curve }] : [])];
   } else {
-    cells = keys.slice(0, MAX_COLS).map((key) => ({ kind: 'video', key }));
+    cells = keys.slice(0, MINI_MAX_CELLS).map((key) => ({ kind: 'video', key }));
     if (!cells.length) {
       const curve = armStream(scope, model.streams);
       if (curve) cells = [{ kind: 'curve', key: curve }];
     }
   }
-  const shape = { cols: Math.max(1, Math.min(MAX_COLS, cells.length)), rows: 1 };
+  const shape = { cols: Math.max(1, Math.min(MINI_MAX_CELLS, cells.length)), rows: 1 };
   return { cells: fitCells(cells, shape), shape };
 }

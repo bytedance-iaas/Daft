@@ -2,18 +2,20 @@ import { Button, Select } from '@arco-design/web-react';
 import { IconClose, IconExpand, IconInfoCircle, IconPlus, IconShrink, IconSwap } from '@arco-design/web-react/icon';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VizDataset, VizEpisode } from '../../api/types';
-import { PALETTE } from '../../lib/vizCurves';
+import { CAMERA_PALETTE } from '../../lib/vizCurves';
 import {
   cellHeight,
   cellValid,
+  cellWidth,
   CELL_GAP_PX,
   fitCells,
   GRID_SIZES,
   gridKey,
+  NARROW_CELL_PX,
   parseGridKey,
   resizeCells,
-  smartColumns,
   templateLayout,
+  widthClass,
   type CellContent,
   type GridShape,
   type LayoutTemplate,
@@ -97,9 +99,17 @@ export function Player(props: PlayerProps) {
   return <PlayerView {...props} model={model.data} ep={episode.data} loadingNext={episode.data.index !== props.index} />;
 }
 
+/** The sizes offered, with the grid's own when a template made one that is not among them (2 × 3, 3 × 4). */
+function gridSizes(shape: GridShape): readonly GridShape[] {
+  if (GRID_SIZES.some((g) => g.cols === shape.cols && g.rows === shape.rows)) return GRID_SIZES;
+  return [...GRID_SIZES, shape].sort((a, b) => a.cols * a.rows - b.cols * b.rows || a.cols - b.cols);
+}
+
 export interface Layout {
   cells: CellContent[];
   shape: GridShape;
+  /** cameras a template left out (more than the grid holds); 0 once the user arranges the cells */
+  overflow?: number;
 }
 
 function PlayerView({
@@ -161,15 +171,16 @@ function PlayerView({
   const [focus, setFocus] = useState<number | null>(null);
   const [sideOpen, setSideOpen] = useState(sidebar);
   const [menu, setMenu] = useState<{ i: number; left: number; top: number } | null>(null);
-  const smartCols = smartColumns(gridW || 1200);
+  // the templates only tell a few widths apart: the grid is laid out again when the width crosses one
+  const wclass = widthClass(gridW || 1200);
   useEffect(() => {
     if (template === 'custom') return;
-    const next = templateLayout(template, model, template === 'smart' ? (smartCols === 3 ? 1200 : 900) : gridW || 1200);
+    const next = templateLayout(template, model, wclass);
     if (next) {
       setLayout(next);
       setMax(null);
     }
-  }, [template, model, smartCols, gridW]);
+  }, [template, model, wclass]);
   // cells the model no longer has (another dataset's layout) become empty
   const cells = useMemo(() => (layout ? layout.cells.map((c) => (cellValid(c, model) ? c : ({ kind: 'empty' } as CellContent))) : []), [layout, model]);
   const shape = layout?.shape ?? { cols: 1, rows: 1 };
@@ -248,8 +259,10 @@ function PlayerView({
     }
   };
 
-  const cameraColor = (key: string) => PALETTE[Math.max(0, model.cameras.findIndex((c) => c.key === key)) % PALETTE.length];
+  const cameraColor = (key: string) => CAMERA_PALETTE[Math.max(0, model.cameras.findIndex((c) => c.key === key)) % CAMERA_PALETTE.length];
   const rowH = cellHeight(gridW || 1200, max !== null ? 1 : shape.cols);
+  const narrow = max === null && cellWidth(gridW || 1200, shape.cols) < NARROW_CELL_PX;
+  const overflow = template !== 'custom' ? (layout?.overflow ?? 0) : 0;
   const focusedCell = focus !== null && focus < cells.length ? cells[focus] : null;
   const focusedStream = focusedCell?.kind === 'curve' ? focusedCell.key : null;
 
@@ -290,7 +303,7 @@ function PlayerView({
               }}
               aria-label={zh.viz.gridTitle}
             >
-              {GRID_SIZES.map((g) => (
+              {gridSizes(shape).map((g) => (
                 <Select.Option key={gridKey(g)} value={gridKey(g)}>
                   {zh.viz.grid(g.cols, g.rows)}
                 </Select.Option>
@@ -330,7 +343,7 @@ function PlayerView({
         <div className="vz-grid-wrap" ref={wrap}>
           {cells.length === 0 || (model.cameras.length === 0 && model.streams.length === 0) ? <div className="vz-skeleton">{zh.viz.noCells}</div> : null}
           <div
-            className="vz-grid"
+            className={`vz-grid${narrow ? ' is-narrow' : ''}`}
             style={{
               gridTemplateColumns: max !== null ? '1fr' : `repeat(${shape.cols}, minmax(0, 1fr))`,
               gridAutoRows: `${max !== null ? rowH * shape.rows + CELL_GAP_PX * (shape.rows - 1) : rowH}px`,
@@ -351,7 +364,7 @@ function PlayerView({
                       }}
                     >
                       <IconSwap />
-                      {zh.viz.cell.swap}
+                      <span className="t">{zh.viz.cell.swap}</span>
                     </button>
                     <button
                       type="button"
@@ -363,7 +376,7 @@ function PlayerView({
                       }}
                     >
                       {max === i ? <IconShrink /> : <IconExpand />}
-                      {max === i ? zh.viz.cell.restore : zh.viz.cell.expand}
+                      <span className="t">{max === i ? zh.viz.cell.restore : zh.viz.cell.expand}</span>
                     </button>
                     {full ? (
                       <button
@@ -435,6 +448,11 @@ function PlayerView({
               );
             })}
           </div>
+          {overflow > 0 ? (
+            <div className="vz-overflow" data-testid="vz-overflow">
+              {zh.viz.overflow(overflow)}
+            </div>
+          ) : null}
           {menu ? (
             <CellMenu
               at={{ left: menu.left, top: menu.top }}

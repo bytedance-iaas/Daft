@@ -38,6 +38,11 @@
 .vz-cell .vz-tools button:hover { background: rgba(29, 33, 41, 0.85); }
 .vz-cell.kind-curve .vz-tools button { background: var(--color-fill-2); color: var(--c-text-2); }
 .vz-cell.kind-curve .vz-tools button:hover { background: var(--c-border); }
+/* narrow cells (more than nine, design doc 19 §2.2): the tools keep their icons, the words go to the tooltip */
+.vz-grid.is-narrow .vz-tools .t { display: none; }
+.vz-grid.is-narrow .vz-tools button { padding: 0 5px; }
+.vz-grid.is-narrow .vz-cell .vz-cap { max-width: calc(100% - 96px); }
+.vz-overflow { margin-top: 8px; font-size: 12px; color: var(--c-text-3); }
 .vz-cell .vz-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: rgba(255, 255, 255, 0.85); font-size: 13px; line-height: 1.6; z-index: 1; pointer-events: none; }
 .vz-cell .vz-overlay.veil { background: rgba(15, 20, 27, 0.55); }
 .vz-cell .vz-overlay .why { display: block; margin-top: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.6); max-width: 420px; }

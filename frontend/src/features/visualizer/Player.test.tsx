@@ -1,7 +1,10 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CAMERA_PALETTE } from '../../lib/vizCurves';
 import { zh } from '../../locales/zh';
+import { db } from '../../mocks/db';
+import { DATASET_PROFILES, datasetDetail } from '../../mocks/world';
 import { renderWithProviders } from '../../test/render';
 import { Player } from './Player';
 
@@ -139,6 +142,32 @@ describe('Player (design doc 18 §5)', () => {
     // typing in the frame box never reaches the player's keys
     fireEvent.keyDown(frameInput(), { key: 'ArrowRight' });
     expect(frameInput().value).toBe('42');
+  });
+
+  it('lays out ten cameras and two curve groups in four columns on a wide grid, three on a narrower one (design doc 19 §2)', async () => {
+    const rh20t = DATASET_PROFILES.find((p) => p.name === 'rh20t_cfg1')!;
+    db.datasets.push(datasetDetail('ds_rh20t', rh20t, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));
+    const source = { scope: 'dataset' as const, id: 'ds_rh20t' };
+    // jsdom lays nothing out: the grid is 1200 px wide by default, under the four-column width
+    const first = renderWithProviders(<Player source={source} index={0} />);
+    let player = await ready();
+    await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(10));
+    expect(player.querySelectorAll('.vz-cell.kind-curve')).toHaveLength(2);
+    expect((player.querySelector('.vz-grid') as HTMLElement).style.gridTemplateColumns).toBe('repeat(3, minmax(0, 1fr))');
+    expect(screen.queryByTestId('vz-overflow')).toBeNull();
+    // sixteen colours: the tenth camera's dot is not the second's
+    const dots = [...player.querySelectorAll('.vz-cell.kind-video .vz-cap .dot')].map((d) => (d as HTMLElement).style.color);
+    expect(new Set(dots).size).toBe(10);
+    expect(CAMERA_PALETTE).toHaveLength(16);
+    first.unmount();
+    // a 1400 px grid: four columns, three rows, and the tools of a 340 px cell keep their words
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1424);
+    renderWithProviders(<Player source={source} index={0} />);
+    player = await ready();
+    await waitFor(() => expect((player.querySelector('.vz-grid') as HTMLElement).style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))'));
+    expect(player.querySelectorAll('.vz-cell')).toHaveLength(12);
+    expect(player.querySelector('.vz-grid')?.classList.contains('is-narrow')).toBe(false);
+    width.mockRestore();
   });
 
   it('draws an mcap JPEG camera from its frame pack and plays the H.264 one as a video', async () => {

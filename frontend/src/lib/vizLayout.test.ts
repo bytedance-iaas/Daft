@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VizCamera, VizStream } from '../api/types';
-import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, gridKey, miniLayout, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout } from './vizLayout';
+import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
 
 function cam(key: string): VizCamera {
   return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null };
@@ -18,8 +18,10 @@ const MODEL = {
 describe('vizLayout', () => {
   it('reads and writes grid keys', () => {
     expect(parseGridKey('3x2')).toEqual({ cols: 3, rows: 2 });
-    expect(parseGridKey('4x1')).toBeNull();
+    expect(parseGridKey('4x4')).toEqual({ cols: 4, rows: 4 });
+    expect(parseGridKey('5x1')).toBeNull();
     expect(gridKey({ cols: 2, rows: 2 })).toBe('2x2');
+    expect(GRID_SIZES.map(gridKey)).toEqual(['1x1', '2x1', '2x2', '3x2', '3x3', '4x3', '4x4']);
   });
 
   it('lays out the smart template by the grid width', () => {
@@ -40,11 +42,47 @@ describe('vizLayout', () => {
     expect(smartColumns(999)).toBe(2);
   });
 
-  it('keeps at most nine cells and shrinks the grid for few contents', () => {
-    const many = { cameras: Array.from({ length: 10 }, (_, i) => cam(`cam${i}`)), streams: [stream('arm')] };
-    const big = templateLayout('smart', many, 1400)!;
-    expect(big.shape).toEqual({ cols: 3, rows: 3 });
-    expect(big.cells).toHaveLength(9);
+  it('lays out more than nine cells in four columns on a wider grid, three otherwise (design doc 19 §2.2)', () => {
+    const cams = (n: number) => Array.from({ length: n }, (_, i) => cam(`cam${i}`));
+    // RH20T: ten cameras and two arm groups
+    const rh20t = { cameras: cams(10), streams: [stream('left_arm'), stream('right_arm')] };
+    const wide = templateLayout('smart', rh20t, 1400)!;
+    expect(wide.shape).toEqual({ cols: 4, rows: 3 });
+    expect(wide.cells.filter((c) => c.kind === 'video')).toHaveLength(10);
+    expect(wide.cells.slice(10)).toEqual([
+      { kind: 'curve', key: 'left_arm' },
+      { kind: 'curve', key: 'right_arm' },
+    ]);
+    expect(wide.overflow).toBe(0);
+    const narrow = templateLayout('smart', rh20t, 900)!;
+    expect(narrow.shape).toEqual({ cols: 3, rows: 4 });
+    expect(narrow.overflow).toBe(0);
+    expect(smartColumns(1239, 12)).toBe(3);
+    expect(smartColumns(1240, 12)).toBe(4);
+    // more than the grid holds: the curves stay, the last cameras wait in 「更换」
+    const sixteen = templateLayout('smart', { cameras: cams(16), streams: [stream('arm'), stream('grip')] }, 1400)!;
+    expect(sixteen.shape).toEqual({ cols: 4, rows: 4 });
+    expect(sixteen.cells.filter((c) => c.kind === 'video').map((c) => (c.kind === 'video' ? c.key : ''))).toEqual(cams(14).map((c) => c.key));
+    expect(sixteen.cells.filter((c) => c.kind === 'curve')).toHaveLength(2);
+    expect(sixteen.overflow).toBe(2);
+    // nine cells or fewer keep the phase-one grid: a narrow 2 × 3 holds four cameras and the two groups
+    const seven = templateLayout('smart', { cameras: cams(5), streams: [stream('arm'), stream('grip')] }, 900)!;
+    expect(seven.shape).toEqual({ cols: 2, rows: 3 });
+    expect(seven.cells.filter((c) => c.kind === 'curve')).toHaveLength(2);
+    expect(seven.overflow).toBe(1);
+    // video only: three columns up to nine cameras, four (or three) beyond
+    expect(templateLayout('video', { cameras: cams(9), streams: [] }, 1400)!.shape).toEqual({ cols: 3, rows: 3 });
+    expect(templateLayout('video', { cameras: cams(12), streams: [] }, 1400)!.shape).toEqual({ cols: 4, rows: 3 });
+    const twenty = templateLayout('video', { cameras: cams(20), streams: [] }, 1000)!;
+    expect(twenty.shape).toEqual({ cols: 3, rows: 4 });
+    expect(twenty.overflow).toBe(8);
+  });
+
+  it('tells three grid widths apart', () => {
+    expect([widthClass(800), widthClass(999), widthClass(1000), widthClass(1239), widthClass(1240), widthClass(2000)]).toEqual([900, 900, 1000, 1000, 1240, 1240]);
+  });
+
+  it('shrinks the grid for few contents', () => {
     const one = templateLayout('smart', { cameras: [cam('head')], streams: [] }, 1400)!;
     expect(one.shape).toEqual({ cols: 1, rows: 1 });
     const none = templateLayout('smart', { cameras: [], streams: [] }, 1400)!;

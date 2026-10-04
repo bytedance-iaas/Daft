@@ -187,6 +187,13 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     （质检按站点缺省读）；可视化页选它时点「去确认映射」进详情并直接打开这个抽屉（`?mcap=1`）。站点开了本地挂载输入时（`window.__CURATOR_FEATURES__.local_input`，Daemon 目前不注入，
     调试时在控制台设），来源多一个「本地挂载路径 experimental」。接真 Daemon：按 `backend/daemon/viz/README.md` 手动验证第 10 步造 `viz_umi`（GenRobot 式）、`viz_abc`（ABC-130k 式）两份本地 mcap，在控制台设好上面的开关后选「本地挂载路径」填它们的绝对路径走同样的流程（已登记过的目录复制一份、换个名字再添加）。
 
+15. **相机多于 9 路（设计 19 §2，F14.1，要真 Daemon）**：在 `backend/` 下用 `../.venv/bin/python scripts/make_cams_dataset.py $L/inputs/cams_10 --cameras 10 --fps 10 --frames 200` 与
+    `… $L/inputs/cams_16 --cameras 16 --fps 30 --frames 300` 造两份（`L` 是 `curator-daemon-local` 的本地数据根，每帧烧着相机名、帧号与时刻），登记成本地数据集。
+    可视化页选 cams_10：左栏展开时网格是 3 × 4（格子数下拉写「3 × 4」），十路相机在前、两组曲线在最后一行；点「‹」收起左栏，网格宽过 1240 px 后变 4 × 3，相机色点十种颜色各不相同。
+    选 cams_16：智能展示是 4 × 4，十四路相机加两组曲线，网格下面写「另有 2 路相机没放上来，在格子的「更换」里选」，「更换」的菜单里能选到 cam_14、cam_15；
+    「布局模版」换「仅展示视频」后十六路全上屏、提示消失。格子数下拉有 4 × 3、4 × 4；把 cams_10 手动切到 4 × 4 再把窗口拉窄，格子窄于 280 px 时右上角的工具只剩图标（悬停有文字）。
+    播放时各格烧着的帧号一致，控制台里 `__vizClock.drift()` 每路都远小于一帧。迷你版不受影响，仍是一行至多三格。
+
 ## 契约缺口（C4 1.9.0）与前端的做法
 
 W10 报告的缺口大多已排进契约的 1.5 待修订（`docs/contracts/SUMMARY.md` §九）。在那之前前端这样做：

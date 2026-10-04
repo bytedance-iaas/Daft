@@ -330,6 +330,22 @@ export const DATASET_PROFILES: DatasetProfile[] = [
     profile: null,
   },
   {
+    // design doc 19 §2: RH20T's ten cameras (cam_<serial>), more than the phase-one 3 × 3 grid holds; not seeded,
+    // the tests that need it add it
+    uri: 'tos://pai-kit-datasets/rh20t/rh20t_cfg1',
+    source: 'tos',
+    name: 'rh20t_cfg1',
+    format: { kind: 'lerobot', version: 'v2', supported: true, detail: 'LeRobot v2, 30 episodes, 10 cameras' },
+    episodes: 30,
+    cameras: ['cam_036422060215', 'cam_037522062165', 'cam_038522062288', 'cam_045322071843', 'cam_104122061850',
+      'cam_104122062295', 'cam_104122062823', 'cam_104122063550', 'cam_104422070011', 'cam_f0172289'],
+    fps: 10,
+    robotType: 'ur5',
+    withTask: 30,
+    missing: [],
+    profile: null,
+  },
+  {
     uri: 'tos://pai-kit-datasets/raw/warehouse_rrd',
     source: 'tos',
     name: 'warehouse_rrd',
@@ -553,7 +569,7 @@ export function datasetFormatOf(f: PreflightResult['format']): DatasetDetail['fo
   return f.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2';
 }
 
-function datasetDetail(
+export function datasetDetail(
   id: string,
   p: DatasetProfile,
   now: number,
