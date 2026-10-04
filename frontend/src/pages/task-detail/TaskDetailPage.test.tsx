@@ -45,7 +45,7 @@ describe('任务详情 (07 §4.2)', () => {
     for (const t of ['50', '41', '7', '2', '10', '82%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
   });
 
-  it('shows episode pipeline results and opens a completed episode immediately', async () => {
+  it('shows episode pipeline results; an episode opens in the mini player', async () => {
     const seen = recordRequests();
     const { user } = renderApp(`/tasks/${MAIN}`);
     const card = await screen.findByTestId('pipeline-episodes');
@@ -57,10 +57,11 @@ describe('任务详情 (07 §4.2)', () => {
     const page = seen.find((r) => r.path === `/tasks/${MAIN}/pipeline/episodes`);
     expect(page?.query.get('limit')).toBe('20');
     expect(card.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
+    // the link opens the episode in the visualizer; no card of its records below (2026-10-04)
     await user.click(within(card).getByRole('button', { name: 'ep 49' }));
-    const detail = await screen.findByTestId('pipeline-episode-detail');
-    expect(detail).toHaveTextContent('漏斗保留');
-    expect(detail).toHaveTextContent('task_success');
+    const mini = await screen.findByTestId('vz-mini');
+    expect(mini).toHaveTextContent('ep 49');
+    expect(screen.queryByTestId('pipeline-episode-detail')).toBeNull();
   });
 
   it('Episode 流水线 keeps its rows while it refreshes; the spinner turns in the header, not in the body (fourth round)', async () => {

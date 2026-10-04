@@ -1,6 +1,6 @@
-import { Button, Card, Select, Space, Table, Tag, Tooltip, Typography } from '@arco-design/web-react';
+import { Button, Card, Dropdown, Menu, Select, Space, Table, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
-import { IconPlus } from '@arco-design/web-react/icon';
+import { IconDown, IconPlus } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -15,9 +15,10 @@ import { SearchInput } from '../../components/SearchInput';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
 import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
-import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
+import { VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { grouped } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
+import { rerunViewerUrl } from '../../lib/rerun';
 import { zh } from '../../locales/zh';
 
 /** The fingerprint state; ``short`` (the list's narrow column) says 有变化 and keeps the rest for the tooltip. */
@@ -50,6 +51,42 @@ export function MappingLine({ d }: { d: Pick<DatasetItem, 'viz_mapping'> }) {
     <div style={{ fontSize: 12, color: 'var(--c-warning)' }} data-testid="mapping-line">
       {zh.mcap.listPending}
     </div>
+  );
+}
+
+/**
+ * A row's 「更多」 (requester, 2026-10-04: a row shows only 可视化, 新建任务 and 更多): 可视化（旧） opens the
+ * ReRun viewer in a new tab (disabled for a locally mounted dataset, saying why), 「mcap 配置」 for an
+ * mcap dataset, and a red 删除.
+ */
+function MoreOps({ d, onMapping, onDelete }: { d: DatasetItem; onMapping: () => void; onDelete: () => void }) {
+  const legacy = rerunViewerUrl(d);
+  return (
+    <Dropdown
+      trigger="click"
+      position="br"
+      droplist={
+        <Menu onClickMenuItem={(key) => (key === 'mcap' ? onMapping() : key === 'delete' ? onDelete() : undefined)}>
+          <Menu.Item key="legacy" disabled={!legacy}>
+            {legacy ? (
+              <a href={legacy} target="_blank" rel="noopener noreferrer" title={zh.datasets.visualizeLegacyTitle}>
+                {zh.datasets.visualizeLegacy}
+              </a>
+            ) : (
+              <span title={zh.datasets.visualizeLocal}>{zh.datasets.visualizeLegacy}</span>
+            )}
+          </Menu.Item>
+          {d.viz_mapping ? <Menu.Item key="mcap">{zh.mcap.entry}</Menu.Item> : null}
+          <Menu.Item key="delete">
+            <span style={{ color: 'var(--c-danger)' }}>{zh.datasets.delete}</span>
+          </Menu.Item>
+        </Menu>
+      }
+    >
+      <Button type="text" size="small" aria-label={zh.datasets.moreOf(d.name)}>
+        {zh.common.more} <IconDown />
+      </Button>
+    </Dropdown>
   );
 }
 
@@ -130,24 +167,15 @@ export function DatasetListPage() {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
-      width: 410,
-      // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page. An mcap
-      // dataset adds 「mcap 配置」 (design doc 18 §6.4).
+      width: 230,
+      // 可视化 / 新建任务 / 更多 (requester, 2026-10-04); 重新检查 stays on the detail page.
       render: (_: unknown, d) => (
         <Space size={4}>
           <VisualizeButton d={d} />
-          <LegacyVisualizeButton d={d} />
-          {d.viz_mapping ? (
-            <Button type="text" size="small" onClick={() => setMapping(d)}>
-              {zh.mcap.entry}
-            </Button>
-          ) : null}
           <Button type="text" size="small" disabled={d.format === 'unsupported'} onClick={() => actions.newTask(d)}>
             {zh.datasets.newTaskShort}
           </Button>
-          <Button type="text" size="small" status="danger" onClick={() => actions.remove(d)}>
-            {zh.datasets.delete}
-          </Button>
+          <MoreOps d={d} onMapping={() => setMapping(d)} onDelete={() => actions.remove(d)} />
         </Space>
       ),
     },
@@ -193,7 +221,7 @@ export function DatasetListPage() {
             loading={list.isLoading}
             columns={columns}
             data={list.data?.items ?? []}
-            scroll={{ x: 1705 }}
+            scroll={{ x: 1525 }}
             noDataElement={<Typography.Text type="secondary">{q || format || check ? zh.datasets.emptyFiltered : zh.datasets.empty}</Typography.Text>}
             pagination={{
               current: page,

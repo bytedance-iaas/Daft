@@ -170,8 +170,6 @@ export function EpisodeRail({
       </div>
       <div className="vz-left-foot">
         <span>{datasetId ? zh.vizPage.count(total, items.length, !!q) : ''}</span>
-        <span className="spacer" />
-        <span>{zh.vizPage.clickHint}</span>
       </div>
     </aside>
   );

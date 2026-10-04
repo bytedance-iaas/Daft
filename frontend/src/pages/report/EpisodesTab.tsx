@@ -209,7 +209,23 @@ export function askable(reg: ModuleRegistry | undefined, item: { module: string;
   return reviewLinesOf(spec).some((id) => lines.includes(id));
 }
 
-function SummaryCard({ taskId, view, readOnly, review, onOpen }: { taskId: string; view: EpisodeView; readOnly: boolean; review: boolean; onOpen: (index: number) => void }) {
+function SummaryCard({
+  taskId,
+  view,
+  readOnly,
+  review,
+  onOpen,
+  onOpenAll,
+}: {
+  taskId: string;
+  view: EpisodeView;
+  readOnly: boolean;
+  review: boolean;
+  /** the mini player on a finding */
+  onOpen: (index: number) => void;
+  /** the mini player on the whole episode */
+  onOpenAll: () => void;
+}) {
   const reg = useModules();
   // A findings revision (C2 2.0, design doc 17 §5.4): every finding by level, the questions on them; the reasons
   // left are the ones no finding stands for (an execution error, a discard, a relabel waiting to be judged).
@@ -226,7 +242,17 @@ function SummaryCard({ taskId, view, readOnly, review, onOpen }: { taskId: strin
     return `/tasks/${taskId}/adjudication?${appeal ? 'tab=appeals&' : ''}source=${encodeURIComponent(r.module)}`;
   };
   return (
-    <Card title={E().summary} size="small" data-testid="episode-summary">
+    <Card
+      title={E().summary}
+      size="small"
+      data-testid="episode-summary"
+      // 可视化 sits on the verdict's card (requester, 2026-10-04: no card of its own)
+      extra={
+        <Button type="primary" size="mini" title={zh.viz.mini.openTitle} onClick={onOpenAll} data-testid="open-mini">
+          {zh.viz.mini.open}
+        </Button>
+      }
+    >
       <Space direction="vertical" style={{ width: '100%' }}>
         <Space wrap>
           <Tag color={LIST_COLOR[view.list]} data-testid="episode-list">
@@ -422,26 +448,11 @@ export function EpisodesTab({
   else if (view.isLoading) body = <Spin style={{ display: 'block', margin: '48px auto' }} />;
   else if (!v) body = <Alert type="error" content={errorMessage(view.error)} data-testid="episode-error" />;
   else {
-    const origin = v.videos[0]?.origin;
     // The EEF module's crops are shown in its block, next to the answer they belong to (F5.12).
     const evidence = (v.evidence ?? []).filter((e) => e.module !== 'eef_video_consistency');
     body = (
       <div className="card-gap" data-testid="episode-view">
-        <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onOpen={(i) => setMini({ focus: i })} />
-        <Card
-          title={zh.viz.mini.open}
-          size="small"
-          extra={
-            <Button type="primary" size="small" title={zh.viz.mini.openTitle} onClick={() => setMini({ focus: null })} data-testid="open-mini">
-              {zh.viz.mini.open}
-            </Button>
-          }
-        >
-          <span className="muted" style={{ fontSize: 12 }}>
-            {zh.viz.mini.openTitle}
-            {origin ? ` · ${zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}` : ''}
-          </span>
-        </Card>
+        <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onOpen={(i) => setMini({ focus: i })} onOpenAll={() => setMini({ focus: null })} />
         {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
         <Card title={E().evidence} size="small">
           {evidence.length ? (

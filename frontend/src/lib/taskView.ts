@@ -49,40 +49,6 @@ export function currentStage<T extends { state: string }>(stages: readonly T[]):
  * module's, first (design doc 14). */
 export const FUNNEL_STAGES: readonly string[] = ['integrity', 'numeric', 'frame', 'vlm'];
 
-/** A block of a two-block run (design doc 17 §3) as its progress card shows it. */
-export interface BlockStages {
-  id: string;
-  /** the per-episode stages, one chain: episodes handed on one by one */
-  chain: StageProgress[];
-  /** autolabel, run once over the unlabeled episodes before the block's checks */
-  before: StageProgress[];
-  /** the full-set steps (dedup, the skill profile): once the block's earlier stages are done */
-  fullSet: StageProgress[];
-}
-
-/**
- * The stages of a two-block run (StageProgress.block, C4 2.2.0) by block, CPU first, and the stages after both
- * (the verdict, the report, the export); none of a funnel run's stages has a block.
- */
-export function splitBlocks(stages: readonly StageProgress[]): { blocks: BlockStages[]; rest: StageProgress[] } {
-  const byId = new Map<string, BlockStages>();
-  const rest: StageProgress[] = [];
-  for (const s of stages) {
-    if (!s.block) {
-      rest.push(s);
-      continue;
-    }
-    const b = byId.get(s.block) ?? { id: s.block, chain: [], before: [], fullSet: [] };
-    byId.set(s.block, b);
-    if (s.full_set) b.fullSet.push(s);
-    else if (s.id === 'autolabel') b.before.push(s);
-    else b.chain.push(s);
-  }
-  const order = ['cpu', 'vlm'];
-  const blocks = [...byId.values()].sort((a, b) => (order.indexOf(a.id) + 1 || 9) - (order.indexOf(b.id) + 1 || 9));
-  return { blocks, rest };
-}
-
 /** A stage's own name, as the CLI output, the log filter and the execution plan use it. */
 export function stageLabel(id: string): string {
   return zh.stage[id] ?? id;

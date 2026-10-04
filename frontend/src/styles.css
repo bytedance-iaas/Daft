@@ -891,6 +891,55 @@ button.video-placeholder {
   margin-top: 10px;
 }
 
+/* Episode 明细's module cards (requester, 2026-10-04): one size for the body - the facts, the lines,
+ * the lists and the tables are 13px, a grey note only changes colour - and every part flush with the
+ * card's left edge: the tables lose their header shading and the inset of their first and last columns. */
+.episode-block > .arco-card-body {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.episode-block > .arco-card-body .muted {
+  font-size: inherit;
+}
+
+.episode-block .arco-card-header-extra {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.episode-block .arco-card-header-title .muted {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.episode-block .arco-table-th,
+.episode-block .arco-table-td {
+  font-size: 13px;
+}
+
+.episode-block .arco-table-th {
+  background: transparent;
+  color: var(--c-text-3);
+  font-weight: 400;
+}
+
+.episode-block .arco-table-th-item,
+.episode-block .arco-table-td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.episode-block .arco-table-col-first .arco-table-th-item,
+.episode-block .arco-table-td.arco-table-col-first {
+  padding-left: 0;
+}
+
+.episode-block .arco-table-th:last-child .arco-table-th-item,
+.episode-block .arco-table-td:last-child {
+  padding-right: 0;
+}
+
 .episode-line,
 .episode-reason {
   font-size: 13px;
@@ -1318,11 +1367,3 @@ button.video-placeholder {
   }
 }
 
-/* 分档进度 of a two-block run: a card per block, the full-set steps on a row of their own. */
-.block-whole {
-  margin-top: 12px;
-}
-
-.block-whole .section-sub {
-  margin-bottom: 4px;
-}

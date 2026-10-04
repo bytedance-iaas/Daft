@@ -10,6 +10,7 @@ import { qk } from '../../api/queries';
 import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
+import { OneLine } from '../../components/OneLine';
 import { EefConclusion, EefDatasetRecord, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
@@ -439,7 +440,7 @@ function IntegrityBlock({ record }: BlockProps) {
   const tone = record.verdict === 'fail' ? 'bad' : record.verdict === 'abstain' ? 'warn' : undefined;
   return (
     <div data-testid="episode-integrity">
-      {str(d.reason) ? <Reason text={str(d.reason)!.replace(/^需要人工裁决：/, '')} tone={tone} /> : <div className="muted">{K.none}</div>}
+      {str(d.reason) ? <Reason text={str(d.reason)!.replace(/^需要人工裁决：/, '')} tone={tone} /> : <div className="episode-line">{K.none}</div>}
       {findings.length ? (
         <Table
           rowKey={(r: IntegrityFinding) => `${r.code}-${r.file ?? ''}-${r.camera ?? ''}-${r.message}`}
@@ -465,8 +466,8 @@ function IntegrityBlock({ record }: BlockProps) {
             data={files}
             data-testid="integrity-files"
             columns={[
-              { title: K.cols.file, dataIndex: 'file', render: (v: string) => <span className="mono">{v}</span> },
-              { title: K.cols.camera, dataIndex: 'camera', width: 90, render: (v?: string) => v ?? '—' },
+              { title: K.cols.file, dataIndex: 'file', render: (v: string) => <span className="mono" style={{ overflowWrap: 'anywhere' }}>{v}</span> },
+              { title: K.cols.camera, dataIndex: 'camera', width: 190, render: (v?: string) => <OneLine text={v ?? '—'} /> },
               { title: K.cols.size, dataIndex: 'size', width: 100, align: 'right' as const, render: (v?: number) => (v == null ? '—' : v >= 1e6 ? `${(v / 1e6).toFixed(1)} MB` : `${(v / 1e3).toFixed(1)} KB`) },
               { title: K.cols.count, dataIndex: 'frames', width: 80, align: 'right' as const, render: (_: unknown, r: IntegrityFile) => r.frames ?? r.rows ?? '—' },
               { title: K.cols.crc, dataIndex: 'crc', width: 70, render: (v?: string | null) => (v ? '✓' : '—') },

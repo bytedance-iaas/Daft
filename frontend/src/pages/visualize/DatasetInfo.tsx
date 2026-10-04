@@ -100,9 +100,6 @@ export function DatasetInfo({ datasetId, model, player }: { datasetId: string; m
       bodyStyle={{ padding: 0 }}
       data-testid="vz-info"
     >
-      <p className="muted" style={{ margin: 0, padding: '8px 16px', borderBottom: '1px solid var(--c-border)' }}>
-        {zh.vizPage.infoHint}
-      </p>
       <div className="dsinfo">
         <div className="tree">
           {model.field_tree.map((n) => (

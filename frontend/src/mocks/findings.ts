@@ -315,6 +315,17 @@ export function findingsPlan(): Plan {
   } as Plan;
 }
 
+/** A finished stage's streaming activity: the last batch, the time per episode, its run (minutes ago). */
+function lane(now: number, last: number, mean: number, from: number, to: number): NonNullable<StageProgress['pipeline']> {
+  return {
+    inflight: 0, queued: 0, capacity: 8, dispatches: Math.ceil(last / 8),
+    recent: [{ number: Math.ceil(last / 8), count: 2, episodes: [last - 2, last - 1], at: now - to * MIN }],
+    started_at: now - from * MIN, finished_at: now - to * MIN, updated_at: now - to * MIN,
+    processing: { count: last, total_s: Math.round(last * mean), mean_s: mean, min_s: mean / 2, max_s: mean * 3 },
+    busy: [{ start: now - from * MIN, end: now - to * MIN }], held_by_downstream: false,
+  } as NonNullable<StageProgress['pipeline']>;
+}
+
 /** The findings task: the main task's dataset and selection, a finished two-block run (one revision). */
 export function findingsTask(now: number): Task {
   const blocks = (s: StageProgress, block: 'cpu' | 'vlm', fullSet = false): StageProgress => ({ ...s, block, ...(fullSet ? { full_set: true } : {}) });
@@ -333,11 +344,12 @@ export function findingsTask(now: number): Task {
     total: 50,
     runId: '20260930-091502',
     stages: [
-      blocks(stage('numeric', 'succeeded', 50, 50, 9), 'cpu'),
-      blocks(stage('frame', 'succeeded', 50, 50, 146), 'cpu'),
+      // the per-episode stages report their streaming activity, as the Daemon's two blocks do (C4 1.18)
+      blocks(stage('numeric', 'succeeded', 50, 50, 9, { pipeline: lane(now, 50, 0.18, 170, 162) }), 'cpu'),
+      blocks(stage('frame', 'succeeded', 50, 50, 146, { pipeline: lane(now, 49, 2.9, 170, 146) }), 'cpu'),
       blocks(stage('dedup', 'succeeded', 50, 50, 12), 'cpu', true),
       blocks(stage('autolabel', 'succeeded', 22, 22, 46), 'vlm'),
-      blocks(stage('vlm', 'completed_with_errors', 50, 50, 560, { note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑' }), 'vlm'),
+      blocks(stage('vlm', 'completed_with_errors', 50, 50, 560, { note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑', pipeline: lane(now, 50, 11.2, 169, 158) }), 'vlm'),
       blocks(stage('profile', 'succeeded', 50, 50, 140), 'vlm', true),
       stage('final', 'succeeded', 1, 1, 1),
       stage('export', 'succeeded', 41, 41, 64),

@@ -164,9 +164,12 @@ describe('mcap 配置 of a registered dataset (design doc 18 §6.4 step 5–7, F
     expect(within(row('warehouse_mcap')).getByRole('button', { name: '可视化' })).toBeDisabled();
     // a task still starts on it: the checks read it with the site's defaults
     expect(within(row('warehouse_mcap')).getByRole('button', { name: '新建任务' })).toBeEnabled();
-    // LeRobot rows have no mcap entry
-    expect(within(row('droid_100')).queryByRole('button', { name: zh.mcap.entry })).toBeNull();
-    await user.click(within(row('warehouse_mcap')).getByRole('button', { name: zh.mcap.entry }));
+    // the entry is in 更多; LeRobot rows have none
+    await user.click(within(row('droid_100')).getByRole('button', { name: '更多操作：droid_100' }));
+    const menu = await waitFor(() => document.querySelector('.arco-dropdown-menu') as HTMLElement);
+    expect(within(menu).queryByText(zh.mcap.entry)).toBeNull();
+    await user.click(within(row('warehouse_mcap')).getByRole('button', { name: '更多操作：warehouse_mcap' }));
+    await user.click(await screen.findByText(zh.mcap.entry));
     const drawer = await findDrawer('mcap 配置 · warehouse_mcap');
     expect(await within(drawer).findByTestId('mcap-current')).toHaveTextContent(zh.mcap.none);
     await within(drawer).findByTestId('mcap-table', {}, { timeout: 5000 });

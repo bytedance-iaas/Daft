@@ -66,7 +66,6 @@ export function VisualizePage() {
         crumbs={[{ label: zh.nav.datasets, to: '/datasets' }, { label: zh.vizPage.title }]}
         title={zh.vizPage.title}
         docTitle={item ? `${zh.vizPage.title} · ${item.name}${current !== null ? ` · ep ${current}` : ''}` : zh.vizPage.title}
-        description={zh.vizPage.desc}
         extra={
           <Space>
             <Button disabled={!datasetId || item?.format === 'unsupported'} onClick={() => navigate(`/tasks/new?dataset_id=${encodeURIComponent(datasetId ?? '')}`)}>

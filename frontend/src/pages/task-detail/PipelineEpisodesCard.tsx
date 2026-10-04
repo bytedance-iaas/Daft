@@ -4,11 +4,9 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
-import { useModules } from '../../api/queries';
 import type { operations } from '../../api/schema';
 import type { PipelineEpisode, Task } from '../../api/types';
 import { rowStages, rowState } from '../../lib/pipelineRow';
-import { recordVerdict } from '../../lib/records';
 
 type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
 import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
@@ -35,16 +33,15 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
 /**
  * Episode 流水线: the latest episodes through the funnel (PIPELINE_PAGE a page), refetched every 3 s while the task runs.
  * A refetch (or a new key when the task's state or revision changes) keeps the rows on screen and
- * only turns the spinner in the header: swapping the table for a spinner made the page jump.
+ * only turns the spinner in the header: swapping the table for a spinner made the page jump. An
+ * episode's link opens it in the mini player (requester, 2026-10-04: no card of its records below).
  */
 /** Rows a page (sixth round: 20, was 30 - the page grew too long). */
 export const PIPELINE_PAGE = 20;
 
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
   const [mini, setMini] = useState<number | null>(null);
-  const reg = useModules();
   const live = !isTerminalState(task.state) || Boolean(task.active_subtask);
   const page = useQuery({
     queryKey: ['task', task.id, 'pipeline-episodes', before, task.state, task.result_rev,
@@ -55,17 +52,6 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     enabled: Boolean(task.started_at),
     refetchInterval: live && before === null ? 3000 : false,
     placeholderData: keepPreviousData,
-  });
-  const detail = useQuery({
-    queryKey: ['task', task.id, 'pipeline-episode', selected, task.state, task.result_rev,
-      Boolean(task.active_subtask)],
-    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/pipeline/episodes/{index}', {
-      params: { path: { id: task.id, index: selected! } },
-    }))) as PipelineEpisode,
-    enabled: selected !== null,
-    refetchInterval: live && selected !== null ? 3000 : false,
-    // the same episode keeps its record while the key moves on; another one starts empty
-    placeholderData: (previous, query) => (query?.queryKey[3] === selected ? previous : undefined),
   });
   const rows = page.data?.items ?? [];
   // the funnel's first layer sees every selected episode (data integrity when selected, else numeric)
@@ -96,7 +82,9 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
             data={rows}
             columns={[
               { title: copy.columnEpisode, dataIndex: 'episode_index', render: (ep: number) => (
-                <Button type="text" size="mini" onClick={() => setSelected(ep)}>{copy.episode(ep)}</Button>
+                <Button type="text" size="mini" title={zh.viz.mini.openTitle} onClick={() => setMini(ep)} data-testid={`pipeline-open-mini-${ep}`}>
+                  {copy.episode(ep)}
+                </Button>
               ) },
               { title: copy.columnStage, dataIndex: 'last_stage', render: (_: unknown, row: PipelineEpisode) => rowStages(row) },
               ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
@@ -124,43 +112,6 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
       ) : page.isLoading ? (
         <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>{zh.common.loading}</div>
       ) : <Empty description={copy.empty} />}
-      {selected !== null ? (
-        <Card
-          size="small"
-          title={copy.detailTitle(selected)}
-          extra={
-            <Space size={8}>
-              <Refreshing on={detail.isFetching} testId="pipeline-episode-refreshing" />
-              <Button type="primary" size="mini" title={zh.viz.mini.openTitle} onClick={() => setMini(selected)} data-testid="pipeline-open-mini">
-                {zh.viz.mini.open}
-              </Button>
-              <Button type="text" size="mini" onClick={() => setSelected(null)}>{copy.collapse}</Button>
-            </Space>
-          }
-          style={{ marginTop: 14 }}
-          data-testid="pipeline-episode-detail"
-        >
-          {detail.isLoading ? <span className="muted">{zh.common.loading}</span> : detail.data ? (
-            <>
-              <Typography.Paragraph>
-                <Tag color={color(detail.data)}>{rowState(detail.data)}</Tag>
-                {detail.data.verdict_reason ? ` ${detail.data.verdict_reason}` : ''}
-              </Typography.Paragraph>
-              {detail.data.processing_s != null ? <Typography.Paragraph type="secondary">
-                {copy.processingTotal}：{detail.data.processing_s.toFixed(2)} s
-              </Typography.Paragraph> : null}
-              {Object.entries(detail.data.modules ?? {}).map(([module, record]) => (
-                <div key={module} style={{ marginBottom: 10 }}>
-                  <b>{module}</b> <Tag>{recordVerdict(record, reg.data)}</Tag>
-                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, margin: '4px 0' }}>
-                    {JSON.stringify(record.details, null, 2)}
-                  </pre>
-                </div>
-              ))}
-            </>
-          ) : <Typography.Text type="secondary">{copy.unavailable}</Typography.Text>}
-        </Card>
-      ) : null}
       {mini !== null ? (
         <MiniPlayerModal
           taskId={task.id}

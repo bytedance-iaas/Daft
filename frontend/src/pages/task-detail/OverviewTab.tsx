@@ -15,7 +15,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, splitBlocks, stageLabel, subtaskLabel, type BlockStages, type StageView } from '../../lib/taskView';
+import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel, type StageView } from '../../lib/taskView';
 import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
@@ -103,22 +103,23 @@ function SubtaskTag({ task, subtasks }: { task: Task; subtasks: readonly Subtask
 /**
  * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
  * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
- * runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the funnel
- * stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart and the
- * other stages keep their bars. A two-block run (design doc 17 §5.3) has its blocks on cards of their
- * own (BlockCard); this card then has the stages after them (`stages`, 判决与交付).
+ * runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the
+ * per-episode stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart
+ * (the integrity strip, a card per stage, the run timeline) and the other stages keep their bars. A
+ * two-block run (design doc 17 §5.3) is shown the same way (requester, 2026-10-04): both blocks' stages
+ * in the one chart, autolabel first among the bars, then the full-set steps and 生成报告 & 产物交付.
  */
-function StagesCard({ task, subtasks, stages: only, title }: { task: Task; subtasks: readonly Subtask[]; stages?: StageProgress[]; title?: string }) {
-  const { active, raw: all } = stageSource(task, subtasks);
-  const raw = only ?? all;
+function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
+  const { active, raw } = stageSource(task, subtasks);
   const lanes = raw.filter((s) => FUNNEL_STAGES.includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
-  const stages = groupStages(showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw);
+  const rest = showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw;
+  const stages = groupStages([...rest.filter((s) => s.id === 'autolabel'), ...rest.filter((s) => s.id !== 'autolabel')]);
   return (
     <Card
       title={
         <Space>
-          {title ?? zh.taskDetail.stages}
+          {zh.taskDetail.stages}
           <SubtaskTag task={task} subtasks={subtasks} />
         </Space>
       }
@@ -133,44 +134,6 @@ function StagesCard({ task, subtasks, stages: only, title }: { task: Task; subta
           ))}
         </div>
       )}
-    </Card>
-  );
-}
-
-/**
- * One block of a two-block run (design doc 17 §5.3): autolabel first (VLM block), the block's per-episode
- * stages as one pipeline - a bar per stage, in flight and queued, and the block's own run timeline - and
- * its full-set step on a row of its own.
- */
-function BlockCard({ task, subtasks, block }: { task: Task; subtasks: readonly Subtask[]; block: BlockStages }) {
-  const reg = useModules();
-  const title = reg.data?.blocks.find((b) => b.id === block.id)?.title_zh ?? block.id;
-  return (
-    <Card
-      title={
-        <Space>
-          {title}
-          <SubtaskTag task={task} subtasks={subtasks} />
-        </Space>
-      }
-      data-testid={`block-${block.id}`}
-    >
-      {block.before.length ? (
-        <div className="block-whole" style={{ marginTop: 0 }}>
-          {groupStages(block.before).map((s) => (
-            <StageRow key={s.key} s={s} />
-          ))}
-        </div>
-      ) : null}
-      {block.chain.length ? <PipelineActivity task={task} stages={block.chain} /> : null}
-      {block.fullSet.length ? (
-        <div className="block-whole" data-testid={`block-${block.id}-full-set`}>
-          <div className="section-sub">{zh.taskDetail.blockFullSet}</div>
-          {groupStages(block.fullSet).map((s) => (
-            <StageRow key={s.key} s={s} />
-          ))}
-        </div>
-      ) : null}
     </Card>
   );
 }
@@ -594,27 +557,15 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   for (const m of report.data?.report.modules ?? []) digest[m.id] = summaryDigest(m.summary);
   const v2 = report.data?.v2 ?? null;
   const { raw } = stageSource(task, subtasks);
-  const split = splitBlocks(raw);
   // a task made before the findings (D59): its report is 1.0, or its stages are the funnel's
   const legacy = Boolean(report.data && !v2) || raw.some((s) => s.id === 'verdict' || s.id === 'profile_vlm');
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
       {task.started_at ? <PipelineEpisodesCard task={task} /> : null}
-      {split.blocks.length ? (
-        <div className="grid-2" data-testid="block-cards">
-          {split.blocks.map((b) => (
-            <BlockCard key={b.id} task={task} subtasks={subtasks} block={b} />
-          ))}
-        </div>
-      ) : null}
-      {/* Side by side, equal height (requester item 13). */}
+      {/* Side by side, equal height (requester item 13; again for two-block runs, 2026-10-04). */}
       <div className="grid-2">
-        {split.blocks.length ? (
-          <StagesCard task={task} subtasks={subtasks} stages={split.rest} title={zh.taskDetail.closingStages} />
-        ) : (
-          <StagesCard task={task} subtasks={subtasks} />
-        )}
+        <StagesCard task={task} subtasks={subtasks} />
         <TokensCard task={task} subtasks={subtasks} />
       </div>
       {legacy ? <ModulesCard task={task} plan={plan.data} digest={digest} /> : <ModuleStatCards task={task} plan={plan.data} v2={v2} />}

@@ -128,17 +128,19 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
 });
 
 describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
-  it('a card per block, the full-set steps on their own row, the closing stages beside the tokens', async () => {
+  it('one 分档进度 beside the tokens: both blocks in one chart, autolabel first, the full-set steps and 生成报告 & 产物交付 below (2026-10-04)', async () => {
     renderApp(`/tasks/${FINDINGS_TASK}`);
-    const cpu = await screen.findByTestId('block-cpu');
-    // the block's title is the registry's: it shows once GET /modules is in
-    await waitFor(() => expect(cpu).toHaveTextContent('CPU 块'));
-    expect(within(cpu).getByTestId('block-cpu-full-set')).toHaveTextContent('去重');
-    const vlm = screen.getByTestId('block-vlm');
-    await waitFor(() => expect(vlm).toHaveTextContent('VLM 块'));
-    expect(within(vlm).getByTestId('stage-autolabel')).toBeInTheDocument();
-    expect(within(vlm).getByTestId('block-vlm-full-set')).toHaveTextContent('技能画像');
-    expect(screen.getByText('判决与交付')).toBeInTheDocument();
+    const stages = await screen.findByTestId('stages');
+    // both blocks' per-episode stages in the one chart: a card each and a row of the run timeline
+    const chart = within(stages).getByTestId('pipeline-activity');
+    expect([...chart.querySelectorAll('.pipeline-layer')].map((e) => e.getAttribute('data-testid'))).toEqual(['stage-numeric', 'stage-frame', 'stage-vlm']);
+    expect(within(chart).getByTestId('pipeline-overlap')).toBeInTheDocument();
+    // then the bars: autolabel first, the full-set steps, 生成报告 & 产物交付
+    const rows = [...stages.querySelectorAll('[data-testid^="stage-"]')].filter((e) => !chart.contains(e)).map((e) => e.getAttribute('data-testid'));
+    expect(rows).toEqual(['stage-autolabel', 'stage-dedup', 'stage-profile', 'stage-report_delivery']);
+    expect(stages.closest('.grid-2')).toHaveTextContent('Token 消耗');
+    expect(screen.queryByTestId('block-cpu')).toBeNull();
+    expect(screen.queryByText('判决与交付')).toBeNull();
     expect(document.body).not.toHaveTextContent('数值档拦下了');
   });
 
