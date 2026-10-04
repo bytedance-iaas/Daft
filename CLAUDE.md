@@ -88,7 +88,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（`15-rerun-presigned-access.md`，D55；首节是开工指引，涉及 rerun 仓库） |
 | 16 | 回归测试样本集（`16-regression-samples.md`：检测项分类表、评测集、期望值与打分；样本与真值在 TOS） |
 | 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；取代了逐档漏斗的执行短路与硬门 / 软分判决，§7 末尾是各 feature 落地时的细化） |
-| 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——数据集「可视化」页签的完整版与报告 / 裁决里的迷你版、mcap 字段映射模版 C7；候选决策 D60–D63；首节是开工指引，静态稿在 `frontend/mockups/`） |
+| 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——数据集「可视化」页签的完整版与报告 / 裁决里的迷你版、mcap 字段映射模版 C7；决策 D60–D64；首节是开工指引，静态稿在 `frontend/mockups/`（`visualize.html`、`episode-visualize-mini.html`、`dataset-add-mcap.html`）） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

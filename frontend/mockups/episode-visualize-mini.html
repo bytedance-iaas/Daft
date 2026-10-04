@@ -327,6 +327,7 @@ select.select { appearance: none;
 .vz-cell .vz-cap { position: absolute; left: 10px; top: 8px; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 2px; font-size: 12px; z-index: 2; background: rgba(29,33,41,.6); color: #fff; }
 .vz-cell.kind-curve .vz-cap { background: transparent; color: var(--text-1); font-weight: 500; left: 12px; top: 10px; padding: 0; }
 .vz-cell .vz-cap .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.vz-cell .vz-cap .vz-tc { margin-left: 4px; padding: 0 5px; border-radius: 2px; font-size: 11px; line-height: 16px; background: var(--warning-6); color: #fff; }
 .vz-cell .vz-tools { position: absolute; right: 8px; top: 8px; display: none; gap: 4px; z-index: 3; }
 .vz-cell:hover .vz-tools, .vz-cell.is-focus .vz-tools { display: flex; }
 .vz-cell .vz-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 24px; padding: 0 7px; border: 0; border-radius: 2px; background: rgba(29,33,41,.6); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
@@ -513,9 +514,13 @@ select.select { appearance: none;
     人工裁决
   </a>
   <div class="menu-group">数据</div>
-  <a class="menu-item " href="dataset-visualize.html">
+  <a class="menu-item " href="dataset-add-mcap.html">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>
     数据集
+  </a>
+  <a class="menu-item " href="visualize.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M6.5 6v4l3.5-2z" fill="currentColor"/></svg>
+    可视化
   </a>
   <div class="menu-group">系统</div>
   <a class="menu-item" data-toast="预览稿：系统和资源配置页不在本稿范围">
@@ -536,7 +541,7 @@ select.select { appearance: none;
   <div class="page-head">
     <div>
       <h1 class="page-title">质检报告 · galaxea 厨房 60 条质检 <span class="tag tag-green"><i class="dot"></i>已完成</span> <span class="tag tag-gray">结果版本 r0001 · 当前</span></h1>
-      <p class="page-desc">数据集 <a href="dataset-visualize.html">galaxea_open_world_kitchen</a>（LeRobot v2.1）· 60 条全部 · 策略 default · 2026-10-02 11:40 结束</p>
+      <p class="page-desc">数据集 <a href="visualize.html" target="_blank">galaxea_open_world_kitchen</a>（LeRobot v2.1）· 60 条全部 · 策略 default · 2026-10-02 11:40 结束</p>
     </div>
     <div class="spacer"></div>
     <button class="btn btn-outline" data-toast="预览稿：回到任务详情">返回任务详情</button>
@@ -632,7 +637,7 @@ select.select { appearance: none;
 
 <!-- ===== 可视化弹窗（迷你版） ===== -->
 <div class="modal viz-modal" id="vizModal">
-  <div class="modal-head">可视化 · galaxea_open_world_kitchen · ep 12<span class="ctx">来自任务「galaxea 厨房 60 条质检」· r0001</span><span class="spacer"></span><button class="x" id="btnCloseViz" title="关闭">×</button></div>
+  <div class="modal-head">可视化 · galaxea_open_world_kitchen · ep 12<span class="ctx">来自任务「galaxea 厨房 60 条质检」· r0001</span><span class="spacer"></span><a class="btn btn-outline" style="height:28px;font-size:12px;font-weight:400" href="visualize.html" target="_blank" title="在新窗口打开完整版（同一条 episode）">在可视化页打开</a><button class="x" id="btnCloseViz" title="关闭">×</button></div>
   <div class="modal-body"><div id="miniPlayer"></div></div>
 </div>
 
@@ -937,8 +942,8 @@ window.Viz = (function () {
         el('span', { class: 'frame' }, '帧', this.frameIn, '/', this.frameTot),
         el('label', { class: 'loop' }, this.loopBtn, '循环'));
       if (this.mode === 'full') {
-        this.epSel = el('select', { class: 'select', style: 'width:150px', title: '切换 episode', onchange: (e) => this.gotoEpisode(Number(e.target.value)) });
-        tr.append(el('span', { class: 'epnav' }, el('button', { class: 'btn btn-outline', onclick: () => this.gotoEpisode(this.ep.index - 1) }, '‹ 上一条'), this.epSel, el('button', { class: 'btn btn-outline', onclick: () => this.gotoEpisode(this.ep.index + 1) }, '下一条 ›')));
+        // 选 episode 在页面左侧的侧栏里；走带上只留上一条 / 下一条
+        tr.append(el('span', { class: 'epnav' }, el('button', { class: 'btn btn-outline', title: '上一条 episode', onclick: () => this.gotoEpisode(this.prevIndex()) }, '‹ 上一条'), el('button', { class: 'btn btn-outline', title: '下一条 episode', onclick: () => this.gotoEpisode(this.nextIndex()) }, '下一条 ›')));
       }
       tr.append(el('span', { class: 'vz-keys', title: '键盘：空格 播放 / 暂停，← → 逐帧，Shift + ← → 跳 1 秒' }, el('kbd', null, '␣'), ' ', el('kbd', null, '←'), el('kbd', null, '→')));
       r.append(tr);
@@ -954,7 +959,6 @@ window.Viz = (function () {
       this.hMeta.innerHTML = ''; this.hMeta.append(`${this.ds.format}`, el('i'), `${this.ep.fps} fps`, el('i'), `${this.ep.frames} 帧 · ${fmtTime(this.ep.duration)}`);
       this.hTask.classList.toggle('none', !this.ep.task); this.hTask.innerHTML = '';
       if (this.ep.task) { this.hTask.append(el('span', { class: 'k' }, '任务'), this.ep.task); this.hTask.title = this.ep.task; } else this.hTask.append('无任务描述');
-      if (this.epSel) { this.epSel.innerHTML = ''; for (const i of ep) this.epSel.append(el('option', { value: i, selected: i === this.ep.index }, `ep ${i}`)); }
       this.frameTot.textContent = this.ep.frames - 1;
       this.stepsEl.innerHTML = '';
       for (const s of this.ep.steps || []) this.stepsEl.append(el('span', { class: s.quality === 'unqualified' ? 'unq' : '', style: `left:${(s.s / this.ep.duration) * 100}%;width:${((s.e - s.s) / this.ep.duration) * 100}%`, title: `${s.label} · ${s.s.toFixed(1)}–${s.e.toFixed(1)} s${s.quality === 'unqualified' ? ' · 不合格' : ''}`, onpointerdown: (e) => { e.stopPropagation(); this.seek(s.s); } }));
@@ -1002,7 +1006,9 @@ window.Viz = (function () {
         const cell = el('div', { class: `vz-cell kind-${c.kind}`, onpointerdown: () => this.focusCell(i) });
         const tools = el('div', { class: 'vz-tools' });
         if (c.kind === 'video') {
-          const cam = this.cam(c.ref); const cv = el('canvas'); cell.append(cv, el('span', { class: 'vz-cap' }, el('i', { class: 'dot', style: `background:${cam.color}` }), cam.title), el('span', { class: 'vz-stamp' }));
+          const cam = this.cam(c.ref); const cv = el('canvas');
+          // 「平台转码」：浏览器播不了的编码由 Daemon 转码时在格子上标出来（D62）
+          cell.append(cv, el('span', { class: 'vz-cap' }, el('i', { class: 'dot', style: `background:${cam.color}` }), cam.title, cam.transcoded ? el('span', { class: 'vz-tc', title: `原始编码 ${cam.codec}，浏览器不能直接播放，由平台转为 H.264（容器开关 CURATOR_VIZ_TRANSCODE，默认开）` }, '平台转码') : null), el('span', { class: 'vz-stamp' }));
           this.views.push({ kind: 'video', cam, cv, ctx: cv.getContext('2d'), stamp: cell.lastChild });
         } else if (c.kind === 'curve') {
           const g = this.grp(c.ref); cell.append(el('span', { class: 'vz-cap', title: '实线是状态，虚线是动作' }, g.title + (g.unit ? ` · ${g.unit}` : '')));
@@ -1064,8 +1070,8 @@ window.Viz = (function () {
       if (c.kind === 'video') {
         const cam = this.cam(c.ref); this.sideTitle.textContent = `相机 · ${cam.title}`;
         const kv = (k, v) => el('div', { class: 'kv' }, el('span', { class: 'k' }, k), el('span', { class: 'v' }, v));
-        b.append(el('div', { class: 'sec' }, '视频流'), kv('键名', cam.feature), kv('分辨率', `${cam.w} × ${cam.h}`), kv('编码', `${cam.codec} · ${cam.pix}`), kv('帧率', `${cam.fps} fps`), kv('帧数', `${this.ep.frames}`), kv('时长', fmtTime(this.ep.duration)),
-          el('div', { class: 'sec' }, '来源'), kv('文件', el('span', { class: 'mono' }, cam.path(this.ep))), kv('时间范围', cam.range ? cam.range(this.ep) : '整个文件'), kv('读取方式', cam.access),
+        b.append(el('div', { class: 'sec' }, '视频流'), kv('键名', cam.feature), kv('分辨率', `${cam.w} × ${cam.h}`), kv('编码', cam.transcoded ? `${cam.codec} · ${cam.pix} → 播放用 h264（平台转码）` : `${cam.codec} · ${cam.pix}`), kv('帧率', `${cam.fps} fps`), kv('帧数', `${this.ep.frames}`), kv('时长', fmtTime(this.ep.duration)),
+          el('div', { class: 'sec' }, '来源'), kv('文件', el('span', { class: 'mono' }, cam.path(this.ep))), kv('时间范围', cam.range ? cam.range(this.ep) : '整个文件'), kv('读取方式', cam.transcoded ? el('span', null, el('span', { class: 'tag tag-orange', style: 'height:20px;margin-right:6px' }, '平台转码'), cam.access) : cam.access),
           el('div', { class: 'sec' }, '当前'), kv('帧号', el('span', { id: 'vzSideFrame' }, '')), kv('时间', el('span', { id: 'vzSideTime' }, '')),
           el('div', { style: 'margin-top:14px' }, el('button', { class: 'btn btn-outline', style: 'height:28px;font-size:12px', onclick: () => toast('真实页面：用预签名地址在新标签打开源文件') }, '在新标签打开源文件')));
       } else {
@@ -1134,8 +1140,10 @@ window.Viz = (function () {
       }
       this.updateSide(); this.needsDraw = false;
     }
+    prevIndex() { const l = this.ds.episodes || []; const k = l.indexOf(this.ep.index); return k > 0 ? l[k - 1] : null; }
+    nextIndex() { const l = this.ds.episodes || []; const k = l.indexOf(this.ep.index); return k >= 0 && k < l.length - 1 ? l[k + 1] : null; }
     gotoEpisode(i) {
-      const list = this.ds.episodes || []; if (!list.includes(i)) { toast(`没有 ep ${i}`); return; }
+      const list = this.ds.episodes || []; if (i == null || !list.includes(i)) { toast(i == null ? '已经是第一条 / 最后一条' : `没有 ep ${i}`); return; }
       this.pause(); const ep = this.opts.onEpisodeChange ? this.opts.onEpisodeChange(i) : null; if (!ep) return;
       this.setEpisode(ep);
     }
@@ -1164,7 +1172,8 @@ window.Viz = (function () {
     cameras: [
       { key: 'head', title: 'head', feature: 'observation.images.head', w: 640, h: 480, codec: 'av1', pix: 'yuv420p', fps: 30, color: '#165DFF', draw: 'head', access: '预签名地址直连 TOS（D16、D55）', path: (ep) => `videos/chunk-000/observation.images.head/episode_${String(ep.index).padStart(6, '0')}.mp4` },
       { key: 'left_wrist', title: 'left_wrist', feature: 'observation.images.left_wrist', w: 640, h: 480, codec: 'av1', pix: 'yuv420p', fps: 30, color: '#0DA5AA', draw: 'left_wrist', access: '预签名地址直连 TOS（D16、D55）', path: (ep) => `videos/chunk-000/observation.images.left_wrist/episode_${String(ep.index).padStart(6, '0')}.mp4` },
-      { key: 'right_wrist', title: 'right_wrist', feature: 'observation.images.right_wrist', w: 640, h: 480, codec: 'av1', pix: 'yuv420p', fps: 30, color: '#E8590C', draw: 'right_wrist', access: '预签名地址直连 TOS（D16、D55）', path: (ep) => `videos/chunk-000/observation.images.right_wrist/episode_${String(ep.index).padStart(6, '0')}.mp4` },
+      // 第三路故意写成 mpeg4（FastUMI 那种浏览器放不了的编码），用来演示「平台转码」标签
+      { key: 'right_wrist', title: 'right_wrist', feature: 'observation.images.right_wrist', w: 640, h: 480, codec: 'mpeg4', pix: 'yuv420p', fps: 30, color: '#E8590C', draw: 'right_wrist', transcoded: true, access: 'Daemon 转码后的 fMP4（首次打开生成，按指纹缓存）', path: (ep) => `videos/chunk-000/observation.images.right_wrist/episode_${String(ep.index).padStart(6, '0')}.mp4` },
     ],
     groups: [
       { key: 'left_arm', title: '左臂关节位置', unit: 'rad', dims: [0, 1, 2, 3, 4, 5], names: ['left_joint_0', 'left_joint_1', 'left_joint_2', 'left_joint_3', 'left_joint_4', 'left_joint_5'] },
