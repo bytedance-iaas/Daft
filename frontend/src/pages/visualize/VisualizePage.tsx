@@ -8,7 +8,7 @@ import { readPrefs, writePrefs } from '../../lib/prefs';
 import { firstEpisode, hasEpisode } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
 import { DatasetInfo } from './DatasetInfo';
-import { EpisodeRail, useVizDatasets } from './EpisodeRail';
+import { EpisodeRail, RailButton, useVizDatasets } from './EpisodeRail';
 import './visualizePage.css';
 
 /** Development builds put the player's clock on window.__vizClock (the drift check, F13.4). */
@@ -22,7 +22,8 @@ const DEV_CLOCK = import.meta.env.DEV
 /**
  * 「可视化」 (design doc 18 §5.0, D63): `/visualize?dataset=<id>&ep=<n>`. The left rail picks the
  * dataset and the episode; the player and the dataset's info tree fill the rest. Without a dataset
- * in the address, the one shown last.
+ * in the address, the one shown last. The rail folds from its own top right and then takes no room;
+ * 展开侧栏 sits before the player's title, or at the top left of whatever the page shows instead.
  */
 export function VisualizePage() {
   const [params, setParams] = useSearchParams();
@@ -36,6 +37,11 @@ export function VisualizePage() {
   const item = datasets.data?.items.find((d) => d.id === datasetId);
   const [order, setOrder] = useState<number[]>([]);
   const [collapsed, setCollapsed] = useState(() => !!readPrefs().vizRailCollapsed);
+  const fold = useCallback((folded: boolean) => {
+    setCollapsed(folded);
+    writePrefs({ vizRailCollapsed: folded });
+  }, []);
+  const unfold = collapsed ? <RailButton fold={false} onClick={() => fold(false)} /> : null;
   const control = useRef<PlayerControl | null>(null);
 
   useEffect(() => {
@@ -85,26 +91,17 @@ export function VisualizePage() {
           onDataset={(id) => go(id, null)}
           onEpisode={(ep) => go(datasetId, ep)}
           onOrder={setOrder}
+          onFold={() => fold(true)}
         />
-        <button
-          type="button"
-          className="vz-rail-toggle"
-          title={zh.vizPage.railToggle}
-          aria-label={zh.vizPage.railToggle}
-          onClick={() =>
-            setCollapsed((c) => {
-              writePrefs({ vizRailCollapsed: !c });
-              return !c;
-            })
-          }
-        >
-          {collapsed ? '›' : '‹'}
-        </button>
         <section className="vz-main">
           {!datasetId ? (
-            <div className="vz-pending">{zh.vizPage.pickFirst}</div>
+            <div className="vz-pending">
+              {unfold ? <span className="lead">{unfold}</span> : null}
+              {zh.vizPage.pickFirst}
+            </div>
           ) : pending ? (
             <div className="vz-pending" role="alert">
+              {unfold ? <span className="lead">{unfold}</span> : null}
               <p>{zh.vizPage.mappingPending(item?.viz?.reason ?? '')}</p>
               <Button type="primary" onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId)}?mcap=1`)}>
                 {zh.vizPage.goMapping}
@@ -120,10 +117,14 @@ export function VisualizePage() {
                 onClock={DEV_CLOCK}
                 onPrevEpisode={prev !== null ? () => go(datasetId, prev) : undefined}
                 onNextEpisode={next !== null ? () => go(datasetId, next) : undefined}
+                lead={unfold}
               />
             </div>
           ) : model.isError ? (
-            <Player source={source as VizRef} index={0} mode="full" />
+            <Player source={source as VizRef} index={0} mode="full" lead={unfold} />
+          ) : unfold ? (
+            // the model is on its way and no episode is known yet, or the dataset has none
+            <div className="vz-lead-only">{unfold}</div>
           ) : null}
           {datasetId && model.data && !pending ? <DatasetInfo key={datasetId} datasetId={datasetId} model={model.data} player={control} /> : null}
         </section>

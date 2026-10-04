@@ -3,7 +3,8 @@
 .vz-left { width: 292px; flex: none; background: var(--color-bg-2); border: 1px solid var(--c-border); border-radius: 4px; display: flex; flex-direction: column; position: sticky; top: 16px; max-height: calc(100vh - 96px); }
 .vzpage.collapsed .vz-left { display: none; }
 .vz-left-head { padding: 12px 12px 10px; border-bottom: 1px solid var(--c-border); }
-.vz-left-head .label { font-size: 12px; color: var(--c-text-3); margin-bottom: 6px; }
+.vz-left-head .label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 18px; margin-bottom: 6px; }
+.vz-left-head .label { font-size: 12px; color: var(--c-text-3); }
 .vz-left .ds-meta { padding: 8px 12px; font-size: 12px; color: var(--c-text-3); border-bottom: 1px solid var(--c-border); line-height: 1.6; }
 .vz-left .ds-meta b { color: var(--c-text-2); font-weight: 500; }
 .vz-left .ep-tools { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--c-border); }
@@ -27,11 +28,16 @@
 .vz-left .ep-empty { padding: 24px 8px; text-align: center; color: var(--c-text-4); font-size: 12px; }
 .vz-left-foot { padding: 8px 12px; font-size: 12px; color: var(--c-text-3); border-top: 1px solid var(--c-border); display: flex; gap: 8px; }
 .vz-left-foot .spacer { flex: 1; }
-.vz-rail-toggle { flex: none; width: 18px; height: 56px; margin-top: 12px; display: grid; place-items: center; border: 1px solid var(--c-border); border-left: 0; border-radius: 0 4px 4px 0; background: var(--color-bg-2); color: var(--c-text-3); cursor: pointer; padding: 0; }
-.vzpage.collapsed .vz-rail-toggle { border-left: 1px solid var(--c-border); border-radius: 4px; }
-.vz-rail-toggle:hover { color: var(--c-primary); border-color: var(--c-primary); }
+/* 收起侧栏 at the rail's top right, 展开侧栏 before the player's title (2026-10-04): quiet icon buttons; the folded rail takes no room */
+.vz-rail-btn.arco-btn { color: var(--c-text-3); flex: none; }
+.vz-rail-btn.arco-btn:hover { color: var(--c-primary); }
+.vz-rail-btn svg { font-size: 16px; }
+.vz-left-head .vz-rail-btn.arco-btn { width: 24px; height: 24px; margin-right: -4px; }
 .vz-main { flex: 1; min-width: 0; margin-left: 12px; }
-.vz-pending { padding: 48px 24px; text-align: center; color: var(--c-text-2); background: var(--color-bg-2); border: 1px solid var(--c-border); border-radius: 4px; }
+.vzpage.collapsed .vz-main { margin-left: 0; }
+.vz-pending { position: relative; padding: 48px 24px; text-align: center; color: var(--c-text-2); background: var(--color-bg-2); border: 1px solid var(--c-border); border-radius: 4px; }
+.vz-pending > .lead { position: absolute; top: 8px; left: 10px; }
+.vz-lead-only { margin-bottom: 12px; }
 
 /* 数据集信息：左树右详情 */
 .dsinfo { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 380px; }

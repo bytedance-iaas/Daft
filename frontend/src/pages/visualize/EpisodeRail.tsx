@@ -1,5 +1,5 @@
-import { Input, Select, Spin, Tag } from '@arco-design/web-react';
-import { IconSearch, IconSort } from '@arco-design/web-react/icon';
+import { Button, Input, Select, Spin, Tag } from '@arco-design/web-react';
+import { IconMenuFold, IconMenuUnfold, IconSearch, IconSort } from '@arco-design/web-react/icon';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -44,6 +44,15 @@ function pickerFormat(d: Pick<DatasetItem, 'format' | 'viz_mapping'>): string {
 }
 
 /**
+ * Folds the rail (at the top right of the rail) or unfolds it (where the page shows it while the rail is
+ * folded: before the player's title). The folded rail takes no room (2026-10-04).
+ */
+export function RailButton({ fold, onClick }: { fold: boolean; onClick: () => void }) {
+  const label = fold ? zh.vizPage.railFold : zh.vizPage.railUnfold;
+  return <Button type="text" size="small" className="vz-rail-btn" icon={fold ? <IconMenuFold /> : <IconMenuUnfold />} title={label} aria-label={label} onClick={onClick} />;
+}
+
+/**
  * The left rail (design doc 18 §5.0): the dataset picker (mcap without a confirmed mapping greyed,
  * with why), a summary, the filter and the sort, the episode list; a click plays that episode.
  */
@@ -54,6 +63,7 @@ export function EpisodeRail({
   onDataset,
   onEpisode,
   onOrder,
+  onFold,
 }: {
   datasetId: string | null;
   current: number | null;
@@ -62,6 +72,7 @@ export function EpisodeRail({
   onEpisode: (index: number) => void;
   /** the episodes in the list's order (for 上一条 / 下一条) */
   onOrder: (indices: number[]) => void;
+  onFold?: () => void;
 }) {
   const datasets = useVizDatasets();
   const [q, setQ] = useState('');
@@ -88,7 +99,10 @@ export function EpisodeRail({
   return (
     <aside className="vz-left" data-testid="vz-rail">
       <div className="vz-left-head">
-        <div className="label">{zh.vizPage.dataset}</div>
+        <div className="label-row">
+          <span className="label">{zh.vizPage.dataset}</span>
+          {onFold ? <RailButton fold onClick={onFold} /> : null}
+        </div>
         <Select
           showSearch
           placeholder={zh.vizPage.pick}

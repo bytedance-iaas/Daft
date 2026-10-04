@@ -42,8 +42,19 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     await user.type(within(rail).getByLabelText(zh.vizPage.filter), '12');
     await waitFor(() => expect(within(rail).getAllByRole('listitem').map((r) => r.querySelector('.id')?.textContent)).toEqual(['ep 12']));
     expect(within(rail).getAllByRole('listitem')[0]).toHaveClass('cur');
-    await user.click(screen.getByRole('button', { name: zh.vizPage.railToggle }));
+    // 收起侧栏 is on the rail itself; 展开侧栏 then sits before the player's title
+    expect(within(rail).queryByRole('button', { name: zh.vizPage.railUnfold })).toBeNull();
+    await user.click(within(rail).getByRole('button', { name: zh.vizPage.railFold }));
     expect(document.querySelector('.vzpage')).toHaveClass('collapsed');
+    expect(JSON.parse(window.localStorage.getItem('curator.ui.prefs') ?? '{}').vizRailCollapsed).toBe(true);
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    const head = player.querySelector('.vz-head') as HTMLElement;
+    const unfold = within(head).getByRole('button', { name: zh.vizPage.railUnfold });
+    expect(head.firstElementChild).toContainElement(unfold);
+    await user.click(unfold);
+    expect(document.querySelector('.vzpage')).not.toHaveClass('collapsed');
+    expect(screen.queryByRole('button', { name: zh.vizPage.railUnfold })).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem('curator.ui.prefs') ?? '{}').vizRailCollapsed).toBe(false);
   });
 
   it('opens the dataset shown last, and the info tree adds a camera to the player', async () => {
@@ -95,5 +106,14 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
   it('asks for a dataset when there is none to show', async () => {
     renderApp('/visualize');
     expect(await screen.findByText(zh.vizPage.pickFirst)).toBeInTheDocument();
+  });
+
+  it('keeps 展开侧栏 where there is no player: the folded rail opens again', async () => {
+    window.localStorage.setItem('curator.ui.prefs', JSON.stringify({ pageSize: {}, vizRailCollapsed: true }));
+    const { user } = renderApp('/visualize');
+    const box = (await screen.findByText(zh.vizPage.pickFirst)).closest('.vz-pending') as HTMLElement;
+    expect(document.querySelector('.vzpage')).toHaveClass('collapsed');
+    await user.click(within(box).getByRole('button', { name: zh.vizPage.railUnfold }));
+    expect(document.querySelector('.vzpage')).not.toHaveClass('collapsed');
   });
 });

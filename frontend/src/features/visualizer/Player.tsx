@@ -62,15 +62,23 @@ export interface PlayerProps {
   control?: React.MutableRefObject<PlayerControl | null>;
   /** cells to show (the mini player's layout for the focused finding); a new one replaces the grid */
   arrangement?: Layout | null;
+  /** a control before the title (the visualize page's 展开侧栏 while its rail is folded); kept while loading */
+  lead?: React.ReactNode;
 }
 
 /** The player: loads the model and the episode, keeps the last episode on screen while the next loads. */
 export function Player(props: PlayerProps) {
   const model = useVizModel(props.source);
   const episode = useVizEpisode(props.source, props.index);
+  const lead = props.lead ? (
+    <div className="vz-head">
+      <span className="lead">{props.lead}</span>
+    </div>
+  ) : null;
   if (model.isError || (!model.isLoading && !model.data)) {
     return (
       <div className={`vz${props.mode === 'mini' ? ' is-mini' : ''}`}>
+        {lead}
         <div className="vz-skeleton" role="alert">
           {zh.viz.modelFailed}
           {model.error instanceof Error ? `：${model.error.message}` : ''}
@@ -81,6 +89,7 @@ export function Player(props: PlayerProps) {
   if (episode.isError && !episode.data) {
     return (
       <div className={`vz${props.mode === 'mini' ? ' is-mini' : ''}`}>
+        {lead}
         <div className="vz-skeleton" role="alert">
           {zh.viz.episodeFailed}
           {episode.error instanceof Error ? `：${episode.error.message}` : ''}
@@ -91,6 +100,7 @@ export function Player(props: PlayerProps) {
   if (!model.data || !episode.data) {
     return (
       <div className={`vz${props.mode === 'mini' ? ' is-mini' : ''}`}>
+        {lead}
         <div className="vz-skeleton" role="status">
           {model.data ? zh.viz.loadingEpisode : zh.viz.loadingModel}
         </div>
@@ -129,6 +139,7 @@ function PlayerView({
   onClock,
   control,
   arrangement = null,
+  lead,
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
   // one clock per episode; the cleanup only stops it (StrictMode runs it and then the effect again on
@@ -296,7 +307,7 @@ function PlayerView({
       }}
       data-testid="vz-player"
     >
-      <Head model={model} ep={ep} clock={clock} loadingNext={loadingNext} full={full}>
+      <Head model={model} ep={ep} clock={clock} loadingNext={loadingNext} full={full} lead={lead}>
         {full ? (
           <>
             <Select size="small" style={{ width: 132 }} value={template} onChange={(v: LayoutTemplate) => setTemplate(v)} aria-label={zh.viz.layoutTitle}>
@@ -535,11 +546,28 @@ export function formatLabel(f: VizDataset['format']): string {
   return f.kind;
 }
 
-function Head({ model, ep, clock, loadingNext, full, children }: { model: VizDataset; ep: VizEpisode; clock: PlayerClock; loadingNext: boolean; full: boolean; children: React.ReactNode }) {
+function Head({
+  model,
+  ep,
+  clock,
+  loadingNext,
+  full,
+  lead,
+  children,
+}: {
+  model: VizDataset;
+  ep: VizEpisode;
+  clock: PlayerClock;
+  loadingNext: boolean;
+  full: boolean;
+  lead?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   const waiting = useClockValue(clock, (s) => s.playing && s.waiting);
   const fps = ep.fps ?? ep.timeline.fps ?? model.fps;
   return (
     <div className="vz-head">
+      {lead ? <span className="lead">{lead}</span> : null}
       <span className="ep" title={model.name}>
         {model.name}
         {/* the mini player's title bar already says which episode (2026-10-04) */}

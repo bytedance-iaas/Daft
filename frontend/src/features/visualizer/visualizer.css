@@ -6,6 +6,8 @@
 
 /* 顶栏 */
 .vz-head { display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--c-border); }
+/* a page's control before the title (展开侧栏), its icon in line with the task text below */
+.vz-head .lead { flex: none; display: inline-flex; margin: 0 -6px; }
 /* a narrow head gives up the meta first, then the task, and the name last (it keeps 120 px) */
 .vz-head .ep { flex: 0 0.2 auto; min-width: 120px; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vz-head .ep small { font-weight: 400; color: var(--c-text-3); margin-left: 6px; }
