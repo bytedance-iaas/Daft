@@ -409,8 +409,8 @@ const datasets = [
         checks: [{ at: now, trigger: 'add', result: 'same', change: null }],
         tasks: [],
         links: [],
-        viz: vizStatusOf(result.format.kind === 'mcap' ? 'mcap' : formatOf(result), false),
-        viz_mapping: mappingInfoOf(result.format.kind === 'mcap' ? 'mcap' : formatOf(result)),
+        viz: vizStatusOf(vizFormatOf({ format: formatOf(result), preflight: result }), false),
+        viz_mapping: mappingInfoOf(vizFormatOf({ format: formatOf(result), preflight: result })),
         annotations: null,
       };
       if (b.viz_mapping && result.format.kind === 'mcap') {

@@ -93,12 +93,11 @@ class VizService:
         return task_source(self.rt, task, owner, run_dir)
 
     def reader_of(self, src: VizSource) -> str | None:
+        # mcap and LeRobot whether or not the check reader takes them (status.viz_format)
         kind, version = src.format()
-        fmt = src.preflight.get("format") if isinstance(src.preflight, dict) else None
-        supported = bool((fmt or {}).get("supported", True))
-        if kind == "lerobot" and supported and version in ("v2", "v3"):
+        if kind == "lerobot" and version in ("v2", "v3"):
             return "lerobot"
-        if kind == "mcap":                  # with or without the checks' defaults (status.is_mcap)
+        if kind == "mcap":
             return "mcap"
         return None
 

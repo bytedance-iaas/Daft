@@ -69,6 +69,29 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(screen.queryByTestId('vz-player')).toBeNull();
   });
 
+  it('lists a LeRobot dataset the checks refuse (no action column) without calling it mcap', async () => {
+    const base = db.datasets.find((d) => d.id === 'ds_droid100')!;
+    db.datasets.push({
+      ...base,
+      id: 'ds_galaxea',
+      name: 'galaxea_tray',
+      uri: 'tos://pai-kit-datasets/lerobot/galaxea_tray',
+      format: 'unsupported',
+      preflight: { ...base.preflight, format: { kind: 'lerobot', version: 'v2', supported: false, detail: "features 里没有 'action'" } },
+      viz: { state: 'ready', reason: null },
+      viz_mapping: null,
+      created_at: base.created_at + 1,
+    });
+    const { user } = renderApp('/visualize?dataset=ds_droid100');
+    const rail = await screen.findByTestId('vz-rail');
+    await user.click(within(rail).getByRole('combobox', { name: zh.vizPage.dataset }));
+    const option = await screen.findByRole('option', { name: /galaxea_tray/ });
+    expect(option).not.toHaveTextContent('mcap');
+    expect(option).not.toHaveAttribute('aria-disabled', 'true');
+    // warehouse_mcap is mcap either way
+    expect(screen.getByRole('option', { name: /warehouse_mcap/ })).toHaveTextContent('mcap');
+  });
+
   it('asks for a dataset when there is none to show', async () => {
     renderApp('/visualize');
     expect(await screen.findByText(zh.vizPage.pickFirst)).toBeInTheDocument();

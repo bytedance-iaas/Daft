@@ -1040,6 +1040,11 @@ class SqliteRepository:
                 # an mcap registration the checks cannot read with the defaults (format
                 # unsupported) is still mcap to the visualizer: its mapping is what fixes it
                 match = f"({match} OR json_extract(preflight, '$.format.kind')='mcap')"
+            for version in ("v2", "v3"):
+                if f"lerobot_{version}" in wanted:
+                    # likewise a LeRobot dataset the check reader refuses (no action column)
+                    match = (f"({match} OR (json_extract(preflight, '$.format.kind')='lerobot'"
+                             f" AND json_extract(preflight, '$.format.version')='{version}'))")
             where.append(match)
             args += wanted
         if check_state is not None:

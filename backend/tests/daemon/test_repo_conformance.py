@@ -472,7 +472,8 @@ def test_list_datasets_pages_filters_and_total(repo, clock):
 
 def test_the_visualizer_picker_keeps_mcap_the_checks_cannot_read(repo, clock):
     """``formats`` with mcap also keeps a registration whose preflight found mcap files the checks
-    could not read with the default topics (stored format unsupported; design doc 18 §9.2)."""
+    could not read with the default topics (stored format unsupported; design doc 18 §9.2); with a
+    LeRobot layout, a LeRobot dataset the check reader refuses (no action column, §9.6)."""
     def with_format(uri, fmt):
         ds = _dataset(uri)
         ds.preflight["format"] = fmt
@@ -485,11 +486,15 @@ def test_the_visualizer_picker_keeps_mcap_the_checks_cannot_read(repo, clock):
     abc = with_format("tos://b/abc", {"kind": "mcap", "version": None, "supported": False, "detail": "no /action"})
     clock.advance(1000)
     with_format("tos://b/lance", {"kind": "lance", "version": None, "supported": True, "detail": "lance"})
-    with_format("tos://b/broken", {"kind": "lerobot", "version": "v2", "supported": False, "detail": "x"})
+    clock.advance(1000)
+    galaxea = with_format("tos://b/galaxea", {"kind": "lerobot", "version": "v2", "supported": False, "detail": "no action"})
+    clock.advance(1000)
+    with_format("tos://b/rrd", {"kind": "rrd", "version": None, "supported": False, "detail": "rrd"})
     page = repo.list_datasets(page=1, page_size=10, formats=("lerobot_v2", "lerobot_v3", "mcap"))
-    assert [d.id for d in page.items] == [abc, readable, lerobot] and page.total == 3
+    assert [d.id for d in page.items] == [galaxea, abc, readable, lerobot] and page.total == 4
     assert [d.id for d in repo.list_datasets(page=1, page_size=10, fmt="mcap").items] == [readable]
-    assert [d.id for d in repo.list_datasets(page=1, page_size=10, formats=("lerobot_v2",)).items] == [lerobot]
+    assert [d.id for d in repo.list_datasets(page=1, page_size=10, formats=("lerobot_v2",)).items] == [galaxea, lerobot]
+    assert [d.id for d in repo.list_datasets(page=1, page_size=10, formats=("lerobot_v3",)).items] == []
 
 
 def test_update_dataset_renames_or_refreshes(repo, clock):

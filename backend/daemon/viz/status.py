@@ -6,7 +6,10 @@ Lance waits for its reader (phase two, design doc 18 §10).
 
 An mcap dataset is one whose preflight found mcap episode files, whether or not the check reader could
 read them with the site's default topics (``format.supported`` false, "找不到必需的动作 topic"): the
-mapping is exactly what makes such a dataset readable, so the visualizer takes it as mcap.
+mapping is exactly what makes such a dataset readable, so the visualizer takes it as mcap. Likewise a
+LeRobot dataset the check reader refuses (Galaxea's action split into ``action.left_arm`` … with no
+``action`` column) is LeRobot to the visualizer: its reader needs info.json, the data and the videos,
+not the columns the checks want (F13.8, design doc 18 §9.6).
 """
 from __future__ import annotations
 
@@ -23,9 +26,22 @@ def is_mcap(preflight: dict | None) -> bool:
     return isinstance(fmt, dict) and fmt.get("kind") == "mcap"
 
 
+def lerobot_version(preflight: dict | None) -> str | None:
+    """The LeRobot layout (v2 / v3) the preflight found, readable by the checks or not."""
+    fmt = preflight.get("format") if isinstance(preflight, dict) else None
+    if isinstance(fmt, dict) and fmt.get("kind") == "lerobot" and fmt.get("version") in ("v2", "v3"):
+        return fmt["version"]
+    return None
+
+
 def viz_format(preflight: dict | None) -> str:
-    """``dataset_format`` as the visualizer sees it: an mcap dataset is ``mcap`` either way."""
-    return "mcap" if is_mcap(preflight) else dataset_format(preflight if isinstance(preflight, dict) else {})
+    """``dataset_format`` as the visualizer sees it: mcap and LeRobot whether the checks read them or not."""
+    if is_mcap(preflight):
+        return "mcap"
+    version = lerobot_version(preflight)
+    if version is not None:
+        return f"lerobot_{version}"
+    return dataset_format(preflight if isinstance(preflight, dict) else {})
 
 
 def viz_status(ds: P.Dataset) -> dict:

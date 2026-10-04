@@ -33,6 +33,16 @@ function useEpisodePages(datasetId: string | null, q: string, sort: Sort) {
 }
 
 /**
+ * The format beside a dataset in the picker: an mcap dataset carries its mapping state whether the checks
+ * read it or not; a dataset the checks refuse but the visualizer reads (Galaxea's LeRobot without an action
+ * column) shows none here - the summary line says what it is once it is picked.
+ */
+function pickerFormat(d: Pick<DatasetItem, 'format' | 'viz_mapping'>): string {
+  if (d.viz_mapping) return zh.format.mcap ?? 'mcap';
+  return d.format === 'unsupported' ? '' : (zh.format[d.format] ?? d.format);
+}
+
+/**
  * The left rail (design doc 18 §5.0): the dataset picker (mcap without a confirmed mapping greyed,
  * with why), a summary, the filter and the sort, the episode list; a click plays that episode.
  */
@@ -92,7 +102,7 @@ export function EpisodeRail({
             <Select.Option key={d.id} value={d.id} extra={d.name} disabled={d.viz?.state === 'unsupported'}>
               <span title={d.viz?.reason ?? d.name}>
                 {d.name}
-                <span className="muted">{` · ${d.viz?.state === 'mapping_pending' || d.format === 'unsupported' ? 'mcap' : (zh.format[d.format] ?? d.format)}`}</span>
+                {pickerFormat(d) ? <span className="muted">{` · ${pickerFormat(d)}`}</span> : null}
                 {d.viz?.state === 'mapping_pending' ? (
                   <Tag size="small" color="orange" style={{ marginLeft: 6 }}>
                     {zh.vizPage.pendingTag}

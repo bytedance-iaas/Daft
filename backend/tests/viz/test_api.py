@@ -250,6 +250,34 @@ def test_transcoding_switched_off(client_for, data_root):
     assert err["error"]["details"]["reason"] == "transcode_disabled"
 
 
+def test_a_lerobot_dataset_the_checks_cannot_read_is_still_shown(app, data_root):
+    """Galaxea-like (F13.8): the check reader refuses a LeRobot dataset with no ``action`` column, so
+    the preflight says unsupported; the visualizer reads info.json, the data and the videos all the same."""
+    import shutil
+
+    rt = app.app.state.runtime
+    from daemon.repo import protocol as P
+
+    if not (data_root / "lerobot_v2_no_action").exists():
+        shutil.copytree(data_root / "lerobot_v2", data_root / "lerobot_v2_no_action")
+    pf = _preflight("v2")
+    pf["format"] = {"kind": "lerobot", "version": "v2", "supported": False,
+                    "detail": "LeRobot dataset with invalid metadata: features 里没有 'action'"}
+    pf["dataset"] = None
+    ds, _ = rt.repo.register_dataset(P.Dataset(
+        id="", name="no_action", source="local", uri=str(data_root / "lerobot_v2_no_action"), preflight=pf,
+        meta_fingerprint="sha256:" + "9" * 64, source_fingerprint={"objects": 0, "bytes": 0, "digest": "d"},
+        preflighted_at=2))
+    item = next(d for d in app.get(f"{API}/datasets").json()["items"] if d["id"] == ds.id)
+    assert (item["format"], item["viz"]) == ("unsupported", {"state": "ready", "reason": None})
+    assert ds.id in [d["id"] for d in app.get(f"{API}/datasets", params={"viz": "true"}).json()["items"]]
+    body = app.get(f"{API}/datasets/{ds.id}/viz").json()
+    assert_schema("VizDataset", body)
+    assert body["format"]["reader"] == "lerobot" and body["cameras"]
+    ep = app.get(f"{API}/datasets/{ds.id}/episodes/0/viz")
+    assert ep.status_code == 200, ep.text
+
+
 def test_unsupported_and_pending_formats(app):
     rt = app.app.state.runtime
     from daemon.repo import protocol as P

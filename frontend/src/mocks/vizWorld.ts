@@ -72,10 +72,14 @@ const READERS: Record<string, 'lerobot' | 'mcap' | null> = { lerobot_v2: 'lerobo
 
 /**
  * The format as the visualizer sees it (the Daemon's ``viz_format``): episode_N.mcap files make an
- * mcap dataset even when the checks cannot read it with the site's default topics (ABC-130k).
+ * mcap dataset even when the checks cannot read it with the site's default topics (ABC-130k), and a
+ * LeRobot layout stays LeRobot when the check reader refuses it (Galaxea: no action column, F13.8).
  */
-export function vizFormatOf(d: { format: DatasetDetail['format']; preflight?: { format?: { kind?: string } } }): DatasetDetail['format'] {
-  return d.preflight?.format?.kind === 'mcap' ? 'mcap' : d.format;
+export function vizFormatOf(d: { format: DatasetDetail['format']; preflight?: { format?: { kind?: string; version?: string | null } } }): DatasetDetail['format'] {
+  const f = d.preflight?.format;
+  if (f?.kind === 'mcap') return 'mcap';
+  if (f?.kind === 'lerobot' && (f.version === 'v2' || f.version === 'v3')) return f.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2';
+  return d.format;
 }
 
 /** C4 ``VizStatus`` of a registration (``DatasetItem.viz``). */
