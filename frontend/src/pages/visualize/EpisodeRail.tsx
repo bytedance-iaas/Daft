@@ -1,4 +1,5 @@
 import { Input, Select, Spin, Tag } from '@arco-design/web-react';
+import { IconSearch, IconSort } from '@arco-design/web-react/icon';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -122,8 +123,9 @@ export function EpisodeRail({
         </div>
       ) : null}
       <div className="ep-tools">
-        <Input size="small" allowClear placeholder={zh.vizPage.filter} value={typed} onChange={setTyped} aria-label={zh.vizPage.filter} />
-        <Select size="small" style={{ width: 112, flex: 'none' }} value={sort} onChange={(v: Sort) => setSort(v)} aria-label={zh.vizPage.sort.index}>
+        {/* a search and a sort icon say what the two boxes are (requester, 2026-10-04) */}
+        <Input size="small" allowClear prefix={<IconSearch />} placeholder={zh.vizPage.filter} value={typed} onChange={setTyped} aria-label={zh.vizPage.filter} />
+        <Select size="small" prefix={<IconSort />} style={{ width: 132, flex: 'none' }} value={sort} onChange={(v: Sort) => setSort(v)} aria-label={zh.vizPage.sort.index}>
           {(['index', 'duration', 'steps'] as const).map((k) => (
             <Select.Option key={k} value={k}>
               {zh.vizPage.sort[k]}
