@@ -1,14 +1,14 @@
 import { Alert, Badge, Button, Card, Empty, Radio, Select, Space, Spin, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { IconLeft, IconRight } from '@arco-design/web-react/icon';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
 import type { EpisodeView, ModuleRegistry, Report, ReportV2, TaskEpisode, TaskEpisodePage } from '../../api/types';
 import { SignedImage } from '../../features/media/SignedMedia';
-import { SyncedVideos } from '../../features/media/SyncedVideos';
+import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import { reasonLine, recordError } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { BlockError, EPISODE_BLOCKS, GenericBlock, blockTitleExtra } from './episodeBlocks';
@@ -209,7 +209,7 @@ export function askable(reg: ModuleRegistry | undefined, item: { module: string;
   return reviewLinesOf(spec).some((id) => lines.includes(id));
 }
 
-function SummaryCard({ taskId, view, readOnly, review, onSeek }: { taskId: string; view: EpisodeView; readOnly: boolean; review: boolean; onSeek: (at: number) => void }) {
+function SummaryCard({ taskId, view, readOnly, review, onOpen }: { taskId: string; view: EpisodeView; readOnly: boolean; review: boolean; onOpen: (index: number) => void }) {
   const reg = useModules();
   // A findings revision (C2 2.0, design doc 17 §5.4): every finding by level, the questions on them; the reasons
   // left are the ones no finding stands for (an execution error, a discard, a relabel waiting to be judged).
@@ -245,7 +245,7 @@ function SummaryCard({ taskId, view, readOnly, review, onSeek }: { taskId: strin
           </div>
         ) : null}
         {findings ? (
-          <EpisodeFindings taskId={taskId} findings={findings} targets={questionTargets(view.review, (r) => askable(reg.data, r))} readOnly={readOnly} onSeek={onSeek} />
+          <EpisodeFindings taskId={taskId} findings={findings} targets={questionTargets(view.review, (r) => askable(reg.data, r))} readOnly={readOnly} onOpen={onOpen} />
         ) : null}
         {!findings && view.review?.length ? (
           <div>
@@ -394,13 +394,8 @@ export function EpisodesTab({
   const reg = useModules();
   const [filter, setFilter] = useState<EpisodeFilter>('all');
   const [findingFilter, setFindingFilter] = useState<FindingFilter>(NO_FINDING_FILTER);
-  // a finding's moment plays every camera from there (design doc 17 §5.4)
-  const [seek, setSeek] = useState<{ at: number; n: number } | null>(null);
-  const videosRef = useRef<HTMLDivElement | null>(null);
-  const onSeek = (at: number) => {
-    setSeek((s) => ({ at, n: (s?.n ?? 0) + 1 }));
-    videosRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  };
+  // the mini player (design doc 18 §4.6): on a finding's moment, or on the whole episode
+  const [mini, setMini] = useState<{ focus: number | null } | null>(null);
   const fq = filterQuery(filter, v2 ? findingFilter : NO_FINDING_FILTER);
   // Without ?ep, the first episode of the filtered order.
   const first = useQuery({
@@ -432,22 +427,22 @@ export function EpisodesTab({
     const evidence = (v.evidence ?? []).filter((e) => e.module !== 'eef_video_consistency');
     body = (
       <div className="card-gap" data-testid="episode-view">
-        <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onSeek={onSeek} />
-        <div ref={videosRef}>
-        <Card title={E().videos} size="small">
-          {v.videos.length ? (
-            <SyncedVideos
-              key={`${v.episode_index}-${v.revision}`}
-              task={taskId}
-              videos={v.videos}
-              seekTo={seek}
-              extra={origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
-            />
-          ) : (
-            <Empty />
-          )}
+        <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onOpen={(i) => setMini({ focus: i })} />
+        <Card
+          title={zh.viz.mini.open}
+          size="small"
+          extra={
+            <Button type="primary" size="small" title={zh.viz.mini.openTitle} onClick={() => setMini({ focus: null })} data-testid="open-mini">
+              {zh.viz.mini.open}
+            </Button>
+          }
+        >
+          <span className="muted" style={{ fontSize: 12 }}>
+            {zh.viz.mini.openTitle}
+            {origin ? ` · ${zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}` : ''}
+          </span>
         </Card>
-        </div>
+        {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
         <Card title={E().evidence} size="small">
           {evidence.length ? (
             <div className="evidence-grid">

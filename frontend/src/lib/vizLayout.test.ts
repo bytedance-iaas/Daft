@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VizCamera, VizStream } from '../api/types';
-import { cellHeight, cellValid, fitCells, gridKey, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout } from './vizLayout';
+import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, gridKey, miniLayout, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout } from './vizLayout';
 
 function cam(key: string): VizCamera {
   return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null };
@@ -78,5 +78,35 @@ describe('vizLayout', () => {
     expect(cellValid({ kind: 'video', key: 'head' }, MODEL)).toBe(true);
     expect(cellValid({ kind: 'curve', key: 'gone' }, MODEL)).toBe(false);
     expect(cellValid({ kind: 'empty' }, MODEL)).toBe(true);
+  });
+
+  it('lays out the mini player by the finding (design doc 18 §4.6)', () => {
+    const arms = { cameras: MODEL.cameras, streams: [stream('left_arm'), stream('right_arm'), stream('grippers')] };
+    // a picture finding: the camera in scope and another one
+    expect(miniLayout('visual_quality', { camera: 'left_wrist' }, arms)).toEqual({
+      cells: [{ kind: 'video', key: 'left_wrist' }, { kind: 'video', key: 'head' }],
+      shape: { cols: 2, rows: 1 },
+    });
+    // a motion finding: the camera and the arm's curves
+    expect(miniLayout('kinematic_limits', { camera: 'right_wrist', arm: 'right' }, arms).cells).toEqual([
+      { kind: 'video', key: 'right_wrist' },
+      { kind: 'curve', key: 'right_arm' },
+    ]);
+    // no arm named: the first smart group; no camera named: the first camera
+    expect(miniLayout('motion_quality', null, arms).cells).toEqual([{ kind: 'video', key: 'head' }, { kind: 'curve', key: 'left_arm' }]);
+    // anything else (or no finding): every camera, three at most
+    expect(miniLayout('task_success', null, arms)).toEqual({ cells: MODEL.cameras.map((c) => ({ kind: 'video', key: c.key })), shape: { cols: 3, rows: 1 } });
+    expect(miniLayout(null, null, { cameras: [], streams: [stream('arm')] }).cells).toEqual([{ kind: 'curve', key: 'arm' }]);
+  });
+
+  it('finds the camera a scope names by its short name (an mcap topic too) and the group of an arm', () => {
+    const cams = [cam('robot0_sensor_camera0_compressed'), cam('wrist')];
+    cams[0].source = '/robot0/sensor/camera0/compressed';
+    expect(cameraOfScope({ camera: 'wrist' }, cams)).toBe('wrist');
+    expect(cameraOfScope({ cameras: ['compressed'] }, cams)).toBe('robot0_sensor_camera0_compressed');
+    expect(cameraOfScope({ camera: 'nope' }, cams)).toBeNull();
+    expect(armStream({ arm: 'LEFT' }, [stream('a'), stream('left_arm')])).toBe('left_arm');
+    expect(armStream(null, [stream('x', false), stream('y')])).toBe('y');
+    expect(armStream(null, [stream('d', false, 'depth', false)])).toBeNull();
   });
 });

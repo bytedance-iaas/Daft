@@ -57,6 +57,8 @@ export interface PlayerProps {
   onClock?: (clock: PlayerClock | null) => void;
   /** filled with the player's PlayerControl while it is mounted */
   control?: React.MutableRefObject<PlayerControl | null>;
+  /** cells to show (the mini player's layout for the focused finding); a new one replaces the grid */
+  arrangement?: Layout | null;
 }
 
 /** The player: loads the model and the episode, keeps the last episode on screen while the next loads. */
@@ -95,7 +97,7 @@ export function Player(props: PlayerProps) {
   return <PlayerView {...props} model={model.data} ep={episode.data} loadingNext={episode.data.index !== props.index} />;
 }
 
-interface Layout {
+export interface Layout {
   cells: CellContent[];
   shape: GridShape;
 }
@@ -115,6 +117,7 @@ function PlayerView({
   sidebar = false,
   onClock,
   control,
+  arrangement = null,
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
   // one clock per episode; the cleanup only stops it (StrictMode runs it and then the effect again on
@@ -146,8 +149,14 @@ function PlayerView({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const [template, setTemplate] = useState<LayoutTemplate>('smart');
-  const [layout, setLayout] = useState<Layout | null>(null);
+  const [template, setTemplate] = useState<LayoutTemplate>(arrangement ? 'custom' : 'smart');
+  const [layout, setLayout] = useState<Layout | null>(arrangement);
+  useEffect(() => {
+    if (!arrangement) return;
+    setTemplate('custom');
+    setLayout(arrangement);
+    setMax(null);
+  }, [arrangement]);
   const [max, setMax] = useState<number | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
   const [sideOpen, setSideOpen] = useState(sidebar);
@@ -210,10 +219,13 @@ function PlayerView({
   const otherTracks = tracks.filter((t) => t !== track);
 
   // -- findings
-  const bands: Band[] = useMemo(() => evidence.map((e) => ({ id: e.id, level: e.level, start: e.start, end: e.end })), [evidence]);
+  const bands: Band[] = useMemo(
+    () => evidence.flatMap((e) => (e.start !== null && e.end !== null ? [{ id: e.id, level: e.level, start: e.start, end: e.end }] : [])),
+    [evidence],
+  );
   const focusEv = (id: string) => {
     const ev = evidence.find((e) => e.id === id);
-    if (ev) {
+    if (ev && ev.start !== null) {
       clock.pause();
       clock.seek(ev.start);
     }
@@ -293,10 +305,18 @@ function PlayerView({
       {!full && evidence.length ? (
         <div className="vz-evlist">
           {evidence.map((ev) => (
-            <button key={ev.id} type="button" className={`chip ${ev.level}${ev.id === focusEvidence ? ' on' : ''}`} onClick={() => focusEv(ev.id)}>
+            <button
+              key={ev.id}
+              type="button"
+              className={`chip ${ev.level}${ev.id === focusEvidence ? ' on' : ''}`}
+              title={ev.start === null ? (ev.whole ? zh.viz.mini.wholeTitle : zh.viz.mini.unlocatableTitle) : ev.label}
+              onClick={() => focusEv(ev.id)}
+              data-testid="vz-chip"
+            >
               <i className="dot" />
               <code>{ev.item}</code>
-              {ev.label}
+              <span className="lab">{ev.label}</span>
+              {ev.start === null ? <span className="muted">{ev.whole ? zh.viz.mini.whole : zh.viz.mini.unlocatable}</span> : null}
             </button>
           ))}
         </div>

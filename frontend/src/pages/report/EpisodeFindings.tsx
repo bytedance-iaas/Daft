@@ -20,21 +20,22 @@ export function questionTargets(review: EpisodeView['review'], askable: (item: {
 
 /**
  * 全部发现 of one episode (design doc 17 §5.4): every finding of every module, grouped blocking / review /
- * info, each with its module, code, item, sentence, scope and moment (a moment in seconds plays every
- * camera from there); an open question gets 去裁决, an appealable reject 去复议.
+ * info, each with its module, code, item, sentence, scope and moment (the moment opens the mini
+ * player on that finding, design doc 18 §4.6); an open question gets 去裁决, an appealable reject 去复议.
  */
 export function EpisodeFindings({
   taskId,
   findings,
   targets,
   readOnly,
-  onSeek,
+  onOpen,
 }: {
   taskId: string;
   findings: readonly EpisodeFinding[];
   targets: { review: Set<string>; appeals: Set<string> };
   readOnly: boolean;
-  onSeek: (at: number) => void;
+  /** opens the mini player on the finding (its index in `findings`) */
+  onOpen: (index: number) => void;
 }) {
   const reg = useModules();
   const groups = groupByLevel(findings);
@@ -72,15 +73,11 @@ export function EpisodeFindings({
             </Tag>
           ) : null}
           {where ? (
-            where.seekS !== null ? (
-              <Tooltip content={F().seek}>
-                <Button size="mini" type="text" onClick={() => onSeek(where.seekS!)} data-testid="finding-seek">
-                  {where.text}
-                </Button>
-              </Tooltip>
-            ) : (
-              <span className="muted">{where.text}</span>
-            )
+            <Tooltip content={zh.viz.mini.seekTitle}>
+              <Button size="mini" type="text" onClick={() => onOpen(findings.indexOf(f))} data-testid="finding-seek">
+                {where.text}
+              </Button>
+            </Tooltip>
           ) : null}
           {ask ? go(`/tasks/${taskId}/adjudication?source=${encodeURIComponent(f.module)}`, zh.episodeTab.goAdjudicate) : null}
           {appeal ? go(`/tasks/${taskId}/adjudication?tab=appeals&source=${encodeURIComponent(f.module)}`, zh.episodeTab.goAppeal) : null}

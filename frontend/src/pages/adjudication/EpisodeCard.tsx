@@ -1,4 +1,4 @@
-import { Button, Card, Empty, Form, Input, Radio, Space, Spin, Tag, Typography } from '@arco-design/web-react';
+import { Button, Card, Form, Input, Radio, Space, Spin, Tag, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -8,7 +8,7 @@ import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
 import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefWindows } from '../../features/eef/EefRecord';
 import { SignedImage } from '../../features/media/SignedMedia';
-import { SyncedVideos } from '../../features/media/SyncedVideos';
+import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
 import { codeName, codeSpec, itemLabel } from '../../lib/findings';
 import { zh } from '../../locales/zh';
@@ -32,30 +32,32 @@ function useEpisode(taskId: string, ep: number, rev: number) {
 }
 
 /**
- * Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7).
- * 「同时播放」 plays the cameras in sync and never starts by itself (F6.2). `skip`: modules whose
- * evidence a question of the card shows itself.
+ * The episode's 「可视化」 and its evidence frames, loaded when the card scrolls into view (03 §7). The
+ * mini player (design doc 18 §4.6) opens on the first finding of the card's source modules. `skip`:
+ * modules whose evidence a question of the card shows itself.
  */
-function CardMedia({ taskId, ep, rev, skip = [] }: { taskId: string; ep: number; rev: number; skip?: readonly string[] }) {
+function CardMedia({ taskId, ep, rev, skip = [], modules = [] }: { taskId: string; ep: number; rev: number; skip?: readonly string[]; modules?: readonly string[] }) {
   const reg = useModules();
   const q = useEpisode(taskId, ep, rev);
+  const [mini, setMini] = useState<{ focus: number | null } | null>(null);
   if (q.isLoading) return <Spin size={16} />;
   if (!q.data) return null;
   const v = q.data;
   const evidence = (v.evidence ?? []).filter((e) => !skip.includes(e.module));
   const origin = v.videos[0]?.origin;
+  const focusOf = () => {
+    const i = (v.findings ?? []).findIndex((f) => modules.includes(f.module));
+    return i >= 0 ? i : null;
+  };
   return (
     <div data-testid={`media-${ep}`}>
-      {v.videos.length ? (
-        <SyncedVideos
-          key={`${ep}-${rev}`}
-          task={taskId}
-          videos={v.videos}
-          extra={origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
-        />
-      ) : (
-        <Empty description={zh.report.videos} />
-      )}
+      <Space size={8}>
+        <Button type="primary" size="small" title={zh.viz.mini.openTitle} onClick={() => setMini({ focus: focusOf() })} data-testid={`open-mini-${ep}`}>
+          {zh.viz.mini.open}
+        </Button>
+        {origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
+      </Space>
+      {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
       {evidence.length ? (
         <div className="evidence-grid" style={{ marginTop: 8 }}>
           {evidence.map((e) => (
@@ -429,7 +431,7 @@ export function EpisodeCard({
         {duplicateOf !== undefined && duplicateOf !== null ? (
           <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} />
         ) : (
-          <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} />
+          <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} modules={view.sources} />
         )}
       </LazyVisible>
       {view.questions.map((q, i) => {

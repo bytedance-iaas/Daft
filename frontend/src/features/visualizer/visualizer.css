@@ -150,6 +150,8 @@
 .vz-evlist .chip.info .dot { background: var(--c-text-3); }
 .vz-evlist .chip.on { border-color: var(--c-primary); color: var(--c-primary); background: rgb(var(--primary-1)); }
 .vz-evlist .chip code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
+.vz-evlist .chip .lab { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-evlist .chip .muted { color: var(--c-text-4); }
 
 .vz-keys { font-size: 11px; color: var(--c-text-4); white-space: nowrap; }
 .vz-keys kbd { display: inline-block; min-width: 16px; padding: 0 4px; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 3px; background: var(--color-bg-2); font: 10px/16px "SF Mono", ui-monospace, Menlo, monospace; color: var(--c-text-3); text-align: center; }

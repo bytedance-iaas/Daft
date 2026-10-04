@@ -2231,6 +2231,20 @@ export const zh = {
     episodeFailed: '这条 episode 读不出来',
     noCells: '这个数据集没有相机，也没有曲线',
     noMoreEpisodes: '已经是第一条 / 最后一条',
+    // the mini player (report, adjudication, task detail; design doc 18 §4.6)
+    mini: {
+      open: '可视化',
+      openTitle: '在弹窗里看这条 episode 的相机与曲线，发现标在进度条上',
+      title: (ep: number) => `可视化 · ep ${ep}`,
+      openFull: '在可视化页打开',
+      openFullTitle: '在新窗口打开完整的可视化页（数据集登记还在时）',
+      unlocatable: '无法定位',
+      unlocatableTitle: '这条发现只有帧号，这个任务读不出帧率，不能放到进度条上',
+      whole: '整条',
+      wholeTitle: '这条发现说的是整条 episode，没有具体时段',
+      seekTitle: '在可视化里看这一段',
+      hint: '点发现芯片跳到那一段；格子按这条发现所属的模块挑相机与曲线',
+    },
   },
   // the visualize page (design doc 18 §5.0, §5.7)
   vizPage: {

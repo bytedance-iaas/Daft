@@ -14,8 +14,11 @@ export interface Evidence {
   /** taxonomy item / code shown on the chip */
   item: string;
   label: string;
-  start: number;
-  end: number;
+  /** episode seconds; null when the finding has no place on the timeline */
+  start: number | null;
+  end: number | null;
+  /** about the whole episode (no frames, no time): listed, never drawn */
+  whole?: boolean;
 }
 
 export interface TimelineInfo {
@@ -156,13 +159,14 @@ export function Progress({
       <i className="knob" style={{ left: `${pct}%`, top: off + 11 }} />
       <div className="ev" style={{ top: off + 24 }}>
         {evidence.map((ev) => {
+          if (ev.start === null || ev.end === null) return null;
           const w = ((ev.end - ev.start) / dur) * 100;
           return (
             <span
               key={ev.id}
               className={`${ev.level}${ev.id === focusEvidence ? ' focus' : ''}${w < 0.4 ? ' pt' : ''}`}
               style={{ left: left(ev.start), width: width(ev.start, ev.end) }}
-              title={`${ev.label} · ${fmtClock(ev.start)}–${fmtClock(ev.end)}`}
+              title={`${ev.label} · ${fmtClock(ev.start)}–${fmtClock(ev.end as number)}`}
               onPointerDown={(e) => {
                 e.stopPropagation();
                 onFocusEvidence?.(ev.id);

@@ -3,6 +3,7 @@ import { IconLoading } from '@arco-design/web-react/icon';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
+import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import { useModules } from '../../api/queries';
 import type { operations } from '../../api/schema';
 import type { PipelineEpisode, Task } from '../../api/types';
@@ -42,6 +43,7 @@ export const PIPELINE_PAGE = 20;
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [mini, setMini] = useState<number | null>(null);
   const reg = useModules();
   const live = !isTerminalState(task.state) || Boolean(task.active_subtask);
   const page = useQuery({
@@ -129,6 +131,9 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
           extra={
             <Space size={8}>
               <Refreshing on={detail.isFetching} testId="pipeline-episode-refreshing" />
+              <Button type="primary" size="mini" title={zh.viz.mini.openTitle} onClick={() => setMini(selected)} data-testid="pipeline-open-mini">
+                {zh.viz.mini.open}
+              </Button>
               <Button type="text" size="mini" onClick={() => setSelected(null)}>{copy.collapse}</Button>
             </Space>
           }
@@ -155,6 +160,15 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
             </>
           ) : <Typography.Text type="secondary">{copy.unavailable}</Typography.Text>}
         </Card>
+      ) : null}
+      {mini !== null ? (
+        <MiniPlayerModal
+          taskId={task.id}
+          view={{ episode_index: mini, findings: [], dataset_id: task.dataset_id ?? null }}
+          focus={null}
+          onFocus={() => undefined}
+          onClose={() => setMini(null)}
+        />
       ) : null}
     </Card>
   );

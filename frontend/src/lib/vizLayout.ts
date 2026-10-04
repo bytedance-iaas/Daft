@@ -114,3 +114,66 @@ export function cellValid(cell: CellContent, model: Pick<VizDataset, 'cameras' |
   if (cell.kind === 'curve') return model.streams.some((s) => s.key === cell.key);
   return true;
 }
+
+// ---------------------------------------------------------------- the mini player (design doc 18 §4.6)
+
+/** Modules whose findings are about a picture: the camera in scope and another one. */
+const PICTURE_MODULES = new Set(['visual_quality', 'camera_defects', 'data_integrity']);
+/** Modules whose findings are about motion: the camera in scope and the arm's curves. */
+const MOTION_MODULES = new Set(['video_action_sync', 'eef_video_consistency', 'motion_quality', 'kinematic_limits', 'timestamp_check']);
+
+/** A finding's scope (C2 2.0): cameras by their short name, an arm. */
+export interface FindingScope {
+  camera?: string;
+  cameras?: string[];
+  arm?: string;
+}
+
+/** The model's camera a scope names (`wrist` is `observation.images.wrist`, an mcap topic's last words). */
+export function cameraOfScope(scope: FindingScope | null | undefined, cameras: Pick<VizDataset, 'cameras'>['cameras']): string | null {
+  const names = [scope?.camera, ...(scope?.cameras ?? [])].filter((n): n is string => !!n);
+  for (const n of names) {
+    const exact = cameras.find((c) => c.key === n || c.name === n || c.source === n);
+    if (exact) return exact.key;
+    const tail = cameras.find((c) => c.key.endsWith(n) || c.source.endsWith(`.${n}`) || c.source.endsWith(`/${n}`));
+    if (tail) return tail.key;
+  }
+  return null;
+}
+
+/** The curve group of an arm (`left`, `right`) or, without one, the first smart group. */
+export function armStream(scope: FindingScope | null | undefined, streams: Pick<VizDataset, 'streams'>['streams']): string | null {
+  const drawable = streams.filter((s) => s.kind === 'series' && s.available);
+  const arm = scope?.arm?.toLowerCase();
+  if (arm) {
+    const hit = drawable.find((s) => s.key.toLowerCase().includes(arm) || s.name.toLowerCase().includes(arm));
+    if (hit) return hit.key;
+  }
+  return (drawable.find((s) => s.smart) ?? drawable[0])?.key ?? null;
+}
+
+/**
+ * The mini player's cells for a finding of `module` (design doc 18 §4.6): a picture finding shows the
+ * camera in scope and another camera; a motion finding the camera and the arm's curves; anything else
+ * (and no finding) every camera, at most three in a row.
+ */
+export function miniLayout(module: string | null, scope: FindingScope | null | undefined, model: Pick<VizDataset, 'cameras' | 'streams'>): { cells: CellContent[]; shape: GridShape } {
+  const keys = model.cameras.map((c) => c.key);
+  const scoped = cameraOfScope(scope, model.cameras) ?? keys[0] ?? null;
+  let cells: CellContent[];
+  if (module && PICTURE_MODULES.has(module) && scoped) {
+    const other = keys.find((k) => k !== scoped);
+    cells = [scoped, other].filter((k): k is string => !!k).map((key) => ({ kind: 'video', key }));
+  } else if (module && MOTION_MODULES.has(module) && (scoped || armStream(scope, model.streams))) {
+    const curve = armStream(scope, model.streams);
+    cells = [...(scoped ? [{ kind: 'video' as const, key: scoped }] : []), ...(curve ? [{ kind: 'curve' as const, key: curve }] : [])];
+  } else {
+    cells = keys.slice(0, MAX_COLS).map((key) => ({ kind: 'video', key }));
+    if (!cells.length) {
+      const curve = armStream(scope, model.streams);
+      if (curve) cells = [{ kind: 'curve', key: curve }];
+    }
+  }
+  const shape = { cols: Math.max(1, Math.min(MAX_COLS, cells.length)), rows: 1 };
+  return { cells: fitCells(cells, shape), shape };
+}

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { api, unwrap } from '../../api/client';
 import { isApiError } from '../../api/errors';
@@ -512,17 +512,17 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(seen.find((r) => r.method === 'POST' && r.path.endsWith('/adjudication/apply'))?.body).toEqual({ relabel_rerun: 'v1' });
   });
 
-  it('card videos are signed on demand and signed again when a URL fails', async () => {
+  it('the card opens the mini player of its episode, and reads no camera before (design doc 18 §4.6)', async () => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
     const c = card(29);
-    await user.click(await within(c).findByRole('button', { name: '同时播放' }));
-    const video = await within(c).findByTestId('video-exterior_image_1_left');
-    await waitFor(() => expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('episode_000029'))).toHaveLength(3));
-    const src = video.getAttribute('src');
-    fireEvent.error(video);
-    await waitFor(() => expect(within(c).getByTestId('video-exterior_image_1_left').getAttribute('src')).not.toBe(src));
-    expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('exterior_image_1_left/episode_000029'))).toHaveLength(2);
+    expect(seen.filter((r) => r.path.includes('/viz'))).toHaveLength(0);
+    await user.click(await within(c).findByTestId('open-mini-29'));
+    const mini = await screen.findByTestId('vz-mini');
+    await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes/29/viz'))).toBe(true));
+    await waitFor(() => expect(mini.querySelectorAll('video[data-testid^="vz-video-"]').length).toBeGreaterThan(0));
+    expect(within(mini).getByText('ep 29')).toBeInTheDocument();
   });
 });

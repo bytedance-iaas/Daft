@@ -86,10 +86,15 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     expect(blocking).toHaveTextContent('TASK-5');
     expect(within(blocking).getByText('可复议')).toBeInTheDocument();
     expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/adjudication?tab=appeals&source=task_success`);
-    // the moment plays every camera from there: the videos are signed
+    // the moment opens the mini player on that finding (design doc 18 §4.6): its chip is the focused one
     const seen = recordRequests();
     await user.click(within(blocking).getByTestId('finding-seek'));
-    await waitFor(() => expect(seen.some((r) => r.path === '/media/sign')).toBe(true));
+    const mini = await screen.findByTestId('vz-mini');
+    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/6/viz`)).toBe(true));
+    const focused = await within(mini).findByText((_, el) => !!el?.classList.contains('chip') && el.classList.contains('on'));
+    expect(focused).toHaveTextContent('TASK-5');
+    await user.click(within(mini).getAllByRole('button', { name: '关闭' }).pop()!);
+    await waitFor(() => expect(screen.queryByTestId('vz-mini')).toBeNull());
     // the module block says what it found, not a verdict
     expect(within(screen.getByTestId('episode-module-task_success')).getByTestId('level-blocking')).toBeInTheDocument();
     expect(within(screen.getByTestId('episode-module-dedup')).getByText('无发现')).toBeInTheDocument();

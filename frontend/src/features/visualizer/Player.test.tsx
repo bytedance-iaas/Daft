@@ -41,8 +41,12 @@ describe('Player (design doc 18 §5)', () => {
     expect(tags).toHaveLength(1);
     expect(tags[0].closest('.vz-cell')?.textContent).toContain('wrist');
     expect(within(player).getByText('关节 · rad')).toBeInTheDocument();
-    // no native controls, no full screen
-    const v = player.querySelector('video') as HTMLVideoElement;
+    // no native controls, no full screen (the <video> comes a render after its cell: the URL is chosen in an effect)
+    const v = await waitFor(() => {
+      const el = player.querySelector('video');
+      expect(el).not.toBeNull();
+      return el as HTMLVideoElement;
+    });
     expect(v.controls).toBe(false);
     expect(v.getAttribute('controlslist')).toContain('nofullscreen');
     expect(v.hasAttribute('disablepictureinpicture')).toBe(true);
@@ -143,8 +147,8 @@ describe('Player (design doc 18 §5)', () => {
     );
     const player = await ready();
     await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(2));
-    expect(player.querySelector('canvas[data-testid^="vz-frames-"]')).not.toBeNull();
-    expect(player.querySelector('video[data-testid^="vz-video-"]')).not.toBeNull();
+    await waitFor(() => expect(player.querySelector('canvas[data-testid^="vz-frames-"]')).not.toBeNull());
+    await waitFor(() => expect(player.querySelector('video[data-testid^="vz-video-"]')).not.toBeNull());
     // the IMU is drawable but not part of the smart layout
     expect(within(player).queryByText(/^IMU/)).toBeNull();
   });

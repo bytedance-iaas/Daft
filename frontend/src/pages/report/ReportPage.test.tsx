@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
@@ -206,7 +206,7 @@ describe('质检报告 (07 §5)', () => {
     expect(await screen.findByTestId('report-equation')).toBeInTheDocument();
   });
 
-  it('Episode 明细: the verdict, synced cameras, evidence and one block per module in report order (F6.2)', async () => {
+  it('Episode 明细: the verdict, the mini player entry, evidence and one block per module in report order (F6.2)', async () => {
     const seen = recordRequests();
     renderApp(`${REPORT}?ep=29#episodes`);
     const summary = await screen.findByTestId('episode-summary');
@@ -234,9 +234,9 @@ describe('质检报告 (07 §5)', () => {
     expect(screen.getByTestId('episode-module-dedup')).toHaveTextContent('无重复');
     expect(await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/)).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
     for (const b of document.querySelectorAll('[data-testid^="episode-module-"]')) expect(b.textContent).not.toMatch(/[{}"]/);
-    // Nothing signed for videos, nothing playing, until 同时播放.
-    expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('videos'))).toHaveLength(0);
-    expect(screen.getAllByRole('button', { name: /点击加载视频/ })).toHaveLength(3);
+    // Nothing about the cameras is read until 可视化 opens the mini player (design doc 18 §4.6).
+    expect(seen.filter((r) => r.path.includes('/viz') || (r.path === '/media/sign' && r.query.get('path')?.includes('videos')))).toHaveLength(0);
+    expect(screen.getByTestId('open-mini')).toBeInTheDocument();
   });
 
   it('Episode 明细: the EEF block shows the conclusion, the CPU readings and every review window with its crops (F5.12)', async () => {
@@ -431,30 +431,23 @@ describe('质检报告 (07 §5)', () => {
     expect(await screen.findByTestId('sync-curves-missing', {}, { timeout: 8000 })).toHaveTextContent('默认只为值得留意的条目');
   });
 
-  it('Episode 明细: 同时播放 signs every camera and waits for all of them; a v3 video plays only its episode (#t=from,to)', async () => {
+  it('Episode 明细: 可视化 opens the mini player on the task\'s own input; another episode starts closed (design doc 18 §4.6)', async () => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
     const seen = recordRequests();
     const { user } = renderApp(`${REPORT}?ep=18#episodes`);
     await screen.findByTestId('episode-summary');
-    await user.click(screen.getByRole('button', { name: '同时播放' }));
-    await waitFor(() => expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('videos'))).toHaveLength(3));
-    const video = await screen.findByTestId('video-exterior_image_1_left');
-    expect(video.getAttribute('src')).toMatch(/file-000\.mp4\?.*#t=252,266$/);
-    expect(screen.getByRole('status')).toHaveTextContent('缓冲中…');
-    // 403 / expired: signed again automatically, then gives up after the configured retries.
-    const first = video.getAttribute('src');
-    fireEvent.error(video);
-    await waitFor(() => expect(screen.getByTestId('video-exterior_image_1_left').getAttribute('src')).not.toBe(first));
-    fireEvent.error(screen.getByTestId('video-exterior_image_1_left'));
-    await waitFor(() => expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('exterior_image_1_left'))).toHaveLength(3));
-    fireEvent.error(screen.getByTestId('video-exterior_image_1_left'));
-    expect(await screen.findByText('视频加载失败：播放地址已重签仍打不开')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '重新加载' }));
-    expect(await screen.findByTestId('video-exterior_image_1_left')).toBeInTheDocument();
-    // Another episode: a new group, nothing plays or signs by itself.
+    await user.click(screen.getByTestId('open-mini'));
+    const mini = await screen.findByTestId('vz-mini');
+    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${MAIN_TASK}/episodes/18/viz`)).toBe(true));
+    // every camera of the frozen input, the v3 file's window given by the episode answer (the clock plays only that)
+    await waitFor(() => expect(mini.querySelectorAll('video[data-testid^="vz-video-"]').length).toBe(3));
+    expect(within(mini).getByText('ep 18')).toBeInTheDocument();
+    await user.click(within(mini).getAllByRole('button', { name: '关闭' }).pop()!);
+    await waitFor(() => expect(screen.queryByTestId('vz-mini')).toBeNull());
+    // Another episode: nothing opens by itself.
     await user.click(screen.getByRole('button', { name: /下一条/ }));
     await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=19#episodes`));
-    expect(await screen.findAllByRole('button', { name: /点击加载视频/ })).toHaveLength(3);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByTestId('vz-mini')).toBeNull();
   });
 
   it('the held episodes link to the Episode tab; history revisions are read only there too', async () => {
