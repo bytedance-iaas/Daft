@@ -110,7 +110,7 @@ def test_a_truncated_faststart_video_is_placed_in_time(cli, dataset, tmp_path):
     check(cli, dataset, rd, "1")
     rec = results(rd)[1]
     [f] = [f for f in rec["details"]["findings"] if f["code"] == "file_truncated"]
-    assert f["span_s"] == [round(s.times[40], 3), None] and "第 40 帧" in f["message"] and "KB 处被截断" in f["message"]
+    assert f["span_s"] == [round(s.times[40], 3), None] and "第 41 帧" in f["message"] and "KB 处被截断" in f["message"]
 
 
 def test_a_zeroed_block_inside_the_video_data(tmp_path):

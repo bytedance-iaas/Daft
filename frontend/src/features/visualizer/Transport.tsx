@@ -41,9 +41,10 @@ function FrameInput({ clock, tl }: { clock: PlayerClock; tl: TimelineInfo }) {
   const go = () => {
     if (draft !== null) {
       const f = Number(draft);
-      if (Number.isFinite(f)) {
+      if (Number.isFinite(f) && draft !== '') {
         clock.pause();
-        clock.seek(timeOfFrame(tl.timeline, tl.frames, clamp(Math.round(f), 0, tl.frames - 1)));
+        // frames count from 1 on screen (design doc 18 §4.4); the timeline's indexes from 0
+        clock.seek(timeOfFrame(tl.timeline, tl.frames, clamp(Math.round(f) - 1, 0, tl.frames - 1)));
       }
     }
     setDraft(null);
@@ -54,7 +55,7 @@ function FrameInput({ clock, tl }: { clock: PlayerClock; tl: TimelineInfo }) {
       <input
         aria-label={zh.viz.frameInput}
         title={zh.viz.frameInput}
-        value={draft ?? String(frame)}
+        value={draft ?? String(frame + 1)}
         onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ''))}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
@@ -65,7 +66,7 @@ function FrameInput({ clock, tl }: { clock: PlayerClock; tl: TimelineInfo }) {
         }}
         onBlur={go}
       />
-      /<span>{Math.max(0, tl.frames - 1)}</span>
+      /<span>{tl.frames}</span>
     </span>
   );
 }

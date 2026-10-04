@@ -13,7 +13,7 @@ describe("one episode's readings in Chinese (F6.2)", () => {
     const d = { n_violations: 25, violations: Array.from({ length: 22 }, (_, i) => ({ type: i ? 'velocity_limit' : 'joint_limit', joint: i % 2 ? 3 : 'xyz', frame: i, value: 2.51234, limit: i ? 2 : [-2, 2] })) };
     const { rows, more } = violationRows(d);
     expect(rows).toHaveLength(20);
-    expect(rows[0]).toMatchObject({ type: '关节超限', joint: '末端位置', frame: '0', value: '2.5123', limit: '-2 ~ 2' });
+    expect(rows[0]).toMatchObject({ type: '关节超限', joint: '末端位置', frame: '1', value: '2.5123', limit: '-2 ~ 2' });
     expect(rows[1]).toMatchObject({ type: '关节超速', joint: '关节 3', limit: '2' });
     expect(more).toBe(5);
   });
@@ -27,7 +27,7 @@ describe("one episode's readings in Chinese (F6.2)", () => {
       ['路径效率', '0.09', '只报不罚', ''],
     ]);
     expect(motionFacts(d).map((f) => `${f.label}：${f.value}`)).toEqual(['执行器卡死：不适用：指令与读数同源', '空闲：开头 1.2 秒 · 结尾 0 秒 · 中途停顿 1 次（共 0.8 秒）', '运动占比：90%']);
-    expect(motionFacts({ stuck: 0, stuck_joints: [{ axis: 'z', freeze_start_frame: 144, freeze_end_frame: 170 }] })[0]).toMatchObject({ value: '卡死：z（第 144–170 帧）', warn: true });
+    expect(motionFacts({ stuck: 0, stuck_joints: [{ axis: 'z', freeze_start_frame: 144, freeze_end_frame: 170 }] })[0]).toMatchObject({ value: '卡死：z（第 145–171 帧）', warn: true });
   });
 
   it('visual: per camera, short names, placeholders and low scores marked', () => {

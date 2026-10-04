@@ -48,7 +48,7 @@ export function violationRows(d: Details, max = 20): { rows: ViolationRow[]; mor
     key: String(i),
     type: K.types[String(v.type)] ?? String(v.type ?? '—'),
     joint: v.joint === undefined || v.joint === null ? '—' : K.joint(String(v.joint)),
-    frame: num(v.frame) === null ? '—' : String(num(v.frame)),
+    frame: num(v.frame) === null ? '—' : String((num(v.frame) as number) + 1),    // shown from 1
     value: num(v.value) === null ? '—' : fmt(num(v.value), 4),
     limit: Array.isArray(v.limit) ? `${fmt(num(v.limit[0]), 3)} ~ ${fmt(num(v.limit[1]), 3)}` : num(v.limit) === null ? String(v.limit ?? '—') : fmt(num(v.limit), 4),
   }));

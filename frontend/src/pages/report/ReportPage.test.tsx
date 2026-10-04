@@ -249,7 +249,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('eef-conclusion')).toHaveTextContent(`为什么转人工：${why}`);
     expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');
     const cand = within(block).getByTestId('eef-window-ext-0');
-    expect(cand).toHaveTextContent('候选段 · 位置帧 120–150（3 帧）点 block_center · 方向 gripper_x');
+    expect(cand).toHaveTextContent('候选段 · 位置帧 121–151（3 帧）点 block_center · 方向 gripper_x');
     expect(cand).toHaveTextContent('与 CPU 冲突：位置 CPU 可疑，模型支持');
     expect(cand.className).toContain('conflict');
     expect(within(block).getByTestId('eef-window-ext-1')).toHaveTextContent('模型超时');
@@ -274,7 +274,7 @@ describe('质检报告 (07 §5)', () => {
     expect(joints).toHaveTextContent('按声明关系的差中位 26.9 · P95 38.3 · 最大 40');
     expect(joints).toHaveTextContent('与声明相差：平移 21.2 mm，转 2.7°');
     expect(joints).toHaveTextContent('数据集记录比上传的轨迹晚 1 帧（0.067 秒）');
-    expect(joints).toHaveTextContent('随时间变化的差：帧 0–286（287 帧） · 位置，峰值 28.5 mm');
+    expect(joints).toHaveTextContent('随时间变化的差：帧 1–287（287 帧） · 位置，峰值 28.5 mm');
     expect(await within(joints).findAllByTestId('chart')).toHaveLength(2);
     expect(within(rec).getByTestId('eef-record-internal')).toHaveTextContent('数据集内部：位姿列与关节角正解对不上');
     // the overlay frame is in the record block, once, with its colours - not among the CPU's own frames
@@ -294,10 +294,10 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).queryByTestId('eef-cpu')).toBeNull();                 // no CPU reading
     expect(within(block).queryByTestId('eef-windows')).toBeNull();
     const [first, second] = within(op).getAllByTestId('eef-opinion-segment');
-    expect(first).toHaveTextContent('片段 1帧 40–95（56 帧）2.7–6.3 秒中心不对不匹配置信度 85%');
+    expect(first).toHaveTextContent('片段 1帧 41–96（56 帧）2.7–6.3 秒中心不对不匹配置信度 85%');
     expect(first).toHaveTextContent('「红圈落在手指外侧」');
-    expect(second).toHaveTextContent('片段 2帧 180–230（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
-    expect(second).toHaveTextContent('证据帧 205（没存图）');
+    expect(second).toHaveTextContent('片段 2帧 181–231（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
+    expect(second).toHaveTextContent('证据帧 206（没存图）');                  // frame 205 of the data
     await waitFor(() => expect(within(first).getAllByAltText(/ext · frame_0000(52|71)\.jpg/)).toHaveLength(2));
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z · 手指连线 y');
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');

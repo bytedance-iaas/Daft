@@ -187,7 +187,7 @@ def mp4_l1(blob: Blob, rep: FileReport) -> None:
     missing = rep.samples.first_missing(blob.size)
     if missing is not None:
         t = rep.samples.times[missing]
-        rep.add("file_truncated", f"文件在 {_at(blob.size)}被截断，第 {missing} 帧（{t:.2f} 秒）起的数据缺失",
+        rep.add("file_truncated", f"文件在 {_at(blob.size)}被截断，第 {missing + 1} 帧（{t:.2f} 秒）起的数据缺失",
                 "L1", span=(t, float("inf")), args={"size": blob.size, "first_missing_frame": missing})
 
 

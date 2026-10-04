@@ -56,7 +56,7 @@ describe('the EEF record for a person (F5.11, F5.12)', () => {
   it('reads every window: votes, offset, the model words, failures, crops', () => {
     const [a, b, c] = eefWindowRows(details);
     expect(a.title).toBe('候选段 · 位置');
-    expect(a.frames).toBe('帧 40');
+    expect(a.frames).toBe('帧 41');                       // frame 40 of the data, counted from 1
     expect(a.target).toBe('点 tcp');
     expect(a.votes.map((v) => `${v.label}：${v.value}:${v.tone}`)).toEqual(['位置：反驳:bad', '朝向：拿不准:none', '绿十字跟对了：支持:good']);
     expect(a.offset).toBe('偏移：偏左，一到两指宽');
@@ -86,7 +86,7 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
       assessment_mode: 'vlm_opinion',
       opinion: { status: 'partial', cameras: { ext: { status: 'partial', clips: [{ start_frame: 0, end_frame: 899, status: 'answered', gripper_visible: false, summary: '看不清' }, { start_frame: 900, end_frame: 1000, status: 'failed', failure: { code: 'timeout' } }], segments: [] } } },
     })!;
-    expect(op.cameras[0]).toMatchObject({ failures: ['帧 900–1000（101 帧）：模型超时'], unseen: true, summaries: ['看不清'] });
+    expect(op.cameras[0]).toMatchObject({ failures: ['帧 901–1001（101 帧）：模型超时'], unseen: true, summaries: ['看不清'] });
   });
 });
 
@@ -112,7 +112,7 @@ describe('eefDatasetRecord (design doc 12 §8.7, D-E16)', () => {
       { label: '补偿时间差后拟合的恒定差', value: '平移 21.2 mm，转 2.7°', bad: false },
       { label: '与声明相差', value: '平移 21.2 mm，转 2.7°', bad: true },
     ]);
-    expect(joints.segments).toEqual(['帧 0–286（287 帧） · 位置，峰值 28.5 mm', '帧 123–234（112 帧） · 姿态，峰值 6.59°']);
+    expect(joints.segments).toEqual(['帧 1–287（287 帧） · 位置，峰值 28.5 mm', '帧 124–235（112 帧） · 姿态，峰值 6.59°']);
     expect(joints.curves?.frame).toEqual([0, 100, 200]);
     expect(r.internal).toEqual({ text: '位姿列与关节角正解对不上（P95 38.3 mm，7.41°）', bad: true });
     expect(r.overlays).toEqual([{ path: 'checks/eef_video_consistency/evidence/000001/record/ext_frame_000148.jpg', camera: 'ext', frame: 148 }]);

@@ -20,7 +20,7 @@ function Now({ clock, ep }: { clock: PlayerClock; ep: VizEpisode }) {
   const t = useClockValue(clock, (s) => Math.round(s.t * 1000) / 1000);
   return (
     <>
-      <Kv k={zh.viz.side.frame} v={frameAt(ep.timeline, ep.frames, t)} />
+      <Kv k={zh.viz.side.frame} v={frameAt(ep.timeline, ep.frames, t) + 1} />
       <Kv k={zh.viz.side.time} v={fmtClock(t)} />
     </>
   );

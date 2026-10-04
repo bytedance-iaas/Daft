@@ -93,10 +93,13 @@ def _req(frames=(10, 12)):
 
 def test_one_repair_turn_then_failed(tmp_path):
     cache = R.Cache(str(tmp_path / "cache"))
-    ask = _Ask("oops", json.dumps(GOOD))
+    # the model sees frame ids from 1 (frames 10 and 12 of the data are printed 11 and 13) and cites them;
+    # the answer kept has the data's indexes (design doc 18 §4.4)
+    ask = _Ask("oops", json.dumps({**GOOD, "evidence_frame_ids": [11, 13]}))
     got = R.ask_window(_req(), ask, cache)
-    assert got["status"] == R.ANSWERED and got["attempts"] == 2
+    assert got["status"] == R.ANSWERED and got["attempts"] == 2 and got["answer"] == GOOD
     assert ask.calls[1][0]["content"] == "oops" and "malformed_json" in ask.calls[1][1]["content"]
+    assert "evidence_frame_ids only from [11, 13]" in ask.calls[1][1]["content"]
     again = R.ask_window(_req(), _Ask(), cache)                          # cached: no request at all
     assert again == {"status": R.ANSWERED, "answer": GOOD, "attempts": 0, "cache_hit": True}
     bad = R.ask_window(R.Request(_req().window, "p", [], [10, 12], "x" * 64),

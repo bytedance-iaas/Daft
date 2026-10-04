@@ -122,14 +122,16 @@ describe('Player (design doc 18 §5)', () => {
       </StrictMode>,
     );
     const player = await ready();
-    await waitFor(() => expect(frameInput().value).toBe('0'));
+    // frames count from 1 on screen (design doc 18 §4.4): the first frame is 1, the box says of how many
+    await waitFor(() => expect(frameInput().value).toBe('1'));
+    expect(frameInput().parentElement?.textContent).toMatch(/\/\d+$/);
     player.focus();
     fireEvent.keyDown(player, { key: 'ArrowRight' });
-    await waitFor(() => expect(frameInput().value).toBe('1'));
+    await waitFor(() => expect(frameInput().value).toBe('2'));
     fireEvent.keyDown(player, { key: 'ArrowRight', shiftKey: true }); // one second on
     await waitFor(() => expect(Number(frameInput().value)).toBeGreaterThan(5));
     fireEvent.keyDown(player, { key: 'ArrowLeft', shiftKey: true });
-    await waitFor(() => expect(frameInput().value).toBe('1'));
+    await waitFor(() => expect(frameInput().value).toBe('2'));
     await user.clear(frameInput());
     await user.type(frameInput(), '42{Enter}');
     await waitFor(() => expect(frameInput().value).toBe('42'));

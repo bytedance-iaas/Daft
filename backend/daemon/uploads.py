@@ -65,9 +65,11 @@ def validate_trajectory(data: bytes) -> dict:
     if not result.ok:
         errors = [_issue(i) for i in result.errors]
         first = errors[0]
-        where = "、".join(label.format(first[k]) for k, label in (("sample_id", "样本 {}"), ("frame_index", "第 {} 帧"),
+        # frame numbers count from 1 on screen (design doc 18 §4.4); frame_index is the data's, from 0
+        shown = {**first, "frame_index": first["frame_index"] + 1} if isinstance(first.get("frame_index"), int) else first
+        where = "、".join(label.format(shown[k]) for k, label in (("sample_id", "样本 {}"), ("frame_index", "第 {} 帧"),
                                                                   ("camera_id", "相机 {}"), ("point_id", "点 {}"))
-                         if first.get(k) is not None)
+                         if shown.get(k) is not None)
         raise _invalid(f"trajectory.json 没有通过校验：{first['problem']}"
                        + (f"（{where}）" if where else "") + (f"，共 {len(errors)} 处" if len(errors) > 1 else ""),
                        errors)

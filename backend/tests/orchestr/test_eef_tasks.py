@@ -68,7 +68,8 @@ def test_upload_is_validated_on_arrival_with_located_errors(daemon):
     assert "truth" in err["field"] and err["code"] == "forbidden_key"
     assert (err["sample_id"], err["episode_index"], err["frame_index"], err["camera_id"], err["point_id"]) == \
         ("mini_000003", 3, 10, CAM, "block_center")
-    assert "样本 mini_000003、第 10 帧、相机 exterior、点 block_center" in bad["error"]["message"]
+    # the message counts frames from 1 (design doc 18 §4.4); the located error keeps the data's frame_index
+    assert "样本 mini_000003、第 11 帧、相机 exterior、点 block_center" in bad["error"]["message"]
     seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
     assert seeds["validation"]["summary"]["samples"] == 7 and seeds["kind"] == "eef_observation_seeds"
     rows = _seed_rows()

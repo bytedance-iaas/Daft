@@ -220,7 +220,7 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
                   ))}
                 </div>
               ) : g.evidenceFrames.length ? (
-                <div className="episode-line muted">{O.evidenceFrames(g.evidenceFrames.join('、'))}</div>
+                <div className="episode-line muted">{O.evidenceFrames(g.evidenceFrames.map((f) => f + 1).join('、'))}</div>
               ) : null}
             </div>
           ))}

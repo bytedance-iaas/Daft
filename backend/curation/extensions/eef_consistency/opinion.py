@@ -21,7 +21,7 @@ import numpy as np
 from . import review as R
 
 PROTOCOL = "eef-opinion/1"
-PROMPT_VERSION = "eef-opinion-prompt/1"
+PROMPT_VERSION = "eef-opinion-prompt/2"           # 2: frame numbers printed and asked from 1
 ANSWER_SCHEMA = "eef/opinion_output.schema.json"
 MAX_CLIP_S = 60.0                     # a longer clip is cut into consecutive parts of about this long
 FLAG_CONFIDENCE = 0.5                 # a segment at least this sure counts as flagged in the report
@@ -193,7 +193,7 @@ def _render(sample, camera_id: str, marks: R.Marks, finger, media_root: str, lo_
         f = mapping.get(fr.index)
         if f is not None:
             bgr = _draw(bgr, marks, finger, f, k)
-        bgr = R._label(bgr, f"frame {f}" if f is not None else f"media frame {fr.index} (no trajectory sample)")
+        bgr = R._label(bgr, f"frame {f + 1}" if f is not None else f"media frame {fr.index + 1} (no trajectory sample)")
         yield fr.pts_s, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
@@ -213,7 +213,7 @@ def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis
     marks = R.marks_for(sample, window, {})
     mapping = {int(v): i for i, v in enumerate(cam.video_frame_index) if v >= 0}
     lo_m, hi_m = int(cam.video_frame_index[lo]), int(cam.video_frame_index[hi])
-    text = build_prompt(sample, camera_id, point_id, axis_id, lo, hi, finger_id)
+    text = build_prompt(sample, camera_id, point_id, axis_id, lo + 1, hi + 1, finger_id)     # as printed
     finger = _second_axis(sample, camera_id, finger_id)
     clip = encode_rendered_video(f"{camera_id} MARKED", _render(sample, camera_id, marks, finger, media_root, lo_m,
                                                                 hi_m, mapping, int(opts.get("max_side", 720))),
@@ -225,9 +225,17 @@ def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis
     return R.Request(window=window, text=text, images=[], frame_ids=[lo, hi], key=key, videos=[clip])
 
 
+def _to_data(answer: dict) -> dict:
+    """An answer in the printed numbering (from 1) with the data's frame indexes (from 0)."""
+    segs = [{**s, "start_frame": s["start_frame"] - 1, "end_frame": s["end_frame"] - 1,
+             "evidence_frames": [f - 1 for f in s["evidence_frames"]]} for s in answer["segments"]]
+    return {**answer, "segments": segs}
+
+
 def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache: R.Cache) -> dict:
-    """One part: cached answer, or the model with at most one repair turn."""
-    lo, hi = req.frame_ids
+    """One part: cached answer, or the model with at most one repair turn. The model sees and answers
+    frame numbers from 1 (design doc 18 §4.4); the answer kept has the data's indexes."""
+    lo, hi = req.frame_ids[0] + 1, req.frame_ids[1] + 1
     hit = cache.get(req.key)
     if hit is not None:
         return {"status": R.ANSWERED, "answer": hit, "attempts": 0, "cache_hit": True}
@@ -241,6 +249,7 @@ def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache:
                     "cache_hit": False}
         answer, problem = check_answer(text, lo, hi)
         if answer is not None:
+            answer = _to_data(answer)
             cache.put(req.key, answer)
             return {"status": R.ANSWERED, "answer": answer, "attempts": attempt, "cache_hit": False}
         history = [{"role": "assistant", "content": text[:4000]},
@@ -269,7 +278,7 @@ def write_stills(sample, camera_id: str, marks: R.Marks, wanted: set[int], *, me
             k = min(1.0, STILL_MAX_SIDE / max(bgr.shape[:2]))
             if k < 1:
                 bgr = cv2.resize(bgr, (int(bgr.shape[1] * k), int(bgr.shape[0] * k)))
-            bgr = R._label(_draw(bgr, marks, finger, f, k), f"frame {f}")
+            bgr = R._label(_draw(bgr, marks, finger, f, k), f"frame {f + 1}")
             path = d / f"frame_{f:06d}.jpg"
             path.write_bytes(R._jpeg(bgr))
             out[f] = os.path.relpath(path, run_dir).replace(os.sep, "/")

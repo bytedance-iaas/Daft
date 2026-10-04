@@ -316,7 +316,7 @@ def _kinematic_limits(passed, score, d, p) -> Derived:
         limit = vs[0].get("limit")
         channel = None if joint in ("", "xyz", "rpy") else f"joint {joint}"
         where = f"关节 {joint}" if channel else ("末端位置" if joint == "xyz" else "末端姿态" if joint == "rpy" else "")
-        out.add(m, kind, f"{where}{_KIN_NAMES[kind]}：{len(vs)} 处，首次在第 {frames[0]} 帧，"
+        out.add(m, kind, f"{where}{_KIN_NAMES[kind]}：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，"
                          f"最大 {worst:.4g}（限值 {limit}）" if worst is not None else f"{where}{_KIN_NAMES[kind]}",
                 scope={"channel": channel} if channel else None,
                 readings={"frames": frames[:20], "max_value": _r(worst), "limit": limit})
@@ -377,7 +377,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
             continue
         a, b = s.get("freeze_start_frame"), s.get("freeze_end_frame")
         joint = s.get("joint")
-        out.add(m, "stuck", f"关节 {joint} 卡死：第 {a}–{b} 帧指令在变、读数不动" if a is not None and b is not None
+        out.add(m, "stuck", f"关节 {joint} 卡死：第 {int(a) + 1}–{int(b) + 1} 帧指令在变、读数不动" if a is not None and b is not None
                 else f"关节 {joint} 卡死", scope={"channel": f"joint {joint}"},
                 frames=(int(a), int(b)) if a is not None and b is not None else None,
                 readings={"max_dead_run": s.get("max_dead_run")})

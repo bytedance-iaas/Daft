@@ -38,7 +38,7 @@ from . import contracts as C
 
 DETAIL_SCHEMA_VERSION = "eef-review-detail/0.1"
 ANSWER_SCHEMA = "eef/review_output.schema.json"
-PROMPT_VERSION = "eef-review-prompt/2"
+PROMPT_VERSION = "eef-review-prompt/3"            # 3: frame ids printed and asked from 1
 PREPROCESS = {"crop_min_px": 160, "crop_max_px": 384, "crop_margin": 2.5, "crop_show_min_px": 256,
               "context_max_px": 640, "jpeg_quality": 85}
 WINDOW_S = 1.0                                   # a uniform window covers about this long
@@ -348,7 +348,7 @@ def build_prompt(sample, window: Window, frame_ids: list[int], marks: "Marks") -
     return "\n".join([
         "You review ONE point P" + (" and ONE direction A" if has_axis else "") +
         " of a robot gripper, as a recorded trajectory projects them into a camera image.",
-        f"Camera {window.camera_id}. Frames {', '.join(map(str, frame_ids))} (the id is printed on every image).",
+        f"Camera {window.camera_id}. Frames {', '.join(str(f + 1) for f in frame_ids)} (the id is printed on every image).",
         "Images: first a downscaled full frame for context; then for every frame RAW (a crop around the gripper with "
         "nothing drawn - find P there yourself first) and MARKED (the same crop) where " + "; ".join(legend) + ".",
         "Definitions:",
@@ -392,16 +392,16 @@ def build_request(sample, window: Window, frames: dict[int, np.ndarray], observe
     scale = min(1.0, PREPROCESS["context_max_px"] / max(w, h))
     ctx = cv2.resize(first, (int(round(w * scale)), int(round(h * scale)))) if scale < 1 else first
     images.append({"role": "context", "frame_index": ids[0],
-                   "jpeg": _jpeg(_label(_overlay(ctx, marks, ids[0], scale), f"frame {ids[0]} (full)"))})
+                   "jpeg": _jpeg(_label(_overlay(ctx, marks, ids[0], scale), f"frame {ids[0] + 1} (full)"))})
     for f in ids:
         x0, y0, cw, ch = _crop_box(marks.points(f), wh)
         crop = frames[f][y0:y0 + ch, x0:x0 + cw]
         k = max(1.0, PREPROCESS["crop_show_min_px"] / max(1, min(cw, ch)))    # small media: enlarge to read
         if k > 1.0:
             crop = cv2.resize(crop, (int(round(cw * k)), int(round(ch * k))), interpolation=cv2.INTER_LINEAR)
-        images.append({"role": "raw", "frame_index": f, "jpeg": _jpeg(_label(crop.copy(), f"frame {f} RAW"))})
+        images.append({"role": "raw", "frame_index": f, "jpeg": _jpeg(_label(crop.copy(), f"frame {f + 1} RAW"))})
         marked = _overlay(crop, marks, f, k, (x0, y0))
-        images.append({"role": "marked", "frame_index": f, "jpeg": _jpeg(_label(marked, f"frame {f} MARKED"))})
+        images.append({"role": "marked", "frame_index": f, "jpeg": _jpeg(_label(marked, f"frame {f + 1} MARKED"))})
     text = build_prompt(sample, window, ids, marks)
     key = cache_key(text, images, model)
     return Request(window, text, images, ids, key)
@@ -437,7 +437,7 @@ def attach_videos(req: Request, sample, observed: dict, media_root: str, *, opti
             f = mapping.get(fr.index)
             if marked and f is not None:
                 bgr = _overlay(bgr, marks, f, k)
-            label = f"frame {f}" if f is not None else f"media frame {fr.index} (no trajectory sample)"
+            label = f"frame {f + 1}" if f is not None else f"media frame {fr.index + 1} (no trajectory sample)"
             bgr = _label(bgr, f"{label} {'MARKED' if marked else 'RAW'}")
             yield fr.pts_s, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
@@ -550,7 +550,9 @@ def conflict(window: Window, answer: dict, cam_cells: dict) -> dict | None:
 
 
 def ask_window(req: Request, ask: Callable[[Request, list[dict]], str], cache: "Cache") -> dict:
-    """One window: cached answer, or the model with at most one repair turn."""
+    """One window: cached answer, or the model with at most one repair turn. The model sees and cites
+    frame ids from 1 (design doc 18 §4.4); the answer kept has the data's indexes."""
+    shown = [f + 1 for f in req.frame_ids]
     hit = cache.get(req.key)
     if hit is not None:
         return {"status": ANSWERED, "answer": hit, "attempts": 0, "cache_hit": True}
@@ -562,12 +564,13 @@ def ask_window(req: Request, ask: Callable[[Request, list[dict]], str], cache: "
         except ReviewCallError as e:
             return {"status": FAILED, "failure": {"code": e.code, "message": str(e)[:300]}, "attempts": attempt,
                     "cache_hit": False}
-        answer, problem = check_answer(text, req.frame_ids)
+        answer, problem = check_answer(text, shown)
         if answer is not None:
+            answer = {**answer, "evidence_frame_ids": [f - 1 for f in answer["evidence_frame_ids"]]}
             cache.put(req.key, answer)
             return {"status": ANSWERED, "answer": answer, "attempts": attempt, "cache_hit": False}
         history = [{"role": "assistant", "content": text[:4000]},
-                   {"role": "user", "content": repair_text(problem, req.frame_ids)}]
+                   {"role": "user", "content": repair_text(problem, shown)}]
     return {"status": FAILED, "failure": problem, "attempts": 2, "cache_hit": False}
 
 
