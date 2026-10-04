@@ -1,15 +1,11 @@
-// Videos and evidence frames are read straight from TOS through presigned URLs (D16, 03 §7):
-// the Daemon signs, the browser fetches. A URL that fails (403, expired) is signed again and the
-// element retried automatically, keeping the playback position (07 §6).
-import { Button, Spin } from '@arco-design/web-react';
-import { IconPlayArrow } from '@arco-design/web-react/icon';
+// Evidence frames are read straight from TOS through presigned URLs (D16, 03 §7): the Daemon signs,
+// the browser fetches. A URL that fails (403, expired) is signed again and the image retried (07 §6).
+// Camera videos are the visualizer's (features/visualizer), which signs through its own endpoints.
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
-import { errorMessage } from '../../api/errors';
 import { LazyVisible } from '../../components/LazyVisible';
 import { zh } from '../../locales/zh';
-import type { SyncController } from './syncPlayback';
 
 export type MediaScope = 'delivery' | 'input';
 
@@ -19,180 +15,27 @@ export interface MediaTarget {
   path: string;
 }
 
-export interface VideoRef {
-  camera: string;
-  scope: MediaScope;
-  path: string;
-  origin?: 'clip' | 'delivery_dataset' | 'source_dataset';
-  from_ts?: number;
-  to_ts?: number;
-}
-
 /** How many times in a row a failing URL is signed again before the element gives up. */
-export const MEDIA_CONFIG = { maxResign: 2, expirySlackMs: 30_000 };
+export const MEDIA_CONFIG = { maxResign: 2 };
 
 export const signKey = (t: MediaTarget) => ['media-sign', t.task, t.scope, t.path] as const;
 
-/** A presigned URL for one object; `resign()` fetches a fresh one (the old one failed or expired). */
+/** A presigned URL for one object; `resign()` fetches a fresh one (the old one failed). */
 export function useSignedUrl(target: MediaTarget | null, enabled: boolean) {
   const q = useQuery({
     queryKey: target ? signKey(target) : ['media-sign', 'none'],
     queryFn: () => unwrap(api().GET('/media/sign', { params: { query: { task: target!.task, scope: target!.scope, path: target!.path } } })),
     enabled: enabled && Boolean(target),
-    // We decide when to sign again: on a failed load, or when a stale URL is about to be used.
+    // We decide when to sign again: on a failed load.
     staleTime: Infinity,
     retry: false,
   });
-  const expired = q.data ? q.data.expires_at - Date.now() < MEDIA_CONFIG.expirySlackMs : false;
   return {
     data: q.data,
     loading: q.isFetching && !q.data,
     error: q.error,
-    expired,
     resign: () => q.refetch(),
   };
-}
-
-/** `url#t=from,to` for sources where one file holds several episodes (LeRobot v3). */
-export function withFragment(url: string, from?: number | null, to?: number | null): string {
-  if (from === undefined || from === null) return url;
-  return `${url}#t=${from}${to !== undefined && to !== null ? `,${to}` : ''}`;
-}
-
-/**
- * One camera's video. Nothing is signed until the user asks for it (a click on the placeholder,
- * or `load` from 「同时播放」), so opening a page never signs every video on it (07 §9), and
- * nothing ever starts playing by itself: playing together is the sync controller's (F6.2), which
- * takes the <video> element when `controller` is given.
- */
-export function SignedVideo({
-  task,
-  video,
-  load = false,
-  caption,
-  controller,
-  syncId,
-}: {
-  task: string;
-  video: VideoRef;
-  load?: boolean;
-  caption?: ReactNode;
-  controller?: SyncController;
-  syncId?: string;
-}) {
-  const [clicked, setClicked] = useState(false);
-  const requested = clicked || load;
-  const [failed, setFailed] = useState(false);
-  const sign = useSignedUrl({ task, scope: video.scope, path: video.path }, requested);
-  const el = useRef<HTMLVideoElement | null>(null);
-  const failures = useRef(0);
-  const resume = useRef<{ time: number; play: boolean } | null>(null);
-  // The episode's time range comes from the episode endpoint (W8 does not return it when signing).
-  const url = sign.data ? withFragment(sign.data.url, video.from_ts, video.to_ts) : null;
-  const synced = () => Boolean(controller?.isActive());
-
-  // The element joins the synced group as it mounts and leaves it as it unmounts.
-  const from = video.from_ts;
-  const to = video.to_ts;
-  const setEl = useCallback(
-    (node: HTMLVideoElement | null) => {
-      if (el.current && el.current !== node && controller && syncId) controller.detach(syncId, el.current);
-      el.current = node;
-      if (node && controller && syncId) controller.attach(syncId, node, { from, to });
-    },
-    [controller, syncId, from, to],
-  );
-
-  const gaveUp = failed || Boolean(sign.error && !sign.data);
-  useEffect(() => {
-    if (gaveUp && controller && syncId) controller.fail(syncId);
-  }, [gaveUp, controller, syncId]);
-
-  const retryFromScratch = () => {
-    failures.current = 0;
-    setFailed(false);
-    void sign.resign();
-  };
-
-  const onError = () => {
-    if (failures.current >= MEDIA_CONFIG.maxResign) {
-      setFailed(true);
-      return;
-    }
-    failures.current += 1;
-    const v = el.current;
-    // While synced the controller puts the new URL back at the group's moment.
-    resume.current = v && !synced() ? { time: v.currentTime, play: !v.paused } : null;
-    void sign.resign();
-  };
-
-  const onLoaded = () => {
-    const v = el.current;
-    const r = resume.current;
-    resume.current = null;
-    if (!v || !r || synced()) return;
-    if (r.time) v.currentTime = r.time;
-    if (r.play) void v.play()?.catch(() => undefined);
-  };
-
-  const onPlay = () => {
-    // A URL that expired while paused is signed again before the browser tries it.
-    if (sign.expired) onError();
-  };
-
-  let body: ReactNode;
-  if (!requested) {
-    body = (
-      <button type="button" className="video-placeholder" onClick={() => setClicked(true)} aria-label={`${zh.report.videoLoad}：${video.camera}`}>
-        <IconPlayArrow style={{ fontSize: 28 }} />
-        <span>{zh.report.videoLoad}</span>
-      </button>
-    );
-  } else if (gaveUp) {
-    body = (
-      <div className="video-placeholder" role="alert">
-        <span>{sign.error && !sign.data ? errorMessage(sign.error) : zh.report.videoFailed}</span>
-        <Button size="mini" onClick={retryFromScratch}>
-          {zh.report.videoRetry}
-        </Button>
-      </div>
-    );
-  } else if (!url) {
-    body = (
-      <div className="video-placeholder">
-        <Spin size={16} />
-        <span>{zh.report.videoSigning}</span>
-      </div>
-    );
-  } else {
-    body = (
-      <video
-        ref={setEl}
-        src={url}
-        controls
-        muted
-        playsInline
-        preload={load ? 'auto' : 'metadata'}
-        onError={onError}
-        onLoadedMetadata={onLoaded}
-        onLoadedData={() => {
-          failures.current = 0;
-        }}
-        onPlay={onPlay}
-        data-testid={`video-${video.camera}`}
-        aria-label={video.camera}
-      />
-    );
-  }
-  return (
-    <figure className="video-box">
-      {body}
-      <figcaption className="muted mono">
-        {video.camera}
-        {caption ? <> · {caption}</> : null}
-      </figcaption>
-    </figure>
-  );
 }
 
 /** An evidence frame, signed when it scrolls into view; a failed load is signed again once. */

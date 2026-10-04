@@ -17,7 +17,7 @@ C2 2.0（设计 17）改了结果记录、报告和计划，契约里两种写�
 |---|---|
 | `src/api/` | 由契约生成的类型 `schema.d.ts`（`npm run gen:api`，不要手改）、薄客户端、错误、查询键、SSE |
 | `src/pages/` | 页面：概览、数据集、任务列表、新建任务（两屏）、任务详情、质检报告、人工裁决（单个任务的，和跨任务的列表 `adjudication/AdjudicationListPage.tsx`）、系统和资源配置 |
-| `src/features/` | 几页共用的块：预检、数据集登记、任务操作、视频签名与多机位同步播放（`media/syncPlayback.ts`）、密钥抽屉、发现统计（`findings/FindingsView.tsx`：报告小节与任务详情模块卡共用） |
+| `src/features/` | 几页共用的块：预检、数据集登记、任务操作、可视化播放器（`visualizer/`：完整版与迷你版共用）、证据帧签名（`media/SignedMedia.tsx`）、密钥抽屉、发现统计（`findings/FindingsView.tsx`：报告小节与任务详情模块卡共用） |
 | `src/lib/` | 纯函数（深链解析、表单模型、裁决规则、报告取值、发现与覆盖矩阵 `findings.ts`……），都有单测 |
 | `src/locales/zh.ts` | 全部界面文案，一个文件 |
 | `src/mocks/` | MSW 模拟：内存里的一套「模拟世界」，每个 C4 接口都有处理器，数字和静态稿一致；`findings.ts` 是两块并行、策略判决的那个任务（报告 2.0），主任务是旧任务（报告 1.0） |
