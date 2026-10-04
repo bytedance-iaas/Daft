@@ -212,7 +212,7 @@ info:
     videos the Daemon serves by Range out of the table's blob column (`VizAccess: blob`); the
     browser decoding mcap H.264 / H.265 cameras itself with WebCodecs from a sample pack - the
     existing `.frames` / `.json` routes, `VizEpisodeCamera.samples_url`, `VizFrameIndex` with
-    `h264` / `h265`, `key` and `codec_string` (`CURATOR_VIZ_CLIENT_DECODE`). Additions only.
+    `h264` / `h265`, `key`, `codec_string` and `config` (`CURATOR_VIZ_CLIENT_DECODE`). Additions only.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -4193,10 +4193,11 @@ components:
           type: [string, "null"]
           description: |
             2.5.0 (design doc 19 §3): an mcap H.264 / H.265 camera's sample pack - one Annex-B access
-            unit per message back to back, from the first keyframe, every keyframe carrying its
-            parameter sets - for the browser to decode itself (WebCodecs); it falls back to `url`.
-            Null when CURATOR_VIZ_CLIENT_DECODE is off, for any other camera, or a stream without a
-            keyframe or parameter sets.
+            unit per message back to back as the recording has them, indexed from the first keyframe
+            with the stream's parameter sets (`VizFrameIndex.config`) - for the browser to decode
+            itself (WebCodecs); it falls back to `url`. Null when CURATOR_VIZ_CLIENT_DECODE is off,
+            for any other camera, or a stream without a keyframe, without parameter sets or with B
+            slices.
         transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one"}
         from_ts: {type: [number, "null"], description: "LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts)"}
         to_ts: {type: [number, "null"]}
@@ -4316,6 +4317,7 @@ components:
         t: {type: array, items: {type: number}, description: "episode seconds of every frame"}
         key: {type: array, items: {type: boolean}, description: "sample packs: whether each frame is a keyframe (decoding starts at one); 2.5.0"}
         codec_string: {type: [string, "null"], description: "sample packs: RFC 6381 codec string from the stream's own parameter sets (avc1.PPCCLL, hvc1....), for VideoDecoder.configure; 2.5.0"}
+        config: {type: [string, "null"], description: "sample packs: the stream's parameter sets (H.264 SPS / PPS, H.265 VPS / SPS / PPS) as Annex-B, base64 - put in front of the keyframe decoding starts at, since a recording may send them only once; 2.5.0"}
         offset: {type: array, items: {type: integer}, description: "byte offset of every frame in the pack"}
         size: {type: array, items: {type: integer}}
         bytes: {type: integer, minimum: 0, description: "the pack's size"}

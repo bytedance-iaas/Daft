@@ -25,6 +25,7 @@ import { zh } from '../../locales/zh';
 import { CellMenu } from './CellMenu';
 import { CurveCell, type Band } from './cells/CurveCell';
 import { FramesCell } from './cells/FramesCell';
+import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
 import { useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
@@ -212,6 +213,18 @@ function PlayerView({
     };
   });
 
+  // -- cameras the browser decodes itself (design doc 19 §3): the info panel says so
+  const [clientKeys, setClientKeys] = useState<ReadonlySet<string>>(new Set());
+  const onDecodeMode = useCallback((key: string, client: boolean) => {
+    setClientKeys((cur) => {
+      if (cur.has(key) === client) return cur;
+      const next = new Set(cur);
+      if (client) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
+
   // -- curves shown, per group
   const [hidden, setHidden] = useState<Record<string, string[]>>({});
   const hiddenOf = useCallback((key: string) => new Set(hidden[key] ?? []), [hidden]);
@@ -398,10 +411,17 @@ function PlayerView({
                 const cam = model.cameras.find((x) => x.key === c.key);
                 const e = ep.cameras.find((x) => x.key === c.key);
                 if (!cam || !e) return <div key={i} className={cls} />;
-                const transcoded = cam.transcoded || e.transcoded || (e.access !== 'frames' && !!e.transcode_url && !canDecode(cam.codec_string));
+                const decodes = !!e.samples_url && !!e.index_url && cam.kind === 'video';
+                const transcoded = cam.transcoded || e.transcoded || (e.access !== 'frames' && !!e.transcode_url && !clientKeys.has(cam.key) && !canDecode(cam.codec_string));
                 return (
                   <div key={i} className={cls} onPointerDown={() => setFocus(i)} data-testid={`vz-cell-${i}`}>
-                    {cam.kind === 'frames' || e.access === 'frames' ? <FramesCell cam={cam} ep={e} clock={clock} /> : <VideoCell cam={cam} ep={e} clock={clock} />}
+                    {cam.kind === 'frames' || e.access === 'frames' ? (
+                      <FramesCell cam={cam} ep={e} clock={clock} />
+                    ) : decodes ? (
+                      <SamplesCell cam={cam} ep={e} clock={clock} onMode={onDecodeMode} />
+                    ) : (
+                      <VideoCell cam={cam} ep={e} clock={clock} />
+                    )}
                     <span className="vz-cap">
                       <i className="dot" style={{ color: cameraColor(cam.key) }} />
                       {cam.name}
@@ -481,6 +501,7 @@ function PlayerView({
             onTrack={setTrackKey}
             onClose={() => setSideOpen(false)}
             points={2000}
+            clientDecoded={clientKeys}
           />
         ) : null}
       </div>
@@ -590,6 +611,7 @@ function SideFor({
   onTrack: (key: string) => void;
   onClose: () => void;
   points: number;
+  clientDecoded: ReadonlySet<string>;
 }) {
   const stream = focused?.kind === 'curve' ? focused.key : '';
   const series = useVizSeries(source, ep.index, stream, points, !!stream);

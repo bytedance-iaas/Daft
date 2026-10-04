@@ -102,7 +102,10 @@ def make_umi(root: str, episodes: int = 2, n: int = 20, chunk_size: int = 8192) 
     return root
 
 
-def make_abc(root: str, episodes: int = 1, n: int = 20) -> str:
+def make_abc(root: str, episodes: int = 1, n: int = 20, wrist_skip: int = 0) -> str:
+    """ABC-130k-like: an H.265 top camera, an H.264 wrist camera, a custom protobuf arm at twice the camera
+    rate, the instruction and a segment. ``wrist_skip`` starts the wrist stream that many frames into its
+    first GOP (GenRobot-like: P-frames before the first keyframe)."""
     from foxglove_schemas_protobuf.CompressedVideo_pb2 import CompressedVideo
     from google.protobuf import descriptor_pb2 as D
     from mcap_protobuf.writer import Writer
@@ -114,7 +117,7 @@ def make_abc(root: str, episodes: int = 1, n: int = 20) -> str:
                                  ("end", D.FieldDescriptorProto.TYPE_DOUBLE, False),
                                  ("label", D.FieldDescriptorProto.TYPE_STRING, False)])
     os.makedirs(root, exist_ok=True)
-    h264, h265 = _annexb("h264", n), _annexb("h265", n)
+    h264, h265 = _annexb("h264", n + wrist_skip)[wrist_skip:], _annexb("h265", n)
     for ep in range(episodes):
         with open(os.path.join(root, f"episode_{ep}.mcap"), "wb") as fh:
             w = Writer(fh)

@@ -414,6 +414,9 @@ API 返回的 `links` 数组（见 `03-rest-api.md` §1）指向的就是上面�
   - `cells/VideoCell.tsx`：先做解码能力检测（`MediaSource.isTypeSupported` / `canPlayType`），解不了且有 `transcode_url`
     就等平台转码（202 期间显示进度），播放出错也退到转码；地址续签时原地换源；没有原生控件、不能全屏、不能画中画。
   - `cells/FramesCell.tsx`：mcap 的 JPEG / PNG 帧包，按帧号区间读，相邻的帧合成一次请求，解码后缓存，播放时预取后面一秒。
+  - `cells/SamplesCell.tsx`（设计 19 §3）：mcap 的 H.264 / H.265 相机有 `samples_url` 时，浏览器支持（`VideoDecoder.isConfigSupported`）就用 WebCodecs 解样本包、画在画布上，
+    规则与帧包相同（时刻 ≤ t 的最后一帧，不拖住时钟）；解码调度在 `sampleStream.ts`（按 GOP 区间取字节、从关键帧起解、解出的帧立刻转成位图），
+    纯逻辑在 `lib/vizSamples.ts`；不支持或解码出错就换成 `VideoCell` 播转封装结果。信息侧栏的读取方式写「浏览器解码（WebCodecs）」。
   - `cells/CurveCell.tsx`：SVG；路径只在数据、尺寸、隐藏集变化时重画，光标和图例里的当前值各自订阅时钟，不让整张图跟着每帧重绘。
   - 格子右上角的「更换」「放大」「×」只在鼠标停在格子上时出现（2026-10-04：不再因为点过、成了焦点格就一直显示），曲线格与视频格同一个样式和大小；
     顶栏开关信息侧栏的按钮叫「详细信息」；迷你版顶栏的任务描述在第二行（字体字号不变，一行太挤）。

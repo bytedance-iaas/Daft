@@ -9,7 +9,8 @@ import { FramePack, type Drawable } from '../framePack';
 /** Frames asked for ahead of the one shown while playing (about a second at 30 fps). */
 const AHEAD = 30;
 
-function draw(canvas: HTMLCanvasElement, img: Drawable | undefined): void {
+/** A picture drawn on the canvas at its aspect ratio (letterboxed); nothing yet: the background. */
+export function drawFrame(canvas: HTMLCanvasElement, img: Drawable | undefined): void {
   const ctx = canvas.getContext('2d');
   if (!ctx || typeof ctx.fillRect !== 'function') return;
   const w = canvas.width;
@@ -49,7 +50,7 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
       setNotYet(k < 0);
       void pack.want(Math.max(0, k), s.playing ? AHEAD : 2);
       const img = k >= 0 ? (pack.get(k) ?? pack.nearest(k)) : undefined;
-      if (k !== shown || img) draw(el, img);
+      if (k !== shown || img) drawFrame(el, img);
       if (pack.get(k)) shown = k;
     };
     const resize = () => {

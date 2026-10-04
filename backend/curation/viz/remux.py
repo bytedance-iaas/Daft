@@ -46,15 +46,24 @@ def _stamps(times_s: list[float], count: int, fps: float) -> list[int]:
     return [round((start + i * step) * TIME_BASE) for i in range(count)]
 
 
-def remux_annexb_file(path: str, times_s: list[float], codec: str, out_path: str, *, fps: float = 30.0) -> Remuxed:
-    """Write the fMP4 of the Annex-B file ``path``. ``times_s`` are the samples' times from the
-    camera's first frame (the mp4 starts at 0; the episode answer places it with ``offset_s``)."""
+def _open(path, fmt: str):
+    import av
+
+    if hasattr(path, "seek"):                          # a stream (the sample pack's tail): from its start
+        path.seek(0)
+    return av.open(path, format=fmt)
+
+
+def remux_annexb_file(path, times_s: list[float], codec: str, out_path: str, *, fps: float = 30.0) -> Remuxed:
+    """Write the fMP4 of the Annex-B file ``path`` (or a seekable stream of it). ``times_s`` are the
+    samples' times from the camera's first frame (the mp4 starts at 0; the episode answer places it
+    with ``offset_s``)."""
     import av
 
     fmt = "hevc" if codec == "h265" else "h264"
     count = 0
     first_key = None
-    with av.open(path, format=fmt) as src:             # first pass: the access units the parser finds
+    with _open(path, fmt) as src:                       # first pass: the access units the parser finds
         vs = src.streams.video[0]
         for p in src.demux(vs):
             if p.size:
@@ -67,7 +76,7 @@ def remux_annexb_file(path: str, times_s: list[float], codec: str, out_path: str
     stamps = _stamps(times_s, count, fps)
     base = stamps[skip] if skip < len(stamps) else 0
     tmp = out_path + ".part"
-    with av.open(path, format=fmt) as src:
+    with _open(path, fmt) as src:
         vs = src.streams.video[0]
         with av.open(tmp, "w", format="mp4",
                      options={"movflags": "frag_keyframe+empty_moov+default_base_moof"}) as out:

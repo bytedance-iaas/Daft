@@ -13,7 +13,7 @@
 
 | 组件 | 位置 | 要做的 |
 |---|---|---|
-| 契约 | `docs/contracts/openapi.yaml`（C4） | 2.5.0，只加不改：`VizFormat.reader` 加 `lance`、`VizFormat.layout`；`VizAccess` 加 `blob`；`VizEpisodeCamera.samples_url`；`VizFrameIndex` 认 H.264 / H.265（`key[]`、`codec_string`）；锁与 `npm run gen:api` |
+| 契约 | `docs/contracts/openapi.yaml`（C4） | 2.5.0，只加不改：`VizFormat.reader` 加 `lance`、`VizFormat.layout`；`VizAccess` 加 `blob`；`VizEpisodeCamera.samples_url`；`VizFrameIndex` 认 H.264 / H.265（`key[]`、`codec_string`、`config`）；锁与 `npm run gen:api` |
 | 前端 | `src/lib/vizLayout.ts`、`features/visualizer/`（`Player.tsx`、新 `cells/SamplesCell.tsx`、新 `lib/sampleDecoder.ts`）、`SidePanel.tsx`、`visualizer.css`、`locales/zh.ts`、`mocks/` | 网格到 4×4、智能布局的多相机规则、窄格子、配色；WebCodecs 格子与退回；`blob` 读取方式；Lance 与多相机的模拟数据 |
 | Daemon | `daemon/viz/mcap.py`、`service.py`、`status.py`、新 `daemon/viz/lance.py`、`media.py`（区间应答）、`settings.py`、`routes/results.py`（任务级 `.mp4` 分派） | 帧包路由出 H.264 / H.265 样本；转封装改为按需；Lance 读取器与 blob 的区间应答；开关 `CURATOR_VIZ_CLIENT_DECODE` |
 | 内核 | `curation/viz/mcap_episode.py`、新 `curation/viz/annexb.py`、新 `curation/viz/lance_layout.py`、`remux.py` | 扫描时认关键帧与参数集、写样本索引；Lance 的布局识别、列名映射、按 episode 读帧表 |
@@ -78,26 +78,36 @@ F13.8：转封装在扫描之后约 0.05 s 出第一帧，冷开的大头是扫�
 **Daemon（`CURATOR_VIZ_CLIENT_DECODE=1`，缺省开）**
 
 - 扫描时逐条消息认 NAL 单元（新 `curation/viz/annexb.py`，只看 NAL 头与 SPS 前几个字节，不解码）：关键帧（H.264 IDR，类型 5；H.265 IRAP，类型 16–23）、参数集（H.264 SPS / PPS，H.265 VPS / SPS / PPS）。
-- 写出的**样本包** `<相机>.annexb`：
-  - 从第一个关键帧开始（之前的帧解不出来，照旧丢掉并警告 `leading_frames`，与转封装同口径）；
-  - 每个关键帧样本自带参数集（消息里没有就把最近一次见到的参数集接在前面），所以从任何关键帧都能起解；
-  - 一条消息一个样本，字节首尾相接。
-- 样本索引写进 `episode.json` 的相机条目：`t[]`（episode 秒）、`offset[]`、`size[]`、`key[]`、`codec_string`（从 SPS 算：`avc1.PPCCLL`、`hvc1.…`）、`width`、`height`。
-- **转封装改为按需**：`.mp4` 第一次被要时才由同一份样本包转成 fMP4（落盘缓存，之后直接出）；浏览器自己解码时 Daemon 不再转封装，缓存里也不再有一份 fMP4。
-  `?transcode=1` 照旧以转封装结果为输入。
+- **样本包**就是扫描写下的 `<相机>.annexb`（一条消息一个样本，字节首尾相接，与转封装读的是同一份、字节不变），留着不删。
+- 样本索引写进 `episode.json` 的相机条目，**从第一个关键帧开始**（之前的帧解不出来，照旧警告 `leading_frames`，与转封装同口径）：
+  `t[]`（episode 秒）、`offset[]`、`size[]`、`key[]`、`codec_string`（从 SPS 算：`avc1.PPCCLL`、`hvc1.…`）、`width`、`height`，
+  以及码流的参数集 `config`（第一个关键帧处生效的 SPS / PPS，H.265 加 VPS，base64）——录制可能只在开头发一次参数集，浏览器从哪个关键帧起解都把它接在前面。
+- **转封装改为按需**：`.mp4` 第一次被要时才转——从样本包的第一个关键帧起、前面接上参数集、按索引的时刻打时间戳（与记录里的 `offset_s` 一致），
+  落盘缓存，之后直接出；浏览器自己解码时 Daemon 不再转封装，缓存里也不再有一份 fMP4。`?transcode=1` 照旧以转封装结果为输入。
 - 样本包与索引走现有的帧包路由：`…/cameras/{key}.frames`（Range）与 `.json`（`VizFrameIndex`，`codec` 为 `h264` / `h265` 时带 `key[]`、`codec_string`）。
   episode 记录里这路相机：`access` 仍是 `remux`（`url` 是按需转封装的 `.mp4`），另给 `index_url` 与新字段 `samples_url`。
 - 开关为 `0` 时与今天完全相同：扫描里就转封装，删掉 Annex-B，不给 `samples_url`。开关进 mcap 缓存目录的指纹，切换后不会混用旧产物。
-- 找不到关键帧、或找不到参数集的相机：不给 `samples_url`，扫描里当场转封装（与开关为 `0` 相同），浏览器走 `<video>`。
+- 找不到关键帧、找不到参数集、或有 B 帧的相机：不给 `samples_url`，扫描里当场转封装（与开关为 `0` 相同），浏览器走 `<video>`。
+  关键帧按 NAL 类型认（H.264 IDR，H.265 IRAP），B 帧看每个画面第一个 slice 的 `slice_type`（H.265 要先读 PPS 的 `num_extra_slice_header_bits`），只读几个字节、不解码。
 
 **播放器（新 `cells/SamplesCell.tsx`，解码调度在 `lib/sampleDecoder.ts`）**
 
 - 有 `samples_url` 且 `VideoDecoder.isConfigSupported({codec: codec_string, codedWidth, codedHeight})` 为真 → 用 WebCodecs 解，画在 canvas 上；否则用 `<video>` 播 `url`，再不行要转码（与今天同一条路）。
 - 时钟规则与 JPEG 帧包相同（D64）：画「时刻 ≤ t 的最后一帧」；格子不拖住时钟（与 `FramesCell` 一样只订阅时钟）。
-- 解码：要第 i 帧时从 i 之前最近的关键帧起解（`configure` 不带 `description`，即 Annex-B）；顺播时向前多解若干帧；向后跳或跳出当前 GOP 就 `reset` 重来。
+- 解码：要第 i 帧时从 i 之前最近的关键帧起解（`configure` 不带 `description`，即 Annex-B；第一个样本前接上 `config`）；顺播时向前多解若干帧；
+  向后跳、跳过整个 GOP、或要的帧已经解过又被挤出缓存，就 `reset` 从它的关键帧重来。纯逻辑（起解关键帧、何时接着解）在 `lib/vizSamples.ts`。
   解出的 `VideoFrame` 立刻转成 `ImageBitmap` 并 `close()`（不占硬件解码器的帧池），按帧号缓存一小段（按字节数封顶）。
 - 字节按 GOP 用 Range 取（一个关键帧到下一个关键帧，连续的几段并成一次请求），与帧包同一套取法。
 - 解码报错（`error` 回调、`configure` 失败）→ 这一路改用 `<video>`（`url`），不再回来；信息侧栏的「读取方式」写「浏览器解码（WebCodecs）」或「转封装」。
+
+**落地时的细化与实测（F14.2，2026-10-04）**
+
+- 本机内置浏览器（Chromium）的 WebCodecs H.264 与 H.265 都能解：GenRobot 两路 1600×1300 H.264（`avc1.64102A`）、ABC-130k 切片四路 1920×1200 H.265 都走画布；
+  同一时刻画布与 `<video>` 播转封装结果的同一帧逐像素比（2.0 / 5.0 / 12.34 / 30.0 秒）：均方差 0、0、2.2、1.6，相邻两帧之间是 70–95，即同一帧。
+  四路 H.265 连播 3.3 秒，每 100 ms 采样每路画面都在变，时钟与墙钟一致。
+- 扫描耗时与缓存（同一份文件，直接调扫描）：ABC 切片（四路 H.265，10 秒）1.36 s → 0.50 s，GenRobot（两路 H.264，43 秒）0.41 s → 0.33 s；
+  缓存大小不变（41.8 MB / 27 MB，留 Annex-B 而不是 fMP4）；有浏览器回退要 `.mp4` 时再转，分别 0.28 s、0.25 s。
+- 开发构建的 React StrictMode 会「挂载—清理—再挂载」：解码器在同一个 effect 里建、在它的清理里关，不能放在 `useMemo` 里（否则第二次挂载拿到的是已关闭的解码器）。
 
 ### 3.3 为什么不让浏览器直接读 mcap
 
@@ -177,7 +187,7 @@ C4 升 **2.5.0**，只加不改，不加新路径：
 | `VizFormat.reader` 加 `lance`；`VizFormat.layout`（可空） | Lance 的布局 `lance-0.3` / `lance-0.2-video` / `lance-0.2-frames`，其他格式为 null；0.1–0.2 的数据集 `kind` 报 `lance`（可视化的看法，不是预检的） |
 | `VizAccess` 加 `blob` | Daemon 按 Range 出 Lance 表 blob 里的原样视频 |
 | `VizEpisodeCamera.samples_url`（可空） | 浏览器内解码读的样本包（mcap H.264 / H.265，开关开着且有关键帧与参数集时才有），索引在 `index_url` |
-| `VizFrameIndex.codec` 加 `h264` / `h265`；可选 `key[]`、`codec_string` | 样本包的索引：每帧是否关键帧、RFC 6381 编码串 |
+| `VizFrameIndex.codec` 加 `h264` / `h265`；可选 `key[]`、`codec_string`、`config` | 样本包的索引：每帧是否关键帧、RFC 6381 编码串、码流的参数集（base64） |
 
 C2、C5、C7 不变。部署（09 §2.1）：`CURATOR_VIZ_CLIENT_DECODE`（缺省 `1`），Daemon 的缺省，Chart 的环境变量约定表不变（要关时用 `extraEnv`）。
 

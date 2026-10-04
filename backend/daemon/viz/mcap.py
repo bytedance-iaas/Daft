@@ -6,6 +6,9 @@ messages, a few ranged reads). An episode is read once, in one pass over its map
 (:mod:`curation.viz.mcap_episode`), when it is first opened: JPEG / PNG cameras become frame packs,
 H.264 / H.265 cameras fragmented mp4s, curves an ``npz`` - all in the Daemon's disk cache, named by
 the source's fingerprint and the mapping's version, so a new mapping version reads the file again.
+With ``CURATOR_VIZ_CLIENT_DECODE`` (design doc 19 §3) an H.264 / H.265 camera is kept as a sample
+pack the browser decodes itself (WebCodecs; the frame-pack routes serve it), and its mp4 is made the
+first time a ``<video>`` asks for one.
 """
 from __future__ import annotations
 
@@ -19,7 +22,7 @@ import numpy as np
 from curation.streams.rangefile import RangeFile
 from curation.viz import mcap_messages as MM
 from curation.viz import mcap_probe as MP
-from curation.viz.mcap_episode import camera_keys, scan
+from curation.viz.mcap_episode import camera_keys, remux_samples, scan
 from curation.viz.series import json_values, thin, window
 
 from ..errors import ApiError
@@ -276,17 +279,29 @@ class McapReader:
 
     # ------------------------------------------------------------ one episode
     def _dir(self, src: VizSource, index: int) -> pathlib.Path:
+        # the client-decode switch is part of the name: its products differ (sample packs, no mp4 yet)
         fp = digest(src.scope, src.id, src.fingerprint, src.mapping_version or 0,
-                    json.dumps(src.mapping or {}, sort_keys=True))
+                    json.dumps(src.mapping or {}, sort_keys=True), bool(self.svc.client_decode))
         return self.svc.disk.root / "mcap" / fp / f"ep{int(index):06d}"
 
     def _cached_doc(self, src: VizSource, index: int) -> dict | None:
-        path = self._dir(src, index) / "episode.json"
+        """The scan of an episode while all its products are still there: the cache drops files one at a
+        time, and an ``episode.json`` that outlived its frame pack, sample pack or mp4 is read again."""
+        d = self._dir(src, index)
+        path = d / "episode.json"
         if path.is_file():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                doc = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return None
+            for key, cd in (doc.get("cameras") or {}).items():
+                wanted = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
+                          else f"{key}.annexb" if cd.get("samples") else f"{key}.mp4" if cd.get("mp4") else None)
+                if wanted and not (d / wanted).is_file():
+                    return None
+            if not (d / "series.npz").is_file():
+                return None
+            return doc
         return None
 
     def episode_doc(self, src: VizSource, index: int) -> tuple[dict, pathlib.Path]:
@@ -305,7 +320,7 @@ class McapReader:
             with Access(self.svc.rt, src).storage() as st:
                 fh = self._open(st, src, name, size)
                 try:
-                    doc = scan(fh, src.mapping or {}, d)
+                    doc = scan(fh, src.mapping or {}, d, client_decode=bool(self.svc.client_decode))
                 except ValueError as err:
                     raise ApiError("validation_failed", f"{name}：{err}") from None
                 finally:
@@ -327,6 +342,9 @@ class McapReader:
                 cam["access"], cam["reason"] = "unsupported", "这条 episode 里没有这一路相机的画面"
             entry = urls.camera(src, index, cam, "mcap", None, None)
             entry["offset_s"] = float(cd.get("offset_s") or 0.0)
+            if cd.get("samples") and entry["access"] == "remux":     # the browser may decode it itself
+                entry["samples_url"] = urls.daemon(src, index, c["key"], "frames")
+                entry["index_url"] = urls.daemon(src, index, c["key"], "json")
             cameras.append(entry)
         ann = {"tracks": [], "events": [], "labels": [], "warnings": []}
         if doc.get("segments"):
@@ -403,25 +421,53 @@ class McapReader:
         return cd, d
 
     def frame_index(self, src: VizSource, index: int, key: str) -> dict:
+        """C4 ``VizFrameIndex``: a JPEG / PNG frame pack's, or an H.264 / H.265 sample pack's (2.5.0:
+        keyframes, codec string and parameter sets, from the first keyframe)."""
         cd, _ = self.camera(src, index, key)
-        if cd.get("codec") not in ("jpeg", "png") or "t" not in cd:
-            raise ApiError("not_found", f"相机 {key} 不是 JPEG / PNG 帧包", details={"reason": "not_frames"})
-        return {"camera": key, "codec": cd["codec"], "width": cd.get("width"), "height": cd.get("height"),
-                "count": len(cd["t"]), "t": cd["t"], "offset": cd["offset"], "size": cd["size"],
-                "bytes": int(cd.get("bytes") or 0)}
+        out = {"camera": key, "codec": cd.get("codec"), "width": cd.get("width"), "height": cd.get("height"),
+               "count": len(cd.get("t") or []), "t": cd.get("t"), "offset": cd.get("offset"), "size": cd.get("size"),
+               "bytes": int(cd.get("bytes") or 0)}
+        if cd.get("codec") in ("jpeg", "png") and "t" in cd:
+            return out
+        if cd.get("codec") in ("h264", "h265") and cd.get("samples"):
+            return {**out, "key": cd["kf"], "codec_string": cd.get("codec_string"), "config": cd.get("config")}
+        raise ApiError("not_found", f"相机 {key} 没有帧包", details={"reason": "not_frames"})
 
     def frames_file(self, src: VizSource, index: int, key: str) -> pathlib.Path:
         cd, d = self.camera(src, index, key)
-        path = d / f"{key}.frames"
-        if cd.get("codec") not in ("jpeg", "png") or not path.is_file():
-            raise ApiError("not_found", f"相机 {key} 不是 JPEG / PNG 帧包", details={"reason": "not_frames"})
+        if cd.get("codec") in ("h264", "h265") and cd.get("samples"):
+            path = d / f"{key}.annexb"
+        elif cd.get("codec") in ("jpeg", "png"):
+            path = d / f"{key}.frames"
+        else:
+            path = None
+        if path is None or not path.is_file():
+            raise ApiError("not_found", f"相机 {key} 没有帧包", details={"reason": "not_frames"})
         return path
 
     def video_file(self, src: VizSource, index: int, key: str) -> pathlib.Path | None:
-        """The remuxed mp4 of an H.264 / H.265 camera (None for a frame-pack camera)."""
+        """The remuxed mp4 of an H.264 / H.265 camera (None for a frame-pack camera); a camera kept for
+        the browser to decode is remuxed now, the first time a ``<video>`` asks."""
         cd, d = self.camera(src, index, key)
         path = d / f"{key}.mp4"
-        return path if cd.get("mp4") and path.is_file() else None
+        if cd.get("mp4") and path.is_file():
+            return path
+        if not (cd.get("samples") and (d / f"{key}.annexb").is_file()):
+            return None
+        with self._lock_for(("mcap-remux", str(path))):
+            doc_path = d / "episode.json"
+            doc = json.loads(doc_path.read_text(encoding="utf-8"))
+            cd = doc["cameras"][key]
+            if not (cd.get("mp4") and path.is_file()):
+                try:
+                    cd.update(remux_samples(d, {**cd, "key": key}))
+                except Exception as exc:  # noqa: BLE001 - the <video> says it cannot play, with why
+                    raise ApiError("internal", f"转封装失败：{str(exc)[:200]}") from None
+                tmp = doc_path.with_name("episode.json.part")
+                tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(doc_path)
+                self.svc.disk.added(path)
+            return path
 
     def mjpeg_file(self, src: VizSource, index: int, key: str) -> pathlib.Path:
         """A frame-pack camera as an MJPEG mp4 (the check reader's muxing): what the transcoder reads,

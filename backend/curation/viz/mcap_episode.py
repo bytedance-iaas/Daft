@@ -5,6 +5,10 @@ What the pass leaves behind, in ``out_dir`` (the Daemon's disk cache):
 * ``<camera>.frames`` + the index in ``episode.json`` - a JPEG / PNG camera's frames, their own
   bytes back to back (the frame pack the player reads by Range and draws on a canvas);
 * ``<camera>.mp4`` - an H.264 / H.265 camera remuxed into fragmented mp4 (:mod:`.remux`);
+* ``<camera>.annexb`` + the index in ``episode.json`` (``client_decode``, design doc 19 §3) - the same
+  camera's access units as they were written, kept for the browser to decode itself: the index starts
+  at the first keyframe and carries the stream's parameter sets (``config``) and codec string. The
+  remux then waits until a ``<video>`` asks for it (:func:`remux_samples`);
 * ``series.npz`` - every curve topic's message times and numbers;
 * ``episode.json`` - the clock (zero, the frame reference's times, the checks' anchor and rate), the
   cameras' indexes, the task text, the segments, the warnings.
@@ -18,6 +22,8 @@ early (truncated recording, no footer) keeps what was read before the break, wit
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import pathlib
@@ -27,6 +33,7 @@ from typing import Any
 
 import numpy as np
 
+from . import annexb as AB
 from . import annotations as A
 from . import mcap_messages as M
 from .mcap_mapping import check_mapping
@@ -103,8 +110,9 @@ def _row(decoded, entry: dict) -> tuple[list[float], list[str]]:
     return values, labels
 
 
-def scan(stream, mapping: dict, out_dir: os.PathLike | str) -> dict:
-    """Read the episode; write the products; return the ``episode.json`` document."""
+def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bool = False) -> dict:
+    """Read the episode; write the products; return the ``episode.json`` document. ``client_decode``
+    keeps the H.264 / H.265 cameras' Annex-B with a sample index and leaves their remux for later."""
     from mcap.reader import make_reader
 
     from .remux import remux_annexb_file
@@ -133,7 +141,11 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str) -> dict:
         topics.add(seg_spec["topic"])
     dec = M.Decoder()
     cams: dict[str, dict] = {t: {"key": k, "codec": None, "t": [], "offset": [], "size": [], "head": [],
-                                 "width": None, "height": None} for t, k in keys.items()}
+                                 "width": None, "height": None,
+                                 # client decode: per sample keyframe flags, the parameter sets seen so far,
+                                 # the first keyframe, the sets in force there, B slices, H.265 PPS bits
+                                 "kf": [], "sets": {}, "first_key": None, "config": None, "b": False,
+                                 "pps_bits": {}, "key_head": []} for t, k in keys.items()}
     files: dict[str, Any] = {}                   # topic -> the open .frames.part / .annexb.part
     series = {t: SeriesData(t) for t in series_entries}
     task_text = ""
@@ -180,6 +192,8 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str) -> dict:
                     fh.write(data)
                     if codec in ("h264", "h265") and len(cam["head"]) < VIDEO_HEAD:
                         cam["head"].append(data)
+                    if codec in ("h264", "h265") and client_decode:
+                        _note_sample(cam, codec, data)
                 cam["t"].append(t_ns)
             if topic in series:
                 values, labels = _row(decoded, series_entries[topic])
@@ -254,6 +268,23 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str) -> dict:
             doc.update(t=[rel(cam["t"][i]) for i in order], offset=[cam["offset"][i] for i in order],
                        size=[cam["size"][i] for i in order], bytes=int(sum(cam["size"])),
                        offset_s=rel(cam["t"][order[0]]))
+        elif cam["codec"] in ("h264", "h265") and cam["t"] and client_decode and _decodable(cam):
+            # the browser decodes it (design doc 19 §3): keep the Annex-B, index it from the first
+            # keyframe, remux only when a <video> asks (remux_samples)
+            k0 = cam["first_key"]
+            os.replace(out / f"{key}.annexb.part", out / f"{key}.annexb")
+            width, height = M.video_size(cam["codec"], [cam["config"] + cam["key_head"][0]] + cam["key_head"][1:])
+            sets = AB.parameter_sets(cam["codec"], cam["config"])
+            doc.update(width=width, height=height, mp4=False, samples=True, b_frames=False, skipped=k0,
+                       offset_s=rel(cam["t"][k0]), t=[rel(x) for x in cam["t"][k0:]], offset=cam["offset"][k0:],
+                       size=cam["size"][k0:], kf=cam["kf"][k0:], bytes=int(cam["offset"][-1] + cam["size"][-1]),
+                       codec_string=AB.codec_string(cam["codec"], sets),
+                       config=base64.b64encode(cam["config"]).decode("ascii"))
+            if k0:
+                lead = (cam["t"][k0] - cam["t"][0]) / 1e9
+                warnings.append({"code": "leading_frames",
+                                 "message": f"相机 {topic} 开头 {k0} 帧在第一个关键帧之前，解不出来，"
+                                            f"从 {lead:.2f} 秒处开始播放"})
         elif cam["codec"] in ("h264", "h265") and cam["t"]:
             first = cam["t"][0]
             times = [(x - first) / 1e9 for x in cam["t"]]
@@ -325,6 +356,93 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str) -> dict:
            "warnings": warnings}
     (out / "episode.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     return doc
+
+
+def _note_sample(cam: dict, codec: str, data: bytes) -> None:
+    """Client decode: what one written sample tells - its keyframe flag, the parameter sets it brings,
+    whether it is a B slice; the first keyframe and the sets in force there."""
+    sets = AB.parameter_sets(codec, data)
+    if sets:
+        cam["sets"].update(sets)
+        if codec == "h265" and AB.H265_PPS in sets:
+            bits = AB.pps_extra_bits(sets[AB.H265_PPS])
+            if bits is not None:
+                cam["pps_bits"][bits[0]] = bits[1]
+    key = AB.is_keyframe(codec, data)
+    cam["kf"].append(key)
+    if key and cam["first_key"] is None and AB.has_all(codec, cam["sets"]):
+        cam["first_key"] = len(cam["kf"]) - 1
+        cam["config"] = AB.joined(codec, cam["sets"])
+    if cam["first_key"] is not None and len(cam["key_head"]) < VIDEO_HEAD:
+        cam["key_head"].append(data)
+    if not cam["b"] and AB.has_b_slice(codec, data, cam["pps_bits"]):
+        cam["b"] = True
+
+
+def _decodable(cam: dict) -> bool:
+    """A camera the browser can decode from its sample pack: a keyframe with its parameter sets, no B
+    slices (decode order would not be display order). The others are remuxed now, as before."""
+    return cam["first_key"] is not None and bool(cam["config"]) and not cam["b"]
+
+
+class _Tail(io.RawIOBase):
+    """``config`` followed by ``path`` from byte ``start``: the sample pack from its first keyframe with
+    the parameter sets in front, as one stream (the remux's input)."""
+
+    def __init__(self, config: bytes, path: os.PathLike | str, start: int):
+        super().__init__()
+        self.head, self.fh, self.start = config, open(path, "rb"), int(start)
+        self.size = len(config) + os.path.getsize(path) - self.start
+        self.pos = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self.pos, io.SEEK_END: self.size}[whence]
+        self.pos = max(0, base + offset)
+        return self.pos
+
+    def tell(self) -> int:
+        return self.pos
+
+    def readinto(self, buf) -> int:
+        if self.pos >= self.size:
+            return 0
+        n = min(len(buf), self.size - self.pos)
+        if self.pos < len(self.head):
+            chunk = self.head[self.pos:self.pos + n]
+        else:
+            self.fh.seek(self.start + self.pos - len(self.head))
+            chunk = self.fh.read(n)
+        buf[:len(chunk)] = chunk
+        self.pos += len(chunk)
+        return len(chunk)
+
+    def close(self) -> None:
+        self.fh.close()
+        super().close()
+
+
+def remux_samples(out_dir: os.PathLike | str, cam_doc: dict) -> dict:
+    """The fMP4 of a camera kept for client decode, made when a ``<video>`` first asks for it: the sample
+    pack from its first keyframe, the parameter sets in front, stamped with the index's times. Returns
+    what changes in the camera's ``episode.json`` entry (``mp4``, ``b_frames``)."""
+    from .remux import remux_annexb_file
+
+    out = pathlib.Path(out_dir)
+    key = cam_doc["key"]
+    config = base64.b64decode(cam_doc["config"])
+    t0 = cam_doc["t"][0]
+    src = _Tail(config, out / f"{key}.annexb", cam_doc["offset"][0])
+    try:
+        made = remux_annexb_file(src, [x - t0 for x in cam_doc["t"]], cam_doc["codec"], str(out / f"{key}.mp4"))
+    finally:
+        src.close()
+    return {"mp4": True, "b_frames": made.b_frames}
 
 
 def _seg_time(v: float, zero_ns: int) -> float | None:

@@ -2985,10 +2985,11 @@ export interface components {
             index_url: string | null;
             /**
              * @description 2.5.0 (design doc 19 §3): an mcap H.264 / H.265 camera's sample pack - one Annex-B access
-             *     unit per message back to back, from the first keyframe, every keyframe carrying its
-             *     parameter sets - for the browser to decode itself (WebCodecs); it falls back to `url`.
-             *     Null when CURATOR_VIZ_CLIENT_DECODE is off, for any other camera, or a stream without a
-             *     keyframe or parameter sets.
+             *     unit per message back to back as the recording has them, indexed from the first keyframe
+             *     with the stream's parameter sets (`VizFrameIndex.config`) - for the browser to decode
+             *     itself (WebCodecs); it falls back to `url`. Null when CURATOR_VIZ_CLIENT_DECODE is off,
+             *     for any other camera, or a stream without a keyframe, without parameter sets or with B
+             *     slices.
              */
             samples_url: string | null;
             /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one */
@@ -3093,6 +3094,8 @@ export interface components {
             key?: boolean[];
             /** @description sample packs: RFC 6381 codec string from the stream's own parameter sets (avc1.PPCCLL, hvc1....), for VideoDecoder.configure; 2.5.0 */
             codec_string?: string | null;
+            /** @description sample packs: the stream's parameter sets (H.264 SPS / PPS, H.265 VPS / SPS / PPS) as Annex-B, base64 - put in front of the keyframe decoding starts at, since a recording may send them only once; 2.5.0 */
+            config?: string | null;
             /** @description byte offset of every frame in the pack */
             offset: number[];
             size: number[];

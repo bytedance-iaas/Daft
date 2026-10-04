@@ -197,4 +197,36 @@ describe('Player (design doc 18 §5)', () => {
     // the IMU is drawable but not part of the smart layout
     expect(within(player).queryByText(/^IMU/)).toBeNull();
   });
+
+  it('decodes an mcap H.264 camera in the browser when WebCodecs can, and says so (design doc 19 §3)', async () => {
+    const supported = vi.fn(async () => ({ supported: true }));
+    class FakeDecoder {
+      static isConfigSupported = supported;
+      decodeQueueSize = 0;
+      configure() {}
+      decode() {}
+      reset() {}
+      close() {}
+    }
+    vi.stubGlobal('VideoDecoder', FakeDecoder);
+    vi.stubGlobal('EncodedVideoChunk', class {});
+    try {
+      const { user } = renderWithProviders(<Player source={MCAP} index={0} />);
+      const player = await ready();
+      const canvas = await waitFor(() => {
+        const el = player.querySelector('canvas[data-testid^="vz-samples-"]');
+        expect(el).not.toBeNull();
+        return el as HTMLCanvasElement;
+      });
+      expect(supported).toHaveBeenCalledWith(expect.objectContaining({ codec: 'avc1.64001f', codedWidth: 640, codedHeight: 480 }));
+      expect(player.querySelector('video[data-testid^="vz-video-"]')).toBeNull();
+      // the info panel of that camera: decoded by the browser
+      const cell = canvas.closest('.vz-cell') as HTMLElement;
+      fireEvent.pointerDown(cell);
+      await user.click(within(player).getByText(zh.viz.info));
+      expect(await within(player).findByText(zh.viz.access.client)).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

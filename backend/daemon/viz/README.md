@@ -12,7 +12,7 @@
 | `source.py` | 数据源：数据集级（登记的地址、密钥、文件清单、映射、展示配置、外部标注）与任务级（任务冻结的输入、`preflight.json`、`source_manifest.json`、`run.json` 里的映射）；打开存储、签浏览器地址、本地文件只在数据集目录之内 |
 | `lerobot.py` | LeRobot v2 / v3 读取器：`meta/` 的 episode 表、相机、曲线组、标注来源、字段树；一条 episode 的逐帧列只读一次（v3 只读它的行组）进缓存，episode 记录与曲线请求共用 |
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
-| `mcap.py` | mcap 读取器（设计 18 §6）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
+| `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
@@ -21,7 +21,7 @@
 `annotations.py`（标注识别 §4.5：`subtask_index`、`language_*`、逐帧 `task_index`、`*_index` 查表、文字列、`*_segment` 布尔段、成败 / 质量 / 评分 / `task_status`、Argus 外部标注）、
 `series.py`（按行组读 episode 的列、min / max 抽稀）、`transcode.py`（PyAV 转 H.264 fMP4）；mcap 的 `mcap_messages.py`（解码、数值叶子与字段路径、
 画面编码与尺寸、显示用的变换）、`mcap_probe.py`（summary 加每个 topic 的首条消息）、`mcap_mapping.py`（三个内置模版、起草与按覆盖率匹配、校验、派生质检映射
-`check_mapping`）、`mcap_episode.py`（一条 episode 的一遍扫描）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
+`check_mapping`）、`mcap_episode.py`（一条 episode 的一遍扫描；样本包的索引与按需转封装 `remux_samples`）、`annexb.py`（只看 NAL 头与 SPS / PPS 前几个字节：关键帧、参数集、B 帧、`codec_string`）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
 
 mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准缺省是第一组 `role=action`（与质检的行同一口径），没有才用第一路相机；`check_clock` 是质检的锚
 （第一条 action 消息相对零点的秒数）与 action 的频率，迷你版用它把发现的帧号换成时刻。一条 episode 按文件顺序扫一遍，相机字节边读边落盘；H.264 / H.265 从第一个
@@ -188,6 +188,12 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     曲线 `series?stream=observation_state` 与 `viz_v3` 的逐点相同。第三份的相机是 `frames`，`.json` 的 `count` 等于这条的帧数、`codec` 是 `jpeg`，按 `offset` / `size` 取的每段都是 `FF D8` 开头。
     字段树最后一组「Lance 表」列出各表的行数与列。把 `lance_03` 的 `meta/` 挪走（只留三张表）再看一遍：元数据从 `meta.lance` 读，`viz/meta?path=meta/info.json` 里有 `"storage_format": "lance"`。
     TOS 上的 Lance 数据集按 S3 兼容端点读，自动化测试里用一个最小的本地 S3（`tests/viz/fake_s3.py`）跑同样的流程。
+
+19. **浏览器内解码（设计 19 §3，F14.2）**：缺省开着（`CURATOR_VIZ_CLIENT_DECODE=1`）。第 14 步的 `viz_abc` 确认映射后打开一条 episode：
+    `curl -s $B/datasets/$D/episodes/0/viz | jq '.cameras[] | {key, access, samples_url, index_url}'` 每路都是 `remux`，另有 `samples_url`（`.frames`）与 `index_url`（`.json`）；
+    `curl -s $B/datasets/$D/episodes/0/cameras/camera_wrist.json | jq '{codec, count, codec_string, k: .key[:3], config: (.config|length)}'` 是 `h264`、20 帧、`avc1.64…`、`[true,false,false]`、一段 base64；
+    这时缓存目录里有 `camera_wrist.annexb`、还没有 `camera_wrist.mp4`。`curl -s -o /tmp/w.mp4 $B/datasets/$D/episodes/0/cameras/camera_wrist.mp4` 才转封装（之后 `episode.json` 里这路 `mp4: true`），
+    `ffprobe /tmp/w.mp4`（或 PyAV）有 20 帧。用 `CURATOR_VIZ_CLIENT_DECODE=0` 重启：相机没有 `samples_url`，`.json` 回 404，扫描时就转封装，与阶段 13 一样。
 
 ## 自动化测试
 

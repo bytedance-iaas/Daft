@@ -49,6 +49,7 @@ export function SidePanel({
   trackKey,
   onTrack,
   onClose,
+  clientDecoded,
 }: {
   focused: CellContent | null;
   model: { cameras: VizCamera[]; streams: VizStream[] };
@@ -61,6 +62,8 @@ export function SidePanel({
   trackKey: string | null;
   onTrack: (key: string) => void;
   onClose: () => void;
+  /** cameras the browser decodes itself (design doc 19 §3) */
+  clientDecoded?: ReadonlySet<string>;
 }) {
   let title = zh.viz.side.title;
   let body: React.ReactNode;
@@ -84,7 +87,7 @@ export function SidePanel({
           <div className="sec">{zh.viz.side.source}</div>
           <Kv k={zh.viz.side.range} v={e && e.from_ts !== null && e.from_ts !== undefined ? zh.viz.side.rangeOf(e.from_ts, e.to_ts ?? null) : zh.viz.side.wholeFile} />
           {e && e.offset_s ? <Kv k={zh.viz.side.offset} v={zh.viz.side.offsetOf(e.offset_s)} /> : null}
-          <Kv k={zh.viz.side.access} v={zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access} />
+          <Kv k={zh.viz.side.access} v={clientDecoded?.has(cam.key) ? zh.viz.access.client : (zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access)} />
           <div className="sec">{zh.viz.side.current}</div>
           <Now clock={clock} ep={ep} />
           {openable ? (

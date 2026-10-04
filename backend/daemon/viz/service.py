@@ -68,6 +68,7 @@ class VizService:
         self.rt = rt
         s = rt.settings
         self.transcode_enabled = bool(getattr(s, "viz_transcode", True))
+        self.client_decode = bool(getattr(s, "viz_client_decode", True))
         self.meta_cache = LRU(max_items=32)
         self.frames_cache = LRU(max_items=64, max_bytes=256 << 20)
         self.label_cache = LRU(max_items=8)
