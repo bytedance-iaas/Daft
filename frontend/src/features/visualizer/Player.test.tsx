@@ -1,9 +1,12 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CAMERA_PALETTE } from '../../lib/vizCurves';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
+import { server } from '../../mocks/server';
+import { sampleIndex } from '../../mocks/vizWorld';
 import { DATASET_PROFILES, datasetDetail } from '../../mocks/world';
 import { renderWithProviders } from '../../test/render';
 import { Player } from './Player';
@@ -226,6 +229,44 @@ describe('Player (design doc 18 §5)', () => {
       fireEvent.pointerDown(cell);
       await user.click(within(player).getByText(zh.viz.info));
       expect(await within(player).findByText(zh.viz.access.client)).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows a camera that starts after the episode zero from its first frame, decoding it at once (2026-10-04)', async () => {
+    const decode = vi.fn();
+    class FakeDecoder {
+      static isConfigSupported = vi.fn(async () => ({ supported: true }));
+      decodeQueueSize = 0;
+      configure() {}
+      decode(chunk: unknown) {
+        decode(chunk);
+      }
+      reset() {}
+      close() {}
+    }
+    vi.stubGlobal('VideoDecoder', FakeDecoder);
+    vi.stubGlobal('EncodedVideoChunk', class {});
+    // the H.264 camera's first keyframe comes 1 s after the episode's zero (GenRobot's recordings start mid-GOP)
+    server.use(
+      http.get('*/episodes/:index/cameras/observation_images_wrist.json', () => {
+        const index = sampleIndex('observation_images_wrist', 90, 30);
+        return HttpResponse.json({ ...index, t: index.t.map((t) => t + 1) });
+      }),
+    );
+    try {
+      renderWithProviders(<Player source={MCAP} index={0} />);
+      const player = await ready();
+      const canvas = await waitFor(() => {
+        const el = player.querySelector('canvas[data-testid="vz-samples-observation_images_wrist"]');
+        expect(el).not.toBeNull();
+        return el as HTMLCanvasElement;
+      });
+      // the clock is at 0, before that frame: the frame is fetched and fed now, not once the clock gets there
+      await waitFor(() => expect(decode).toHaveBeenCalled());
+      // the fake decoder gives nothing back: the cell says it is decoding
+      expect(within(canvas.closest('.vz-cell') as HTMLElement).getByText(zh.viz.video.decoding)).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

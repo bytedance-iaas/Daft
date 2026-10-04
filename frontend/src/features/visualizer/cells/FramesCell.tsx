@@ -34,7 +34,8 @@ export function drawFrame(canvas: HTMLCanvasElement, img: Drawable | undefined):
 export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const index = useFrameIndex(ep.index_url);
-  const [notYet, setNotYet] = useState(false);
+  // nothing to draw yet: the frame is on its way
+  const [waiting, setWaiting] = useState(true);
   const pack = useMemo(() => (ep.url && index.data ? new FramePack(ep.url, index.data) : null), [ep.url, index.data]);
   // the cleanup only drops the frames: StrictMode runs it and then reuses the same pack
   useEffect(() => () => pack?.clear(), [pack]);
@@ -44,14 +45,16 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
     if (!el || !pack) return undefined;
     let shown = -2;
     const times = pack.index.t;
+    // before the camera's first frame it shows that frame, as a <video> parked at its start does
+    const at = () => Math.max(0, bisectRight(times, clock.getSnapshot().t + 1e-6));
     const paint = () => {
       const s = clock.getSnapshot();
-      const k = bisectRight(times, s.t + 1e-6);
-      setNotYet(k < 0);
-      void pack.want(Math.max(0, k), s.playing ? AHEAD : 2);
-      const img = k >= 0 ? (pack.get(k) ?? pack.nearest(k)) : undefined;
+      const k = at();
+      void pack.want(k, s.playing ? AHEAD : 2);
+      const img = pack.get(k) ?? pack.nearest(k);
       if (k !== shown || img) drawFrame(el, img);
       if (pack.get(k)) shown = k;
+      setWaiting(!img);
     };
     const resize = () => {
       const r = el.getBoundingClientRect();
@@ -62,14 +65,13 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
       paint();
     };
     pack.onFrame = (k) => {
-      if (k === bisectRight(times, clock.getSnapshot().t + 1e-6)) {
+      if (k === at()) {
         shown = -2;
         paint();
       }
     };
     const unsub = clock.subscribe(() => {
-      const k = bisectRight(times, clock.getSnapshot().t + 1e-6);
-      if (k !== shown) paint();
+      if (at() !== shown) paint();
     });
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
     ro?.observe(el);
@@ -96,13 +98,9 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
         <div className="vz-overlay" role="status">
           {zh.viz.video.framesFailed}
         </div>
-      ) : index.isLoading ? (
+      ) : index.isLoading || waiting ? (
         <div className="vz-overlay" role="status">
           {zh.viz.video.loading}
-        </div>
-      ) : notYet ? (
-        <div className="vz-overlay" role="status">
-          {zh.viz.video.notYet}
         </div>
       ) : null}
     </>

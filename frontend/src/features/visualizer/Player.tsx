@@ -1,5 +1,6 @@
 import { Button, Select } from '@arco-design/web-react';
 import { IconClose, IconExpand, IconInfoCircle, IconPlus, IconShrink, IconSwap } from '@arco-design/web-react/icon';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VizDataset, VizEpisode } from '../../api/types';
 import { CAMERA_PALETTE } from '../../lib/vizCurves';
@@ -28,7 +29,7 @@ import { FramesCell } from './cells/FramesCell';
 import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
-import { useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
+import { prefetchVizEpisode, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
 import { SidePanel } from './SidePanel';
 import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
@@ -64,6 +65,8 @@ export interface PlayerProps {
   arrangement?: Layout | null;
   /** a control before the title (the visualize page's 展开侧栏 while its rail is folded); kept while loading */
   lead?: React.ReactNode;
+  /** the episode to prepare once this one is on screen (the visualize page's next one) */
+  prefetch?: number | null;
 }
 
 /** The player: loads the model and the episode, keeps the last episode on screen while the next loads. */
@@ -102,7 +105,7 @@ export function Player(props: PlayerProps) {
       <div className={`vz${props.mode === 'mini' ? ' is-mini' : ''}`}>
         {lead}
         <div className="vz-skeleton" role="status">
-          {model.data ? zh.viz.loadingEpisode : zh.viz.loadingModel}
+          {!model.data ? zh.viz.loadingModel : model.data.format.reader === 'mcap' ? zh.viz.loadingMcap : zh.viz.loadingEpisode}
         </div>
       </div>
     );
@@ -140,8 +143,15 @@ function PlayerView({
   control,
   arrangement = null,
   lead,
+  prefetch = null,
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
+  // once this episode is on screen, the next one is prepared in the background: clicking 下一条 on an mcap
+  // dataset then finds its scan done (design doc 18 §10, 预生成 for one episode ahead)
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!loadingNext && prefetch !== null && prefetch !== ep.index) void prefetchVizEpisode(qc, source, prefetch);
+  }, [qc, source, prefetch, loadingNext, ep.index]);
   // one clock per episode; the cleanup only stops it (StrictMode runs it and then the effect again on
   // the same clock - a one-way dispose there would leave the cells on a dead clock)
   const clock = useMemo(() => new PlayerClock(ep.duration_s), [ep]);

@@ -118,6 +118,7 @@ export function VisualizePage() {
                 onPrevEpisode={prev !== null ? () => go(datasetId, prev) : undefined}
                 onNextEpisode={next !== null ? () => go(datasetId, next) : undefined}
                 lead={unfold}
+                prefetch={next}
               />
             </div>
           ) : model.isError ? (

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
+import { server } from '../../mocks/server';
 import { currentLocation, renderApp } from '../../test/render';
 
 describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
@@ -27,6 +28,17 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     await user.click(within(screen.getByTestId('vz-player')).getByRole('button', { name: zh.viz.nextEpisode }));
     await waitFor(() => expect(currentLocation()).toBe('/visualize?dataset=ds_droid200&ep=4'));
     expect(document.title).toContain('droid-200');
+  });
+
+  it('prepares the next episode in the background once this one is on screen (an mcap one is scanned once)', async () => {
+    const asked: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      asked.push(new URL(request.url).pathname);
+    });
+    renderApp('/visualize?dataset=ds_droid200&ep=3');
+    const player = await screen.findByTestId('vz-player');
+    await waitFor(() => expect(within(player).getByText('ep 3')).toBeInTheDocument());
+    await waitFor(() => expect(asked.some((p) => p.endsWith('/datasets/ds_droid200/episodes/4/viz'))).toBe(true));
   });
 
   it('falls back to the first episode when the address names one the dataset does not have', async () => {

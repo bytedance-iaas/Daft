@@ -61,9 +61,6 @@ function Opened({ dataset, onClose }: { dataset: Pick<DatasetItem, 'id' | 'name'
       onCancel={onClose}
       footer={
         <Space>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {zh.mcap.freezeHint}
-          </span>
           <Button onClick={onClose}>{zh.common.cancel}</Button>
           <Button
             type="primary"

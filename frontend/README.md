@@ -200,6 +200,8 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     支持 WebCodecs 的浏览器（Chrome / Edge / Safari 新版）里相机格是画布不是 `<video>`（开发者工具里 `canvas[data-testid^="vz-samples-"]`），点相机格开「详细信息」，读取方式写
     「浏览器解码（WebCodecs）」；播放、逐帧（→）、帧号框跳帧、向后拖进度条、2x、循环，画面与曲线同一条进度条走；网络面板里样本包按 GOP 区间取（`Range: bytes=…`），没有 `.mp4` 请求。
     控制台里 `delete window.VideoDecoder` 后刷新：相机格换回 `<video>`，读取方式写「Daemon 转封装（不重编码）」，这时才有 `.mp4` 请求。
+    GenRobot 的切片（robot1 的相机比时间轴零点晚 0.07 秒开始）停在开头时两路都有画面，robot1 显示它自己的第一帧，没有「这一路相机还没有画面」；
+    多条的 mcap（如 `viz_umi`）打开第 0 条，网络面板里紧跟着有 `episodes/1/viz`（后台预取下一条），再点「下一条」不用等扫描。
 
 ## 契约缺口（C4 1.9.0）与前端的做法
 

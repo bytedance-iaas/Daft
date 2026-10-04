@@ -1,7 +1,7 @@
 // What the player reads (C4 2.4.0, design doc 18 §7): the presentation model, one episode, a curve
 // group, a frame pack's index and the transcode state of a camera - for a registered dataset
 // (the full page) or a task's frozen input (the mini player). Everything is fetched from the Daemon.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../../api/client';
 import { ApiError } from '../../api/errors';
 import type { VizDataset, VizEpisode, VizFrameIndex, VizMediaPending, VizSeries } from '../../api/types';
@@ -56,6 +56,14 @@ export function useVizModel(r: VizRef | null) {
  * One episode. Presigned camera URLs expire (`expires_at`): the answer is fetched again two minutes
  * before the first one does, and the cells swap to the new URL where they are (design doc 18 §5.8).
  */
+/**
+ * Asks for an episode the viewer will likely open next, so the Daemon prepares it now: an mcap episode is
+ * scanned once (the whole file) into its disk cache, and the answer waits here for the click.
+ */
+export function prefetchVizEpisode(qc: QueryClient, r: VizRef, index: number): Promise<void> {
+  return qc.prefetchQuery({ queryKey: vizKeys.episode(r, index), queryFn: () => fetchVizEpisode(r, index), staleTime: Infinity });
+}
+
 export function useVizEpisode(r: VizRef | null, index: number | null) {
   return useQuery({
     queryKey: r && index !== null ? vizKeys.episode(r, index) : ['viz', 'none', 'episode'],

@@ -101,7 +101,8 @@ export function VideoCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCa
   };
 
   let message: string | null = null;
-  if (phase.kind === 'loading') message = phase.resigning ? zh.viz.video.resigning : zh.viz.video.loading;
+  // an mcap camera's <video> waits for the Daemon to rewrap its stream the first time (cached afterwards)
+  if (phase.kind === 'loading') message = phase.resigning ? zh.viz.video.resigning : ep.access === 'remux' ? zh.viz.video.remuxing : zh.viz.video.loading;
   else if (phase.kind === 'pending') message = zh.viz.video.transcoding(phase.progress);
   else if (phase.kind === 'failed') message = zh.viz.video.failed;
   else if (phase.kind === 'unsupported') message = zh.viz.video.unsupported;

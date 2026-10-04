@@ -51,7 +51,8 @@ export function SamplesCell({ cam, ep, clock, onMode }: { cam: VizCamera; ep: Vi
 
 function Decoded({ cam, url, index, clock, onFail }: { cam: VizCamera; url: string; index: NonNullable<ReturnType<typeof useFrameIndex>['data']>; clock: PlayerClock; onFail: () => void }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
-  const [notYet, setNotYet] = useState(false);
+  // nothing to draw yet: the GOP is on its way or in the decoder
+  const [decoding, setDecoding] = useState(true);
   // made and let go in one effect: StrictMode's mount - cleanup - mount must not reuse a closed decoder
   const [stream, setStream] = useState<SampleStream | null>(null);
   useEffect(() => {
@@ -65,15 +66,17 @@ function Decoded({ cam, url, index, clock, onFail }: { cam: VizCamera; url: stri
     if (!el || !stream) return undefined;
     let shown = -2;
     const times = index.t;
-    const at = () => bisectRight(times, clock.getSnapshot().t + 1e-6);
+    // before the camera's first frame (its first keyframe comes a little after the episode's zero) it shows
+    // that frame, as a <video> parked at its start does
+    const at = () => Math.max(0, bisectRight(times, clock.getSnapshot().t + 1e-6));
     const paint = () => {
       const s = clock.getSnapshot();
       const k = at();
-      setNotYet(k < 0);
-      if (k >= 0) stream.want(k, s.playing ? AHEAD : 0);
-      const img = k >= 0 ? (stream.get(k) ?? stream.nearest(k)) : undefined;
+      stream.want(k, s.playing ? AHEAD : 0);
+      const img = stream.get(k) ?? stream.nearest(k);
       if (k !== shown || img) drawFrame(el, img);
       if (stream.get(k)) shown = k;
+      setDecoding(!img);
     };
     const resize = () => {
       const r = el.getBoundingClientRect();
@@ -107,9 +110,9 @@ function Decoded({ cam, url, index, clock, onFail }: { cam: VizCamera; url: stri
   return (
     <>
       <canvas ref={canvas} data-testid={`vz-samples-${cam.key}`} />
-      {notYet ? (
+      {decoding ? (
         <div className="vz-overlay" role="status">
-          {zh.viz.video.notYet}
+          {zh.viz.video.decoding}
         </div>
       ) : null}
     </>

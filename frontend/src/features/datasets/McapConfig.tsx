@@ -267,9 +267,7 @@ function SourceSelects({ probe, value, onChange }: { probe: McapProbe; value: Vi
         ) : null}
       </Col>
       <Col span={6}>
-        <div className="mcap-label" title={zh.mcap.frameRefHelp}>
-          {zh.mcap.frameRef} <span className="muted mcap-small">{zh.mcap.frameRefHelp}</span>
-        </div>
+        <div className="mcap-label">{zh.mcap.frameRef}</div>
         <Select
           size="small"
           value={value.timeline?.frame_reference ?? ''}
@@ -590,7 +588,6 @@ export function McapConfig({
             <Button size="small" onClick={() => setSavingAs((x) => !x)}>
               {zh.mcap.saveAs}
             </Button>
-            <span className="muted mcap-small">{zh.mcap.freezeHint}</span>
           </Space>
           {savingAs ? <SaveAsTemplate value={value} onDone={() => setSavingAs(false)} /> : null}
         </>
