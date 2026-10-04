@@ -159,6 +159,17 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `check_mapping`；任务日志的调试行（`GET /tasks/<task_id>/logs?level=debug`）`run: curation preflight …`、`run: curation check …` 都带 `--set ingest.mcap_mapping=…`。之后再改映射，这个任务的 `run.json` 不变，任务级的
     `GET /tasks/<task_id>/episodes/0/viz` 仍按第 1 版出，且带 `check_clock`（`offset_s` 0、`fps` 10）。
 
+17. **整套样本集**（F13.8，设计 18 §9.6）：`scripts/viz_sample_check.py` 对着一个运行中的 Daemon 逐个子集像「可视化」页那样打开：登记（本地挂载；
+    mcap 按探测起草的映射原样确认）、数据集模型、episode 列表、首尾两条 episode 的记录、每路相机经播放器用的地址解出首帧（本地文件或预签名地址按 `from_ts` 定位；
+    转封装 / 转码等 202 结束；帧包读索引与第一张 JPEG）、每组曲线按 1200 点；首条再开一次量热缓存；最后量缓存目录。每个子集一行 JSON，另写一份汇总：
+
+    ```bash
+    ../.venv/bin/python scripts/viz_sample_check.py --api http://127.0.0.1:8080/curation/api/v1 \
+        --cache-dir $CURATOR_VIZ_CACHE_DIR --out /tmp/viz_check.jsonl /path/to/samples/*/*
+    ```
+
+    全部子集通过时退出码 0；失败的子集、相机与曲线在汇总的 `failed` 里写明原因。
+
 ## 自动化测试
 
 ```bash

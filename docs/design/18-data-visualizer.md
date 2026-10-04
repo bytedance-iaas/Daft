@@ -551,6 +551,56 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
   两条质检读取器差距照实提示，`/left-arm-state` 的候选字段是 position / velocity / torque（各 6 维），勾上 velocity 保存后左臂曲线组画 12 条状态线叠 6 条动作线；
   不带映射登记的 GenRobot 副本在列表里是「映射：待确认」、「可视化」置灰、「新建任务」可用，在列表的「mcap 配置」里确认第 1 版后「可视化」可点。
 
+### 9.6 F13.8 样本集验收（2026-10-04）
+
+**做法**：`backend/scripts/viz_sample_check.py` 对着一个运行中的 Daemon 像「可视化」页那样逐个子集打开：登记（本地挂载；mcap 的映射按探测起草的原样确认，
+不做人工修改）→ 数据集模型 → episode 列表 → 首、尾两条 episode 的记录 → 每路相机按播放器会用的地址解出第一帧（本地文件由 Daemon 读、按 `from_ts` 定位；
+mcap 的转封装与 mpeg4 的平台转码先等 202 结束，再像浏览器一样从头流式读 fMP4，平均只读 0.33 MB、最多 0.85 MB 就出第一帧；浏览器放不了 HEVC 时的转码回退每个子集测一路）
+→ 每组曲线按 1200 点 → 首条再开一次量热缓存；最后量缓存目录。在 h200-14 上起 Daemon（本地盘、单客户端顺序执行），第二遍前换空的缓存目录、
+并把 27.8 GB 样本文件逐个移出系统页缓存，下表是第二遍。另取 5 个子集登记成 TOS 地址补测预签名直连与 Daemon 读 TOS 的路径，浏览器经 SSH 隧道抽查。
+
+**结果**：88 个子集（anchor 63、anchor-nc 25）全部能开：173 条 episode、467 路相机都解出第一帧，1005 次曲线请求都有数。第一遍有 15 个 Galaxea 子集打不开——
+它的动作拆成 `action.left_arm` 等几列、没有 `action` 列，质检读取器（A 类）判「不支持」，可视化跟着拒了；可视化读取器其实读得了（§9.1 的进程内验收），
+已改成「预检认出了 LeRobot v2 / v3 就交给可视化读取器，不看质检读不读得了」（与 §9.2 的 mcap 同理，`viz_format`、读取器选择、`GET /datasets?viz=true` 三处），
+可视化页数据集下拉里也不再把这类数据集标成 mcap。
+
+| 指标（冷缓存，秒，p50 / p90 / 最大，括号里是次数） | 值 |
+|---|---|
+| 登记（预检 + 文件清单，第一遍） | 0.91 / 1.40 / 1.46（88） |
+| mcap 探测（第一遍） | 0.52 / 0.71 / 0.96（16；起草：UMI 15、Foxglove 通用 1） |
+| 数据集模型 | 0.02 / 0.10 / 0.49（88）；episode 列表 ≤ 0.03 |
+| episode 记录：LeRobot | v2.0 0.01 / 0.14 / 0.18，v2.1 ≤ 0.01，v3.0 0.04 / 0.07 / 0.30，anchor-nc 0.07 / 0.13 / 0.20 |
+| episode 记录：mcap（含整条扫描） | 0.82 / 1.70 / 29.2（32）；GenRobot ≤ 1.8，ABC-130k 一条 117 s、四路 1920×1200 H.265 冷开 29.2 s（另一条 9.5 s） |
+| 首帧：本地文件（LeRobot，AV1 / H.264） | 0.05 / 0.12 / 1.40（332） |
+| 首帧：转封装 fMP4（mcap，记录之后） | 0.05 / 0.06 / 0.08（68） |
+| 首帧：平台转码（FastUMI mpeg4，约 20 s 的 episode） | 2.56 / 3.58 / 4.83（66） |
+| 首帧：HEVC 转码回退（ABC-130k 一路 117 s） | 63.8（1） |
+| 打开一条 episode 到各路都出第一帧（记录 + 最慢一路） | 全体 0.21 / 3.31 / 29.3（173）；v2.0 0.05 / 0.16 / 0.27，FastUMI 3.07 / 3.83 / 4.84，v3.0 0.14 / 0.23 / 1.45，anchor-nc 0.12 / 0.20 / 0.31，mcap 0.91 / 1.75 / 29.3 |
+| 曲线（1200 点） | 0.02 / 0.12 / 0.23（1005）；热缓存相同 |
+| 热缓存再开 | episode 记录 ≤ 0.04；首帧 0.05 / 0.10 / 1.64 |
+| 缓存体积（173 条 episode） | 3.3 GB：mcap 2.93 GB（扫描产物与 fMP4；ABC 两条 1.16 GB，GenRobot 约 59 MB / 条），转码 0.39 GB（FastUMI 每路每条约 5 MB 加一路 HEVC 回退）；缺省上限 20 GB LRU |
+
+**TOS 补测**（droid200、rh20t_cfg1_28、fastumi_add_rice、genrobot_p2_clean_bowl、galaxea_push_in_chairs，登记成 `tos://curation-robo-anchor/…`）：5 个全部能开——
+LeRobot 相机是预签名直连、FastUMI 由 Daemon 从 TOS 读来转码、mcap 由 Daemon 从 TOS 流式扫描。h200-14 在境外，到 TOS 每次请求 1–2 s，这组时长（直连首帧 7–18 s、
+mcap 记录 19–25 s）反映的是这条链路，不是部署环境（Daemon 与 TOS 同在 cn-beijing）。控制台所在的浏览器直连 TOS 打开 droid200 的一条：三路 AV1 在播放器要视频后
+2.3–2.8 s 出第一帧，每路都是两次串行请求之后（这批文件的 `moov` 在文件尾）。
+
+**浏览器抽查**（内置浏览器，经 SSH 隧道连 h200-14 的 Daemon）：FastUMI 两路「平台转码」同步走、播 5 秒两路都在 4.996 s；RH20T 窄网格下智能布局 2×3 放 6 路，
+6 路同步（5 s 时 5.00 / 4.99，帧号 80 对 10 fps），其中一路文件时长 22 万秒（时间戳起点很大）照样按 `from_ts` 跟上时钟；so101_depth 的两路 AV1 同步，深度流标「第二期渲染」；
+修正后的 Galaxea 四路 1280×720 同步。
+
+**缺口清单**（已修的不再列；其余进 §10 或已在 §10）：
+
+- mcap 首开要等整条扫描完才出记录：GenRobot 一条 ≤ 1.8 s，ABC-130k 一条 2 分钟、四路 H.265 冷开 29 s（§10「预生成」）。
+- 浏览器不解 HEVC 时（没有 HEVC 硬件解码的 Chrome / Edge，例如多数 Linux 机器）ABC-130k 走转码回退，2 分钟一路约 64 s（2 个转码进程）；macOS 的 Chrome / Safari 与有硬件解码的 Windows 直接播。
+- 72 个 LeRobot 子集里 52 个的 mp4 把 `moov` 放在文件尾（LeRobot v2 编码器的缺省，没有 faststart），直连 TOS 时第一帧多一次往返（§10 新增一行）。
+- 相机多于 9 路放不全：网格最大 3×3，RH20T 有 10 路（§10 新增一行）；智能布局在窄网格下是 2×3。
+- 深度流不画：dual_ur5e_rgbd 4 路、so101_depth 1 路，标「深度图在第二期渲染」（§10「深度图」）。
+- 认不出的标注写法：g1_failure_labeling 的 `annotation.failure.*` 报「标注格式不支持」（§10「我们自己的标注标准」）。
+- 照设计提示的警告：`leading_frames`（GenRobot 6 条，开头约 1 秒在第一个关键帧之前）、`topics_differ`（4 个 GenRobot 子集的文件 topic 布局不一）、
+  `file_unreadable`（结构故障注入的子集）、`episode_rows_mismatch`（svla_so101_index_injected 故意偏了行窗）。
+- 待需求方：验收（F13.8 ③）；§9.4 报告帧号从 1 数、播放器从 0 数的口径。
+
 ## 10. 第二期（另立阶段，先记在这里）
 
 需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
@@ -561,7 +611,9 @@ C5：`Dataset` 加 `viz_mapping`（JSON）、`viz_mapping_version`、`viz_mappin
 | 三维场景 | 末端轨迹（`observation.eef_pose`、mcap `PoseInFrame`）、点云、URDF 本体；新的视图类型「三维」 | `transform` / `pointcloud` 流进字段树，「+」菜单里置灰 |
 | 深度图 | `uint16` 深度列与 mcap 深度流的渲染（伪彩、与 RGB 叠放） | `depth` 流进字段树 |
 | 我们自己的标注标准 | 统一标注模型的序列化格式（片段 / 事件 / 条目标签 / 多轨），把质检产出的区间（TASK-1 动作起止、ACT-7 人工接管…）并进去，可导出、可回写数据集；外部标注的更多格式与在线编辑 | `Annotations` 模型；外部标注上传件 |
-| 预生成 | 登记后后台生成可视化索引、帧包与转码产物（大数据集首次打开不等待） | 缓存目录与指纹规则 |
+| 预生成 | 登记后后台生成可视化索引、帧包与转码产物（大数据集首次打开不等待；F13.8 实测 mcap 首开要等整条扫描，ABC-130k 一条冷开 29 s，HEVC 转码回退一路 64 s） | 缓存目录与指纹规则 |
+| moov 在尾的 mp4 | LeRobot v2 编码器不加 faststart（样本集 72 个 LeRobot 子集里 52 个），直连 TOS 时第一帧前多一次往返；可由预生成写 faststart 副本，或 Daemon 先读尾部的 `moov` 给浏览器 | `access` 可加 Daemon 代读 |
+| 相机多于 9 路 | 网格最大 3×3，RH20T 有 10 路放不全；4×3 网格或相机墙视图 | 格子数由 `GRID_SIZES` 决定 |
 | v3 片段切分 | 按 GOP 切出单条 episode 的 mp4，替代 `#t=from,to` 直连整个分块文件 | `access: remux` |
 | LeRobot 展示配置其余项 | 缺省布局、曲线分组覆盖、相机顺序之外的个性化 | `display_config` |
 | 多 episode 连播与并排对比 | 自动下一条；两条 episode 同屏对比 | 播放器以 episode 时间为时钟，可扩展为两个时钟 |
