@@ -188,7 +188,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 **aggregate**：`curation aggregate --run-dir … --phase funnel|final [--revision N] [--modules a,b] [--episodes 表达式] [--input …] --json`
 
 - 纯计算、秒级、每次全量重算。模块取 `--modules`，否则取 `plan.json`；episode 取 `--episodes`，否则取有结果的全部。
-- 判决按策略（设计 17 §4，D58）：模块只报发现，任务的策略（`run.json` 的 `policy`，开始时冻结；没有时是 `default`）给每条发现定级 blocking / review / info。有 blocking 发现即 drop，每条 blocking 发现都是理由，对它执行出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则所需模块出错或没有记录即 held（「待补跑」）；否则 keep，review 级发现进 review（弃权不是错）。`default` 就是今天的硬门，只是软分不再拒（P18）；`report_only` 一律只报告，不拒也不问。换策略只要重跑 aggregate。
+- 判决按策略（设计 17 §4，D58）：模块只报发现，任务的策略（`run.json` 的 `policy`，开始时冻结；没有时是 `default`）给每条发现定级 blocking / review / info（`report_only` 只留数据完整性的 blocking，其余都是 info，策略版本 2）。有 blocking 发现即 drop，每条 blocking 发现都是理由，对它执行出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则所需模块出错或没有记录即 held（「待补跑」）；否则 keep，review 级发现进 review（弃权不是错）。`default` 就是今天的硬门，只是软分不再拒（P18）；`report_only` 一律只报告，不拒也不问。换策略只要重跑 aggregate。
 - `funnel`：逐条段的模块 → 每条 keep / drop / held（`verdicts.jsonl`，2.0 行：`blocking`、`review`、`info_count`、`error_modules`、`reason`）和 `keep.txt`。两块的运行（计划 2.0，F12.4）里每个所选模块都判过每一条，Daemon 不再单独跑这一步（`final` 也写这两份）；手工跑漏斗计划的旧运行目录照旧可用。不给 `--revision` 时写到 `<run-dir>/funnel/`。
 - `verdicts.jsonl` 始终是检查本身的漏斗判决；`keep.txt`（dedup 与技能画像的输入）还要跟着已应用的人工裁决走：弃用的、人工判失败的移出，复议捞回的、对拒绝条目人工判成功的加入（`counts` 里的 `decided_in` / `decided_out`）。没有裁决时两者一致。
 - **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它报的重复组保持不变，每组留哪条由 aggregate 在人工决定之后选——组内第一条没因别的原因被拒的（设计 17 §4.5：被人判失败的原件去掉了，它的副本顶上），其余成员按副本拒；由人带回交付的条从不去重。

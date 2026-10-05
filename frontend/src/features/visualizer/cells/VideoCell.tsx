@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { VizCamera, VizEpisodeCamera } from '../../../api/types';
 import { zh } from '../../../locales/zh';
 import type { PlayerClock } from '../clock';
@@ -34,7 +34,7 @@ const POLL_MS = 1500;
  * renewed) is swapped in where the clock is. The clock drives it: no native controls, no full
  * screen, no picture-in-picture.
  */
-export function VideoCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock }) {
+export function VideoCell({ cam, ep, clock, onBusy }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock; onBusy?: (id: string, busy: boolean) => void }) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'loading', resigning: false });
   const [src, setSrc] = useState<string | null>(null);
@@ -83,6 +83,15 @@ export function VideoCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCa
       if (timer) clearTimeout(timer);
     };
   }, [target, wantTranscode, reason]);
+
+  // a camera the platform is still transcoding holds 播放 back (requester 2026-10-05: it could not play
+  // yet); one id a cell, so two cells of one camera, or a cell going away, do not clear each other
+  const busyId = `${cam.key}:${useId()}`;
+  const transcoding = phase.kind === 'pending';
+  useEffect(() => {
+    onBusy?.(busyId, transcoding);
+  }, [onBusy, busyId, transcoding]);
+  useEffect(() => () => onBusy?.(busyId, false), [onBusy, busyId]);
 
   // on the clock while it plays this URL
   useEffect(() => {

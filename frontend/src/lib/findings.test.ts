@@ -37,11 +37,17 @@ describe('the findings views read the registry and the report 2.0', () => {
     expect(placeLabel(reg, spec('skill_profile'))).toBe('VLM 块 · 技能画像');
   });
 
-  it('a module rejects, asks or only reports by its codes, nothing under report_only', () => {
+  it('a module rejects, asks or only reports by its codes; under report_only only data integrity rejects', () => {
     expect(moduleRole(spec('timestamp_check'))).toBe('blocking');
     expect(moduleRole(spec('skill_profile'))).toBe('review');
     expect(moduleRole(spec('visual_quality'))).toBe('info');
     expect(moduleRole(spec('task_success'), 'report_only')).toBe('info');
+    expect(moduleRole(spec('timestamp_check'), 'report_only')).toBe('info');
+    // an empty or cut file still rejects (requester 2026-10-05, policy version 2)
+    expect(moduleRole(spec('data_integrity'), 'report_only')).toBe('blocking');
+    expect(moduleRole(spec('data_integrity'), 'report_only', '2')).toBe('blocking');
+    // a task frozen with version 1 rejected nothing
+    expect(moduleRole(spec('data_integrity'), 'report_only', '1')).toBe('info');
   });
 
   it('lays the coverage out by dimension, control items left out', () => {

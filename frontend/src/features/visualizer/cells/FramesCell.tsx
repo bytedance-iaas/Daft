@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { VizCamera, VizEpisodeCamera } from '../../../api/types';
-import { bisectRight } from '../../../lib/vizTime';
+import { bisectRight, framesIn } from '../../../lib/vizTime';
 import { zh } from '../../../locales/zh';
-import type { PlayerClock } from '../clock';
+import { CLOCK_CONFIG, type PlayerClock } from '../clock';
 import { useFrameIndex } from '../data';
 import { FramePack, type Drawable } from '../framePack';
 
@@ -34,6 +34,7 @@ export function drawFrame(canvas: HTMLCanvasElement, img: Drawable | undefined):
 export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const index = useFrameIndex(ep.index_url);
+  const sourceId = `${cam.key}:${useId()}`;
   // nothing to draw yet: the frame is on its way
   const [waiting, setWaiting] = useState(true);
   const pack = useMemo(() => (ep.url && index.data ? new FramePack(ep.url, index.data) : null), [ep.url, index.data]);
@@ -44,13 +45,16 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
     const el = canvas.current;
     if (!el || !pack) return undefined;
     let shown = -2;
+    let playing = clock.getSnapshot().playing;
     const times = pack.index.t;
+    // playing, the bytes of about readyAheadS more come too (fetched in batches): what the clock waits for
+    const prefetch = framesIn(times, CLOCK_CONFIG.readyAheadS + 1);
     // before the camera's first frame it shows that frame, as a <video> parked at its start does
     const at = () => Math.max(0, bisectRight(times, clock.getSnapshot().t + 1e-6));
     const paint = () => {
       const s = clock.getSnapshot();
       const k = at();
-      void pack.want(k, s.playing ? AHEAD : 2);
+      void pack.want(k, s.playing ? AHEAD : 2, s.playing ? prefetch : 0);
       const img = pack.get(k) ?? pack.nearest(k);
       if (k !== shown || img) drawFrame(el, img);
       if (pack.get(k)) shown = k;
@@ -71,17 +75,23 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
       }
     };
     const unsub = clock.subscribe(() => {
-      if (at() !== shown) paint();
+      const now = clock.getSnapshot().playing;
+      if (at() !== shown || now !== playing) {
+        playing = now;
+        paint();
+      }
     });
+    const detach = clock.attachSource(sourceId, { ahead: (t) => pack.ahead(t) });
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
     ro?.observe(el);
     resize();
     return () => {
       unsub();
+      detach();
       ro?.disconnect();
       pack.onFrame = null;
     };
-  }, [pack, clock]);
+  }, [pack, clock, sourceId]);
 
   const failed = index.isError || (!ep.url && ep.access !== 'unsupported');
   return (

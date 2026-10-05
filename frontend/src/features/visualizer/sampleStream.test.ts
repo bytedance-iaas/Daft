@@ -97,6 +97,20 @@ describe('SampleStream (design doc 19 §3)', () => {
     expect(s.nearest(19)).toBe(s.get(14));
   });
 
+  it('fetches the GOPs of about 5 s ahead and tells how far they reach (2026-10-05)', async () => {
+    const w = world();
+    const s = new SampleStream('/x.frames', INDEX, w.deps);
+    expect(s.ahead(0)).toBe(0);
+    s.prefetch(0, 12);                                              // frames 0-12: GOPs 0 and 10
+    await vi.waitFor(() => expect(s.ahead(0)).toBeCloseTo(2.0));
+    expect(w.ranges).toEqual(['bytes=0-99', 'bytes=100-199']);
+    expect(w.fed).toHaveLength(0);                                  // bytes only: nothing decoded
+    expect(s.ahead(0.5)).toBeCloseTo(1.5);
+    s.prefetch(5, 30);                                              // to the last frame
+    await vi.waitFor(() => expect(s.ahead(0)).toBe(Infinity));
+    expect(w.ranges).toEqual(['bytes=0-99', 'bytes=100-199', 'bytes=200-299']);
+  });
+
   it('tells the cell when the decoder fails, and stops', async () => {
     const w = world();
     const s = new SampleStream('/x.frames', INDEX, w.deps);

@@ -284,7 +284,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 
 > **策略判决（2026-10-01，设计 17 §4，D58；C2 2.0 已定稿，F12.3 已实现）**：判决改为「发现 → 策略表 → 级别」：有 blocking 发现
 > 就 drop，`reasons` 列出全部 blocking 发现；否则任一已勾选模块出错或没有记录就 held；否则 keep，review 级发现按各自的裁决线进
-> `review.json`。默认策略复刻今天的硬门（P18），软分拒绝消失；预设 `report_only` 只报不拒。`verdicts.jsonl` 2.0 每行是
+> `review.json`。默认策略复刻今天的硬门（P18），软分拒绝消失；预设 `report_only` 只报不拒（数据完整性的致命问题仍判废，策略版本 2）。`verdicts.jsonl` 2.0 每行是
 > `{episode_index, verdict, blocking, review, info_count, error_modules, reason}`；四份清单的 `reasons[]` 多 `code`、`item`，`kind` 取
 > `finding | human | execution_error | duplicate`。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
 > 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理），去重组留哪条在人工决定之后选；1.0 的运行目录拒绝聚合

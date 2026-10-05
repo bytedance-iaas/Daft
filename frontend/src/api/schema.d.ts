@@ -2144,7 +2144,7 @@ export interface components {
             };
             /** @default false */
             clips?: boolean;
-            /** @description The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a person and which are only reported. `default` gives every finding code its registry level (today's hard gates reject, today's suspects and abstentions are asked); `report_only` rejects nothing and asks nothing. Frozen at start; changing it later re-runs aggregate only. The funnel keeps judging by `default` until the policy aggregate replaces it (F12.3). */
+            /** @description The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a person and which are only reported. `default` gives every finding code its registry level (today's hard gates reject, today's suspects and abstentions are asked); `report_only` asks nothing and rejects only on data integrity's blocking findings (an empty, cut or unreadable file leaves nothing for the modules after it; policy version 2, 2026-10-05 - version 1 rejected nothing). Frozen at start; changing it later re-runs aggregate only. The funnel keeps judging by `default` until the policy aggregate replaces it (F12.3). */
             policy?: {
                 /**
                  * @default default

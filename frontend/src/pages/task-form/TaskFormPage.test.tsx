@@ -203,10 +203,11 @@ describe('新建任务 · 两屏与提交', () => {
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByRole('button', { name: '清空' }));
     await user.click(within(screen.getByTestId('module-timestamp_check')).getByRole('checkbox'));
-    // the verdict policy: 只报不拒 is sent, and the module card says it only reports
+    // the verdict policy: 只报不拒 is sent, and the module card says it only reports - data integrity still rejects
     expect(within(screen.getByTestId('module-timestamp_check')).getByText('可判废')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '只报不拒' }));
     expect(within(screen.getByTestId('module-timestamp_check')).getByText('只报告')).toBeInTheDocument();
+    expect(within(screen.getByTestId('module-data_integrity')).getByText('可判废')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     const card = within(s2()).getByTestId('params-timestamp_check');

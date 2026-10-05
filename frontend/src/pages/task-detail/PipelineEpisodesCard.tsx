@@ -37,8 +37,14 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
  * only turns the spinner in the header: swapping the table for a spinner made the page jump. An
  * episode's link opens it in the mini player (requester, 2026-10-04: no card of its records below).
  */
-/** Rows a page (sixth round: 20, was 30 - the page grew too long). */
-export const PIPELINE_PAGE = 20;
+/** Rows a page (requester 2026-10-05: the latest 15; the sixth round had 20, before it 30). */
+export const PIPELINE_PAGE = 15;
+
+/**
+ * Column widths (requester 2026-10-05): 最近阶段 holds four stages on one line (「完整性验证 ✓ · 数值验证 ✓ ·
+ * 视频验证 ✓ · 模型验证 …」is 335 px), the time columns are only as wide as their heads; 当前结果 takes the rest.
+ */
+const COL = { episode: 84, stages: 372, time: 96, total: 108, resultMin: 200 };
 
 /**
  * The mini player of a pipeline row: the episode's findings as chips and bands, read from the task's
@@ -97,24 +103,28 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
             rowKey="episode_index"
             size="small"
             pagination={false}
-            scroll={{ x: 780 }}
+            scroll={{ x: COL.episode + COL.stages + (funnel.length || FUNNEL_STAGES.length - 1) * COL.time + COL.total + COL.resultMin }}
+            className="pipeline-table"
             data={rows}
             columns={[
-              { title: copy.columnEpisode, dataIndex: 'episode_index', render: (ep: number) => (
+              { title: copy.columnEpisode, dataIndex: 'episode_index', width: COL.episode, render: (ep: number) => (
                 <Button type="text" size="mini" title={zh.viz.mini.openTitle} onClick={() => setMini(ep)} data-testid={`pipeline-open-mini-${ep}`}>
                   {copy.episode(ep)}
                 </Button>
               ) },
-              { title: copy.columnStage, dataIndex: 'last_stage', render: (_: unknown, row: PipelineEpisode) => rowStages(row) },
+              { title: copy.columnStage, dataIndex: 'last_stage', width: COL.stages, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
               ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
                 title: copy.processingStage[stage] ?? stage,
                 dataIndex: 'stage_processing_s.' + stage,
+                width: COL.time,
+                align: 'right' as const,
+                className: 'pipeline-num',
                 render: (_: unknown, row: PipelineEpisode) => {
                   const took = (row.stage_processing_s as Record<string, number | undefined> | undefined)?.[stage];
                   return took != null ? took.toFixed(2) + ' s' : '—';
                 },
               })),
-              { title: copy.processingTotal, dataIndex: 'processing_s', render: (seconds: number | null | undefined) =>
+              { title: copy.processingTotal, dataIndex: 'processing_s', width: COL.total, align: 'right' as const, className: 'pipeline-num', render: (seconds: number | null | undefined) =>
                 seconds != null ? seconds.toFixed(2) + ' s' : '—' },
               { title: copy.columnResult, dataIndex: 'next_stage', render: (_: unknown, row: PipelineEpisode) => (
                 <Tag color={color(row)}>{rowState(row)}</Tag>

@@ -109,6 +109,8 @@
 .vz-transport .tb:hover { background: var(--color-fill-2); }
 .vz-transport .tb.play { width: 34px; height: 34px; background: var(--c-primary); color: #fff; border-radius: 50%; }
 .vz-transport .tb.play:hover { background: rgb(var(--primary-5)); }
+/* 播放 waits while a camera is being transcoded (2026-10-05): it could not play yet */
+.vz-transport .tb.play:disabled { background: var(--color-fill-3); color: var(--c-text-4); cursor: not-allowed; }
 .vz-transport .time { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--c-text-2); white-space: nowrap; min-width: 118px; text-align: center; }
 .vz-transport .frame { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--c-text-3); white-space: nowrap; }
 .vz-transport .frame input { width: 64px; height: 28px; font-size: 12px; text-align: center; font-family: "SF Mono", ui-monospace, Menlo, monospace; border: 1px solid var(--c-border); border-radius: 2px; background: var(--color-bg-2); color: var(--c-text-1); }

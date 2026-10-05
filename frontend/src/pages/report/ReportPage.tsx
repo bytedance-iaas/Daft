@@ -278,7 +278,7 @@ function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report:
         dataIndex: 'id',
         render: (_: unknown, r: ScopeRow) => {
           const spec = moduleById(reg.data, r.id);
-          const role = moduleRole(spec, preset);
+          const role = moduleRole(spec, preset, v2?.overview.policy.version);
           return (
             <Space size={4} wrap>
               <span className="nowrap">{placeLabel(reg.data, spec)}</span>
@@ -420,6 +420,7 @@ function ReportBody({
           section={s}
           v2={v2?.modules.find((x) => x.id === s.id) ?? null}
           preset={v2?.overview.policy.preset}
+          policyVersion={v2?.overview.policy.version}
           subtasks={subtasks}
           readOnly={readOnly}
           retryBlocked={blocked}

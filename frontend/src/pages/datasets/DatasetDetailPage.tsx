@@ -66,6 +66,9 @@ export function DatasetDetailPage() {
     { label: zh.datasets.fpListing, value: `${zh.datasets.fpListingValue(d.listing.objects, bytes(d.listing.bytes))} · ${d.listing.digest}` },
     ...(d.note ? [{ label: zh.datasets.note, value: d.note }] : []),
   ];
+  // a preflight that failed (nothing read, or a format the checks cannot read): its error as it is, no
+  // 格式 label, and no 模块可用性 - every module would only say 不支持 (requester 2026-10-05)
+  const failure = !ds || !pf.format.supported ? reasonText(pf.modules[0]) || pf.format.detail || zh.taskForm.preflightFailed : null;
   const preflight = ds
     ? [
         { label: zh.datasets.colFormat, value: pf.format.kind === 'lerobot' ? `LeRobot ${pf.format.version ?? ''}` : pf.format.kind },
@@ -76,7 +79,7 @@ export function DatasetDetailPage() {
         { label: zh.datasets.labels, value: zh.datasets.labelsValue(ds.labels.with_task, ds.labels.without_task) },
         { label: zh.datasets.profile, value: ds.profile ? zh.taskForm.profileHit(ds.profile.matched, ds.profile.by) : zh.taskForm.profileMiss },
       ]
-    : [{ label: zh.datasets.colFormat, value: reasonText(pf.modules[0]) || pf.format.detail }];
+    : [];
   const moduleRows = (reg.data?.modules ?? []).map((m) => {
     const a = pf.modules.find((x) => x.id === m.id);
     const row = withVlmBackends({ availability: pf.format.supported ? a?.availability ?? 'available' : 'unsupported', reason: reasonText(a) }, a, backends.data?.items);
@@ -157,27 +160,32 @@ export function DatasetDetailPage() {
           />
         </Card>
         <Card title={zh.datasets.detailPreflight}>
-          <Descriptions column={2} data={preflight} />
-          <Typography.Title heading={6} style={{ marginTop: 16 }}>
-            {zh.datasets.modules}
-          </Typography.Title>
-          <Table
-            rowKey="id"
-            size="small"
-            pagination={false}
-            data={moduleRows}
-            data-testid="dataset-modules"
-            columns={[
-              { title: zh.taskDetail.colModule, dataIndex: 'name', width: 240 },
-              {
-                title: zh.datasets.colAvailability,
-                dataIndex: 'availability',
-                width: 130,
-                render: (v: string) => <Tag color={v === 'available' ? 'green' : v === 'needs_input' ? 'orange' : 'gray'}>{zh.datasets.availability[v] ?? v}</Tag>,
-              },
-              { title: zh.datasets.colReason, dataIndex: 'reason', render: (v: string) => <span className="muted">{v || '—'}</span> },
-            ]}
-          />
+          {failure ? <Alert type="error" content={failure} data-testid="dataset-preflight-error" style={ds ? { marginBottom: 16 } : undefined} /> : null}
+          {preflight.length ? <Descriptions column={2} data={preflight} /> : null}
+          {failure ? null : (
+            <>
+              <Typography.Title heading={6} style={{ marginTop: 16 }}>
+                {zh.datasets.modules}
+              </Typography.Title>
+              <Table
+                rowKey="id"
+                size="small"
+                pagination={false}
+                data={moduleRows}
+                data-testid="dataset-modules"
+                columns={[
+                  { title: zh.taskDetail.colModule, dataIndex: 'name', width: 240 },
+                  {
+                    title: zh.datasets.colAvailability,
+                    dataIndex: 'availability',
+                    width: 130,
+                    render: (v: string) => <Tag color={v === 'available' ? 'green' : v === 'needs_input' ? 'orange' : 'gray'}>{zh.datasets.availability[v] ?? v}</Tag>,
+                  },
+                  { title: zh.datasets.colReason, dataIndex: 'reason', render: (v: string) => <span className="muted">{v || '—'}</span> },
+                ]}
+              />
+            </>
+          )}
         </Card>
         <Card title={zh.datasets.detailChecks}>
           <Table

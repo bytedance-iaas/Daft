@@ -15,6 +15,14 @@ export function bisectRight(arr: readonly number[], x: number): number {
   return lo - 1;
 }
 
+/** About how many frames of an index cover `seconds` (its average rate; 30 fps when it cannot tell). */
+export function framesIn(times: readonly number[], seconds: number): number {
+  const n = times.length;
+  const span = n > 1 ? times[n - 1] - times[0] : 0;
+  const fps = span > 0 ? (n - 1) / span : 30;
+  return Math.max(1, Math.ceil(seconds * fps));
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }

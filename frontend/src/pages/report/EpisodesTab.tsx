@@ -349,7 +349,7 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
         const record = raw ? asLegacyRecord(raw, reg.data) : undefined;
         const Block = EPISODE_BLOCKS[id] ?? GenericBlock;
         // only reports: what it finds never rejects or asks (its codes, or the task's policy)
-        const advisory = findingsView && moduleRole(reg.data?.modules.find((m) => m.id === id), v2?.overview.policy.preset) === 'info';
+        const advisory = findingsView && moduleRole(reg.data?.modules.find((m) => m.id === id), v2?.overview.policy.preset, v2?.overview.policy.version) === 'info';
         const unassessable = raw && isRecordV2(raw) && raw.status !== 'error' ? raw.unassessable : [];
         return (
           <Card

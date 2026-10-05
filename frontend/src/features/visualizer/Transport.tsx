@@ -194,14 +194,18 @@ export function Transport({
   progress,
   onPrevEpisode,
   onNextEpisode,
+  playBlocked = null,
 }: {
   clock: PlayerClock;
   tl: TimelineInfo;
   progress: React.ReactNode;
   onPrevEpisode?: () => void;
   onNextEpisode?: () => void;
+  /** why 播放 cannot start now (a camera being transcoded); pausing stays possible */
+  playBlocked?: string | null;
 }) {
   const playing = useClockValue(clock, (s) => s.playing);
+  const blocked = Boolean(playBlocked) && !playing;
   const speed = useClockValue(clock, (s) => s.speed);
   const loop = useClockValue(clock, (s) => s.loop);
   const step = (n: number) => {
@@ -213,7 +217,7 @@ export function Transport({
       <button type="button" className="tb" title={zh.viz.prevFrame} aria-label={zh.viz.prevFrame} onClick={() => step(-1)}>
         <IconSkipPreviousFill />
       </button>
-      <button type="button" className="tb play" title={zh.viz.play} aria-label={zh.viz.play} onClick={() => clock.toggle()} data-testid="vz-play">
+      <button type="button" className="tb play" title={blocked ? (playBlocked as string) : zh.viz.play} aria-label={zh.viz.play} disabled={blocked} onClick={() => clock.toggle()} data-testid="vz-play">
         {playing ? <IconPause /> : <IconPlayArrowFill />}
       </button>
       <button type="button" className="tb" title={zh.viz.nextFrame} aria-label={zh.viz.nextFrame} onClick={() => step(1)}>

@@ -18,12 +18,12 @@ export function CoverageMatrix({ report, onJump }: { report: ReportV2; onJump: (
   const ids = report.modules.map((s) => s.id);
   const chip = (it: CoverageItem) => {
     const to = it.status === 'not_covered' ? [] : reportersOf(reg.data, ids, it.id);
+    // the colour and the legend above say covered / not / partly (requester 2026-10-05): the tip adds only what they cannot
     const lines = [
       `${it.id} ${it.name}`,
-      F().coverageStatus[it.status],
       ...(it.episodes ? [F().coverageFound(it.episodes)] : []),
       ...it.unassessable.map((u) => F().coverageWhy(u.title, u.count)),
-      ...(to.length ? [F().coverageJump(to.map((id) => moduleName(reg.data, id)).join('、'))] : it.status === 'not_covered' ? [F().coverageNobody] : []),
+      ...(to.length ? [F().coverageJump(to.map((id) => moduleName(reg.data, id)).join('、'))] : []),
     ];
     const tag = (
       <Tag

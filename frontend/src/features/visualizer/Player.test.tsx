@@ -174,6 +174,20 @@ describe('Player (design doc 18 §5)', () => {
     width.mockRestore();
   });
 
+  it('holds 播放 while a camera is being transcoded, and lets it go once the copy is ready (2026-10-05)', async () => {
+    renderWithProviders(<Player source={LEROBOT} index={0} />);
+    const player = await ready();
+    const play = within(player).getByTestId('vz-play');
+    // droid-200's mpeg4 wrist camera: the first ask starts the platform's transcode
+    await waitFor(() => expect(play).toBeDisabled());
+    expect(play).toHaveAttribute('title', zh.viz.playBlocked);
+    fireEvent.keyDown(player, { code: 'Space' });
+    expect(play).toBeDisabled();                                         // the space bar does not start it either
+    // the next poll finds the copy ready: 播放 is back
+    await waitFor(() => expect(play).not.toBeDisabled());
+    expect(play).toHaveAttribute('title', zh.viz.play);
+  });
+
   it('plays the camera of a Lance dataset out of its table, through the Daemon (design doc 19 §4)', async () => {
     const pusht = DATASET_PROFILES.find((p) => p.name === 'pusht_lance')!;
     db.datasets.push(datasetDetail('ds_pusht_lance', pusht, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));

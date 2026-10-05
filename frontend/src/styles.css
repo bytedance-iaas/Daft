@@ -463,6 +463,13 @@ body {
   object-fit: cover;
 }
 
+/* Episode 流水线 (requester 2026-10-05): the time columns only as wide as their heads */
+.pipeline-table .pipeline-num .arco-table-th-item,
+.pipeline-table td.pipeline-num {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 .evidence-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
