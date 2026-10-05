@@ -41,8 +41,7 @@ class EpisodeUrls:
             return out
         access = cam["access"]
         if access == "direct":
-            out["url"] = Access(self.svc.rt, src).browser_url(rel, URL_TTL_S)
-            out["expires_at"] = self.svc.rt.clock() + URL_TTL_S * 1000
+            out["url"], out["expires_at"] = self.svc.presigned_camera_url(src, rel)
             if out["url"] is None:                                 # a local source after all
                 out["access"], out["url"] = "local", self.daemon(src, index, cam["key"], "mp4")
         elif access in ("local", "transcode", "remux", "blob"):
@@ -63,6 +62,10 @@ class EpisodeUrls:
 
 class VizService:
     META_TTL_S = 600.0
+    #: presigned camera URL lifetime, and the bucket a signature is reused within so the frontend's
+    #: pre-expiry refresh (design doc 18 §5.8) signs a byte-identical URL and the browser keeps cache
+    PRESIGN_TTL_S = URL_TTL_S
+    PRESIGN_BUCKET_S = 600
 
     def __init__(self, rt):
         self.rt = rt
@@ -70,6 +73,7 @@ class VizService:
         self.transcode_enabled = bool(getattr(s, "viz_transcode", True))
         self.client_decode = bool(getattr(s, "viz_client_decode", True))
         self.meta_cache = LRU(max_items=32)
+        self.presign_cache = LRU(max_items=512)
         self.frames_cache = LRU(max_items=64, max_bytes=256 << 20)
         self.label_cache = LRU(max_items=8)
         self.disk = DiskCache(getattr(s, "viz_cache_dir", None) or pathlib.Path(s.scratch_dir) / "viz-cache",
@@ -98,6 +102,27 @@ class VizService:
             cand = store_of(self.rt).task_dir(task.id)
             run_dir = cand if cand.is_dir() else None
         return task_source(self.rt, task, owner, run_dir)
+
+    def presigned_camera_url(self, src: VizSource, rel: str):
+        """A browser URL for a TOS camera object, or ``(None, None)`` for a local source. The object
+        is immutable, so the URL is signed with an immutable ``Cache-Control`` (TOS echoes it) and is
+        reused within a :data:`PRESIGN_BUCKET_S` time bucket: the frontend refreshes a camera URL just
+        before it expires (design doc 18 §5.8), and within a bucket that refresh signs a byte-identical
+        URL, so the browser keeps the bytes it cached instead of re-fetching under a new signature.
+        ``expires_at`` is reported from the bucket start, so it never outlasts the signature it names."""
+        now_ms = self.rt.clock()
+        bucket = int(now_ms // 1000 // self.PRESIGN_BUCKET_S) * self.PRESIGN_BUCKET_S
+        k = (src.scope, src.id, src.fingerprint, rel, bucket)
+        hit = self.presign_cache.get(k)
+        if hit is not None:
+            return hit
+        cc = f"private, max-age={self.PRESIGN_TTL_S}, immutable"
+        url = Access(self.rt, src).browser_url(rel, self.PRESIGN_TTL_S, cache_control=cc)
+        if url is None:
+            return None, None
+        out = (url, (bucket + self.PRESIGN_TTL_S) * 1000)
+        self.presign_cache.put(k, out)
+        return out
 
     def reader_of(self, src: VizSource) -> str | None:
         # mcap and LeRobot whether or not the check reader takes them (status.viz_format); Lance

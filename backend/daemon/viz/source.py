@@ -183,8 +183,9 @@ class Access:
         with svc.tos(key, region) as (client, ends):
             yield TosStorage(self.src.uri, client, ends.region, role="input")
 
-    def browser_url(self, rel: str, ttl_s: int = URL_TTL_S) -> str | None:
-        """A URL the browser GETs ``rel`` from; None for a local dataset (the Daemon serves it)."""
+    def browser_url(self, rel: str, ttl_s: int = URL_TTL_S, cache_control: str | None = None) -> str | None:
+        """A URL the browser GETs ``rel`` from; None for a local dataset (the Daemon serves it).
+        ``cache_control`` is signed into the presigned URL so TOS echoes it on the response."""
         if self.src.is_local:
             return None
         from ..secrets import BadPath, browser_url
@@ -192,7 +193,8 @@ class Access:
         key = self._key()
         region = self.src.region or (key.region if key is not None else None)
         try:
-            return browser_url(self._svc(), self.src.uri, rel, ttl_s=ttl_s, key=key, region=region)
+            return browser_url(self._svc(), self.src.uri, rel, ttl_s=ttl_s, key=key, region=region,
+                               cache_control=cache_control)
         except BadPath:
             return None
 
