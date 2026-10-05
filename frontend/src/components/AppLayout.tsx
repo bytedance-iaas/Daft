@@ -1,8 +1,9 @@
 import { Menu, Message } from '@arco-design/web-react';
-import { IconDashboard, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
+import { IconCode, IconDashboard, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
 import { Suspense, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Spin } from '@arco-design/web-react';
+import { appPath } from '../base';
 import { zh } from '../locales/zh';
 
 interface NavItem {
@@ -46,24 +47,38 @@ export function navKey(pathname: string): string {
 }
 
 /**
- * Where 「帮助 · 使用文档」 leads. Empty until the user guide is published: the entry then only
- * says so. Set it to the guide's URL and the entry opens it in a new tab.
+ * Where the 「帮助」 entries lead (doc 07 §2); the only place these addresses are written. A full
+ * URL opens as it is, a path is taken under the mount prefix (so `/curation/api-docs.html` in
+ * production). An empty one makes the entry only say it is not configured.
+ * - docs, 使用文档: the guide for the people who check data; empty until it is published.
+ * - api, 接口文档: the API reference built next to the console (api-docs.html, Scalar over C4).
  */
-export const HELP_LINKS = { docs: '' };
+export const HELP_LINKS = { docs: '', api: '/api-docs.html' };
 
-const DOCS_KEY = 'help:docs';
+/** The address a help link opens. */
+export function helpUrl(link: string): string {
+  return /^[a-z][a-z0-9+.-]*:/i.test(link) ? link : appPath(link);
+}
 
-function openDocs(): void {
-  if (!HELP_LINKS.docs) {
-    Message.info(zh.nav.docsMissing);
-    return;
-  }
-  window.open(HELP_LINKS.docs, '_blank', 'noopener,noreferrer');
+const HELP: readonly { key: string; link: keyof typeof HELP_LINKS; label: string; missing: string; icon: ReactNode }[] = [
+  { key: 'help:docs', link: 'docs', label: zh.nav.docs, missing: zh.nav.docsMissing, icon: <IconQuestionCircle /> },
+  { key: 'help:api', link: 'api', label: zh.nav.apiDocs, missing: zh.nav.apiDocsMissing, icon: <IconCode /> },
+];
+
+/** Opens a help entry in a new tab; false when `key` is not one. */
+function openHelp(key: string): boolean {
+  const item = HELP.find((h) => h.key === key);
+  if (!item) return false;
+  const link = HELP_LINKS[item.link];
+  if (link) window.open(helpUrl(link), '_blank', 'noopener,noreferrer');
+  else Message.info(item.missing);
+  return true;
 }
 
 /**
  * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集 with 数据集列表 / 可视化、
- * 系统和资源配置, then 帮助; doc 07 §2, design doc 18 §5.0) around the routed page.
+ * 系统和资源配置, then 帮助 with 使用文档 / 接口文档; doc 07 §2, design doc 18 §5.0) around the
+ * routed page.
  */
 export function AppLayout() {
   const { pathname } = useLocation();
@@ -85,7 +100,9 @@ export function AppLayout() {
           <Menu
             selectedKeys={[selected]}
             defaultOpenKeys={[QC_KEY, DS_KEY]}
-            onClickMenuItem={(key) => (key === DOCS_KEY ? openDocs() : navigate(key))}
+            onClickMenuItem={(key) => {
+              if (!openHelp(key)) navigate(key);
+            }}
           >
             <Menu.ItemGroup title={zh.nav.groupMain}>
               {NAV.map((n) =>
@@ -112,10 +129,12 @@ export function AppLayout() {
               )}
             </Menu.ItemGroup>
             <Menu.ItemGroup title={zh.nav.groupHelp}>
-              <Menu.Item key={DOCS_KEY}>
-                <IconQuestionCircle />
-                {zh.nav.docs}
-              </Menu.Item>
+              {HELP.map((h) => (
+                <Menu.Item key={h.key}>
+                  {h.icon}
+                  {h.label}
+                </Menu.Item>
+              ))}
             </Menu.ItemGroup>
           </Menu>
         </nav>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!--
+      The API reference (design doc 07 §2): Scalar over {base}/openapi.json, the C4 contract the
+      build emits next to this page. The Daemon serves this file as it is (no prefix injection);
+      src/lib/apiDocs.ts reads the prefix off the page's address. Assets are relative, so the
+      page works under any prefix.
+    -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Curator v2 API · 接口文档</title>
+  </head>
+  <body>
+    <div id="api-docs"></div>
+    <script type="module" src="./src/apiDocs.ts"></script>
+  </body>
+</html>
