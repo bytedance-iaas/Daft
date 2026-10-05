@@ -31,6 +31,8 @@ export const zh = {
     groupHelp: '帮助',
     docs: '使用文档',
     docsMissing: '使用文档还没配置',
+    apiDocs: '接口文档',
+    apiDocsMissing: '接口文档还没配置',
   },
 
   common: {

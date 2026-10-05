@@ -48,6 +48,7 @@ const TYPES = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.map': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 // What the Daemon does: replace the marker with the prefix (JSON-encoded, so it is always a JS
