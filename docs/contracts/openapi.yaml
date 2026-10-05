@@ -1,50 +1,111 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.5.0
+  version: 2.5.1
   description: |
-    C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
-    Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
-    production; the gateway does not strip it). Write operations are asynchronous: they
-    return the resource and its state, progress arrives over SSE or polling.
+    ## Overview
+
+    The REST API of the Curator v2 Daemon, Physical AI Kit's quality-check platform for robot
+    datasets (LeRobot v2 / v3, mcap, Lance): register datasets, run quality-check tasks over their
+    episodes, read the verdicts, findings and reports, adjudicate what needs a person, and export the
+    episodes that pass as a delivery dataset. C4 of the frozen contracts (design doc 03): the web
+    console uses nothing else, and the `curation task ...` commands are a thin client of it. JSON in,
+    JSON out, UTF-8. Coarse-grained: one endpoint does one thing a user would name, no client chains
+    calls to finish one.
+
+    A typical run, by tag:
+
+    1. `datasets`: `GET /modules` lists the quality-check modules; `POST /preflight` checks a dataset
+       against them in seconds (the result is kept 30 minutes); `POST /datasets` registers the dataset
+       (a task created with a plain address registers it too).
+    2. `tasks`: `POST /tasks` with that `preflight_id` creates the task and, with `params.start_now`,
+       starts it; otherwise `POST /tasks/{id}/actions/start`.
+    3. `system`: follow it over SSE (`GET {base}/events/tasks/{id}`) or poll `GET /tasks/{id}`.
+    4. `report`: read `GET /tasks/{id}/report` and the episodes with their findings
+       (`GET /tasks/{id}/episodes`, `GET /tasks/{id}/episodes/{index}`).
+    5. `report`: `GET /tasks/{id}/adjudication` lists what a person has to decide, `POST` on the same
+       path records decisions, and `POST /tasks/{id}/adjudication/apply` executes them as a subtask
+       that makes a new result revision; it never exports, `POST /tasks/{id}/reexport` does.
+
+    `credentials` and `vlm` hold the TOS access keys and the VLM backends a task names, `uploads`
+    takes the input files of module parameters, `viz` is the data visualizer and `overview` the
+    console's first page.
+
+    ## Conventions
+
+    ### Mount prefix
+
+    Every route lives under the mount prefix `{base}` (empty by default, `/curation` in production;
+    the gateway does not strip it): the API under `{base}/api/v1`, SSE under `{base}/events`, the
+    probes `/healthz` and `/readyz` both at the root and under `{base}`.
+
+    ### Authentication
+
+    HTTP Basic (`basicAuth`, doc 08 §5) on every route but the probes. A browser signed in to the
+    console sends the credentials by itself on same-origin requests.
+
+    ### Writes
+
+    Write operations are asynchronous: they return the resource and its state, progress arrives over
+    SSE or polling. Write endpoints accept only `application/json` - send
+    `Content-Type: application/json` on every write, even without a body
+    (`POST /tasks/{id}/actions/{action}`, `DELETE /tasks/{id}` and other writes have none) - and
+    cross-site writes are refused (a browser's `Sec-Fetch-Site` other than `same-origin`); there is
+    no CORS.
+
+    Every write takes an `Idempotency-Key` header: the same key within 24 hours returns the first
+    successful response, so a retry after a timeout does not create a second task.
+
+    ### Errors
+
     Errors use one body, `Error`; `code` is stable for machines, `message` is Chinese for people.
     `precheck_failed` (422, any write that starts work) carries `error.details` shaped as
-    `PrecheckDetails`: one entry per pre-start check (D30).
+    `PrecheckDetails`: one entry per pre-start check (D30). A write that does not fit the current
+    state answers 409 with a code that names the conflict (`task_state_conflict`, `subtask_active`,
+    `dataset_in_use`, ...).
+
+    ### Links
+
     Responses that point people at a page carry `links` (D22): absolute URLs when
     `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
-    Write endpoints accept only `application/json` - send the header on every write, even without
-    a body - and cross-site writes are refused; there is no CORS.
+
+    ### Ids
+
     Ids are opaque strings. Records made since 1.10.0 get `<prefix>-<9 lowercase letters>` (task,
     sub, ds, pf, cred, vb, vm, upl; e.g. `task-kqzmrtbwe`, D45); records made before keep their
     `<prefix>_...` id, and both work everywhere. Ids carry no time: lists sort by creation time.
 
-    1.1.0 (2026-09-21): dataset registry (D36): `/datasets` now lists registered datasets and the
+    ## Changelog
+
+    Oldest first.
+
+    **1.1.0** (2026-09-21): dataset registry (D36): `/datasets` now lists registered datasets and the
     TOS / cache-bucket listing moved to `/datasets/browse`; `/overview`; starting a task re-checks
     the dataset fingerprints and answers 409 `source_changed` with a `SourceChange`, after which
     `/tasks/{id}/repreflight` re-runs preflight (D37); the task list filters by `module` and
     `dataset_id` and lists the selected modules; request inputs may name a `dataset_id`;
     `dataset_in_use`. No client consumed 1.0.0.
 
-    1.2.0 (2026-09-21): every write request carries `Content-Type: application/json`, a body or
+    **1.2.0** (2026-09-21): every write request carries `Content-Type: application/json`, a body or
     not, and `Idempotency-Key` is accepted on every write; `method_not_allowed`; `Task.vlm`
     has its own schema with `snapshot`; access-key names are null in responses once the key
     was deleted; SSE `state` and `done` carry `subtask_id` and `reason`; the log order and the
     `subtask` filter are spelled out; call kinds and stage ids are open like in C2/C3 1.1.
 
-    1.3.0 (2026-09-21): `Idempotency-Key` is declared on every write; `Decision` and
+    **1.3.0** (2026-09-21): `Idempotency-Key` is declared on every write; `Decision` and
     `DatasetDetail` validate (shared fields plus `unevaluatedProperties: false` instead of an
     allOf over a closed base); `precheck_failed` details (`PrecheckDetails`), probe error codes,
     the confirmation rule for deleting keys and backends that finished tasks used, the media
     signing prefix, optional session tokens on access keys, `Subtask.pause_reason`, `rel:
     dataset` links, dataset ids and the overview's counting rules are spelled out.
 
-    1.4.0 (2026-09-21): applying an adjudication takes an optional `AdjudicationApply` body -
+    **1.4.0** (2026-09-21): applying an adjudication takes an optional `AdjudicationApply` body -
     `relabel_rerun` picks how relabelled episodes are judged again, v1's two layers by default
     or the first run's full flow (D39) - and the subtask's `scope` records the choice;
     `Summary.skipped` counts episodes left out because source files are missing (D40), which
     the report lists under `integrity.skipped_episodes`.
 
-    1.5.0 (2026-09-21): review kinds are declared by the registry (D43): `ModuleRegistry`
+    **1.5.0** (2026-09-21): review kinds are declared by the registry (D43): `ModuleRegistry`
     carries the `review_lines` catalog (id, title, the list its episodes are in, whether an
     open item counts as pending, the decisions with their titles) and every module its
     `review_lines` and `appealable`; adjudication `line` and `decision` are open strings the
@@ -52,44 +113,44 @@ info:
     question can name `duplicate_of`; already-rejected episodes get no task-verdict question
     (D42). Appeal candidates never count as pending.
 
-    1.5.1 (2026-09-22): v1's optional task verdict after a relabel is back as a catalog
+    **1.5.1** (2026-09-22): v1's optional task verdict after a relabel is back as a catalog
     `follow_ups` entry (a card gains the question once its label answer adopts a new label;
     answered, the machine takes it and does not judge again); the `status` filter, the label an
     adopted suggestion gets without `new_label`, the episode view's `reasons` / `review` items
     and the 404 reasons of the result readers are spelled out.
 
-    1.5.2 (2026-09-22): a question a card gained as a follow-up says so (`follow_up_of`), and
+    **1.5.2** (2026-09-22): a question a card gained as a follow-up says so (`follow_up_of`), and
     a follow-up whose opening answer changed is left out of the card.
 
-    1.6.0 (2026-09-22): a model may be the default one (`VlmModel.is_default`, set through
+    **1.6.0** (2026-09-22): a model may be the default one (`VlmModel.is_default`, set through
     `VlmModelPatch`): the new-task form starts with it instead of asking, and there is at most
     one per owner across all backends.
 
-    1.7.0 (2026-09-23): the module registry 1.4 (design doc 12): every module says its
+    **1.7.0** (2026-09-23): the module registry 1.4 (design doc 12): every module says its
     `input_scope` (funnel / all_selected) and whether it `affects_dataset_verdict`; the need
     `eef_input` and a module id as `depends_on` (eef_video_review on eef_video_consistency).
     The two EEF-video consistency modules are advisory: they never change keep / drop / held.
 
-    1.8.0 (2026-09-23): file parameters (registry 1.5). `POST /uploads` stores an input file of a
+    **1.8.0** (2026-09-23): file parameters (registry 1.5). `POST /uploads` stores an input file of a
     module parameter after validating it (errors located to sample / frame / camera / point /
     JSON path) and returns an `Upload` whose `handle` (`upload:<upload_id>`) is the parameter's
     value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
     task that selects a module needing `eef_input` preflights that module against the dataset with
     the uploaded file; the task's preflight snapshot carries that entry.
 
-    1.10.0 (2026-09-23): new ids are `<prefix>-<9 lowercase letters>` (D45): the patterns of
+    **1.10.0** (2026-09-23): new ids are `<prefix>-<9 lowercase letters>` (D45): the patterns of
     dataset ids, `UploadId` and upload handles take both formats. `GET /overview?days=7|30|90|365`
     picks the period of `recent`, which says its `bucket` (day / week / month) and `since`;
     `recent.tokens_per_bucket` (`start`, `label`, `tokens`) replaces `tokens_per_day`.
     `GET /tasks?state=running` also lists finished tasks whose subtask is queued or running (D46).
 
-    1.10.1 (2026-09-23): running tasks expose per-episode funnel progress and immediate
+    **1.10.1** (2026-09-23): running tasks expose per-episode funnel progress and immediate
     machine verdicts through `/tasks/{id}/pipeline/episodes` and its single-episode reader;
     `TaskParams.batch_size` lets API clients set the maximum number of episodes handed from
     one funnel layer to the next per batch. (Written on 2026-09-22 as 1.7.0 / 1.7.1 on a branch
     that predates 1.8.0-1.10.0; renumbered when merged.)
 
-    1.11.0 (2026-09-23): the report's Episode tab (F6.2). `GET /tasks/{id}/episodes` lists the
+    **1.11.0** (2026-09-23): the report's Episode tab (F6.2). `GET /tasks/{id}/episodes` lists the
     episodes of a result revision - list, the modules behind it, whether a person still has to
     answer something about it - filtered by list, by open questions and by an episode number
     (`q`: `12`, `ep12`, `ep 12`), in episode order with a revision-bound cursor;
@@ -99,7 +160,7 @@ info:
     their schema stays a free object. (Written as 1.9.0 on the F6.2 branch; renumbered when
     merged after 1.10.1.)
 
-    1.12.0 (2026-09-23): mcap and lance datasets (D44, v1's PR #155). `DatasetFormat` and the
+    **1.12.0** (2026-09-23): mcap and lance datasets (D44, v1's PR #155). `DatasetFormat` and the
     `format` filter of `GET /datasets` take `mcap` and `lance` (lerobot-lance-convert >= 0.3.0);
     `BrowsedDataset.format_hint` takes them too. `EpisodePreview` of such a dataset has no
     cameras (their videos are inside the files / tables); an mcap episode whose task text is in
@@ -107,52 +168,52 @@ info:
     (C2) reports `kind` mcap / lance; exports of these datasets name their `dataset_dir`.
     (Written as 1.11.0 on the F6.5 branch; renumbered when merged after the report's 1.11.0.)
 
-    1.13.0 (2026-09-23): the module registry's stages take `profile_vlm` (registry 1.7): the
+    **1.13.0** (2026-09-23): the module registry's stages take `profile_vlm` (registry 1.7): the
     skill profile runs in a VLM stage of its own after dedup instead of `post_verdict`; the plan's
     stage id for it is `profile_vlm`.
 
-    1.14.0 (2026-09-23): texts only - the review line `eef_check` (registry 1.9, D49) is named
+    **1.14.0** (2026-09-23): texts only - the review line `eef_check` (registry 1.9, D49) is named
     among `ReviewLineId` and the decisions of `DecisionInput`.
 
-    1.15.0 (2026-09-24): `GET /tasks` takes `has_result` (tasks with a committed result: the
+    **1.15.0** (2026-09-24): `GET /tasks` takes `has_result` (tasks with a committed result: the
     console's 质检报告 list) and `pending_adjudication` (tasks with pending adjudication items:
     its 人工裁决 list); false or absent does not filter.
 
-    1.16.0 (2026-09-24): the data integrity module (registry 1.11, design doc 14, D50-D52): the
+    **1.16.0** (2026-09-24): the data integrity module (registry 1.11, design doc 14, D50-D52): the
     stage enums take `integrity`, first in the funnel (the registry's stages and module stage, the
     pipeline's `last_stage` and `stage_processing_s`; `next_stage` takes `numeric`); the review line `integrity_check`
     (decisions intact, broken, unsure) is named among `ReviewLineId` and `DecisionInput`.
 
-    1.17.0 (2026-09-26): a TOS access key may be the default one (`Credential.is_default`, set
+    **1.17.0** (2026-09-26): a TOS access key may be the default one (`Credential.is_default`, set
     through `CredentialUpdate`): the new-task form starts with it, and there is at most one per
     owner. Deleting the key leaves none.
 
-    1.18.0 (2026-09-26): `PipelineActivity` may say when the layer was working and why it is not:
+    **1.18.0** (2026-09-26): `PipelineActivity` may say when the layer was working and why it is not:
     `busy` lists the spans during which episodes were out (at most 64; the rest of the layer's run
     is waiting), `held_by_downstream` that it has episodes to hand out but holds them because the
     next layer's queue is full. Both optional: snapshots written before have neither.
 
-    1.19.0 (2026-09-28): the upload kind `eef_record_mapping` (registry 1.13, design doc 12 §8.7): the
+    **1.19.0** (2026-09-28): the upload kind `eef_record_mapping` (registry 1.13, design doc 12 §8.7): the
     EEF module's dataset-record mapping (`eef-mapping/1.1`), validated on arrival; its summary names
     the sources, the robot, the columns / topics and the declared frames.
 
-    1.20.0 (2026-09-28): a module's preflight entry may carry `drafts` (C2 preflight schema): files a
+    **1.20.0** (2026-09-28): a module's preflight entry may carry `drafts` (C2 preflight schema): files a
     module drafts from the dataset's metadata for a person to confirm before use, by parameter key -
     the EEF module's `record_mapping` from a LeRobot info.json, with every assumption listed (design
     doc 12 §8.7, D-E17). Confirming uploads the draft as an `eef_record_mapping` like any other file.
 
-    1.21.0 (2026-09-28): `POST /datasets/{id}/sign` (design doc 15, D55): the ReRun web viewer's
+    **1.21.0** (2026-09-28): `POST /datasets/{id}/sign` (design doc 15, D55): the ReRun web viewer's
     reads of a registered private TOS dataset, signed by the Daemon with the key bound to the
     registration - one S3 SigV4 presigned URL per object read or ListObjectsV2 page, on TOS's
     public S3-compatible endpoint. The caller names full object keys and listing prefixes, which
     must lie under the dataset's prefix; bucket, region and key are the registration's.
 
-    1.22.0 (2026-09-29): a module may ride on another (registry 1.14, `rides_on`): it is answered
+    **1.22.0** (2026-09-29): a module may ride on another (registry 1.14, `rides_on`): it is answered
     inside its host's model requests, runs whenever the host runs and is never selected on its
     own - the new-task form does not offer it, a task request naming it is accepted and the name
     ignored, the report shows it. First one: `camera_defects` on `task_success`.
 
-    2.0.0 (2026-10-01): findings, policy verdicts and the two parallel blocks (design doc 17,
+    **2.0.0** (2026-10-01): findings, policy verdicts and the two parallel blocks (design doc 17,
     D56-D59). The module registry is 2.0: a module has a `block` (cpu / vlm) and a `stage` of that
     block (`integrity`, `numeric`, `frame`, `dedup`; `autolabel`, `vlm`, `profile` - `dedup` and
     `profile` are the full-set stages), a catalogue of finding `codes` (each mapped to an item of
@@ -169,18 +230,18 @@ info:
     plan and the result records follow C2 2.0, which keeps reading the 1.0 documents of tasks
     made before (D59).
 
-    2.1.0 (2026-10-01): the policy verdicts (F12.3). An `EpisodeNote` of the episode view's
+    **2.1.0** (2026-10-01): the policy verdicts (F12.3). An `EpisodeNote` of the episode view's
     `reasons` may carry what a C2 2.0 reason carries: the finding `code`, its taxonomy `item` and
     whether it may be `appealable`; its `kind` is then `finding`, `human`, `execution_error` or
     `duplicate`.
 
-    2.2.0 (2026-10-01): the two blocks (F12.4, design doc 17 §3). A `PipelineEpisode` of a two-block
+    **2.2.0** (2026-10-01): the two blocks (F12.4, design doc 17 §3). A `PipelineEpisode` of a two-block
     run has `stages` (every per-episode stage of both blocks: waiting / running / done / error) and a
     `provisional` verdict; `last_stage` / `next_stage` are a funnel run's position and only appear on
     tasks made before. `StageProgress` of a two-block run names its `block` and, for dedup and the
     skill profile, `full_set`.
 
-    2.3.0 (2026-10-02): the console's findings views (F12.5, design doc 17 §5). On a findings
+    **2.3.0** (2026-10-02): the console's findings views (F12.5, design doc 17 §5). On a findings
     revision every `TaskEpisode` carries the `items` and `levels` of its findings (its list
     entry's, C2 final-list 2.0: the policy's levels after the applied human decisions) and
     `listTaskEpisodes` filters by `level` and `item`; `EpisodeView.findings` lists every finding of
@@ -190,7 +251,7 @@ info:
     the rejects per item (`overview.reject_items`) and per module the episodes with a finding,
     in all and per level (`summary.flagged_episodes`, `summary.levels`).
 
-    2.4.0 (2026-10-04): the data visualizer (design doc 18, D60-D64). Two sets of readers share one
+    **2.4.0** (2026-10-04): the data visualizer (design doc 18, D60-D64). Two sets of readers share one
     presentation model (`VizDataset`, `VizEpisode`, `VizSeries`): the dataset scope for the
     visualize page (`/datasets/{id}/viz`, `/viz/episodes`, `/viz/meta`,
     `/datasets/{id}/episodes/{index}/viz|series`, the cameras the Daemon serves:
@@ -207,12 +268,17 @@ info:
     `GET /datasets?viz=true` lists only those; `DatasetDetail` names its `viz_mapping` and
     `annotations`; `EpisodeView` gains `fps` and `dataset_id`.
 
-    2.5.0 (2026-10-04): the visualizer's phase-two items done first (design doc 19). A Lance
+    **2.5.0** (2026-10-04): the visualizer's phase-two items done first (design doc 19). A Lance
     reader (`VizFormat.reader: lance`, the lerobot-lancedb layout in `VizFormat.layout`) whose
     videos the Daemon serves by Range out of the table's blob column (`VizAccess: blob`); the
     browser decoding mcap H.264 / H.265 cameras itself with WebCodecs from a sample pack - the
     existing `.frames` / `.json` routes, `VizEpisodeCamera.samples_url`, `VizFrameIndex` with
     `h264` / `h265`, `key`, `codec_string` and `config` (`CURATOR_VIZ_CLIENT_DECODE`). Additions only.
+
+    **2.5.1** (2026-10-05): texts and examples only, for the API reference page (design doc 07 §2).
+    The description has headings (Overview, Conventions, Changelog), every tag says what it covers, and
+    the common operations carry request and response examples, each one valid against its schema
+    (`backend/tests/contracts/test_openapi.py`). No shape changed.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -223,29 +289,55 @@ security:
   - basicAuth: []
 tags:
   - name: credentials
-    description: TOS access keys (VLM API keys are stored with their backend)
+    description: >-
+      TOS access keys that tasks and registered datasets read and deliver with: save (the identity is
+      verified on save), list, update, delete, verify again; at most one is the default. Secrets are
+      write-only, no response returns them. VLM API keys are stored with their backend (`vlm`).
   - name: vlm
-    description: VLM backends and models
+    description: >-
+      VLM backends (Volcengine Ark or a custom endpoint) and their models, which a task's `vlm` names
+      for the modules that ask a vision-language model: save, verify, refresh the model list, add /
+      update / delete models, pick the default model. API keys are write-only.
   - name: datasets
-    description: modules, dataset registry and browsing, episodes, preflight, delivery probe
+    description: >-
+      Before a task: the module registry (`GET /modules`), the dataset registry (register, list,
+      rename, recheck and re-preflight the fingerprints, sign reads for the ReRun viewer), browsing
+      TOS prefixes and the HuggingFace cache bucket, episode previews, the preflight and the
+      delivery-directory write probe.
   - name: overview
-    description: the overview page
+    description: >-
+      The console's first page in one call: what needs attention, what is running, and the chosen
+      period's numbers (tasks finished, episodes checked, pass rate, tokens).
   - name: tasks
-    description: tasks and subtasks
+    description: >-
+      Quality-check tasks: create (one or a batch), edit (any field before it starts, name and note
+      after), start / pause / resume / stop, delete and restore, delete its run directory on TOS,
+      re-preflight, rebind keys, and the subtasks that retry, continue and re-export; a task's
+      subtasks, plan, timeline, logs and token usage.
   - name: report
     description: >-
-      report, detail tables, episodes, performance, adjudication. They read a committed result
-      revision; when its files are not on the Daemon's disk and cannot be fetched back from the
-      delivery directory, the answer is 404 not_found with details.reason run_dir_missing or
-      revision_missing.
+      What a task found: the report and its detail tables, the episodes with their verdicts and
+      findings (live ones while it runs: `pipeline/episodes`), sync curves, the performance profile,
+      and adjudication (the open questions, recording decisions, applying them). They read a
+      committed result revision; when its files are not on the Daemon's disk and cannot be fetched
+      back from the delivery directory, the answer is 404 not_found with details.reason
+      run_dir_missing or revision_missing.
   - name: system
-    description: media signing, events, probes
+    description: >-
+      Plumbing: presigned URLs for evidence media (`GET /media/sign`), the SSE stream of one task
+      (under `{base}/events`, not `{base}/api/v1`), and the liveness / readiness probes (no
+      authentication, at the root and under `{base}`).
   - name: uploads
-    description: input files of module parameters (registry 1.5, format upload), validated on arrival
+    description: >-
+      Input files of module parameters (registry 1.5, format upload) and a dataset's external
+      annotation files (`viz_annotations`), validated on arrival; the returned `handle`
+      (`upload:<upload_id>`) is what a task's module `params` or a dataset names.
   - name: viz
     description: >-
-      the data visualizer (design doc 18): the presentation model of a registered dataset or of a
-      task's input, curves, the cameras the Daemon serves, mcap field mappings and templates
+      The data visualizer (design docs 18, 19): one presentation model for a registered dataset (the
+      visualize page) or a task's frozen input (the mini player of the report, the adjudication cards
+      and the live episodes): episodes, curves, the cameras the Daemon serves (mp4, frame and sample
+      packs), mcap field mappings and the site's template library.
 
 paths:
   # ---------------------------------------------------------------- credentials
@@ -538,6 +630,88 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Overview"}
+              examples:
+                busy:
+                  summary: A busy week
+                  value:
+                    todo:
+                      error_tasks: 1
+                      adjudication: {tasks: 2, episodes: 15}
+                      delivery_pending: 1
+                      datasets_changed: 1
+                      credentials_failed: 0
+                      backends_failed: 0
+                    running:
+                      running: 1
+                      queued: 2
+                      paused: 0
+                      active:
+                        - task: {id: task-kqzmrtbwe, name: droid 前 50 条质检, state: running, created_at: 1758300000000}
+                          stage: vlm
+                          done: 31
+                          total: 49
+                        - task:
+                            id: task-umfwkdyps
+                            name: umi_640 重试
+                            state: completed_with_errors
+                            created_at: 1758200000000
+                          stage: vlm
+                          done: 2
+                          total: 5
+                    recent:
+                      days: 7
+                      bucket: day
+                      since: 1790092800000
+                      tasks_finished: 9
+                      episodes_checked: 1480
+                      pass_rate: 0.81
+                      tokens_per_bucket:
+                        - {start: 1790092800000, label: 09-23, tokens: 1200000}
+                        - {start: 1790179200000, label: 09-24, tokens: 0}
+                        - {start: 1790265600000, label: 09-25, tokens: 0}
+                        - {start: 1790352000000, label: 09-26, tokens: 0}
+                        - {start: 1790438400000, label: 09-27, tokens: 2077500}
+                        - {start: 1790524800000, label: 09-28, tokens: 0}
+                        - {start: 1790611200000, label: 09-29, tokens: 310000}
+                    datasets: {total: 12, changed: 1}
+                    generated_at: 1790650000000
+                quiet:
+                  summary: A quiet site
+                  value:
+                    todo:
+                      error_tasks: 0
+                      adjudication: {tasks: 0, episodes: 0}
+                      delivery_pending: 0
+                      datasets_changed: 0
+                      credentials_failed: 0
+                      backends_failed: 0
+                    running:
+                      running: 0
+                      queued: 0
+                      paused: 0
+                      active: []
+                    recent:
+                      days: 365
+                      bucket: month
+                      since: 1759248000000
+                      tasks_finished: 0
+                      episodes_checked: 0
+                      pass_rate: null
+                      tokens_per_bucket:
+                        - {start: 1759248000000, label: 2025-10, tokens: 0}
+                        - {start: 1761926400000, label: 2025-11, tokens: 0}
+                        - {start: 1764518400000, label: 2025-12, tokens: 0}
+                        - {start: 1767196800000, label: 2026-01, tokens: 0}
+                        - {start: 1769875200000, label: 2026-02, tokens: 0}
+                        - {start: 1772294400000, label: 2026-03, tokens: 0}
+                        - {start: 1774972800000, label: 2026-04, tokens: 0}
+                        - {start: 1777564800000, label: 2026-05, tokens: 0}
+                        - {start: 1780243200000, label: 2026-06, tokens: 0}
+                        - {start: 1782835200000, label: 2026-07, tokens: 0}
+                        - {start: 1785513600000, label: 2026-08, tokens: 0}
+                        - {start: 1788192000000, label: 2026-09, tokens: 0}
+                    datasets: {total: 0, changed: 0}
+                    generated_at: 1790650000000
         default: {$ref: "#/components/responses/Error"}
   /datasets:
     get:
@@ -593,6 +767,21 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/DatasetCreate"}
+            examples:
+              tos:
+                summary: A private TOS dataset
+                value:
+                  input:
+                    source: tos
+                    uri: tos://bkt/datasets/droid_lerobot
+                    region: cn-beijing
+                    credential: readonly-tos
+                  name: droid_lerobot
+                  note: DROID 抽检用
+              public:
+                summary: A dataset in the HuggingFace cache bucket (no key)
+                value:
+                  input: {source: public, uri: 'tos://hf-cache/lerobot/aloha_sim'}
       responses:
         "201":
           description: registered
@@ -720,6 +909,23 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DatasetCheck"}
+              examples:
+                changed:
+                  summary: The dataset changed since it was registered
+                  value:
+                    at: 1791231552154
+                    trigger: recheck
+                    result: changed
+                    change:
+                      meta_changed: true
+                      added: 12
+                      removed: 0
+                      modified: 1
+                      sample_keys: [data/chunk-000/episode_000200.parquet, meta/info.json]
+                      preflighted_at: 1758300000000
+                same:
+                  summary: Nothing changed
+                  value: {at: 1791231552154, trigger: recheck, result: same, change: null}
         default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/repreflight:
     parameters:
@@ -761,12 +967,33 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/DatasetSignRequest"}
+            examples:
+              browse:
+                summary: Read meta/info.json and list two pages, URLs valid 30 minutes
+                value:
+                  ttl: 1800
+                  requests:
+                    - {op: get, key: lerobot/droid_100/meta/info.json}
+                    - {op: list, prefix: lerobot/droid_100/, delimiter: /}
+                    - {op: list, prefix: lerobot/droid_100/, continuation_token: 1/abc+def==, max_keys: 500}
+              one:
+                summary: One video, default lifetime
+                value:
+                  requests:
+                    - {op: get, key: lerobot/droid_100/videos/chunk-000/front/episode_000001.mp4}
       responses:
         "200":
           description: one URL per request, in the same order
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DatasetSignResponse"}
+              examples:
+                signed:
+                  summary: One presigned URL per request, in order
+                  value:
+                    expires_at: 1790000000000
+                    urls: ['https://bkt.tos-s3-cn-beijing.volces.com/lerobot/droid_100/meta/info.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKLTexample%2F20260928%2Fcn-beijing%2Fs3%2Faws4_request&X-Amz-Date=20260928T120000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000',
+                      'https://bkt.tos-s3-cn-beijing.volces.com/?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKLTexample%2F20260928%2Fcn-beijing%2Fs3%2Faws4_request&X-Amz-Date=20260928T120000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&delimiter=%2F&list-type=2&max-keys=1000&prefix=lerobot%2Fdroid_100%2F&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000']
         default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/viz:
     parameters:
@@ -1013,12 +1240,91 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/PreflightRequest"}
+            examples:
+              tos:
+                summary: A private TOS dataset
+                value:
+                  input:
+                    source: tos
+                    uri: tos://bucket/datasets/droid_lerobot
+                    region: cn-beijing
+                    credential: prod-tos
+              public:
+                summary: A dataset in the HuggingFace cache bucket
+                value:
+                  input: {source: public, uri: pusht}
       responses:
         "200":
           description: preflight result
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PreflightResponse"}
+              examples:
+                lerobot:
+                  summary: A LeRobot v2 dataset every module can check
+                  value:
+                    preflight_id: pf-kqzmrtbwe
+                    expires_at: 1791233352154
+                    result:
+                      schema_version: '1.0'
+                      format:
+                        kind: lerobot
+                        version: v2
+                        supported: true
+                        detail: LeRobot v2, 120 episodes, 2 cameras
+                      validation: []
+                      dataset:
+                        episode_count: 120
+                        cameras: [front, wrist]
+                        fps: 30
+                        robot_type: so101
+                        total_frames: 30720
+                        labels: {with_task: 120, without_task: 0}
+                        profile: null
+                      modules:
+                        - {id: data_integrity, availability: available}
+                        - {id: timestamp_check, availability: available}
+                        - {id: kinematic_limits, availability: available}
+                        - {id: motion_quality, availability: available}
+                        - {id: visual_quality, availability: available}
+                        - {id: video_action_sync, availability: available}
+                        - id: eef_video_consistency
+                          availability: needs_input
+                          reason: no trajectory.json given
+                          reason_code: trajectory_missing
+                          input_hint: {field: trajectory_json}
+                          drafts:
+                            record_mapping:
+                              document: null
+                              assumptions: []
+                              not_drafted:
+                                - {code: no_named_pose_column, source: pose}
+                                - code: robot_not_built_in
+                                  source: joints
+                                  args:
+                                    robot_type: so101
+                                    known: [franka_panda, franka_fr3]
+                        - id: task_success
+                          availability: needs_input
+                          reason: no VLM backend selected
+                          reason_code: vlm_backend_missing
+                          input_hint: {field: vlm}
+                          notes: []
+                        - id: camera_defects
+                          availability: needs_input
+                          reason: no VLM backend selected
+                          reason_code: vlm_backend_missing
+                          input_hint: {field: vlm}
+                          notes: []
+                        - {id: dedup, availability: available}
+                        - id: skill_profile
+                          availability: needs_input
+                          reason: no VLM backend selected
+                          reason_code: vlm_backend_missing
+                          input_hint: {field: vlm}
+                          notes: []
+                      meta_fingerprint: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                      warnings: []
         default: {$ref: "#/components/responses/Error"}
   /deliveries/probe:
     post:
@@ -1238,6 +1544,124 @@ paths:
                   page: {type: integer, minimum: 1}
                   page_size: {type: integer}
                   total: {type: integer, minimum: 0}
+              examples:
+                first:
+                  summary: The first page (two of its rows shown)
+                  value:
+                    items:
+                      - id: task-zcnvbhqeo
+                        name: umi_640 全量质检
+                        state: running
+                        pause_reason: null
+                        dataset: umi_640_notask
+                        dataset_id: ds-gyrkcbfsd
+                        created_at: 1791239508043
+                        progress:
+                          stages:
+                            - id: autolabel
+                              state: succeeded
+                              done: 640
+                              total: 640
+                              elapsed_s: 612
+                              eta_s: null
+                            - id: integrity
+                              state: succeeded
+                              done: 640
+                              total: 640
+                              elapsed_s: 190
+                              eta_s: null
+                            - {id: numeric, state: succeeded, done: 640, total: 640, elapsed_s: 5, eta_s: null}
+                            - id: frame
+                              state: succeeded
+                              done: 631
+                              total: 631
+                              elapsed_s: 1033
+                              eta_s: null
+                              note: 数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条
+                            - {id: vlm, state: running, done: 410, total: 631, elapsed_s: 1102, eta_s: 1440}
+                            - {id: verdict, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: dedup, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: profile_vlm, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: export, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: verify, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                        summary: null
+                        pending_adjudication: 0
+                        delivery_stale: false
+                        active_subtask: null
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
+                          skill_profile]
+                        module_counts: {succeeded: 5, running: 1, pending: 2}
+                        usage:
+                          prompt_tokens: 1700000
+                          completion_tokens: 120000
+                          reasoning_tokens: 70000
+                          cached_tokens: 812000
+                          requests: 1210
+                          requests_unknown_usage: 12
+                        deleted_at: null
+                      - id: task-hdwpxfmnq
+                        name: droid 前 50 条质检
+                        state: completed_with_errors
+                        pause_reason: null
+                        dataset: droid_100
+                        dataset_id: ds-tvbqmhzra
+                        created_at: 1791235308043
+                        progress:
+                          stages:
+                            - {id: autolabel, state: succeeded, done: 22, total: 22, elapsed_s: 46, eta_s: null}
+                            - {id: numeric, state: succeeded, done: 50, total: 50, elapsed_s: 9, eta_s: null}
+                            - id: frame
+                              state: succeeded
+                              done: 49
+                              total: 49
+                              elapsed_s: 144
+                              eta_s: null
+                              note: 数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条
+                            - id: vlm
+                              state: completed_with_errors
+                              done: 49
+                              total: 49
+                              elapsed_s: 542
+                              eta_s: null
+                              note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
+                            - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
+                            - {id: dedup, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
+                            - id: profile_vlm
+                              state: succeeded
+                              done: 41
+                              total: 41
+                              elapsed_s: 131
+                              eta_s: null
+                            - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
+                            - id: export
+                              state: skipped
+                              done: 0
+                              total: 0
+                              elapsed_s: null
+                              eta_s: null
+                              note: 主流程结束时没有可交付的条目，没有导出
+                            - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
+                            - {id: verify, state: skipped, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                        summary: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82}
+                        pending_adjudication: 10
+                        delivery_stale: true
+                        active_subtask: null
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
+                          skill_profile]
+                        module_counts: {succeeded: 7, completed_with_errors: 1}
+                        usage:
+                          prompt_tokens: 2010000
+                          completion_tokens: 67500
+                          reasoning_tokens: 42900
+                          cached_tokens: 931800
+                          requests: 886
+                          requests_unknown_usage: 41
+                        deleted_at: null
+                    page: 1
+                    page_size: 20
+                    total: 41
         default: {$ref: "#/components/responses/Error"}
     post:
       tags: [tasks]
@@ -1255,12 +1679,88 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/TaskCreate"}
+            examples:
+              head50:
+                summary: First 50 episodes of a private TOS dataset, started at once
+                value:
+                  name: droid 前 50 条质检
+                  note: 第一轮抽检
+                  input:
+                    source: tos
+                    uri: tos://bucket/datasets/droid_lerobot
+                    region: cn-beijing
+                    credential: prod-tos
+                  output: {uri: 'tos://bucket/deliveries/droid-50', region: cn-beijing, credential: prod-tos}
+                  preflight_id: pf-kqzmrtbwe
+                  episodes: {mode: head, n: 50}
+                  modules:
+                    - timestamp_check
+                    - motion_quality
+                    - {id: kinematic_limits}
+                    - id: video_action_sync
+                      params: {sync_plots: all}
+                    - visual_quality
+                    - task_success
+                    - dedup
+                    - skill_profile
+                  embodiment_id: franka
+                  vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
+                  params:
+                    vlm_retry: 3
+                    export: true
+                    start_now: true
+                    limits: {cpu_concurrency: 4, vlm_parallelism: 32}
+              public:
+                summary: A HuggingFace cache-bucket dataset, every episode, one module
+                value:
+                  name: hf pusht
+                  input: {source: public, uri: pusht}
+                  output: {uri: 'tos://b/d', credential: prod-tos}
+                  preflight_id: pf-hzwtrmqbn
+                  episodes: {mode: all}
+                  modules: [timestamp_check]
+              registered:
+                summary: A registered dataset by id
+                value:
+                  name: droid 前 50 条质检
+                  note: 第一轮抽检
+                  input: {dataset_id: ds-tvbqmhzra}
+                  output: {uri: 'tos://bucket/deliveries/droid-50', region: cn-beijing, credential: prod-tos}
+                  preflight_id: pf-kqzmrtbwe
+                  episodes: {mode: head, n: 50}
+                  modules:
+                    - timestamp_check
+                    - motion_quality
+                    - {id: kinematic_limits}
+                    - id: video_action_sync
+                      params: {sync_plots: all}
+                    - visual_quality
+                    - task_success
+                    - dedup
+                    - skill_profile
+                  embodiment_id: franka
+                  vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
+                  params:
+                    vlm_retry: 3
+                    export: true
+                    start_now: true
+                    limits: {cpu_concurrency: 4, vlm_parallelism: 32}
       responses:
         "201":
           description: created (state queued, or created when start_now=false)
           content:
             application/json:
               schema: {$ref: "#/components/schemas/TaskCreated"}
+              examples:
+                queued:
+                  summary: Created and queued (start_now)
+                  value:
+                    id: task-kqzmrtbwe
+                    state: queued
+                    created_at: 1791231552154
+                    warnings: []
+                    links:
+                      - {rel: task, title: Open task, url: /tasks/task-kqzmrtbwe, absolute: false}
         default: {$ref: "#/components/responses/Error"}
   /tasks/batch:
     post:
@@ -1297,6 +1797,169 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Task"}
+              examples:
+                finished:
+                  summary: 'A finished two-block run: two episodes erred and wait for a retry, ten for a person'
+                  value:
+                    id: task-kqzmrtbwe
+                    name: droid 前 50 条质检（两块并行）
+                    note: 发现与策略判决的新版报告
+                    state: completed_with_errors
+                    state_reason: null
+                    pause_reason: null
+                    input:
+                      source: tos
+                      uri: tos://pai-kit-datasets/lerobot/droid_100
+                      region: cn-beijing
+                      credential: readonly-tos
+                    dataset_id: ds-tvbqmhzra
+                    output:
+                      uri: tos://pai-kit-deliveries/droid-50-findings
+                      region: cn-beijing
+                      credential: prod-tos
+                    run_id: 20260930-091502
+                    episodes: {mode: head, n: 50}
+                    embodiment_id: null
+                    vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
+                    params:
+                      start_now: true
+                      export: true
+                      vlm_retry: 3
+                      vlm_hedge: true
+                      clips: false
+                      policy: {preset: default}
+                    source:
+                      objects: 204
+                      bytes: 1520331122
+                      digest: sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6a5b4c3d2
+                    progress:
+                      stages:
+                        - id: numeric
+                          state: succeeded
+                          done: 50
+                          total: 50
+                          elapsed_s: 9
+                          eta_s: null
+                          block: cpu
+                        - id: frame
+                          state: succeeded
+                          done: 50
+                          total: 50
+                          elapsed_s: 146
+                          eta_s: null
+                          block: cpu
+                        - id: dedup
+                          state: succeeded
+                          done: 50
+                          total: 50
+                          elapsed_s: 12
+                          eta_s: null
+                          block: cpu
+                          full_set: true
+                        - id: autolabel
+                          state: succeeded
+                          done: 22
+                          total: 22
+                          elapsed_s: 46
+                          eta_s: null
+                          block: vlm
+                        - id: vlm
+                          state: completed_with_errors
+                          done: 50
+                          total: 50
+                          elapsed_s: 560
+                          eta_s: null
+                          note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
+                          pipeline:
+                            inflight: 0
+                            queued: 0
+                            capacity: 8
+                            dispatches: 7
+                            recent:
+                              - number: 7
+                                count: 2
+                                episodes: [48, 49]
+                                at: 1791233028043
+                            started_at: 1791232368043
+                            finished_at: 1791233028043
+                            updated_at: 1791233028043
+                            processing: {count: 50, total_s: 560, mean_s: 11.2, min_s: 5.6, max_s: 33.6}
+                            busy:
+                              - {start: 1791232368043, end: 1791233028043}
+                            held_by_downstream: false
+                          block: vlm
+                        - id: profile
+                          state: succeeded
+                          done: 50
+                          total: 50
+                          elapsed_s: 140
+                          eta_s: null
+                          block: vlm
+                          full_set: true
+                        - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
+                        - {id: export, state: succeeded, done: 41, total: 41, elapsed_s: 64, eta_s: null}
+                        - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
+                        - {id: verify, state: succeeded, done: 1, total: 1, elapsed_s: 9, eta_s: null}
+                    modules:
+                      - id: data_integrity
+                        name: 数据完整性
+                        selected: false
+                        availability: available
+                        unavailable_reason: null
+                        state: skipped
+                        episodes_total: 0
+                        episodes_error: 0
+                        elapsed_s: null
+                        error: null
+                      - id: timestamp_check
+                        name: 时间戳检查
+                        selected: true
+                        availability: available
+                        unavailable_reason: null
+                        state: succeeded
+                        episodes_total: 50
+                        episodes_error: 0
+                        elapsed_s: null
+                        error: null
+                      - id: task_success
+                        name: 任务成败判定
+                        selected: true
+                        availability: available
+                        unavailable_reason: null
+                        state: completed_with_errors
+                        episodes_total: 50
+                        episodes_error: 2
+                        elapsed_s: 560
+                        error: null
+                      - id: dedup
+                        name: 精确去重
+                        selected: true
+                        availability: available
+                        unavailable_reason: null
+                        state: succeeded
+                        episodes_total: 50
+                        episodes_error: 0
+                        elapsed_s: null
+                        error: null
+                    summary: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82}
+                    result_rev: 1
+                    usage:
+                      prompt_tokens: 2090000
+                      completion_tokens: 70100
+                      reasoning_tokens: 44000
+                      cached_tokens: 950000
+                      requests: 912
+                      requests_unknown_usage: 12
+                    pending_adjudication: 10
+                    delivery_stale: false
+                    active_subtask: null
+                    created_at: 1791231708043
+                    updated_at: 1791231768043
+                    started_at: 1791231710043
+                    finished_at: 1791233208043
+                    deleted_at: null
+                    links:
+                      - {rel: task, title: Open task, url: /tasks/task-kqzmrtbwe, absolute: false}
         default: {$ref: "#/components/responses/Error"}
     patch:
       tags: [tasks]
@@ -1628,6 +2291,172 @@ paths:
                   revision: {type: integer, minimum: 1}
                   report: {$ref: "./cli/report.schema.json"}
                   links: {$ref: "#/components/schemas/Links"}
+              examples:
+                findings:
+                  summary: A findings report (C2 2.0; two of its module sections shown)
+                  value:
+                    revision: 1
+                    report:
+                      schema_version: '2.0'
+                      revision: 1
+                      overview:
+                        dataset:
+                          input: tos://pai-kit-datasets/lerobot/droid_100
+                          source_digest: sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6a5b4c3d2
+                          episode_count: 100
+                          cameras: [exterior_image_1_left, exterior_image_2_left, wrist_image_left]
+                          fps: 15
+                          robot_type: null
+                        run:
+                          run_dir: 20260920-130514
+                          revision: 1
+                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup, skill_profile]
+                          adjudications_applied: 0
+                        counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
+                        pass_rate: 0.82
+                        reject_reasons:
+                          - {module: task_success, kind: finding, code: failure, item: TASK-5, count: 5}
+                          - {module: timestamp_check, kind: finding, code: fragment, item: STRM-5, count: 1}
+                          - {module: dedup, kind: duplicate, code: duplicate, item: SET-1, count: 1}
+                        token_usage:
+                          prompt: 2010000
+                          completion: 67500
+                          reasoning: 42900
+                          cached: 931800
+                          requests: 886
+                          requests_unknown_usage: 41
+                        duration_s: null
+                        reject_items:
+                          - {item: TASK-5, count: 5}
+                          - {item: SET-1, count: 1}
+                          - {item: STRM-5, count: 1}
+                        policy: {preset: default, version: '1'}
+                        coverage:
+                          taxonomy_version: '1.2'
+                          covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
+                            ACT-8, AV-1, AV-3, TASK-1, TASK-5, TASK-8, LABEL-2, LABEL-3, LABEL-5, SET-1, SET-3, TASK-12]
+                          not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
+                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-5, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-6,
+                            TASK-7, LABEL-1, LABEL-4, SET-4, SET-5, STRM-9, IMG-12, IMG-13, IMG-14, TASK-10, TASK-11, SET-6]
+                          unassessable:
+                            - {item: ACT-4, reason: not_applicable, count: 50}
+                        findings_by_item:
+                          - {item: STRM-5, episodes: 1, blocking: 1, review: 0, info: 0}
+                          - {item: IMG-2, episodes: 7, blocking: 0, review: 0, info: 7}
+                          - {item: ACT-8, episodes: 4, blocking: 0, review: 0, info: 4}
+                          - {item: AV-1, episodes: 2, blocking: 0, review: 0, info: 2}
+                          - {item: AV-3, episodes: 4, blocking: 0, review: 0, info: 4}
+                          - {item: TASK-1, episodes: 17, blocking: 0, review: 0, info: 17}
+                          - {item: TASK-5, episodes: 11, blocking: 5, review: 6, info: 0}
+                          - {item: LABEL-5, episodes: 5, blocking: 0, review: 5, info: 0}
+                          - {item: SET-1, episodes: 1, blocking: 1, review: 0, info: 0}
+                      modules:
+                        - id: timestamp_check
+                          state: succeeded
+                          tables:
+                            - {id: timestamp_check, rows: 50, file: tables/timestamp_check.parquet}
+                          adjudication: null
+                          summary:
+                            counts: {total: 50, pass: 49, fail: 1, abstain: 0, scored: 0, error: 0}
+                            fail_kinds: {fragment: 1}
+                            fail_reasons:
+                              - {name: out_of_order, count: 0}
+                              - {name: gap, count: 0}
+                              - {name: fragment, count: 1}
+                              - {name: jitter, count: 0}
+                            duration_total_s: 1047.3
+                            duration_median_s: 21.4
+                            duration_min_s: 0.5
+                            duration_max_s: 31.9
+                            duration_hist:
+                              - {name: 0–5, count: 1}
+                              - {name: 5–10, count: 0}
+                              - {name: 10–15, count: 9}
+                              - {name: 15–20, count: 12}
+                              - {name: 20–25, count: 14}
+                              - {name: 25–30, count: 10}
+                              - {name: 30–35, count: 4}
+                            assessed_episodes: 50
+                            flagged_episodes: 1
+                            levels: {blocking: 1, review: 0, info: 0}
+                            items:
+                              - {item: STRM-5, code: fragment, level: blocking, episodes: 1, share: 0.02}
+                            unassessable: []
+                            dataset_findings:
+                              - code: duration_outlier
+                                item: SET-3
+                                severity: low
+                                message_zh: 3 条时长远离全库四分位（ep 6、ep 23、ep 45）
+                                unit: dataset
+                        - id: task_success
+                          state: completed_with_errors
+                          tables:
+                            - {id: task_success, rows: 49, file: tables/task_success.parquet}
+                          adjudication: {pending: 6, appealable: 5}
+                          episodes_error: 2
+                          summary:
+                            counts: {total: 49, pass: 36, fail: 5, abstain: 6, scored: 0, error: 2}
+                            arbitration: {triggered: 7, adopted_success: 0, adopted_failure: 2, abstained: 3, skipped: 2}
+                            abstain_reason_counts:
+                              - {name: 末态物证 … 在灰区, count: 3}
+                              - {name: 取证仲裁只有 … 路判未完成, count: 1}
+                              - {name: 峰值 … 崩至末态 …, count: 1}
+                              - {name: 复核判未完成, count: 1}
+                            error_steps:
+                              - {name: arbitration, count: 2}
+                            judgements:
+                              - {name: success, count: 30}
+                              - {name: endstate_success, count: 6}
+                              - {name: failure, count: 3}
+                              - {name: arbitration_failure, count: 2}
+                              - {name: uncertain, count: 3}
+                              - {name: gap_violation, count: 1}
+                              - {name: review_conflict, count: 1}
+                              - {name: label_conflict_suspect, count: 1}
+                            abstain_by_judgement:
+                              - {name: uncertain, count: 3}
+                              - {name: gap_violation, count: 1}
+                              - {name: review_conflict, count: 1}
+                              - {name: label_conflict_suspect, count: 1}
+                            text_sources:
+                              - {name: 原始标注, count: 26}
+                              - {name: 自产caption, count: 21}
+                            layers:
+                              - {name: probe, count: 47}
+                              - {name: endstate, count: 47}
+                              - {name: label_guard, count: 3}
+                              - {name: arbitration, count: 5}
+                            assessed_episodes: 48
+                            flagged_episodes: 11
+                            levels: {blocking: 5, review: 6, info: 0}
+                            items:
+                              - {item: TASK-5, code: failure, level: blocking, episodes: 5, share: 0.104}
+                              - {item: TASK-5, code: uncertain, level: review, episodes: 6, share: 0.125}
+                            unassessable: []
+                      skipped_modules:
+                        - {id: kinematic_limits, reason: 预检没读到机器人型号（robot_type 为 unknown），创建任务时选择跳过；其余模块照常}
+                      integrity:
+                        format:
+                          kind: lerobot
+                          version: v3
+                          supported: true
+                          detail: LeRobot v3.0, 100 episodes, 3 cameras
+                        validation: []
+                        warnings: []
+                        labels: {with_task: 28, without_task: 22}
+                        profile: {matched: droid_100, by: repo_id}
+                        robot_type: null
+                        skipped_episodes: []
+                      perf:
+                        vlm_requests: 886
+                        vlm_wall_s: 900
+                        effective_concurrency: 19.2
+                        redone_after_interruption: 3
+                    links:
+                      - rel: report
+                        title: Open QA report
+                        url: /tasks/task-kqzmrtbwe/report?rev=1
+                        absolute: false
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/report/tables/{table}:
     parameters:
@@ -1721,6 +2550,40 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/TaskEpisodePage"}
+              examples:
+                page:
+                  summary: A page of the current revision
+                  value:
+                    items:
+                      - episode_index: 12
+                        list: passed
+                        review: true
+                        reason_modules: []
+                        review_modules: [task_success]
+                      - episode_index: 112
+                        list: reject
+                        review: false
+                        reason_modules: [timestamp_check]
+                        review_modules: []
+                      - episode_index: 120
+                        list: held
+                        review: false
+                        reason_modules: [task_success]
+                        review_modules: []
+                    next_cursor: eyJ2IjoxfQ
+                    has_more: true
+                    total: 14
+                    counts: {all: 640, passed: 508, reject: 96, held: 36, review: 32}
+                    revision: 2
+                empty:
+                  summary: A filter nothing matches
+                  value:
+                    items: []
+                    next_cursor: null
+                    has_more: false
+                    total: 0
+                    counts: {all: 9, passed: 5, reject: 3, held: 1, review: 0}
+                    revision: 1
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}:
     parameters:
@@ -1828,6 +2691,39 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SyncCurves"}
+              examples:
+                annotated:
+                  summary: Two cameras, the reading on the cross-correlation
+                  value:
+                    episode_index: 26
+                    revision: 2
+                    verdict: annotated
+                    consensus_lag_s: null
+                    lag_tol_s: 0.25
+                    window_s: 2.0
+                    cameras:
+                      - camera: exterior_image_1_left
+                        t: [0.0, 0.067, 0.133]
+                        flow: [0.8, 1.4, null]
+                        speed: [0.02, 0.05, 0.04]
+                        lags: [-0.133, -0.067, 0.0, 0.067, 0.133]
+                        xcorr: [0.12, 0.3, 0.41, 0.46, 0.38]
+                        lag_s: 0.41
+                        corr_peak: 0.46
+                        code: flat_peak
+                        trusted: false
+                        peak: null
+                      - camera: wrist_image_left
+                        t: [0.0, 0.067, 0.133]
+                        flow: [0.3, 0.9, 1.1]
+                        speed: [0.02, 0.05, 0.04]
+                        lags: [-0.067, 0.0, 0.067]
+                        xcorr: [0.6, 0.83, 0.7]
+                        lag_s: 0.0
+                        corr_peak: 0.83
+                        code: aligned
+                        trusted: true
+                        peak: {lag_s: 0.0, corr: 0.83}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/viz:
     parameters:
@@ -2010,6 +2906,53 @@ paths:
                     properties:
                       items: {type: array, items: {$ref: "#/components/schemas/AdjudicationCard"}}
                       counts: {$ref: "#/components/schemas/AdjudicationCounts"}
+              examples:
+                pending:
+                  summary: The first cards of the pending tab
+                  value:
+                    items:
+                      - episode_index: 29
+                        status: pending
+                        questions:
+                          - line: label
+                            source_module: skill_profile
+                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
+                            annotation: pour rice into the cup
+                            caption: pour rice into the green bowl
+                            suggestion: pour rice into the green bowl
+                            priority: 重点
+                            latest_decision: null
+                            codes: [label_disagreement]
+                            items: [LABEL-5]
+                            follow_up_of: null
+                          - line: task_verdict
+                            source_module: task_success
+                            reason: 证据不足，弃权：打分层拿不准 → 复核分歧 → 仲裁拿不准 → 转人工
+                            annotation: pour rice into the cup
+                            caption: null
+                            suggestion: null
+                            priority: null
+                            latest_decision: null
+                            codes: [uncertain]
+                            items: [TASK-5]
+                            follow_up_of: null
+                      - episode_index: 4
+                        status: pending
+                        questions:
+                          - line: label
+                            source_module: skill_profile
+                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
+                            annotation: Open the cabinet door
+                            caption: fold the cloth and put it on the table
+                            suggestion: fold the cloth and put it on the table
+                            priority: 高置信
+                            latest_decision: null
+                            codes: [label_disagreement]
+                            items: [LABEL-5]
+                            follow_up_of: null
+                    next_cursor: null
+                    has_more: false
+                    counts: {decided: 0, pending: 10, unapplied: 0}
         default: {$ref: "#/components/responses/Error"}
     post:
       tags: [report]
@@ -2030,12 +2973,27 @@ paths:
                   type: array
                   minItems: 1
                   items: {$ref: "#/components/schemas/DecisionInput"}
+            examples:
+              decisions:
+                summary: Adopt a suggested label, judge the task a success, write a label of one's own
+                value:
+                  decisions:
+                    - {episode_index: 29, line: label, decision: adopt_suggestion}
+                    - {episode_index: 29, line: task_verdict, decision: success, note: 杯子里确实倒进了米}
+                    - episode_index: 4
+                      line: label
+                      decision: custom_label
+                      new_label: fold the cloth on the table
       responses:
         "200":
           description: recorded
           content:
             application/json:
               schema: {$ref: "#/components/schemas/AdjudicationCounts"}
+              examples:
+                counts:
+                  summary: The three count cards after recording
+                  value: {decided: 2, pending: 8, unapplied: 2}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/adjudication/apply:
     parameters:
@@ -2054,12 +3012,37 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/AdjudicationApply"}
+            examples:
+              v1:
+                summary: Judge relabelled episodes again the way v1 does (the default; {} or no body is the same)
+                value: {relabel_rerun: v1}
+              full:
+                summary: Run the first run's full flow on relabelled episodes
+                value: {relabel_rerun: full}
       responses:
         "202":
           description: subtask created
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SubtaskCreated"}
+              examples:
+                queued:
+                  summary: The subtask, queued
+                  value:
+                    subtask:
+                      id: sub-rnfqwzbke
+                      task_id: task-kqzmrtbwe
+                      kind: apply_adjudication
+                      scope: {relabel_rerun: v1}
+                      state: queued
+                      state_reason: null
+                      progress: null
+                      created_at: 1791241552154
+                      started_at: null
+                      finished_at: null
+                      result_rev: null
+                    links:
+                      - {rel: task, title: Open task, url: /tasks/task-kqzmrtbwe, absolute: false}
         default: {$ref: "#/components/responses/Error"}
 
   # ---------------------------------------------------------------- system
@@ -2272,6 +3255,65 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
+          examples:
+            state_conflict:
+              summary: '409: the write does not fit the task''s state'
+              value:
+                error:
+                  code: task_state_conflict
+                  message: 任务正在运行，请先停止再删除
+                  details: {state: running}
+            not_json:
+              summary: '400: a write without Content-Type: application/json'
+              value:
+                error: {code: validation_failed, message: '写接口只接受 JSON：请带上 Content-Type: application/json（没有请求体也要带）'}
+            precheck_failed:
+              summary: '422: a pre-start check failed (details: PrecheckDetails)'
+              value:
+                error:
+                  code: precheck_failed
+                  message: 开始前的检查没有通过：交付目录写不进去，访问密钥「prod-tos」没有写入 tos://bucket/deliveries/droid-50 的权限
+                  details:
+                    checks:
+                      - id: input
+                        ok: true
+                        code: ok
+                        reason: 用访问密钥「prod-tos」读到了 meta/info.json
+                        target: tos://bucket/datasets/droid_lerobot
+                        elapsed_ms: 180
+                      - id: output
+                        ok: false
+                        code: forbidden
+                        reason: 访问密钥「prod-tos」没有写入 tos://bucket/deliveries/droid-50 的权限
+                        target: tos://bucket/deliveries/droid-50
+                        elapsed_ms: 240
+                      - id: vlm
+                        ok: true
+                        code: ok
+                        reason: doubao-seed-2-0-pro-260215 完成了一次最小调用
+                        target: ark-prod / doubao-seed-2-0-pro-260215
+                        elapsed_ms: 1350
+            source_changed:
+              summary: '409: the dataset changed since its preflight (details: SourceChange)'
+              value:
+                error:
+                  code: source_changed
+                  message: 数据集和登记时（或上次预检时）不一样了：确认后重新预检，相容就接着开始
+                  details:
+                    meta_changed: true
+                    added: 12
+                    removed: 0
+                    modified: 1
+                    sample_keys: [data/chunk-000/episode_000200.parquet, meta/info.json]
+                    preflighted_at: 1758300000000
+            not_found:
+              summary: '404: no such object'
+              value:
+                error: {code: not_found, message: 要找的对象不存在，可能已被删除}
+            unauthorized:
+              summary: '401: not signed in'
+              value:
+                error: {code: unauthorized, message: 需要登录：请输入质检平台的账号和密码}
     VizVideo:
       description: the whole video (Accept-Ranges bytes)
       content:
