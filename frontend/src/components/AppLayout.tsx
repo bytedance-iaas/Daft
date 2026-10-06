@@ -1,9 +1,10 @@
 import { Menu, Message } from '@arco-design/web-react';
 import { IconCode, IconDashboard, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
-import { Suspense, type ReactNode } from 'react';
+import { Suspense, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Spin } from '@arco-design/web-react';
 import { appPath } from '../base';
+import { readPrefs, writePrefs } from '../lib/prefs';
 import { zh } from '../locales/zh';
 
 interface NavItem {
@@ -78,12 +79,14 @@ function openHelp(key: string): boolean {
 /**
  * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集 with 数据集列表 / 可视化、
  * 系统和资源配置, then 帮助 with 使用文档 / 接口文档; doc 07 §2, design doc 18 §5.0) around the
- * routed page.
+ * routed page. The sidebar collapses to its icons (the button at its bottom; remembered in this browser),
+ * where a group's entries open as a popup.
  */
 export function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const selected = navKey(pathname);
+  const [collapsed, setCollapsed] = useState(() => readPrefs().siderCollapsed === true);
   return (
     <>
       <header className="app-header">
@@ -96,8 +99,14 @@ export function AppLayout() {
         <span className="app-product">{zh.app.product}</span>
       </header>
       <div className="app-body">
-        <nav className="app-sider" aria-label={zh.nav.groupMain}>
+        <nav className={collapsed ? 'app-sider collapsed' : 'app-sider'} aria-label={zh.nav.groupMain}>
           <Menu
+            collapse={collapsed}
+            hasCollapseButton
+            onCollapseChange={(c) => {
+              setCollapsed(c);
+              writePrefs({ siderCollapsed: c });
+            }}
             selectedKeys={[selected]}
             defaultOpenKeys={[QC_KEY, DS_KEY]}
             onClickMenuItem={(key) => {

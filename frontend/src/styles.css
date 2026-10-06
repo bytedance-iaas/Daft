@@ -74,10 +74,31 @@ body {
   flex: none;
   background: #fff;
   border-right: 1px solid var(--c-border);
+  /* below the sticky header, as tall as the window: the collapse button stays at its bottom */
+  position: sticky;
+  top: 61px;
+  align-self: flex-start;
+  height: calc(100vh - 61px);
+  transition: width 0.2s cubic-bezier(0.34, 0.69, 0.1, 1);
+}
+
+.app-sider.collapsed {
+  width: 48px;
 }
 
 .app-sider .arco-menu {
-  width: 208px;
+  width: 100%;
+  height: 100%;
+}
+
+.app-sider .arco-menu-inner {
+  padding-bottom: 48px; /* room for the collapse button */
+}
+
+/* A group's entries one indent in, their text under the group's text: Arco indents a level by 20px,
+   the group's icon and its gap take 30px. */
+.app-sider .arco-menu-inline-content .arco-menu-indent + .arco-menu-indent {
+  width: 30px;
 }
 
 .app-main {

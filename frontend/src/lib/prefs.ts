@@ -27,6 +27,8 @@ export interface Prefs {
   lastVizDataset?: string;
   /** The visualize page's left rail folded away. */
   vizRailCollapsed?: boolean;
+  /** The app's sidebar collapsed to its icons. */
+  siderCollapsed?: boolean;
 }
 
 function storage(): Storage | null {
