@@ -102,7 +102,7 @@ export interface EefWindowRow {
   title: string;
   /** e.g. 「帧 120–168（3 帧）」 */
   frames: string;
-  /** e.g. 「点 block_center · 轴 gripper_x」 */
+  /** e.g. 「工具中心点（TCP） · 朝向 Z 轴（接近方向）」 */
   target: string | null;
   answered: boolean;
   votes: EefVote[];
@@ -180,9 +180,9 @@ export interface EefOpinionSegment {
   aspect: string;
   /** How sure the model is that the stretch does NOT match, 0-1. */
   confidence: number;
+  /** Sample frames (from 0) the model cited; the report seeks the camera's player to them. */
   evidenceFrames: number[];
   observation: string;
-  evidence: string[];
 }
 
 export interface EefOpinionCamera {
@@ -196,6 +196,8 @@ export interface EefOpinionCamera {
   summaries: string[];
   /** Why a part got no answer, readable. */
   failures: string[];
+  /** Parts answered on the repair turn: why the first answer was rejected, readable. */
+  repairs: string[];
   /** The gripper could not be seen in some part. */
   unseen: boolean;
   segments: EefOpinionSegment[];
@@ -214,8 +216,8 @@ const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFini
 
 /**
  * No gripper reference (design doc 12 §10.5, D-E15): the model's advisory opinion on each camera's
- * whole clip - the stretches it finds mismatched, each with its confidence and evidence stills. Null
- * for a record the module judged.
+ * whole clip - the stretches it finds mismatched, each with its confidence and evidence frames. Null
+ * for a record the module judged. Nothing marked is saved: the report draws the marks live (design doc 20).
  */
 export function eefOpinion(details: D): EefOpinion | null {
   if (details.assessment_mode !== 'vlm_opinion') return null;
@@ -236,6 +238,14 @@ export function eefOpinion(details: D): EefOpinion | null {
           const code = s(obj(x.failure).code) ?? '';
           return `${Z().frames(n(x.start_frame) ?? 0, n(x.end_frame) ?? 0, (n(x.end_frame) ?? 0) - (n(x.start_frame) ?? 0) + 1)}：${Z().failure[code] ?? (code || Z().failed)}`;
         }),
+      repairs: clips
+        .filter((x) => x.repaired)
+        .map((x) => {
+          const r = obj(x.repaired);
+          const code = s(r.code) ?? '';
+          const why = [Z().failure[code] ?? code, s(r.message)].filter(Boolean).join('：');
+          return Z().opinion.repaired(Z().frames(n(x.start_frame) ?? 0, n(x.end_frame) ?? 0, (n(x.end_frame) ?? 0) - (n(x.start_frame) ?? 0) + 1), why);
+        }),
       unseen: clips.some((x) => x.gripper_visible === false),
       reason: s(c.reason),
       segments: arr(c.segments)
@@ -250,7 +260,6 @@ export function eefOpinion(details: D): EefOpinion | null {
           confidence: n(x.confidence) ?? 0,
           evidenceFrames: arr(x.evidence_frames).map(n).filter((f): f is number => f !== null),
           observation: s(x.observation) ?? '',
-          evidence: arr(x.evidence).map(s).filter((p): p is string => Boolean(p)),
         }))
         .sort((a, b) => b.confidence - a.confidence || a.startFrame - b.startFrame),
     };

@@ -74,6 +74,7 @@
 | GET | `/api/v1/datasets/{id}/viz/meta` | 字段树里元数据文件的预览（`meta/*`、README，256 KiB 截断） |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/viz`、`/api/v1/tasks/{id}/episodes/{index}/viz` | 一条 episode：时钟、相机地址、任务描述、分段 / 事件 / 条目标签；任务级另有把发现换到 episode 时间的 `check_clock` |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/series`、`/api/v1/tasks/{id}/episodes/{index}/series` | 一个曲线组，按 min / max 抽稀到 `points` 以内，可按区间再取 |
+| GET | `/api/v1/tasks/{id}/episodes/{index}/eef-overlay` | EEF 模型意见的标记（2.6.0，设计 20）：按任务冻结的 trajectory.json 现场算每帧的图层（点、线段、箭头、过去轨迹，原视频像素），连同对应的 `VizEpisode` 相机；报告在原视频上用 canvas 画出。任务没勾 EEF 时 404 `no_eef_module` |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、Lance 表 blob 里的 mp4、fMP4 转封装、`?transcode=1` 的 H.264 转码），带 Range，准备中 202 |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | 帧包（各帧原字节首尾相接，Range 读）：mcap 与 Lance 逐帧图片的 JPEG / PNG；mcap H.264 / H.265 相机给浏览器自己解码的样本包（每条消息一个 Annex-B 访问单元，2.5.0） |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度；样本包另有每帧是否关键帧、按码流参数集算的 `codec_string` |
@@ -387,6 +388,10 @@ GET /api/v1/media/sign?task=task-kqzmrtbwe&scope=delivery&path=details/clips/ep0
   v3 源是多条拼接的 mp4，返回里带 `from_ts` / `to_ts`，前端用 `#t=from,to` 片段播放。
 - 必须用**公网端点**签名。Pod 里用的内网端点对浏览器是死链（v1 注释里的实锤）。
 - TTL 默认 30 分钟。前端在 403/过期时自动重签一次再重试，不弹错。
+- 配置了 `CURATOR_LOCAL_DELIVERY_ROOT` 的本地调试环境，`scope=delivery` 从该任务的本地交付批次读取媒体，
+  返回同源的内部 `/api/v1/media/local?task=…&path=…` 地址，不能为实际不存在于 TOS 的文件生成 TOS URL。
+  此字节路由随每次请求校验任务归属、路径和文件类型，只允许视频及位图，支持 Range；禁用本地交付时返回 404。
+  `media/sign` 的请求和返回结构保持不变，生产 TOS 交付仍直接签名。
 
 ### 7.1 ReRun 读登记的数据集：`POST /api/v1/datasets/{id}/sign`
 

@@ -247,8 +247,7 @@ def test_without_a_gripper_reference_the_model_gives_an_advisory_opinion(cli, mi
     for r in flagged:
         (seg,) = r["details"]["opinion"]["cameras"][CAM]["segments"]
         assert seg["confidence"] == 0.8 and seg["aspect"] == "position" and seg["evidence_frames"] == [0]
-        assert seg["start_s"] == 0.0 and len(seg["evidence"]) == 1
-        assert os.path.isfile(os.path.join(rd, seg["evidence"][0])) and r["evidence"] == seg["evidence"]
+        assert seg["start_s"] == 0.0
     summary = OP.summary(recs)
     assert summary["opinion_episodes"] == 3 and summary["opinion_flagged"] == len(flagged)
     assert summary["opinion_segments"] == len(flagged)

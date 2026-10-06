@@ -187,13 +187,13 @@ class FakeTosClient:
         self._allowed(ak, bucket, "write")
         self.tos.objects.pop((bucket, key), None)
 
-    def pre_signed_url(self, method, bucket: str, key: str, expires: int = 3600):
+    def pre_signed_url(self, method, bucket: str, key: str, expires: int = 3600, query=None):
         # local HMAC in the real SDK: no authentication round trip, only a record
         with self.tos._lock:
             self.tos.calls.append({"op": "presign", "endpoint": self.endpoint,
                                    "region": self.region,
                                    "ak": self.key.access_key_id if self.key else None,
-                                   "bucket": bucket, "key": key, "expires": expires})
+                                   "bucket": bucket, "key": key, "expires": expires, "query": query})
         host = self.endpoint.split("://", 1)[1]
         ak = self.key.access_key_id if self.key else ""
         return _Presigned(f"https://{bucket}.{host}/{key}?X-Tos-Credential={ak}%2F{self.region}"

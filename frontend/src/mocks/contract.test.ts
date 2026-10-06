@@ -341,6 +341,7 @@ const vizCalls = async (): Promise<Call[]> => {
     { op: 'getTaskViz', method: 'GET', path: `/tasks/${T}/viz` },
     { op: 'getTaskEpisodeViz', method: 'GET', path: `/tasks/${T}/episodes/3/viz` },
     { op: 'getTaskEpisodeSeries', method: 'GET', path: `/tasks/${T}/episodes/3/series?stream=observation_state` },
+    { op: 'getTaskEpisodeEefOverlay', method: 'GET', path: `/tasks/${T}/episodes/3/eef-overlay` },
     { op: 'getTaskCameraVideo', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.mp4?transcode=1` },
     { op: 'getTaskCameraVideo', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.mp4?transcode=1` },
     { op: 'getTaskCameraFrames', method: 'GET', path: `/tasks/${T}/episodes/3/cameras/wrist.frames` },

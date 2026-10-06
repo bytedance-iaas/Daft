@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.5.1
+  version: 2.6.0
   description: |
     ## Overview
 
@@ -75,6 +75,11 @@ info:
 
     ## Changelog
 
+    **2.6.0** (2026-10-06): `GET /tasks/{id}/episodes/{index}/eef-overlay` returns the marks of the
+    end-effector check's video opinion (gripper centre, direction, fingers and recent trail) for drawing
+    over the episode's own camera video. Opinion records no longer carry a marked video or evidence
+    images; each segment still lists its evidence frame numbers.
+
     **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
     its changes here.
   x-description-zh: |
@@ -121,6 +126,9 @@ info:
     ID 是不透明的字符串。现在新建的记录，ID 形如 `<前缀>-<9 个小写字母>`（task、sub、ds、pf、cred、vb、vm、upl，比如 `task-kqzmrtbwe`）；早先建的记录保留原来的 `<前缀>_…` 形式，两种在所有地方都能用。ID 不含时间，列表按创建时间排序。
 
     ## 变更记录
+
+    **2.6.0**（2026-10-06）：新增 `GET /tasks/{id}/episodes/{index}/eef-overlay`，返回末端执行器检查中模型意见的标记（夹爪中心、朝向、手指连线与最近一段轨迹），
+    供叠加在该 episode 的原始相机视频上显示。模型意见的记录不再附带标记视频和证据图片，各片段仍给出证据帧号。
 
     **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
 servers:
@@ -2653,6 +2661,29 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/VizSeries"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/eef-overlay:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getTaskEpisodeEefOverlay
+      summary: The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
+      description: |
+        Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
+        plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+        `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
+        bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
+        own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
+        past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
+        bundle has no such episode.
+      responses:
+        "200":
+          description: one entry per camera of the bundle's sample
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EefOverlay"}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}/cameras/{camera}.mp4:
     parameters:
@@ -5235,6 +5266,62 @@ components:
               values: {type: array, items: {type: [number, "null"]}}
         total_points: {type: integer, minimum: 0, description: "raw samples in the window"}
         downsampled: {type: boolean}
+    EefOverlay:
+      type: object
+      additionalProperties: false
+      required: [task_id, episode_index, cameras]
+      properties:
+        task_id: {type: string}
+        episode_index: {type: integer, minimum: 0}
+        cameras:
+          type: array
+          items: {$ref: "#/components/schemas/EefOverlayCamera"}
+    EefOverlayCamera:
+      type: object
+      additionalProperties: false
+      required: [camera_id, viz_camera, image_size_wh, fps, media_frames, skipped, layers]
+      properties:
+        camera_id: {type: string, description: "the bundle's camera id, as in the opinion record's `cameras`"}
+        viz_camera:
+          type: [string, "null"]
+          description: "key of the `VizEpisodeCamera` playing the same file (LeRobot) or topic (mcap); null when none does"
+        image_size_wh:
+          type: array
+          items: {type: integer, minimum: 1}
+          minItems: 2
+          maxItems: 2
+          description: "the source video's size; every coordinate is a pixel of it"
+        fps: {type: [number, "null"], description: "the camera clip's frame rate"}
+        media_frames:
+          type: array
+          items: {type: [integer, "null"], minimum: 0}
+          description: >-
+            per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a
+            LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps.
+        skipped: {type: [string, "null"], description: "why the opinion skipped this camera; its layers are then empty"}
+        layers:
+          type: array
+          description: drawn in order, later on top
+          items: {$ref: "#/components/schemas/EefOverlayLayer"}
+    EefOverlayLayer:
+      type: object
+      additionalProperties: false
+      required: [kind, label, color, width, frames]
+      properties:
+        kind:
+          enum: [point, segment, arrow, polyline]
+          description: >-
+            point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end);
+            polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+        label: {type: [string, "null"], description: "text by the mark (P, A, B, a UMI hand)"}
+        color: {type: string, pattern: "^#[0-9a-f]{6}$"}
+        width: {type: number, minimum: 0, description: "line width in source pixels at full size"}
+        frames:
+          type: array
+          description: one entry per sample frame; null where nothing is drawn
+          items:
+            type: [array, "null"]
+            items: {type: [number, "null"]}
     VizFrameIndex:
       type: object
       additionalProperties: false

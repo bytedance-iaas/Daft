@@ -119,6 +119,9 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
                             {"errors": [i.as_dict() for i in result.errors[:10]], "sha256": result.sha256})
     seeds = seed_dir(params)
     tpath = template_path(params)
+    if any(s.hand_poses for s in result.samples.values()) and (seeds or tpath):
+        return _unsupported("UMI action overlays use advisory video opinion; omit gripper seeds/templates",
+                            C.TRAJECTORY_INVALID)
     template = None
     if tpath:
         try:

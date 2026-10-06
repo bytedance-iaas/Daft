@@ -1,0 +1,367 @@
+{
+  "schema": "eef/sample.schema.json",
+  "valid": [
+    {
+      "schema_version": "eef-video/1.0.0",
+      "sample_id": "umi_000000",
+      "source": {
+        "dataset": "DecisionFacts/Physical-AI-UMI-transfer-objects-from-cups",
+        "episode_id": "0",
+        "instruction": "Pick objects out of cups and transfer them to a new location using both grippers."
+      },
+      "frame_count": 2,
+      "timebase": "video_pts",
+      "annotations_path": "#frames",
+      "calibration_path": "#calibration",
+      "eef_frame": "robot0",
+      "reference_frame": "umi_world",
+      "views": [
+        {
+          "view_id": "camera0",
+          "kind": "camera",
+          "camera_id": "camera0",
+          "mount": "wrist",
+          "media": {
+            "kind": "video",
+            "uri": "videos/chunk-000/observation.images.camera0/episode_000000.mp4",
+            "image_size_wh": [
+              960,
+              720
+            ],
+            "frame_count": 1902,
+            "fps": 59.94005994005994,
+            "clip_start_s": 0.0,
+            "clip_end_s": 31.7317
+          }
+        },
+        {
+          "view_id": "camera1",
+          "kind": "camera",
+          "camera_id": "camera1",
+          "mount": "wrist",
+          "media": {
+            "kind": "video",
+            "uri": "videos/chunk-000/observation.images.camera1/episode_000000.mp4",
+            "image_size_wh": [
+              960,
+              720
+            ],
+            "frame_count": 1902,
+            "fps": 59.94005994005994,
+            "clip_start_s": 0.0,
+            "clip_end_s": 31.7317
+          }
+        }
+      ],
+      "point_definitions": {
+        "eef_origin": {
+          "meaning": "Recorded EEF origin (robot0)",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "copy",
+            "assurance": "declared"
+          }
+        },
+        "tcp": {
+          "meaning": "Model assumed finger center",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_x": {
+          "meaning": "Local x axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.06,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_y": {
+          "meaning": "Local y axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.06,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_z": {
+          "meaning": "Local z axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.06
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        }
+      },
+      "axis_definitions": {
+        "x": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_x",
+          "physical_meaning": "local_x",
+          "directed": true,
+          "length_m": 0.06
+        },
+        "y": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_y",
+          "physical_meaning": "local_y",
+          "directed": true,
+          "length_m": 0.06
+        },
+        "z": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_z",
+          "physical_meaning": "local_z",
+          "directed": true,
+          "length_m": 0.06
+        }
+      },
+      "raw_pose_sequence": null,
+      "notes": [
+        "UMI absolute recorded TCP trajectories; action/state are the same observation, not independent commands.",
+        "Raw source images, resized only; Camera->TCP geometry is declared, not independently calibrated."
+      ],
+      "umi": {
+        "camera_hands": {
+          "camera0": "robot0",
+          "camera1": "robot1"
+        },
+        "horizon_s": 1.0,
+        "provenance": {
+          "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+          "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+          "assurance": "declared"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "schema_version": "eef-video/1.0.0",
+      "sample_id": "umi_000000",
+      "source": {
+        "dataset": "DecisionFacts/Physical-AI-UMI-transfer-objects-from-cups",
+        "episode_id": "0",
+        "instruction": "Pick objects out of cups and transfer them to a new location using both grippers."
+      },
+      "frame_count": 2,
+      "timebase": "video_pts",
+      "annotations_path": "#frames",
+      "calibration_path": "#calibration",
+      "eef_frame": "robot0",
+      "reference_frame": "umi_world",
+      "views": [
+        {
+          "view_id": "camera0",
+          "kind": "camera",
+          "camera_id": "camera0",
+          "mount": "wrist",
+          "media": {
+            "kind": "video",
+            "uri": "videos/chunk-000/observation.images.camera0/episode_000000.mp4",
+            "image_size_wh": [
+              960,
+              720
+            ],
+            "frame_count": 1902,
+            "fps": 59.94005994005994,
+            "clip_start_s": 0.0,
+            "clip_end_s": 31.7317
+          }
+        },
+        {
+          "view_id": "camera1",
+          "kind": "camera",
+          "camera_id": "camera1",
+          "mount": "wrist",
+          "media": {
+            "kind": "video",
+            "uri": "videos/chunk-000/observation.images.camera1/episode_000000.mp4",
+            "image_size_wh": [
+              960,
+              720
+            ],
+            "frame_count": 1902,
+            "fps": 59.94005994005994,
+            "clip_start_s": 0.0,
+            "clip_end_s": 31.7317
+          }
+        }
+      ],
+      "point_definitions": {
+        "eef_origin": {
+          "meaning": "Recorded EEF origin (robot0)",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "copy",
+            "assurance": "declared"
+          }
+        },
+        "tcp": {
+          "meaning": "Model assumed finger center",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_x": {
+          "meaning": "Local x axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.06,
+            0.0,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_y": {
+          "meaning": "Local y axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.06,
+            0.0
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        },
+        "tcp_z": {
+          "meaning": "Local z axis endpoint from tcp",
+          "frame_id": "robot0",
+          "model": "fixed",
+          "position_eef_m": [
+            0.0,
+            0.0,
+            0.06
+          ],
+          "position_open_eef_m": null,
+          "position_closed_eef_m": null,
+          "provenance": {
+            "source": "UMI TCP",
+            "method": "tool geometry",
+            "assurance": "model_assumed"
+          }
+        }
+      },
+      "axis_definitions": {
+        "x": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_x",
+          "physical_meaning": "local_x",
+          "directed": true,
+          "length_m": 0.06
+        },
+        "y": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_y",
+          "physical_meaning": "local_y",
+          "directed": true,
+          "length_m": 0.06
+        },
+        "z": {
+          "start_point_id": "tcp",
+          "end_point_id": "tcp_z",
+          "physical_meaning": "local_z",
+          "directed": true,
+          "length_m": 0.06
+        }
+      },
+      "raw_pose_sequence": null,
+      "notes": [
+        "UMI absolute recorded TCP trajectories; action/state are the same observation, not independent commands.",
+        "Raw source images, resized only; Camera->TCP geometry is declared, not independently calibrated."
+      ],
+      "umi": {
+        "camera_hands": {
+          "camera0": "robot0",
+          "camera1": "robot1"
+        },
+        "horizon_s": 6,
+        "provenance": {
+          "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+          "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+          "assurance": "declared"
+        }
+      }
+    }
+  ]
+}

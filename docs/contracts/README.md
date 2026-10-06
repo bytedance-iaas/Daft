@@ -35,6 +35,10 @@ C2 各文件对应的命令与产物：
 
 ## 怎么用
 
+2026-10-05：EEF 1.0 兼容增补 UMI 输入（设计 20）。sample 可携带 `umi`（相机所属手、历史时间窗口、来源）；
+frame 可携带 `hands`（同一参考系的绝对位姿和夹爪开口，缺测为 null）。必须同时提供，读取器验证名称、参考系和时间轴。
+模型意见 `aspect` 增加 `action`，原有输入与结果仍可读取；该分类只用于 UMI 动作意见，不改变策略判决。
+
 ```python
 from curation.contracts import schemas
 schemas.validate("cli/preflight.schema.json", payload)

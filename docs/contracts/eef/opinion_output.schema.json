@@ -17,8 +17,8 @@
           "start_frame": {"type": "integer", "minimum": 0},
           "end_frame": {"type": "integer", "minimum": 0},
           "aspect": {
-            "enum": ["position", "orientation", "both"],
-            "description": "position: P is off the gripper centre; orientation: A does not follow the gripper; both"
+            "enum": ["position", "orientation", "both", "action"],
+            "description": "position: P is off the gripper centre; orientation: A does not follow the gripper; both; action: UMI motion or grasp/release timing conflicts with visible task evidence"
           },
           "confidence": {
             "type": "number", "minimum": 0, "maximum": 1,

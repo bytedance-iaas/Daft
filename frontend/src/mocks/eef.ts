@@ -1,6 +1,6 @@
 // A test fixture (F5.11 / F5.12): the EEF module's record of an episode it sent to a person. The mock
 // world's tasks do not select the module; tests add it through db.extraRecords.
-import type { ResultRecord } from '../api/types';
+import type { EefOverlay, ResultRecord } from '../api/types';
 
 const EEF = 'eef_video_consistency';
 
@@ -123,7 +123,6 @@ export function eefRecord(ep: number, why: string): ResultRecord {
 
 /** No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on the episode, one stretch flagged. */
 export function eefOpinionRecord(ep: number): ResultRecord {
-  const dir = `checks/${EEF}/opinion/ep_${String(ep).padStart(6, '0')}/ext`;
   return {
     episode_index: ep,
     module: EEF,
@@ -133,7 +132,7 @@ export function eefOpinionRecord(ep: number): ResultRecord {
     gate: 'hard',
     elapsed_s: 21.4,
     error: null,
-    evidence: [`${dir}/frame_000052.jpg`, `${dir}/frame_000071.jpg`],
+    evidence: [],
     details: {
       assessment_mode: 'vlm_opinion',
       overall: 'opinion',
@@ -154,13 +153,47 @@ export function eefOpinionRecord(ep: number): ResultRecord {
             finger_axis_id: 'y',
             clips: [{ start_frame: 0, end_frame: 286, status: 'answered', attempts: 1, cache_hit: false, gripper_visible: true, summary: '前半段中心偏得明显' }],
             segments: [
-              { start_frame: 180, end_frame: 230, start_s: 12.0, end_s: 15.33, aspect: 'orientation', confidence: 0.4, evidence_frames: [205], observation: '红箭头略偏向桌面', evidence: [] },
-              { start_frame: 40, end_frame: 95, start_s: 2.67, end_s: 6.33, aspect: 'position', confidence: 0.85, evidence_frames: [52, 71], observation: '红圈落在手指外侧', evidence: [`${dir}/frame_000052.jpg`, `${dir}/frame_000071.jpg`] },
+              { start_frame: 180, end_frame: 230, start_s: 12.0, end_s: 15.33, aspect: 'orientation', confidence: 0.4, evidence_frames: [205], observation: '红箭头略偏向桌面' },
+              { start_frame: 40, end_frame: 95, start_s: 2.67, end_s: 6.33, aspect: 'position', confidence: 0.85, evidence_frames: [52, 71], observation: '红圈落在手指外侧' },
             ],
           },
           wrist: { status: 'skipped', reason: 'mount wrist does not take part' },
         },
       },
     },
+  };
+}
+
+/**
+ * The marks of {@link eefOpinionRecord}'s camera `ext` (design doc 20): P circling slowly with its
+ * past trail, A pointing down, B across the fingers, over a 640×480 clip of 287 frames at 15 fps.
+ */
+export function eefOverlay(taskId: string, episode: number, vizCamera: string | null): EefOverlay {
+  const frames = 287;
+  const at = (f: number): [number, number] => [320 + 120 * Math.cos(f / 40), 260 + 60 * Math.sin(f / 40)];
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const trail = Array.from({ length: frames }, (_, f) =>
+    f < 1 ? null : Array.from({ length: Math.min(f, 15) + 1 }, (_, i) => at(f - Math.min(f, 15) + i)).flat().map(round));
+  const each = (fn: (p: [number, number]) => number[]) => Array.from({ length: frames }, (_, f) => fn(at(f)).map(round));
+  return {
+    task_id: taskId,
+    episode_index: episode,
+    cameras: [
+      {
+        camera_id: 'ext',
+        viz_camera: vizCamera,
+        image_size_wh: [640, 480],
+        fps: 15,
+        media_frames: Array.from({ length: frames }, (_, f) => f),
+        skipped: null,
+        layers: [
+          { kind: 'polyline', label: null, color: '#00dcff', width: 2, frames: trail },
+          { kind: 'segment', label: 'B', color: '#ffa500', width: 2, frames: each(([x, y]) => [x - 30, y, x + 30, y]) },
+          { kind: 'arrow', label: 'A', color: '#ff0000', width: 2, frames: each(([x, y]) => [x, y, x, y + 50]) },
+          { kind: 'point', label: 'P', color: '#ff0000', width: 2, frames: each(([x, y]) => [x, y]) },
+        ],
+      },
+      { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, media_frames: [], skipped: 'mount wrist does not take part', layers: [] },
+    ],
   };
 }

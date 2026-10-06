@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from dataclasses import replace
 
 from daemon.repo import protocol as P
 
@@ -97,6 +98,54 @@ def _started_task(c, *, input_source="tos", in_cred=None, out_cred=None, run_id=
 def _sign(c, task_id, scope, path, **params):
     return c.get(f"{API}/media/sign", params={"task": task_id, "scope": scope, "path": path,
                                               **params})
+
+
+def test_local_delivery_media_plays_ranges_without_tos_credentials(secret_client, fake_tos, tmp_path):
+    c = secret_client()
+    rt = runtime(c)
+    root = tmp_path / "local-delivery"
+    rt.orchestrator.cfg = replace(rt.orchestrator.cfg, local_delivery_root=root)
+    task = _started_task(c)
+    rel = "checks/eef_video_consistency/opinion/camera0/marked.mp4"
+    media = root / "deliveries/droid-50" / task.run_id / rel
+    media.parent.mkdir(parents=True)
+    content = b"\x00\x00\x00\x18ftypmp42" + bytes(range(64))
+    media.write_bytes(content)
+    signed = _sign(c, task.id, "delivery", rel)
+    assert signed.status_code == 200, signed.text
+    assert_schema("SignedUrl", signed.json())
+    url = signed.json()["url"]
+    assert url.startswith(f"{API}/media/local?")
+    got = c.get(url, headers={"Range": "bytes=4-15"})
+    assert got.status_code == 206 and got.content == content[4:16]
+    assert got.headers["content-type"] == "video/mp4"
+    assert got.headers["content-range"] == f"bytes 4-15/{len(content)}"
+    assert got.headers["cache-control"] == "private, no-cache"
+    assert c.get(url).content == content
+    assert fake_tos.ops("presign") == []
+    media.unlink()
+    assert_error(c.get(url), "not_found")
+
+
+def test_local_media_cannot_read_other_paths_or_active_content(secret_client, tmp_path):
+    c = secret_client()
+    rt = runtime(c)
+    root = tmp_path / "local-delivery"
+    rt.orchestrator.cfg = replace(rt.orchestrator.cfg, local_delivery_root=root)
+    task = _started_task(c)
+    base = root / "deliveries/droid-50" / task.run_id
+    base.mkdir(parents=True)
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"not this task")
+    (base / "escape.mp4").symlink_to(outside)
+    (base / "script.html").write_text("<script>alert(1)</script>")
+    for rel in ("../outside.mp4", "escape.mp4"):
+        assert_error(_sign(c, task.id, "delivery", rel), "validation_failed")
+        assert_error(c.get(f"{API}/media/local", params={"task": task.id, "path": rel}), "validation_failed")
+    assert_error(_sign(c, task.id, "delivery", "script.html"), "not_found")
+    assert_error(c.get(f"{API}/media/local", params={"task": "no-such-task", "path": "clip.mp4"}), "not_found")
+    rt.orchestrator.cfg = replace(rt.orchestrator.cfg, local_delivery_root=None)
+    assert_error(c.get(f"{API}/media/local", params={"task": task.id, "path": "clip.mp4"}), "not_found")
 
 
 def test_delivery_urls_are_signed_under_the_run_directory_on_the_public_endpoint(
