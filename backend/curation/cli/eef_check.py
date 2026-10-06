@@ -151,6 +151,8 @@ class EefJudge:
                                {"errors": [i.as_dict() for i in self.result.errors[:10]],
                                 "sha256": self.result.sha256})
         tpath = template_path(params)
+        if any(s.hand_poses for s in self.result.samples.values()) and (seed_dir(params) or tpath):
+            raise UsageError("UMI action overlays use advisory video opinion; omit gripper seeds/templates")
         template = None
         if tpath:
             try:
@@ -216,6 +218,7 @@ class EefJudge:
         from ..adapters.vlm_client import SharedGate
         from ..extensions.eef_consistency import opinion as OP
         from ..extensions.eef_consistency import review as R
+        from ..extensions.eef_consistency.umi import PROMPT_VERSION as UMI_PROMPT
         from . import eef_review
 
         self.model = str(self.vlm["model"])
@@ -223,7 +226,8 @@ class EefJudge:
             {"windows": self.per_camera, "frames": self.per_window, "model": self.model, "prompt": R.PROMPT_VERSION,
              "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS,
              "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {},
-             **({"opinion": [OP.PROTOCOL, OP.PROMPT_VERSION, OP.ANSWER_SCHEMA, OP.MAX_CLIP_S]} if self.opinion else {})},
+             **({"opinion": [OP.PROTOCOL, OP.PROMPT_VERSION, OP.ANSWER_SCHEMA, OP.MAX_CLIP_S]} if self.opinion else {}),
+             **({"umi_prompt": UMI_PROMPT} if any(s.hand_poses for s in self.result.samples.values()) else {})},
             sort_keys=True).encode()).hexdigest()
         self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
@@ -320,7 +324,7 @@ class EefJudge:
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
                   "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,
                   "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": "",
-                  "vlm": {"model": self.model, "prompt_version": OP.PROMPT_VERSION, "answer_schema": OP.ANSWER_SCHEMA,
+                  "vlm": {"model": self.model, "prompt_version": op.get("prompt_version", OP.PROMPT_VERSION), "answer_schema": OP.ANSWER_SCHEMA,
                           "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
         evidence += self._attach_record(detail, sample)           # needs no gripper reference (§8.7)
         return {"passed": True, "score": None, "detail": detail}, evidence

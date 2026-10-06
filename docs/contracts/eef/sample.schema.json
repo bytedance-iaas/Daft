@@ -143,6 +143,34 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "umi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "camera_hands",
+        "horizon_s",
+        "provenance"
+      ],
+      "properties": {
+        "camera_hands": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "horizon_s": {
+          "description": "UMI trajectory history duration in seconds; the trail ends at the current frame.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
     }
   },
   "required": [

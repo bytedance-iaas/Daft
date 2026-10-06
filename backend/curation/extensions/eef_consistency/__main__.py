@@ -206,6 +206,18 @@ def _template_check(a: argparse.Namespace) -> int:
     return 0
 
 
+def _export_umi(a: argparse.Namespace) -> int:
+    from .adapters.umi import export
+
+    try:
+        result = export(a.dataset_root, a.calibration, a.out, horizon_s=a.horizon_s, max_side=a.max_side)
+    except (ValueError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m curation.extensions.eef_consistency", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -234,6 +246,13 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--episodes", type=int, nargs="*", default=None)
     x.add_argument("--out", required=True)
     x.set_defaults(fn=_export)
+    u = sub.add_parser("export-umi", help="calibrated raw UMI session to LeRobot and trajectory.json")
+    u.add_argument("--dataset-root", required=True, help="directory containing dataset_plan.pkl and demos/")
+    u.add_argument("--calibration", required=True, help="explicit umi-calibration/1 JSON")
+    u.add_argument("--horizon-s", type=float, default=1.0, help="history window ending at the current frame, in seconds")
+    u.add_argument("--max-side", type=int, default=960)
+    u.add_argument("--out", required=True, help="new output directory")
+    u.set_defaults(fn=_export_umi)
     b = sub.add_parser("template-build", help="gripper template from seed / clicked observation rows")
     b.add_argument("--trajectory", required=True)
     b.add_argument("--lerobot-root", required=True)

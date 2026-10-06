@@ -26,6 +26,7 @@
 | `metrics.py` | 位置残差（像素与毫米等效）、方向夹角（有向 0–180°、无向 0–90°，投影过短为 not_observable）、全局与滑窗 lag（`u_visual(t) ≈ u_declared(t+lag)`，同一掩码、去常量偏移、亚帧抛物线）、残差高频占比 |
 | `motion.py`（续） | 背景 / 相机运动：半分辨率逐帧背景特征 + RANSAC 相似变换累积成画面轨迹（遮掉独立观测到的夹爪，不用投影），1 Hz 以上滚动 RMS |
 | `segments.py` | 迟滞分段（开 / 关阈值、最短持续、允许短缺口）、滚动中位数、证据帧挑选 |
+| `history.py` | 普通 EEF 和 UMI 共用的历史时间窗、提示词说明；普通 EEF 在当前 P/A/B 下方画同一点过去 1 秒的青色轨迹，所有历史点重投影到当前相机；缺失、相机后方、时间断档不连线；缺少三维定义或与声明 P 冲突时只保留当前标记 |
 | `assess.py` | 分项状态：`ok / suspect / unknown / unsupported / error`；无 profile 只出曲线（`threshold_uncalibrated`），覆盖不足 `unknown`；episode 级只做「任一相机 suspect 即候选」汇总 |
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍；`record` 段是记录比对的阈值 |
@@ -42,6 +43,42 @@
 | `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`template-build`、`template-check` |
 
 ## 手动验证
+
+### UMI 原始数据的动作投影（设计 20）
+
+UMI 原始会话先转换为 LeRobot 与带双手轨迹的 EEF 上传件。需要 `dataset_plan.pkl`、`demos/` 内各路
+`raw_video.mp4`、`camera_trajectory.csv` 和显式标定。直接读取 plan 的绝对位置/轴角与相机 CSV，不从视频拟合轨迹。
+测试集 `DecisionFacts/Physical-AI-UMI-transfer-objects-from-cups` 的标定示例在
+`backend/tests/eef/mappings/umi_cups.json`（只适用于该采集会话；内参取 SLAM 日志，世界变换取 `tx_slam_tag.json`）。
+
+仓库根目录运行：
+
+```bash
+PYTHONPATH=backend .venv/bin/python -m curation.extensions.eef_consistency export-umi \
+  --dataset-root /path/to/transfer-objects-from-cups \
+  --calibration backend/tests/eef/mappings/umi_cups.json \
+  --horizon-s 1 --out /path/to/umi-lerobot
+```
+
+输出目录必须不存在。默认把原始鱼眼画面等比例缩到最长边 960，保留 plan 选中的全部帧；`--max-side` 控制尺寸。
+`--horizon-s 0` 关闭历史轨迹，只画当前几何。标定 JSON 的 `cameras.cameraN` 必须与 plan 顺序一致，
+并明确 `K`、`model`、`distortion_coefficients`、`image_size_wh`、`T_camera_tcp`；`T_world_slam` 把 CSV 坐标转到 plan 坐标。
+换参考系由 `adapters/umi.py` 的 `slam_to_tag()` 完成：传入 SLAM 系下的 4×4 位姿（或 N×4×4 序列）和 SLAM → tag 变换，
+返回 tag 系下的位姿；测试集的变换为 `inverse(tx_slam_tag)`。plan 中已经对齐的 TCP 不再转换。
+Camera→TCP 参数作为显式几何来源保存，投影相机位姿取 CSV，不用 EEF 反推相机来掩盖两者的不一致。
+
+在控制台登记输出目录，勾选 EEF–视频一致性，上传输出的 `trajectory.json`，选择视频模型，不给观测种子/模板。
+任务自动使用 UMI 提问：每路只叠加 `umi.camera_hands` 指定的本手（camera0 为蓝色 robot0，camera1 为紫色 robot1），
+包含当前中心/朝向/开口与过去 1 秒到当前帧的历史轨迹；另一只手不画标记或文字。模型同时看 RAW/MARKED，并只评估本手叠加。
+每路标记视频保存在 `checks/eef_video_consistency/opinion/ep_000000/cameraN/*_marked.mp4`，报告 Episode 的模型意见区可播放。
+`action` 类疑点表示动作或抓放时机与可见画面不符；沿用建议性意见，不因此自动判废。
+该测试集使用 `doubao-seed-2-1-pro-260915` 的 `minimal` 推理设置完成真实验证；默认推理曾超时。
+受控外参和时间偏移仍存在漏检，详细结果见设计 20，不能把模型意见当作已校准的自动判定器。
+
+验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi.py`。
+实际像素重投影、当前帧相机锚定、坐标系变换抵消、双手独立性、缺测断线、视频帧对齐和动作证据帧均有回归。
+
+### 原有 EEF 数据
 
 在 `backend/` 下执行（DEMO 数据在仓库外 `~/ws/ws_general/galbot/`，可用 `CURATOR_EEF_DEMO_DATA` 改位置；
 没有这份数据时相关测试自动跳过）：
@@ -231,8 +268,13 @@
     PY
     ```
 
-    应看到两路相机各 287 帧；视频左上角印着帧号，夹爪附近有红圈 P、红箭头 A 与穿过两指的橙线 B（ep2 注入的是绕接近方向转 30°：
+    应看到两路相机各 287 帧；视频左上角印着帧号，夹爪附近有红圈 P、红箭头 A 与穿过两指的橙线 B，以及到当前 P 结束的过去 1 秒青色轨迹
+    （ep2 注入的是绕接近方向转 30°：
     P、A 与 ep0 一样，只有 B 的方向不同；脚本里 `build_request` 要带上 `finger_id=OP.pick_finger_axis(s, cid, frames, "z")` 才画 B）。
+    暂停检查：历史线随动作逐步出现，不提前显示后续轨迹；不足 1 秒时只显示已有历史。历史点统一投影到当前相机，
+    相机移动时不应当直接连接过去帧的像素。证据 JPEG 应与同帧视频的标记一致。只有二维投影、没有时间或三维末端与声明 P 冲突时省略历史线。
+    便携回归：`../.venv/bin/python -m pytest -q tests/eef/test_opinion.py tests/eef/test_umi.py`（没有 dataset2 时只跳过原有两项真实数据测试）。
+    两类提示词共用「过去到当前」说明，保留各自标记定义；普通 EEF 的 `aspect=action` 表示轨迹运动时序与可见动作不符。
     有模型时在控制台新建任务：勾 EEF，第二屏只传 `dataset2/trajectory.json`、夹爪参考留空；跑完后报告的 EEF 小节写「模型意见 7」、
     有不匹配片段的条数与置信度分布，不列判过 / 判废 / 转人工；Episode 明细里每条列出片段（帧、秒、中心 / 朝向、不匹配置信度、
     模型的话、标注证据帧）。对照 `dataset2/meta/corruptions.json`：ep0 原版应当干净，ep1–6 的片段应当落在注入的故障上。

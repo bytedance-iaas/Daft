@@ -84,9 +84,10 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     const { eefOpinion } = await import('./eefReadings');
     const op = eefOpinion({
       assessment_mode: 'vlm_opinion',
-      opinion: { status: 'partial', cameras: { ext: { status: 'partial', clips: [{ start_frame: 0, end_frame: 899, status: 'answered', gripper_visible: false, summary: '看不清' }, { start_frame: 900, end_frame: 1000, status: 'failed', failure: { code: 'timeout' } }], segments: [] } } },
+      opinion: { status: 'partial', cameras: { ext: { status: 'partial', clips: [{ start_frame: 0, end_frame: 899, status: 'answered', gripper_visible: false, summary: '看不清', video_path: 'checks/eef_video_consistency/opinion/ep_000000/camera0/marked.mp4' }, { start_frame: 900, end_frame: 1000, status: 'failed', failure: { code: 'timeout' } }], segments: [] } } },
     })!;
     expect(op.cameras[0]).toMatchObject({ failures: ['帧 901–1001（101 帧）：模型超时'], unseen: true, summaries: ['看不清'] });
+    expect(op.cameras[0].videos).toEqual(['checks/eef_video_consistency/opinion/ep_000000/camera0/marked.mp4']);
   });
 });
 

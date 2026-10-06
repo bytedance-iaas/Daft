@@ -194,6 +194,7 @@ export interface EefOpinionCamera {
   fingerAxis: string | null;
   /** The model's one-line summaries, one per clip part. */
   summaries: string[];
+  videos: string[];
   /** Why a part got no answer, readable. */
   failures: string[];
   /** The gripper could not be seen in some part. */
@@ -230,6 +231,7 @@ export function eefOpinion(details: D): EefOpinion | null {
       axis: s(c.axis_id),
       fingerAxis: s(c.finger_axis_id),
       summaries: clips.map((x) => s(x.summary)).filter((x): x is string => Boolean(x)),
+      videos: clips.map((x) => s(x.video_path)).filter((x): x is string => Boolean(x)),
       failures: clips
         .filter((x) => x.status === 'failed')
         .map((x) => {

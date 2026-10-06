@@ -17,7 +17,7 @@ import {
   type EefWindowRow,
 } from '../../lib/eefReadings';
 import { zh } from '../../locales/zh';
-import { SignedImage } from '../media/SignedMedia';
+import { SignedImage, useSignedUrl } from '../media/SignedMedia';
 
 type D = Record<string, unknown>;
 const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
@@ -172,6 +172,13 @@ export function EefCpuEvidence({ taskId, record }: { taskId: string; record: Res
  * the stretches it finds mismatched, the most confident first, with the marked frames it cited. It is
  * only an opinion: the episode's verdict does not depend on it.
  */
+function OpinionVideo({ task, path }: { task: string; path: string }) {
+  const sign = useSignedUrl({ task, path, scope: 'delivery' }, true);
+  return sign.data ? (
+    <video controls preload="none" src={sign.data.url} aria-label={Z().opinion.video} style={{ width: '100%', maxWidth: 960 }} />
+  ) : sign.error ? <div className="episode-line warn">{Z().opinion.videoFailed}</div> : null;
+}
+
 export function EefOpinion({ taskId, record }: { taskId: string; record: ResultRecord }) {
   const op = eefOpinion(details(record));
   if (!op) return null;
@@ -225,6 +232,7 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
             </div>
           ))}
           {c.summaries.length ? <div className="episode-line muted">{O.summary}：{c.summaries.join('；')}</div> : null}
+          {c.videos.map((path) => <OpinionVideo key={path} task={taskId} path={path} />)}
         </div>
       ))}
     </div>
