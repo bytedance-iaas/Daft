@@ -122,7 +122,15 @@ export function VisualizePage() {
               />
             </div>
           ) : model.isError ? (
-            <Player source={source as VizRef} index={0} mode="full" lead={unfold} />
+            // said here, not by a Player: its own observer mounting re-fetched the failed model, which went
+            // back to pending, unmounted it and failed again - requests in a loop and nothing on screen
+            <div className="vz-pending" role="alert">
+              {unfold ? <span className="lead">{unfold}</span> : null}
+              <p>
+                {zh.viz.modelFailed}
+                {model.error instanceof Error ? `：${model.error.message}` : ''}
+              </p>
+            </div>
           ) : unfold ? (
             // the model is on its way and no episode is known yet, or the dataset has none
             <div className="vz-lead-only">{unfold}</div>

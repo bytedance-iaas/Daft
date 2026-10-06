@@ -198,6 +198,8 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     顶栏与左栏摘要的格式分别写「Lance（lerobot-lancedb 0.3 三表）」「Lance（lerobot-lancedb 0.2 视频表）」「Lance（lerobot-lancedb 0.2 逐帧图片）」；
     前两份的相机格是视频，「详细信息」侧栏的读取方式写「Daemon 出 Lance 表里的视频字节」，「打开原始视频」能下载到这一路的 mp4；第三份的相机格是逐帧画布（读取方式「帧包」）。
     三份播放、跳帧、曲线与同一份 LeRobot 原始数据一致；下半页「数据集信息」最后一组「Lance 表」列出各表的行数与列。模拟世界里 pusht_lance 不在数据集列表里（测试里临时加），逻辑见 `Player.test.tsx`。
+    再登记一份数据文件是 Git LFS 指针的副本（做法见 `backend/daemon/viz/README.md` 第 18 步末尾）：详情页「预检结果」写「这些文件是 Git LFS 指针（一百多字节的占位），不是数据：…用 git lfs pull 或 hf download 拿到真文件后重新上传」；
+    可视化页选它，主区写「可视化读不出来：…是 Git LFS 指针文件…」，开发者工具里 `/viz` 只请求一次、之后不再请求（2026-10-05 以前会反复请求、主区空白；`VisualizePage.test.tsx` 覆盖）。
 17. **浏览器内解码（设计 19 §3，F14.2，要真 Daemon）**：可视化页选一份 mcap 数据集（H.264 / H.265 相机，如 `backend/daemon/viz/README.md` 第 14 步的 `viz_abc`）：
     支持 WebCodecs 的浏览器（Chrome / Edge / Safari 新版）里相机格是画布不是 `<video>`（开发者工具里 `canvas[data-testid^="vz-samples-"]`），点相机格开「详细信息」，读取方式写
     「浏览器解码（WebCodecs）」；播放、逐帧（→）、帧号框跳帧、向后拖进度条、2x、循环，画面与曲线同一条进度条走；网络面板里样本包按 GOP 区间取（`Range: bytes=…`），没有 `.mp4` 请求。

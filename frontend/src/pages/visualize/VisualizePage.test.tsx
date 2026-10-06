@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
@@ -39,6 +40,25 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     const player = await screen.findByTestId('vz-player');
     await waitFor(() => expect(within(player).getByText('ep 3')).toBeInTheDocument());
     await waitFor(() => expect(asked.some((p) => p.endsWith('/datasets/ds_droid200/episodes/4/viz'))).toBe(true));
+  });
+
+  it('says why a dataset does not read, once, instead of asking again and again', async () => {
+    // the requester's pusht-lance (2026-10-05): its model answered an error; the page mounted a Player to
+    // show it, whose own observer re-fetched the failed model - back to pending, unmounted, failed again
+    const message = 'meta/episodes/chunk-000/file-000.parquet 是 Git LFS 指针文件（131 字节的占位），不是数据';
+    let asked = 0;
+    server.use(
+      http.get('*/api/v1/datasets/:id/viz', () => {
+        asked += 1;
+        return HttpResponse.json({ error: { code: 'not_found', message } }, { status: 404 });
+      }),
+    );
+    renderApp('/visualize?dataset=ds_droid200');
+    await screen.findByText(`${zh.viz.modelFailed}：${message}`);
+    await new Promise((r) => setTimeout(r, 300));
+    // still on screen, in an alert, and the model was not asked for again and again
+    expect(screen.getAllByRole('alert').some((a) => a.textContent === `${zh.viz.modelFailed}：${message}`)).toBe(true);
+    expect(asked).toBeLessThanOrEqual(2);
   });
 
   it('falls back to the first episode when the address names one the dataset does not have', async () => {

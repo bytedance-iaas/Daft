@@ -212,7 +212,16 @@ export const zh = {
     format_disabled: (a: { format?: unknown }) =>
       `本实例关闭了 ${String(a.format ?? '')} 格式的质检（站点配置 ingest.${String(a.format ?? '')}_enabled），请联系管理员`,
     format_unsupported_by_module: (a: { format?: unknown }) => `该模块只能读 LeRobot 与 mcap 数据集，不支持 ${String(a.format ?? '')}`,
-    metadata_invalid: (a: { problem?: unknown }) => `数据集的元数据有问题：${String(a.problem ?? '')}`,
+    metadata_invalid: (a: { problem?: unknown }) => {
+      const problem = String(a.problem ?? '');
+      // a git clone made without Git LFS (the CLI's lfs_problem): said in full, it is the user's to fix
+      const lfs = /^Git LFS pointer files instead of the data: (.*?)(?: \(and up to (\d+) more data files of pointer size\))? - /.exec(problem);
+      if (lfs) {
+        const more = lfs[2] ? ` 等（另有至多 ${lfs[2]} 个同样大小的数据文件）` : '';
+        return `这些文件是 Git LFS 指针（一百多字节的占位），不是数据：${lfs[1]}${more}。数据集是从没装 Git LFS 的 git clone 上传的，用 git lfs pull 或 hf download 拿到真文件后重新上传`;
+      }
+      return `数据集的元数据有问题：${problem}`;
+    },
     missing_input: (a: { missing?: unknown; video_cause?: unknown }) => {
       const names: Record<string, string> = {
         timestamps: '时间戳列',
