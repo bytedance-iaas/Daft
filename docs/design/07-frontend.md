@@ -45,13 +45,17 @@
 
 - 「使用文档」（`HELP_LINKS.docs`）是给质检员的操作手册，手册发布前留空，点了提示「使用文档还没配置」；
 - 「接口文档」（`HELP_LINKS.api`，缺省 `/api-docs.html`，生产即 `/curation/api-docs.html`）是 REST API（C4）的接口参考：
-  构建时和控制台一起产出的独立页面 `api-docs.html`，用 Scalar 渲染同时产出的 `{base}/openapi.json`（契约原文，外部 `$ref` 已收进
+  构建时和控制台一起产出的独立页面 `api-docs.html`，用 Scalar 渲染同时产出的 `{base}/openapi.json`（由契约生成，外部 `$ref` 已收进
   `components`，版本永远等于线上镜像）。页面不进控制台主包（Vue 写的，和 Arco 的样式互不影响），Daemon 不用改：它是 `dist/` 里的普通文件。
-  页面是英文的（契约正文是英文）；「试调用」从同一个源发出，带着浏览器的登录（Scalar 的鉴权框留空时，它给 basicAuth 填的占位头会被去掉），
+  页面是给客户看的（2026-10-06 需求方）：文案——首页的概览 / 约定 / 变更记录、每个 tag 的说明、示例标题——有中英两版（契约里的
+  `description` / `summary` 与 `x-description-zh` / `x-summary-zh`），页面左上角的文档选择器切「中文 / English」，缺省跟浏览器语言
+  （`?api=en` 直接打开英文）；接口自身的说明与参数描述两版都是英文。变更记录从 2.5.1 记起。内部编号（C4、D36、F12.3、设计 18 §4.0、
+  registry 1.5、早期契约版本号）不进页面：文案里不写，接口说明里的由构建时去掉（`src/lib/publicText.ts`，只改发布的 `openapi.json`，
+  仓库里的契约原文照旧带着，方便开发者追溯）。「试调用」从同一个源发出，带着浏览器的登录（Scalar 的鉴权框留空时，它给 basicAuth 填的占位头会被去掉），
   每个写请求都补上 `Content-Type: application/json`（无请求体的也补），所以过得了 Daemon 的写请求校验（只收 JSON、只收同源）；无请求体的写操作在页面上还多一个
   必填的 `Content-Type` 请求头参数，curl 等代码示例照抄就能用（只在页面上加，`openapi.json` 原样）。契约里的 `{base}` 变量（含 SSE 与探针
   在路径上单独声明的服务器）按页面地址填好，示例里是完整地址。字体、遥测、AI 助手、公网代理等
-  会外联的功能一律关掉，页面上除本站外没有任何请求（配置在 `src/lib/apiDocs.ts`）。给 agent 的是 `{base}/openapi.json` 加一页导读 `{base}/llms.txt`（`frontend/public/llms.txt`）。
+  会外联的功能一律关掉，页面上除本站外没有任何请求（配置在 `src/lib/apiDocs.ts`）。给 agent 的是 `{base}/openapi.json` 加导读 `{base}/llms.txt`（英文）与 `{base}/llms-zh.txt`（中文），在 `frontend/public/`。
 
 面包屑的首项「数据质检平台」可点，回到概览（第 7 条）。
 

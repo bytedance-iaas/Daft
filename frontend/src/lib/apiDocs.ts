@@ -3,9 +3,14 @@
 // file, without the prefix injection index.html gets, so the prefix is read off the page's address.
 import type { createApiReference } from '@scalar/api-reference';
 import { normalizeBase } from '../base';
+import { apiDocsText } from '../locales/apiDocs';
 
 type ScalarConfiguration = Exclude<Parameters<typeof createApiReference>[1], readonly unknown[]>;
 type PageLocation = { origin: string; pathname: string };
+
+/** The page comes in both languages; the API's own texts are English in both. */
+export type Lang = 'zh' | 'en';
+export const LANGS: readonly Lang[] = ['zh', 'en'];
 
 interface Server {
   url: string;
@@ -38,9 +43,14 @@ export function serverUrl(url: string, loc: PageLocation): string {
  * samples a full address. Changes `doc` in place and returns it.
  */
 export function localizeServers<T extends OpenApiDocument>(doc: T, loc: PageLocation): T {
-  const localize = (servers: Server[] | undefined, fallback?: string) =>
-    servers?.map(({ url, description }) => ({ url: serverUrl(url, loc), description: description ?? fallback }));
-  if (doc.servers) doc.servers = localize(doc.servers, 'this Daemon');
+  const localize = (servers: Server[] | undefined) => servers?.map(({ url, description }) => ({ url: serverUrl(url, loc), description }));
+  if (doc.servers) {
+    doc.servers = doc.servers.map(({ url, description }) => ({
+      url: serverUrl(url, loc),
+      description: description ?? apiDocsText.en.server,
+      'x-description-zh': description ?? apiDocsText.zh.server,
+    }));
+  }
   for (const item of Object.values(doc.paths ?? {})) {
     if (item.servers) item.servers = localize(item.servers);
     for (const op of Object.values(item)) {
@@ -71,7 +81,8 @@ export function requireJsonOnBodylessWrites<T extends OpenApiDocument>(doc: T): 
           name: 'Content-Type',
           in: 'header',
           required: true,
-          description: 'Every write says it, even without a body (Conventions, Writes).',
+          description: apiDocsText.en.contentType,
+          'x-description-zh': apiDocsText.zh.contentType,
           schema: { type: 'string', enum: ['application/json'] },
           example: 'application/json',
         },
@@ -97,12 +108,50 @@ export function prepareRequest(method: string, headers: Headers): void {
 }
 
 /**
- * Scalar's configuration for the contract `doc` (already localized). Everything that would leave
- * the site is off: the site may have no way out to the internet, and the page must not need one.
+ * The page's language: the one the address names (`?api=en`, or a link into `#zh/...`), else
+ * Chinese for a browser that prefers it, else English.
  */
-export function apiDocsConfiguration(doc: object): ScalarConfiguration {
+export function pageLanguage(languages: readonly string[], loc: { search: string; hash: string } = { search: '', hash: '' }): Lang {
+  const named = new URLSearchParams(loc.search).get('api') ?? /^#(zh|en)\b/.exec(loc.hash)?.[1];
+  if (named === 'zh' || named === 'en') return named;
+  return /^zh\b/i.test(languages[0] ?? '') ? 'zh' : 'en';
+}
+
+const COPY = { description: 'x-description-zh', summary: 'x-summary-zh' } as const;
+
+/**
+ * The document in one language. The contract keeps its copy - the home page, the tags, the example
+ * titles - in English under description / summary and in Chinese under x-description-zh /
+ * x-summary-zh; the Chinese version takes the latter where there is one. Either way the x- fields
+ * go, and the API's own texts stay English. Returns a new document.
+ */
+export function inLanguage<T>(doc: T, lang: Lang): T {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node)) {
+      if (key !== COPY.description && key !== COPY.summary) out[key] = walk(value);
+    }
+    if (lang === 'zh') {
+      for (const [field, zh] of Object.entries(COPY)) {
+        const text = (node as Record<string, unknown>)[zh];
+        if (typeof text === 'string') out[field] = text;
+      }
+    }
+    return out;
+  };
+  return walk(doc) as T;
+}
+
+/**
+ * Scalar's configuration: the contract in Chinese and in English as two documents, switched in the
+ * sidebar (or with `?api=en`), `lang` first. Everything that would leave the site is off: the site
+ * may have no way out to the internet, and the page must not need one.
+ */
+export function apiDocsConfiguration(doc: object, lang: Lang): ScalarConfiguration {
   return {
-    content: doc,
+    sources: LANGS.map((l) => ({ title: apiDocsText[l].language, slug: l, content: inLanguage(doc, l), default: l === lang })),
     defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
     documentDownloadType: 'json',
     onBeforeRequest: ({ request }) => prepareRequest(request.method, request.headers),
