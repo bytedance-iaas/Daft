@@ -118,7 +118,7 @@ def test_history_never_replaces_supplied_p_or_invents_external_2d_geometry(scene
     assert len(history.project_eef(s, "cam0", f, "tcp", original[f])) == 0
 
 
-def test_video_and_evidence_still_share_history_and_preserve_current_markers(scene, tmp_path):
+def test_video_shares_history_and_preserves_current_markers(scene, tmp_path):
     import base64
 
     s, cid, f = scene, "cam0", 25
@@ -130,9 +130,6 @@ def test_video_and_evidence_still_share_history_and_preserve_current_markers(sce
     marks, finger = R.marks_for(s, window, {}), OP._second_axis(s, cid, "finger_line")
     rendered = list(OP._render(s, cid, marks, finger, str(tmp_path), f, f + 1,
                               {i: i for i in range(s.n_frames)}, 720))
-    out = OP.write_stills(s, cid, marks, {f}, media_root=str(tmp_path), directory=str(tmp_path / "stills"),
-                          run_dir=str(tmp_path), finger=finger)
-    assert (tmp_path / out[f]).read_bytes() == R._jpeg(cv2.cvtColor(rendered[0][1], cv2.COLOR_RGB2BGR))
     with av.open(str(path)) as inp:
         raw = list(inp.decode(video=0))[f].to_ndarray(format="bgr24")
     trail = history.project_eef(s, cid, f, "tcp", marks.declared[f])

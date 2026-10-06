@@ -310,7 +310,7 @@ class EefJudge:
         try:
             self._fetch(sample)
             op = OP.opinion_episode(sample, media_root=self.media_root, ask=self.ask, cache=self.cache,
-                                    model=self.model, out_dir=self.out_dir, run_dir=self.run_dir,
+                                    model=self.model,
                                     allowed_mounts=self.cfg.allowed_mounts,
                                     options=getattr(self.ask, "video_options", {}))
         except Exception as e:  # noqa: BLE001 - an opinion that could not be had changes nothing
@@ -319,7 +319,7 @@ class EefJudge:
                   "failure": f"{type(e).__name__}: {e}"[:300]}
             self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {type(e).__name__}: {e}")
         op["elapsed_s"] = round(time.perf_counter() - t1, 3)
-        evidence = OP.evidence_paths(op)
+        evidence: list[str] = []                                  # the overlay is drawn live
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
                   "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,

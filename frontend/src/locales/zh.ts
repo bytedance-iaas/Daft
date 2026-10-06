@@ -1675,8 +1675,10 @@ export const zh = {
       video: '动作投影视频',
       videoLoading: '正在加载动作投影视频…',
       videoFailed: '动作投影视频加载失败',
+      noSource: (why: string | null) => `原始视频放不了${why ? `（${why}）` : ''}，没法叠加标记`,
       confidence: (pct: number) => `不匹配置信度 ${pct}%`,
-      evidenceFrames: (frames: string) => `证据帧 ${frames}（没存图）`,
+      evidenceFrames: '证据帧',
+      seekFrame: (frame: number) => `跳到第 ${frame} 帧`,
       summary: '模型总结',
     },
     // the upload against the dataset's own record (design doc 12 §8.7, D-E16)

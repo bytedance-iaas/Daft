@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
@@ -15,31 +15,6 @@ function sectionIds(): string[] {
 }
 
 describe('质检报告 (07 §5)', () => {
-  it('plays the EEF marked clip before its explanation and reports exhausted media retries', async () => {
-    const record = eefOpinionRecord(12);
-    const detail = record.details as { opinion: { cameras: { ext: { clips: Record<string, unknown>[] } } } };
-    const path = 'checks/eef_video_consistency/opinion/ep_000012/ext/marked.mp4';
-    detail.opinion.cameras.ext.clips[0].video_path = path;
-    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: record }]])]]);
-    const seen = recordRequests();
-    renderApp(`${REPORT}?ep=12#episodes`);
-    const video = await screen.findByLabelText('动作投影视频');
-    expect(video).toHaveAttribute('controls');
-    expect(video).toHaveAttribute('preload', 'metadata');
-    expect(video).toHaveAttribute('src', expect.stringContaining('/marked.mp4?'));
-    const explanation = screen.getByText('模型总结：前半段中心偏得明显');
-    expect(video.compareDocumentPosition(explanation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    for (let n = 0; n < 2; n += 1) {
-      const old = screen.getByLabelText('动作投影视频');
-      const oldUrl = old.getAttribute('src');
-      fireEvent.error(old);
-      await waitFor(() => expect(screen.getByLabelText('动作投影视频')).not.toHaveAttribute('src', oldUrl));
-    }
-    fireEvent.error(screen.getByLabelText('动作投影视频'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('动作投影视频加载失败');
-    expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path') === path)).toHaveLength(3);
-  });
-
   it('overview, integrity, scope and one section per module in report.json order', async () => {
     renderApp(REPORT);
     const eq = await screen.findByTestId('report-equation');
@@ -322,8 +297,6 @@ describe('质检报告 (07 §5)', () => {
     expect(first).toHaveTextContent('片段 1帧 41–96（56 帧）2.7–6.3 秒中心不对不匹配置信度 85%');
     expect(first).toHaveTextContent('「红圈落在手指外侧」');
     expect(second).toHaveTextContent('片段 2帧 181–231（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
-    expect(second).toHaveTextContent('证据帧 206（没存图）');                  // frame 205 of the data
-    await waitFor(() => expect(within(first).getAllByAltText(/ext · frame_0000(52|71)\.jpg/)).toHaveLength(2));
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z · 手指连线 y');
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');
     expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');

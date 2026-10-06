@@ -592,7 +592,7 @@ dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position
 有主时间戳时用主时间轴，否则用已配对的视频时间戳或帧号/fps；没有可靠时间、工具三维定义或绝对位姿时只保留当前标记。
 上传的 provided 投影仍优先用于 P/A/B；若历史三维投影的当前末端与 P 超过已有重投影容差，该帧省略历史线，
 不移动 P 或强行接线掩盖冲突。提示词明确说明历史线可能因输入不足或冲突而省略，缺线本身不是动作错误。
-视频和证据图共用绘制逻辑，两个路径都说明历史线是已经发生的运动、不是预测路径；原有模型意见 API 不增加开关。
+送模型的视频和报告里的叠加共用选择与投影（`opinion.select`、`history.project_eef`），都说明历史线是已经发生的运动、不是预测路径；原有模型意见 API 不增加开关。
 
 **问什么、答什么**（prompt 版本 `eef-opinion-prompt/3`，答复 Schema C2 `eef/opinion_output.schema.json`）：
 
@@ -610,10 +610,11 @@ dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position
 答复按发送内容缓存。
 
 **结果**：记录 `passed = true`（不影响判决、不进人工裁决），`details.assessment_mode = "vlm_opinion"`，
-`details.opinion` 按相机给出答复或失败原因、每个片段的帧、时间、方面、置信度、证据图；证据图是每个证据帧的标注整帧
-（JPEG，存在 `checks/eef_video_consistency/opinion/` 下，随交付目录可签名查看）。报告小节单列「模型意见」：问过的条数、
-有不匹配片段的条数（置信度 ≥ 0.5）、片段数与置信度分布，不计入判过 / 判废 / 转人工；Episode 明细里列出各片段与证据图，
-标明「只是意见，不参与判决」。
+`details.opinion` 按相机给出答复或失败原因、每个片段的帧、时间、方面、置信度、证据帧号。标记视频和证据帧图都不落盘
+（2026-10-06，设计 20）：Episode 明细里每路相机播放原始视频，标记由 `GET /tasks/{id}/episodes/{index}/eef-overlay`
+现场算出、浏览器叠加，点证据帧号跳到该帧。报告小节单列「模型意见」：问过的条数、
+有不匹配片段的条数（置信度 ≥ 0.5）、片段数与置信度分布，不计入判过 / 判废 / 转人工；Episode 明细里列出各片段与证据帧，
+标明「只是意见，不参与判决」。送模型的视频长边上限 448（`opinion.VIDEO_MAX_SIDE`）。
 
 **评估**：在 galbot 上用 dataset2（eef_ds2_lr3，ep0 原版，ep1–6 各注入一种故障）跑，对照 `meta/corruptions.json` 看模型
 指出的片段是否落在注入的故障上、ep0 是否干净。评估之前不接入判决。

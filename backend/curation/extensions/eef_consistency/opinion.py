@@ -7,14 +7,13 @@ video, with P's past-one-second trail under the current markers (clips longer th
 are cut into consecutive parts, one request each). The model
 lists the stretches where P is not on the gripper centre or A does not follow the gripper, each with
 the confidence that it does NOT match and its evidence frames. The opinion is advisory: the record
-passes and nobody is asked; the report and the Episode tab show it next to the verdict.
+passes and nobody is asked; the report and the Episode tab show it next to the verdict. No marked video
+or still is kept: the report plays the source video under an overlay the Daemon draws live (:mod:`.overlay`).
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-import pathlib
 from typing import Callable
 
 import numpy as np
@@ -26,7 +25,7 @@ PROMPT_VERSION = "eef-opinion-prompt/3"           # 3: past-one-second P history
 ANSWER_SCHEMA = "eef/opinion_output.schema.json"
 MAX_CLIP_S = 60.0                     # a longer clip is cut into consecutive parts of about this long
 FLAG_CONFIDENCE = 0.5                 # a segment at least this sure counts as flagged in the report
-STILL_MAX_SIDE = 960                  # evidence stills, full frame
+VIDEO_MAX_SIDE = 448                  # the marked clip sent to the model (the shared vlm.video max_side is 720)
 ASPECTS = ("position", "orientation", "both", "action")
 NAMES = {"position": "中心", "orientation": "朝向", "both": "中心与朝向", "action": "动作合理性"}
 
@@ -235,14 +234,14 @@ def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis
     text = build_prompt(sample, camera_id, point_id, axis_id, lo + 1, hi + 1, finger_id)     # as printed
     finger = _second_axis(sample, camera_id, finger_id)
     clip = encode_rendered_video(f"{camera_id} MARKED", _render(sample, camera_id, marks, finger, media_root, lo_m,
-                                                                hi_m, mapping, int(opts.get("max_side", 720)),
+                                                                hi_m, mapping, VIDEO_MAX_SIDE,
                                                                 point_id=point_id),
                                  fps=fps, end_s=(hi_m + 1) / fps,
                                  max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)))
     clips = [clip]
     if sample.hand_poses:
         raw = encode_rendered_video(f"{camera_id} RAW", _render(sample, camera_id, marks, finger, media_root, lo_m,
-                                   hi_m, mapping, int(opts.get("max_side", 720)), marked=False),
+                                   hi_m, mapping, VIDEO_MAX_SIDE, marked=False),
                                    fps=fps, end_s=(hi_m + 1) / fps,
                                    max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)) - clip.byte_size)
         clips = [raw, clip]
@@ -285,45 +284,6 @@ def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache:
     return {"status": R.FAILED, "failure": problem, "attempts": 2, "cache_hit": False}
 
 
-def write_stills(sample, camera_id: str, marks: R.Marks, wanted: set[int], *, media_root: str, directory: str,
-                 run_dir: str, finger=None, point_id: str | None = None) -> dict[int, str]:
-    """The marked full frames the model cited, as JPEG; paths relative to the run directory."""
-    import cv2
-
-    from .observations import view_frames
-
-    cam = sample.cameras[camera_id]
-    point_id = point_id or pick_point(sample, camera_id)
-    media = {int(cam.video_frame_index[f]): f for f in wanted if cam.video_frame_index[f] >= 0}
-    if not media:
-        return {}
-    d = pathlib.Path(directory)
-    d.mkdir(parents=True, exist_ok=True)
-    out: dict[int, str] = {}
-    for fr in view_frames(sample, camera_id, media_root):
-        f = media.get(fr.index)
-        if f is not None:
-            bgr = fr.bgr()
-            k = min(1.0, STILL_MAX_SIDE / max(bgr.shape[:2]))
-            if k < 1:
-                bgr = cv2.resize(bgr, (int(bgr.shape[1] * k), int(bgr.shape[0] * k)))
-            if sample.hand_poses:
-                from .umi import draw
-
-                bgr = draw(bgr, sample, camera_id, f, k)
-            else:
-                trail = history.project_eef(sample, camera_id, f, point_id,
-                                            marks.declared[f] if marks.declared is not None else None)
-                bgr = _draw(bgr, marks, finger, f, k, trail)
-            bgr = R._label(bgr, f"frame {f + 1}")
-            path = d / f"frame_{f:06d}.jpg"
-            path.write_bytes(R._jpeg(bgr))
-            out[f] = os.path.relpath(path, run_dir).replace(os.sep, "/")
-        if fr.index >= max(media):
-            break
-    return out
-
-
 def _time(sample, camera_id: str, f: int) -> float | None:
     if sample.t is not None and np.isfinite(sample.t[f]):
         return round(float(sample.t[f]), 3)
@@ -331,12 +291,29 @@ def _time(sample, camera_id: str, f: int) -> float | None:
     return round(float(ts[f]), 3) if np.isfinite(ts[f]) else None
 
 
-def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str, out_dir: str, run_dir: str,
-                    allowed_mounts, options: dict | None = None) -> dict:
-    """Every participating camera's clip asked in parts; the segments with their evidence stills.
-    ``{"status", "cameras": {id: {...}}, "segments", "flagged", "max_confidence", "requests"}``."""
+def select(sample, camera_id: str) -> tuple[str, str | None, str | None, list[int]] | str:
+    """What a camera's marked clip draws: (P, A, B, the sample frames shown), or why the camera is skipped.
+    Shared by the request and by the report's overlay (:mod:`.overlay`), so both mark the same things."""
     from .load import declared_track
 
+    cam = sample.cameras[camera_id]
+    pid = pick_point(sample, camera_id)
+    track = declared_track(sample, camera_id, pid) if pid else None
+    if track is None and not sample.hand_poses:
+        return "no projection of the gripper centre on this camera"
+    frames = [i for i in range(sample.n_frames)
+              if cam.video_frame_index[i] >= 0 and (sample.hand_poses or np.isfinite(track.uv[i]).all())]
+    if not frames:
+        return "the gripper centre is never projected into this camera"
+    aid = None if sample.hand_poses else pick_axis(sample, camera_id, frames)
+    bid = None if sample.hand_poses else pick_finger_axis(sample, camera_id, frames, aid)
+    return pid or "tcp", aid, bid, frames
+
+
+def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
+                    allowed_mounts, options: dict | None = None) -> dict:
+    """Every participating camera's clip asked in parts; the segments with their evidence frame numbers.
+    ``{"status", "cameras": {id: {...}}, "segments", "flagged", "max_confidence", "requests"}``."""
     allowed = set(allowed_mounts)
     cams: dict[str, dict] = {}
     requests = 0
@@ -345,19 +322,11 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
         if cam.mount not in allowed:
             cams[cid] = {"status": "skipped", "reason": f"mount {cam.mount} does not take part"}
             continue
-        pid = pick_point(sample, cid)
-        track = declared_track(sample, cid, pid) if pid else None
-        if track is None and not sample.hand_poses:
-            cams[cid] = {"status": "skipped", "reason": "no projection of the gripper centre on this camera"}
+        picked = select(sample, cid)
+        if isinstance(picked, str):
+            cams[cid] = {"status": "skipped", "reason": picked}
             continue
-        frames = [i for i in range(sample.n_frames)
-                  if cam.video_frame_index[i] >= 0 and (sample.hand_poses or np.isfinite(track.uv[i]).all())]
-        if not frames:
-            cams[cid] = {"status": "skipped", "reason": "the gripper centre is never projected into this camera"}
-            continue
-        pid = pid or "tcp"
-        aid = None if sample.hand_poses else pick_axis(sample, cid, frames)
-        bid = None if sample.hand_poses else pick_finger_axis(sample, cid, frames, aid)
+        pid, aid, bid, frames = picked
         fps = float(cam.media.get("fps") or 0)
         row: dict = {"status": "answered", "point_id": pid, "axis_id": aid, "finger_axis_id": bid, "clips": [],
                      "segments": []}
@@ -370,15 +339,7 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
                 clip.update(status=R.FAILED, failure={"code": "video_unreadable", "message": str(e)[:300]})
                 row["clips"].append(clip)
                 continue
-            clip["video"] = req.videos[-1].metadata()
-            if sample.hand_poses:
-                import base64
-
-                dest = pathlib.Path(out_dir) / "opinion" / f"ep_{sample.episode_index:06d}" / cid
-                dest.mkdir(parents=True, exist_ok=True)
-                path = dest / f"{req.key[:16]}_marked.mp4"
-                path.write_bytes(base64.b64decode(req.videos[-1].url.split(",", 1)[1]))
-                clip["video_path"] = os.path.relpath(path, run_dir).replace(os.sep, "/")
+            clip["video"] = req.videos[-1].metadata()   # nothing is kept: the report draws the overlay live
             got = ask_clip(req, ask, cache)
             requests += 0 if got.get("cache_hit") else got.get("attempts", 0)
             req.videos.clear()                      # the record keeps metadata, never the video's Base64
@@ -398,14 +359,6 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
                     "evidence_frames": list(seg["evidence_frames"]), "observation": seg["observation"]})
         answered = [c for c in row["clips"] if c.get("status") == R.ANSWERED]
         row["status"] = "answered" if len(answered) == len(row["clips"]) else "partial" if answered else "failed"
-        if row["segments"]:
-            window = R.Window(camera_id=cid, kind="opinion", frames=frames, point_id=pid, axis_id=aid)
-            stills = write_stills(sample, cid, R.marks_for(sample, window, {}),
-                                  {f for s in row["segments"] for f in s["evidence_frames"]}, media_root=media_root,
-                                  directory=os.path.join(out_dir, "opinion", f"ep_{sample.episode_index:06d}", cid),
-                                  run_dir=run_dir, finger=_second_axis(sample, cid, bid), point_id=pid)
-            for s in row["segments"]:
-                s["evidence"] = [stills[f] for f in s["evidence_frames"] if f in stills]
         cams[cid] = row
     asked = [c for c in cams.values() if c.get("status") != "skipped"]
     segments = [s for c in asked for s in c.get("segments") or []]
@@ -419,11 +372,6 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
             "status": status, "cameras": cams,
             "segments": len(segments), "flagged": bool(top is not None and top >= FLAG_CONFIDENCE),
             "max_confidence": top, "requests": requests}
-
-
-def evidence_paths(opinion: dict) -> list[str]:
-    return [p for c in (opinion.get("cameras") or {}).values() for s in c.get("segments") or []
-            for p in s.get("evidence") or []]
 
 
 def summary(results: dict) -> dict:

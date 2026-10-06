@@ -15,6 +15,7 @@
 | `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
+| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
 
 内核（`backend/curation/viz/`）：`lerobot_info.py`（features、names 的几种写法、相机编码与 `needs_transcode`、RFC 6381 编码串）、`groups.py`（曲线分组 §5.3）、
@@ -195,6 +196,11 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `curl -s $B/datasets/$D/episodes/0/cameras/camera_wrist.json | jq '{codec, count, codec_string, k: .key[:3], config: (.config|length)}'` 是 `h264`、20 帧、`avc1.64…`、`[true,false,false]`、一段 base64；
     这时缓存目录里有 `camera_wrist.annexb`、还没有 `camera_wrist.mp4`。`curl -s -o /tmp/w.mp4 $B/datasets/$D/episodes/0/cameras/camera_wrist.mp4` 才转封装（之后 `episode.json` 里这路 `mp4: true`），
     `ffprobe /tmp/w.mp4`（或 PyAV）有 20 帧。用 `CURATOR_VIZ_CLIENT_DECODE=0` 重启：相机没有 `samples_url`，`.json` 回 404，扫描时就转封装，与阶段 13 一样。
+
+20. **EEF 标记叠加（设计 20）**：跑一条勾了「EEF–视频一致性」、没给夹爪参考的任务（UMI 数据见 EEF extension README 的 `export-umi`）。
+    `curl -s $B/tasks/$T/episodes/0/eef-overlay | jq '.cameras[] | {camera_id, viz_camera, image_size_wh, skipped, layers: [.layers[] | {kind, label, color}]}'`：
+    每路参与的相机有四层，`viz_camera` 等于 `curl -s $B/tasks/$T/episodes/0/viz | jq '[.cameras[].key]'` 里的一项；`layers[].frames` 的长度等于这条的样本帧数。
+    `ls $D/data/runs/$T/checks/eef_video_consistency/` 没有 `opinion/`。没勾 EEF 的任务回 404，`error.details.reason` 是 `no_eef_module`。
 
 ## 自动化测试
 

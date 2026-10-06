@@ -180,9 +180,9 @@ export interface EefOpinionSegment {
   aspect: string;
   /** How sure the model is that the stretch does NOT match, 0-1. */
   confidence: number;
+  /** Sample frames (from 0) the model cited; the report seeks the camera's player to them. */
   evidenceFrames: number[];
   observation: string;
-  evidence: string[];
 }
 
 export interface EefOpinionCamera {
@@ -194,7 +194,6 @@ export interface EefOpinionCamera {
   fingerAxis: string | null;
   /** The model's one-line summaries, one per clip part. */
   summaries: string[];
-  videos: string[];
   /** Why a part got no answer, readable. */
   failures: string[];
   /** The gripper could not be seen in some part. */
@@ -215,8 +214,8 @@ const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFini
 
 /**
  * No gripper reference (design doc 12 §10.5, D-E15): the model's advisory opinion on each camera's
- * whole clip - the stretches it finds mismatched, each with its confidence and evidence stills. Null
- * for a record the module judged.
+ * whole clip - the stretches it finds mismatched, each with its confidence and evidence frames. Null
+ * for a record the module judged. Nothing marked is saved: the report draws the marks live (design doc 20).
  */
 export function eefOpinion(details: D): EefOpinion | null {
   if (details.assessment_mode !== 'vlm_opinion') return null;
@@ -231,7 +230,6 @@ export function eefOpinion(details: D): EefOpinion | null {
       axis: s(c.axis_id),
       fingerAxis: s(c.finger_axis_id),
       summaries: clips.map((x) => s(x.summary)).filter((x): x is string => Boolean(x)),
-      videos: clips.map((x) => s(x.video_path)).filter((x): x is string => Boolean(x)),
       failures: clips
         .filter((x) => x.status === 'failed')
         .map((x) => {
@@ -252,7 +250,6 @@ export function eefOpinion(details: D): EefOpinion | null {
           confidence: n(x.confidence) ?? 0,
           evidenceFrames: arr(x.evidence_frames).map(n).filter((f): f is number => f !== null),
           observation: s(x.observation) ?? '',
-          evidence: arr(x.evidence).map(s).filter((p): p is string => Boolean(p)),
         }))
         .sort((a, b) => b.confidence - a.confidence || a.startFrame - b.startFrame),
     };

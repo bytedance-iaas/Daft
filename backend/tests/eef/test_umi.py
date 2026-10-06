@@ -177,12 +177,10 @@ def test_continuous_raw_marked_and_action_evidence(exported, tmp_path):
                           "summary": "需要检查抓取时机"})
 
     op = OP.opinion_episode(s, media_root=str(root), ask=ask, cache=R.Cache(str(tmp_path / "cache")), model="test",
-                            out_dir=str(tmp_path / "out"), run_dir=str(tmp_path), allowed_mounts=["wrist"])
+                            allowed_mounts=["wrist"])
     assert op["status"] == "answered" and op["requests"] == 2 and op["flagged"]
     for cam in op["cameras"].values():
         assert cam["segments"][0]["start_frame"] == 1
-        assert (tmp_path / cam["segments"][0]["evidence"][0]).is_file()
-        assert (tmp_path / cam["clips"][0]["video_path"]).is_file()
 
 
 def test_pickle_globals_and_missing_calibration_are_rejected(tmp_path):

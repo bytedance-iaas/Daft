@@ -5,6 +5,7 @@ import { HttpResponse, http } from 'msw';
 import type { DatasetDetail, McapProbeRequest, Task, VizMapping, VizTemplate } from '../api/types';
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
+import { eefOverlay } from './eef';
 import { API, body, cursorPage, err, idempotent } from './plumbing';
 import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
 import {
@@ -192,6 +193,12 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
 export const vizHandlers = [
   ...scoped('datasets', datasetSource),
   ...scoped('tasks', taskSource),
+  // the EEF opinion's marks (design doc 20): the opinion record's camera `ext` over the input's first camera
+  http.get(`${API}/tasks/:id/episodes/:index/eef-overlay`, withSource(taskSource, (s, _request, params) => {
+    const index = episodeOf(s, params.index);
+    if (index instanceof Response) return index;
+    return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null));
+  })),
   http.get(`${API}/datasets/:id/viz/episodes`, ({ request, params }) => {
     const s = datasetSource(String(params.id));
     if (s instanceof Response) return s;
