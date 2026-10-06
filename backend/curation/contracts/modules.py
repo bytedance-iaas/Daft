@@ -7,9 +7,9 @@ where a module runs, its finding codes and tunable parameters from here (the fro
 Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 
 * **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
-  (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm -> profile). Stages
+  (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm). Stages
   inside a block exist to share a decode and to size their own concurrency; every stage gets every
-  selected episode. ``dedup`` and ``profile`` need the whole selection and start once the stages
+  selected episode. ``dedup`` needs the whole selection and starts once the stages
   before them in their block are done (``FULL_SET_STAGES``). ``depends_on`` is data only: the
   captions ``autolabel`` writes for episodes without a task text.
 * **What it can find.** Every module carries its catalogue of finding codes (``codes``). A code maps
@@ -25,7 +25,7 @@ Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
   nothing" and "did not look" are told apart.
 
 ``autolabel`` (captioning episodes without a task text) is not a module; it is the first stage of
-the VLM block and a data dependency of ``task_success`` and ``skill_profile``.
+the VLM block and a data dependency of ``task_success``.
 
 ``param_schema`` drives the second screen of the new-task form (D38), so every parameter carries
 ``title`` (the field label), ``description`` (help text) and ``default``; a choice lists its
@@ -56,20 +56,20 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "2.1"
+REGISTRY_VERSION = "3.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "1.2"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
-Stage = Literal["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile"]
+Stage = Literal["integrity", "numeric", "frame", "dedup", "autolabel", "vlm"]
 
 #: The two blocks and their stages in order (design doc 17 §3.1).
 BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup"),
-                                      "vlm": ("autolabel", "vlm", "profile")}
+                                      "vlm": ("autolabel", "vlm")}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
-FULL_SET_STAGES: tuple[str, ...] = ("dedup", "profile")
+FULL_SET_STAGES: tuple[str, ...] = ("dedup",)
 #: Every stage, the CPU block's first.
 STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 
@@ -612,16 +612,6 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_blocking("duplicate", "SET-1", "与另一条完全重复", appealable=True),),
         param_schema=_no_params(),
         tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
-    ModuleSpec(
-        id="skill_profile", name_zh="技能画像",
-        summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-        level="dataset", needs=frozenset({"video", "vlm"}), block="vlm", stage="profile",
-        depends_on=("autolabel",),
-        codes=(_review("label_disagreement", "LABEL-5", "标注与画面不符", "label"),
-               _info("descriptions_conflict", "LABEL-2", "多份描述彼此不一致", "medium"),
-               _info("undersampled_family", "SET-3", "样本偏少的技能族", scope_kind="dataset")),
-        param_schema=_no_params(),
-        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),
 )
 
 

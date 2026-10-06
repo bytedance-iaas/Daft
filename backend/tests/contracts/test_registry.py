@@ -14,12 +14,12 @@ from curation.contracts import schemas
 def test_modules_in_block_and_stage_order():
     assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
                        "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
-                       "camera_defects", "dedup", "skill_profile")
+                       "camera_defects", "dedup")
     for block, stages in M.BLOCKS.items():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
     assert M.STAGES == M.BLOCKS["cpu"] + M.BLOCKS["vlm"]
-    assert set(M.FULL_SET_STAGES) == {"dedup", "profile"}
+    assert set(M.FULL_SET_STAGES) == {"dedup"}
     assert all(s in M.STAGES for s in M.FULL_SET_STAGES)
 
 
@@ -107,17 +107,17 @@ def test_the_taxonomy_matches_the_sample_sets():
 
 
 def test_v1_facts():
-    """Design doc 05 section 1 / 17 §3: the funnel checks, then dedup and the profile on the whole set."""
+    """Design doc 05 section 1 / 17 §3: the funnel checks, then dedup on the whole set."""
     assert {m.id for m in M.by_stage("dedup")} == {"dedup"}
-    assert {m.id for m in M.by_stage("profile")} == {"skill_profile"}
-    assert {m.id for m in M.by_block("vlm")} == {"eef_video_consistency", "task_success", "camera_defects",
-                                                 "skill_profile"}
-    assert M.get("dedup").level == "dataset" and M.get("skill_profile").level == "dataset"
+    assert "profile" not in M.STAGES, "the skill profile and its stage were removed"
+    assert {m.id for m in M.by_block("vlm")} == {"eef_video_consistency", "task_success",
+                                                 "camera_defects"}
+    assert M.get("dedup").level == "dataset"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
-                                                                    "skill_profile", "eef_video_consistency",
+                                                                    "eef_video_consistency",
                                                                     "data_integrity"}
-    assert {m.id for m in M.MODULES if "autolabel" in m.depends_on} == {"task_success", "camera_defects",
-                                                                        "skill_profile"}
+    assert {m.id for m in M.MODULES if "autolabel" in m.depends_on} == {"task_success",
+                                                                        "camera_defects"}
     assert "autolabel" not in M.ids()
 
 
@@ -136,9 +136,13 @@ def test_the_default_policy_reproduces_todays_gates():
 
 
 def test_p20_items_have_codes():
-    """P20: the eight items that needed only a mapping are covered from the first stage on."""
+    """P20: the items that needed only a mapping are covered from the first stage on.
+
+    LABEL-2 (one episode with several descriptions that disagree) left the list with the skill
+    profile: it was the only module that read the descriptions against each other."""
     covered = {item for m in M.MODULES for item in m.covers}
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "SET-3", "ACT-6"} <= covered
+    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= covered
+    assert "LABEL-2" not in covered
 
 
 def test_the_eef_module_takes_part_in_the_verdict():
@@ -212,7 +216,7 @@ def test_review_lines():
     # physical and structural gates are final; info-only modules reject nothing
     assert not any(M.appealable(m.id) for m in M.MODULES
                    if m.id in ("timestamp_check", "kinematic_limits", "video_action_sync", "data_integrity",
-                               "motion_quality", "visual_quality", "camera_defects", "skill_profile"))
+                               "motion_quality", "visual_quality", "camera_defects"))
 
 
 def test_params_validate():

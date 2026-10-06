@@ -1,5 +1,5 @@
 {
- "registry_version": "2.1",
+ "registry_version": "3.0",
  "taxonomy_version": "1.2",
  "blocks": [
   {
@@ -17,8 +17,7 @@
    "title_zh": "VLM 块",
    "stages": [
     "autolabel",
-    "vlm",
-    "profile"
+    "vlm"
    ]
   }
  ],
@@ -28,12 +27,10 @@
   "frame",
   "dedup",
   "autolabel",
-  "vlm",
-  "profile"
+  "vlm"
  ],
  "full_set_stages": [
-  "dedup",
-  "profile"
+  "dedup"
  ],
  "finding_levels": [
   {
@@ -2210,74 +2207,6 @@
      "sortable": [
       "episode_index",
       "duplicate_of"
-     ],
-     "default_sort": "episode_index"
-    }
-   ],
-   "mergeable": false
-  },
-  {
-   "id": "skill_profile",
-   "name_zh": "技能画像",
-   "summary_zh": "归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-   "level": "dataset",
-   "needs": [
-    "video",
-    "vlm"
-   ],
-   "block": "vlm",
-   "stage": "profile",
-   "depends_on": [
-    "autolabel"
-   ],
-   "codes": [
-    {
-     "code": "label_disagreement",
-     "item": "LABEL-5",
-     "name_zh": "标注与画面不符",
-     "severity": "medium",
-     "level": "review",
-     "scope_kind": "episode",
-     "appealable": false,
-     "review_line": "label"
-    },
-    {
-     "code": "descriptions_conflict",
-     "item": "LABEL-2",
-     "name_zh": "多份描述彼此不一致",
-     "severity": "medium",
-     "level": "info",
-     "scope_kind": "episode",
-     "appealable": false
-    },
-    {
-     "code": "undersampled_family",
-     "item": "SET-3",
-     "name_zh": "样本偏少的技能族",
-     "severity": "low",
-     "level": "info",
-     "scope_kind": "dataset",
-     "appealable": false
-    }
-   ],
-   "covers": [
-    "LABEL-5",
-    "LABEL-2",
-    "SET-3"
-   ],
-   "param_schema": {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": false
-   },
-   "tables": [
-    {
-     "id": "skill_assignment",
-     "title_zh": "技能归属",
-     "sortable": [
-      "episode_index",
-      "family",
-      "subskill"
      ],
      "default_sort": "episode_index"
     }
