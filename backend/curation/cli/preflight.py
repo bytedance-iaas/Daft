@@ -129,6 +129,11 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
            "warnings": []}
 
     fmt = lerobot_meta.detect_format(listing)
+    if fmt.kind in ("lerobot", "mcap", "lance"):
+        # a git clone without Git LFS: say so, not "Parquet magic bytes not found" further down
+        pointers, candidates = lerobot_meta.lfs_pointers(storage, listing)
+        if pointers:
+            return _invalid(ctx, doc, specs, fmt, [lerobot_meta.lfs_problem(pointers, candidates)])
     if fmt.kind in ("mcap", "lance"):
         from . import preflight_containers
 

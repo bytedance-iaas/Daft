@@ -185,7 +185,9 @@ F13.8：转封装在扫描之后约 0.05 s 出第一帧，冷开的大头是扫�
   本地 S3 仍走路径风格。修好后同一份数据经 Daemon 读通：数据集模型、episode、曲线、两路相机按 Range 出字节（`tests/viz/test_lance.py` 加了端点的用例）。
 - HuggingFace 上 `lance-format` 组织发的 LeRobot 数据集（如 `lerobot-pusht-lance`、`lerobot-xvla-soft-fold`）是另一种「frames / episodes / videos」三表布局：
   表在 `data/` 下，没有 `meta/` 也没有 `meta.lance`（没有 info.json、特征名、任务文字），不是 lerobot-lancedb 转出来的。预检照旧判为 `lancedb`（不支持），可视化也读不了；
-  要不要支持待需求方定。
+  要不要支持待需求方定。需求方改用同组织的 `pusht-lance`（lerobot-lancedb 0.3，两边都支持）；`pusht-lerobot-lancedb`、`pusht-lerobot-lancedb-video` 是 0.1–0.2 的两种布局，只能看。
+- 需求方上传的 `tos://curation/datasets/pusht-lance/` 仍读不出：是从没装 Git LFS 的 git clone 传的，数据文件全是一百多字节的 LFS 指针。
+  预检现在直接说是 LFS 指针（设计 05 §3），可视化的元数据读不出时给 404 与原因（原先是 500），可视化页只请求一次并写出原因（设计 07 §4.5）。
 
 ## 5. 契约与接口改动
 

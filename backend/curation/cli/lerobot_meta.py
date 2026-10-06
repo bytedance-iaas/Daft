@@ -71,6 +71,37 @@ class DatasetMeta:
     warnings: list[str] = field(default_factory=list)
 
 
+#: the first line of a Git LFS pointer file; the spec keeps pointer files under 1024 bytes
+LFS_POINTER = b"version https://git-lfs.github.com/spec/v1"
+_LFS_MAX = 1024
+_LFS_DATA = (".parquet", ".mp4", ".mcap", ".lance", ".blob", ".arrow", ".jsonl", ".json")
+
+
+def lfs_pointers(storage: Storage, listing: dict[str, ObjectInfo], probe: int = 5) -> tuple[list[str], int]:
+    """Data files that are Git LFS pointers instead of data - a dataset uploaded from a git clone made
+    without Git LFS (HuggingFace repositories keep their data in LFS): (the pointers among the first
+    ``probe`` candidates, how many candidates there are). Candidates are data files of pointer size,
+    so a dataset without data files under 1 KiB costs no reads."""
+    cands = sorted(k for k, o in listing.items()
+                   if len(LFS_POINTER) <= (o.size or 0) < _LFS_MAX and k.lower().endswith(_LFS_DATA))
+    found = []
+    for key in cands[:probe]:
+        try:
+            if storage.read_range(key, 0, len(LFS_POINTER)) == LFS_POINTER:
+                found.append(key)
+        except Exception:  # noqa: BLE001 - unreadable here: the reading proper reports it
+            continue
+    return found, len(cands)
+
+
+def lfs_problem(found: list[str], candidates: int) -> str:
+    shown = ", ".join(found[:3])
+    more = f" (and up to {candidates - len(found[:3])} more data files of pointer size)" if candidates > 3 else ""
+    return (f"Git LFS pointer files instead of the data: {shown}{more} - the dataset was uploaded from "
+            f"a git clone made without Git LFS; fetch the files (`git lfs pull` in the clone, or "
+            f"`hf download`) and upload them again")
+
+
 def _count_suffix(keys, suffix: str) -> int:
     return sum(1 for k in keys if k.lower().endswith(suffix))
 

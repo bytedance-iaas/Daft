@@ -117,6 +117,22 @@ def test_preflight_mcap_topic_mapping(cli, mini_mcap):
     assert "ingest.mcap_mapping" in doc["format"]["detail"]
 
 
+
+def test_preflight_names_git_lfs_pointers_in_lance_tables(cli, mini_lance, tmp_path):
+    """The requester's tos://curation/datasets/pusht-lance/ (2026-10-05): a HuggingFace clone made
+    without Git LFS, every table's data file a pointer - named, not a parquet or Lance error."""
+    import shutil
+
+    root = tmp_path / "lance_lfs"
+    shutil.copytree(mini_lance, root)
+    data = sorted((root / "frames.lance" / "data").glob("*.lance"))[0]
+    data.write_bytes(b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"b" * 64
+                     + f"\nsize {data.stat().st_size}\n".encode())
+    doc = cli("preflight", "--input", str(root)).doc
+    assert not schemas.errors("cli/preflight.schema.json", doc)
+    assert doc["format"]["kind"] == "lance" and doc["format"]["supported"] is False
+    assert f"Git LFS pointer files instead of the data: frames.lance/data/{data.name}" in doc["format"]["detail"]
+
 @pytest.mark.parametrize("fmt", ["mcap", "lance"])
 def test_preflight_format_switched_off(cli, mini_mcap, mini_lance, fmt):
     doc = cli("preflight", "--input", _datasets(mini_mcap, mini_lance)[fmt],

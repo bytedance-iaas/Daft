@@ -189,6 +189,8 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     字段树最后一组「Lance 表」列出各表的行数与列。把 `lance_03` 的 `meta/` 挪走（只留三张表）再看一遍：元数据从 `meta.lance` 读，`viz/meta?path=meta/info.json` 里有 `"storage_format": "lance"`。
     TOS 上的 Lance 数据集按 S3 兼容端点读，自动化测试里用一个最小的本地 S3（`tests/viz/fake_s3.py`）跑同样的流程。
     有 TOS 密钥时登记一份 TOS 上的 0.3 数据集（如 `tos://galbot/so101-pick-place-lance/`）：`/viz` 的 `format.layout` 是 `lance-0.3`，episode 能开，相机 `Range: bytes=0-31` 返回 206、第 5–12 字节是 `ftypisom`。
+    把一份 0.3 副本的 `meta/episodes/chunk-000/file-000.parquet` 换成 Git LFS 指针文本（`version https://git-lfs.github.com/spec/v1` 开头）再登记：
+    `/viz` 与 `/viz/episodes` 是 404，`message` 写「…file-000.parquet 是 Git LFS 指针文件（N 字节的占位），不是数据…」（以前是 500）。
 
 19. **浏览器内解码（设计 19 §3，F14.2）**：缺省开着（`CURATOR_VIZ_CLIENT_DECODE=1`）。第 14 步的 `viz_abc` 确认映射后打开一条 episode：
     `curl -s $B/datasets/$D/episodes/0/viz | jq '.cameras[] | {key, access, samples_url, index_url}'` 每路都是 `remux`，另有 `samples_url`（`.frames`）与 `index_url`（`.json`）；

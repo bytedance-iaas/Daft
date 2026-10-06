@@ -252,7 +252,12 @@ class LanceReader(LeRobotReader):
         rid = rows.get((feature, where[0], where[1]))
         if rid is None:
             raise ApiError("not_found", f"videos 表里没有 {feature} 的 chunk {where[0]} / file {where[1]}")
-        blob = self.table(src, m.layout.videos).take_blobs(LL.BLOB_COLUMN, ids=[rid])[0]
+        try:
+            blob = self.table(src, m.layout.videos).take_blobs(LL.BLOB_COLUMN, ids=[rid])[0]
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a blob that does not read: the page says so
+            raise ApiError("not_found", f"读不出 {feature} 的视频 blob：{str(exc)[:200]}") from None
         frm, to = row.windows.get(feature, (None, None))
         return cam, blob, frm, to
 

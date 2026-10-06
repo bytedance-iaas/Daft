@@ -78,6 +78,21 @@ class LeRobotMeta:
     made_at: float = field(default_factory=time.monotonic)
 
 
+def _episode_table(pd, st, key: str):
+    """One parquet of the v3 episode table; one that does not parse is said what it is (a Git LFS
+    pointer from a clone made without LFS, most often), not a 500."""
+    from curation.cli.lerobot_meta import LFS_POINTER
+
+    data = st.read_bytes(key)
+    try:
+        return pd.read_parquet(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001 - not a parquet: the page says why
+        if data.startswith(LFS_POINTER):
+            raise ApiError("not_found", f"{key} 是 Git LFS 指针文件（{len(data)} 字节的占位），不是数据：数据集是从没装 Git LFS 的 "
+                                        "git clone 上传的，用 git lfs pull 或 hf download 拿到真文件后重新上传") from None
+        raise ApiError("not_found", f"读不出 {key}：{type(exc).__name__}: {str(exc)[:200]}") from None
+
+
 class LeRobotReader:
     def __init__(self, service):
         self.svc = service
@@ -202,7 +217,7 @@ class LeRobotReader:
             import pandas as pd
 
             keys = [k for k in meta_files if k.startswith("meta/episodes/") and k.endswith(".parquet")]
-            frames = [pd.read_parquet(io.BytesIO(st.read_bytes(k))) for k in sorted(keys)]
+            frames = [_episode_table(pd, st, k) for k in sorted(keys)]
             if not frames:
                 raise ApiError("not_found", "meta/episodes/ 下没有 parquet（LeRobot v3 的 episode 表）")
             table = pd.concat(frames, ignore_index=True)

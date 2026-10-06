@@ -218,3 +218,24 @@ def test_tos_tables_open_on_the_buckets_virtual_host(client_for, data_root):
     local = s3_options("http://127.0.0.1:9000", "cn-beijing", bucket="bkt", key_id="ak", secret="sk", virtual_hosted=False)
     assert local["aws_endpoint"] == "http://127.0.0.1:9000" and local["aws_allow_http"] == "true"
     assert local["aws_access_key_id"] == "ak" and "aws_skip_signature" not in local
+
+
+
+def test_metadata_that_is_a_git_lfs_pointer_is_said_so(client_for, data_root, tmp_path):
+    """meta/ parquet that does not parse was a 500; a Git LFS pointer (a HuggingFace clone made
+    without LFS, the requester's pusht-lance on 2026-10-05) is named as one."""
+    root = tmp_path / "lance_lfs"
+    shutil.copytree(data_root / "lance_03", root)
+    episodes = sorted((root / "meta" / "episodes").rglob("*.parquet"))[0]
+    episodes.write_bytes(b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"c" * 64 + b"\nsize 106584\n")
+    c = client_for(base_path="/curation", local_data_root=tmp_path)
+    ds = _register(c.app.state.runtime, "lance_lfs", str(root), _preflight("lance"))
+    for path in (f"{API}/datasets/{ds}/viz", f"{API}/datasets/{ds}/viz/episodes"):
+        body = assert_error(c.get(path), "not_found")
+        assert "Git LFS 指针文件" in body["error"]["message"] and "hf download" in body["error"]["message"]
+    # a parquet that is broken some other way says which file, still not a 500
+    episodes.write_bytes(b"PAR1 not really")
+    c2 = client_for(base_path="/curation", local_data_root=tmp_path)
+    ds2 = _register(c2.app.state.runtime, "lance_broken", str(root), _preflight("lance"))
+    body = assert_error(c2.get(f"{API}/datasets/{ds2}/viz"), "not_found")
+    assert body["error"]["message"].startswith(f"读不出 meta/episodes/{episodes.parent.name}/{episodes.name}")
