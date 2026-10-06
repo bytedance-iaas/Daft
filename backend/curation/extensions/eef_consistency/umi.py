@@ -5,7 +5,7 @@ import numpy as np
 
 from . import geometry as G, history
 
-PROMPT_VERSION = "umi-action-prompt/5"
+PROMPT_VERSION = "umi-action-prompt/6"  # 6: release is when the held object stays behind
 COLORS = ((255, 160, 0), (210, 60, 255))  # BGR, stable hand order
 
 
@@ -120,37 +120,44 @@ def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
     cfg = sample.sample["umi"]
     owner = cfg['camera_hands'][camera_id]
     color = ('BLUE', 'MAGENTA')[sorted(sample.hand_poses).index(owner)]
-    legend = f"{owner} is {color}"
+    task = (sample.sample['source']['instruction'] or 'Assess the visible manipulation').strip().rstrip('.')
     return "\n".join([
-        "Check a UMI handheld manipulation recording using continuous RAW and MARKED videos of the same window.",
-        f"Task: {sample.sample['source']['instruction'] or 'Assess the visible manipulation'}. "
-        f"Camera {camera_id} is attached to {owner}. Printed frames {lo} to {hi}.",
+        "Check a UMI recording: a person operates a handheld gripper with a camera on it. There is no robot and "
+        "no robot command; check whether the recorded gripper motion agrees with what the video shows. "
+        "You get continuous RAW and MARKED videos of the same window.",
+        f"Task: {task}. Camera {camera_id} is mounted on {owner}'s gripper. Printed frames {lo} to {hi}.",
+        f"Identify {owner} first: because the camera is mounted on it, {owner}'s own fingers stay at about the same "
+        "place in every frame. A gripper or hand that moves around the frame is a DIFFERENT hand, even if a person "
+        f"holds it; never assess it as {owner}.",
         f"Only the camera's own hand {owner} is annotated and assessed. Other hands in RAW are scene context; "
         "their trajectories, geometry and opening values are intentionally not overlaid. "
         "Do not report their missing annotations as discrepancies.",
-        f"Legend: {legend}. A circle is the current TCP (finger center), a short line is its approach axis, "
-        "and a crossbar is the recorded finger opening. Colors identify hands, not correctness.",
+        f"Legend: {owner} is {color}. A circle is the current TCP (tool center point, between the fingertips), a "
+        "short line is its approach axis, and a crossbar is the recorded finger opening. The text at the bottom "
+        "gives the recorded opening in meters. Colors identify hands, not correctness.",
         history.prompt(cfg["horizon_s"], "TCP"),
         "The own-hand current overlay is approximately fixed because the camera moves with the gripper. "
         "This is expected and cannot independently validate its world trajectory. Poses come from SLAM, "
         "not independent motion-capture ground truth. Projections do not account for occlusion or mirror reflections.",
-        "First watch RAW for the objects and actual grasp/transfer/release events. Then compare MARKED. "
-        "Check the annotated hand's current TCP/orientation consistency and whether its recent motion and "
-        "opening/closing timing agree with the visible task. Do not infer physical collisions from a 2D crossing "
-        "alone or require the operator's hand to execute a robot command. Distinguish a visible discrepancy "
-        "from occlusion, missing calibration evidence or an ambiguous target. Abstain when not observable.",
-        "A grasp does NOT require zero opening: fingers holding a ball, cup rim, or cup body remain separated "
-        "by that object's contact span. A stable nonzero opening while carrying or pouring is normal. "
-        "Do not flag opening just because an object is held, transferred between cups, or released by pouring. "
-        "Report opening/timing errors only when an actual visible finger opening/closing transition or separation "
-        "contradicts the recorded crossbar over time. Numeric width alone cannot establish a discrepancy without "
-        "visible finger evidence; do not infer metric object size from this uncalibrated visual impression.",
+        "First watch RAW for the objects and the actual grasp, transfer and release events. Then compare MARKED. "
+        "position: the circle is not at the visible point between the fingertips. orientation: the approach line "
+        "does not follow the direction the fingers point. action: the recent motion or the opening/closing timing "
+        "disagrees with the visible events. Do not infer physical collisions from a 2D crossing alone. Distinguish "
+        "a visible discrepancy from occlusion, missing calibration evidence or an ambiguous target. Abstain when "
+        "not observable.",
+        "Opening: fingers holding an object stay apart by the object's contact width, so a stable nonzero opening "
+        "while an object is held, carried or manipulated is normal. The printed opening is a metric record; do not "
+        "compare it with a size guessed from the image. Judge grasp and release by the object actually between the "
+        "fingers, not by other objects it carries or that move with it. It is released when it stops moving with "
+        "the camera (it stays behind as the gripper moves away); while it is still between the fingers it is held. "
+        "Opening widening at or just before the release and staying open afterwards is a normal release. Report "
+        "opening or timing only when a visible finger opening/closing, or the held object leaving the fingers, "
+        "happens clearly before or after the recorded opening change.",
         "Return ONE JSON object only: "
         '{"gripper_visible": true, "segments": [{"start_frame": 1, "end_frame": 2, '
         '"aspect": "position|orientation|both|action", "confidence": 0.0, "evidence_frames": [1], '
         '"observation": "具体可见证据，中文"}], "summary": "中文总结，包括无法判断的部分"}.',
         f"Use printed frame numbers {lo}..{hi}; evidence_frames must be inside their segment (1 to 5 frames). "
-        "confidence is confidence in a DISCREPANCY, not action success. action means motion or grasp/release "
-        "timing inconsistent with visible evidence. If no discrepancy is supported, return segments: []. "
-        "If no gripper is visible, set gripper_visible to false and do not invent discrepancies.",
+        "confidence is confidence in a DISCREPANCY, not action success. If no discrepancy is supported, return "
+        "segments: []. If no gripper is visible, set gripper_visible to false and do not invent discrepancies.",
     ])
