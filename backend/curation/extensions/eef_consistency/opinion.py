@@ -261,13 +261,14 @@ def _to_data(answer: dict) -> dict:
 
 def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache: R.Cache) -> dict:
     """One part: cached answer, or the model with at most one repair turn. The model sees and answers
-    frame numbers from 1 (design doc 18 §4.4); the answer kept has the data's indexes."""
+    frame numbers from 1 (design doc 18 §4.4); the answer kept has the data's indexes. An answer that took
+    the repair turn keeps why the first one was rejected (``repaired``: the problem's code and message)."""
     lo, hi = req.frame_ids[0] + 1, req.frame_ids[1] + 1
     hit = cache.get(req.key)
     if hit is not None:
         return {"status": R.ANSWERED, "answer": hit, "attempts": 0, "cache_hit": True}
     history: list[dict] = []
-    problem = None
+    problem = first = None
     for attempt in (1, 2):
         try:
             text = ask(req, history)
@@ -278,7 +279,9 @@ def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache:
         if answer is not None:
             answer = _to_data(answer)
             cache.put(req.key, answer)
-            return {"status": R.ANSWERED, "answer": answer, "attempts": attempt, "cache_hit": False}
+            out = {"status": R.ANSWERED, "answer": answer, "attempts": attempt, "cache_hit": False}
+            return out | ({"repaired": first} if first else {})
+        first = first or problem
         history = [{"role": "assistant", "content": text[:4000]},
                    {"role": "user", "content": repair_text(problem, lo, hi)}]
     return {"status": R.FAILED, "failure": problem, "attempts": 2, "cache_hit": False}
@@ -343,7 +346,7 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
             got = ask_clip(req, ask, cache)
             requests += 0 if got.get("cache_hit") else got.get("attempts", 0)
             req.videos.clear()                      # the record keeps metadata, never the video's Base64
-            clip.update({k: got[k] for k in ("status", "attempts", "cache_hit") if k in got})
+            clip.update({k: got[k] for k in ("status", "attempts", "cache_hit", "repaired") if k in got})
             if got["status"] != R.ANSWERED:
                 clip["failure"] = got.get("failure")
                 row["clips"].append(clip)

@@ -196,6 +196,8 @@ export interface EefOpinionCamera {
   summaries: string[];
   /** Why a part got no answer, readable. */
   failures: string[];
+  /** Parts answered on the repair turn: why the first answer was rejected, readable. */
+  repairs: string[];
   /** The gripper could not be seen in some part. */
   unseen: boolean;
   segments: EefOpinionSegment[];
@@ -235,6 +237,14 @@ export function eefOpinion(details: D): EefOpinion | null {
         .map((x) => {
           const code = s(obj(x.failure).code) ?? '';
           return `${Z().frames(n(x.start_frame) ?? 0, n(x.end_frame) ?? 0, (n(x.end_frame) ?? 0) - (n(x.start_frame) ?? 0) + 1)}：${Z().failure[code] ?? (code || Z().failed)}`;
+        }),
+      repairs: clips
+        .filter((x) => x.repaired)
+        .map((x) => {
+          const r = obj(x.repaired);
+          const code = s(r.code) ?? '';
+          const why = [Z().failure[code] ?? code, s(r.message)].filter(Boolean).join('：');
+          return Z().opinion.repaired(Z().frames(n(x.start_frame) ?? 0, n(x.end_frame) ?? 0, (n(x.end_frame) ?? 0) - (n(x.start_frame) ?? 0) + 1), why);
         }),
       unseen: clips.some((x) => x.gripper_visible === false),
       reason: s(c.reason),

@@ -607,6 +607,7 @@ dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position
 `segments` 是模型认为「红圈不在夹爪中心、朝向标记不沿夹爪方向，或轨迹运动时序与可见动作不符」的连续片段，
 `action` 表示后者，`confidence` 是**不匹配**的置信度（0–1），
 全程一致就给空列表。帧号必须是视频上印的、在本段范围内的帧，证据帧落在自己的片段里；不合格给一次修复，仍不合格记失败。
+修复后通过的段在记录里留 `clips[].repaired`（第一次被拒的 `code` 与 `message`），Episode 明细在该相机下写明「第 1 次答复不合格（原因），已修正」。
 答复按发送内容缓存。
 
 **结果**：记录 `passed = true`（不影响判决、不进人工裁决），`details.assessment_mode = "vlm_opinion"`，

@@ -198,6 +198,11 @@ function OpinionCamera({ taskId, episode, c }: { taskId: string; episode: number
           {f}
         </div>
       ))}
+      {c.repairs.map((r) => (
+        <div key={r} className="episode-line muted" data-testid="eef-opinion-repaired">
+          {r}
+        </div>
+      ))}
       {c.status !== 'skipped' && !c.segments.length && !c.failures.length ? <div className="episode-line">{O.none}</div> : null}
       {c.status !== 'skipped' ? <EefOverlayVideo taskId={taskId} episode={episode} camera={c.camera} seek={seek} /> : null}
       {c.segments.map((g, i) => (
