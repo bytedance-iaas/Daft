@@ -5,7 +5,7 @@ import numpy as np
 
 from . import geometry as G, history
 
-PROMPT_VERSION = "umi-action-prompt/6"  # 6: release is when the held object stays behind
+PROMPT_VERSION = "umi-action-prompt/7"  # 7: the hand's opening calibration, saturation reported as such
 COLORS = ((255, 160, 0), (210, 60, 255))  # BGR, stable hand order
 
 
@@ -24,6 +24,11 @@ def load_hands(sample, rows) -> None:
     ids = set(owners.values())
     if not 1 <= len(ids) <= 2:
         raise ValueError("UMI supports one or two hands")
+    for hand, r in (cfg.get("gripper_range") or {}).items():
+        if hand not in ids:
+            raise ValueError(f"umi.gripper_range names {hand}, which no camera belongs to")
+        if not (np.isfinite([r["min_width_m"], r["max_width_m"]]).all() and 0 <= r["min_width_m"] < r["max_width_m"]):
+            raise ValueError(f"umi.gripper_range.{hand}: min_width_m must be below max_width_m")
     for cid, cam in sample.cameras.items():
         if cam.mount != "wrist" or cam.calibration(sample) is None:
             raise ValueError(f"{cid}: UMI requires a calibrated wrist camera")
@@ -116,6 +121,23 @@ def draw(img, sample, camera_id: str, frame: int, scale: float):
     return out
 
 
+def _calibration(r: dict | None) -> list[str]:
+    """What the hand's recorded opening means, from its gripper calibration; nothing when the input has none."""
+    if not r:
+        return []
+    lo, top = r["min_width_m"], r["max_width_m"] - r["min_width_m"]
+    return [
+        f"Opening calibration of this hand: recorded opening = finger-tag distance - {lo:.4f} m, clipped to "
+        f"0..{top:.4f} m (from its gripper calibration video). Fully closed fingers with nothing between them read 0, "
+        f"and fully open fingers read at or near {top:.4f}; both are normal. The reading is SATURATED only when it "
+        f"stays exactly at a bound (0, or {top:.4f}) while the fingers visibly differ from that state: held apart by "
+        "an object or still moving while the reading stays at 0, or visibly opening further while it stays at the "
+        "top. A reading close to but below the top while the fingers are fully open is normal, not saturation. "
+        "Report each saturated stretch as aspect action with an observation starting with '开口标定饱和：', in "
+        "every clip where it is visible. It is a calibration problem, not a timing error: do not also report "
+        "grasp/release timing because of it; judge timing only by when the reading changes."]
+
+
 def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
     cfg = sample.sample["umi"]
     owner = cfg['camera_hands'][camera_id]
@@ -145,7 +167,7 @@ def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
         "disagrees with the visible events. Do not infer physical collisions from a 2D crossing alone. Distinguish "
         "a visible discrepancy from occlusion, missing calibration evidence or an ambiguous target. Abstain when "
         "not observable.",
-        "Opening: fingers holding an object stay apart by the object's contact width, so a stable nonzero opening "
+        "Opening: fingers holding an object stay apart by the object's contact width, so a stable opening "
         "while an object is held, carried or manipulated is normal. The printed opening is a metric record; do not "
         "compare it with a size guessed from the image. Judge grasp and release by the object actually between the "
         "fingers, not by other objects it carries or that move with it. It is released when it stops moving with "
@@ -153,6 +175,7 @@ def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
         "Opening widening at or just before the release and staying open afterwards is a normal release. Report "
         "opening or timing only when a visible finger opening/closing, or the held object leaving the fingers, "
         "happens clearly before or after the recorded opening change.",
+        *_calibration(cfg.get("gripper_range", {}).get(owner)),
         "Return ONE JSON object only: "
         '{"gripper_visible": true, "segments": [{"start_frame": 1, "end_frame": 2, '
         '"aspect": "position|orientation|both|action", "confidence": 0.0, "evidence_frames": [1], '

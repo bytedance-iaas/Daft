@@ -28,7 +28,7 @@
   "docs/contracts/eef/observation.schema.json": "sha256:44194891fc2ad499cc723da848987b28f347bffd81326ba0f8329d5079e4d90a",
   "docs/contracts/eef/opinion_output.schema.json": "sha256:3df40fcbe6350abfc73cc9620daeada4d29e16254b30c60a2b8badb5fbb6b38b",
   "docs/contracts/eef/review_output.schema.json": "sha256:f468a537daed089fdbb8d70facea808994fae654033b2c38786facbdd3f0a583",
-  "docs/contracts/eef/sample.schema.json": "sha256:a79261477804e48abae508768f697f03a22e6163b30ba46a1c045cc00303dc44",
+  "docs/contracts/eef/sample.schema.json": "sha256:f9ce44aaebddf1220b4793ed65bbbd12eb58a1428840fbbc87f0eae1ff6ca43d",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
   "docs/contracts/modules.json": "sha256:740f3ae03e6fdceff2dddcc4ab90f8e79ec4e8aff718632d862b3647db17a644",
   "docs/contracts/openapi.yaml": "sha256:70bfb39e18071d527c2f45afad0c642575460d4b4efc59a6f8d2db42abaf3221",

@@ -169,6 +169,35 @@
         },
         "provenance": {
           "$ref": "#/$defs/provenance"
+        },
+        "gripper_range": {
+          "description": "Optional, per hand: the opening calibration of the gripper (UMI / TRUMI gripper calibration video, gripper_range.json). The recorded opening_m is the finger-tag distance minus min_width_m, clipped to 0 .. max_width_m - min_width_m: 0 means at or below the calibration minimum, the top value at or beyond its maximum.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "min_width_m",
+              "max_width_m",
+              "source"
+            ],
+            "properties": {
+              "min_width_m": {
+                "type": "number",
+                "minimum": 0
+              },
+              "max_width_m": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "description": "where the values come from, e.g. the calibration file's relative path"
+              }
+            }
+          }
         }
       }
     }

@@ -105,6 +105,35 @@ def _camera_rows(csv, times):
     return G.pose_matrix(p, q)
 
 
+def _serial(name: str) -> str | None:
+    """The camera serial in a TRUMI / UMI session directory name (``demo_<serial>_…``, ``gripper_calibration_<serial>_…``)."""
+    import re
+
+    m = re.match(r"^(?:demo|gripper_calibration)_([A-Za-z0-9]+)_", name)
+    return m.group(1) if m else None
+
+
+def gripper_range(root, video_path: str) -> dict | None:
+    """The opening calibration of the gripper that recorded ``video_path``: the session's
+    ``gripper_calibration_<serial>_*/gripper_range.json`` of the same camera serial (TRUMI pairs them the same way
+    when the gripper id is not found). The latest one recorded before the demo; None when there is none."""
+    root = pathlib.Path(root)
+    demo = pathlib.PurePosixPath(video_path).parts[0]
+    serial = _serial(demo)
+    if serial is None:
+        return None
+    found = sorted(d for d in (root / "demos").glob(f"gripper_calibration_{serial}_*")
+                   if (d / "gripper_range.json").is_file() and d.name.split("_", 3)[3] <= demo.split("_", 2)[2])
+    if not found:
+        return None
+    path = found[-1] / "gripper_range.json"
+    doc = json.loads(path.read_text())
+    lo, hi = float(doc["min_width"]), float(doc["max_width"])
+    if not (np.isfinite(lo) and np.isfinite(hi) and 0 <= lo < hi):
+        raise MappingError(f"{path}: min_width must be below max_width")
+    return {"min_width_m": lo, "max_width_m": hi, "source": path.relative_to(root).as_posix()}
+
+
 def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
     """Create a new dataset directory, using raw video pixels (scale only, no inferred crop)."""
     import av
@@ -219,6 +248,9 @@ def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
                             "Raw source images, resized only; Camera->TCP geometry is declared, not independently calibrated."],
                   "umi": {"camera_hands": {f"camera{j}": f"robot{j}" for j in range(len(cams))},
                           "horizon_s": horizon_s, "provenance": prov}}
+        ranges = {f"robot{j}": r for j, camera in enumerate(cams) if (r := gripper_range(root, camera["video_path"]))}
+        if ranges:                                   # what 0 and the top opening mean (the prompt explains them)
+            sample["umi"]["gripper_range"] = ranges
         frames = []
         for i in range(n):
             hands = {}

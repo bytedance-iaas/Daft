@@ -61,7 +61,7 @@ PYTHONPATH=backend .venv/bin/python -m curation.extensions.eef_consistency expor
 ```
 
 输出目录必须不存在。默认把原始鱼眼画面等比例缩到最长边 960，保留 plan 选中的全部帧；`--max-side` 控制尺寸。
-`--horizon-s 0` 关闭历史轨迹，只画当前几何。标定 JSON 的 `cameras.cameraN` 必须与 plan 顺序一致，
+`--horizon-s 0` 关闭历史轨迹，只画当前几何。会话里有 `demos/gripper_calibration_<相机序列号>_*/gripper_range.json` 时，按序列号把每只手的开口标定写进 `sample.umi.gripper_range`，提示词据此说明开口 0 与上限的含义（设计 20「开口标定」）。标定 JSON 的 `cameras.cameraN` 必须与 plan 顺序一致，
 并明确 `K`、`model`、`distortion_coefficients`、`image_size_wh`、`T_camera_tcp`；`T_world_slam` 把 CSV 坐标转到 plan 坐标。
 换参考系由 `adapters/umi.py` 的 `slam_to_tag()` 完成：传入 SLAM 系下的 4×4 位姿（或 N×4×4 序列）和 SLAM → tag 变换，
 返回 tag 系下的位姿；测试集的变换为 `inverse(tx_slam_tag)`。plan 中已经对齐的 TCP 不再转换。
