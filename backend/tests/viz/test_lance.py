@@ -194,3 +194,27 @@ def test_lance_on_an_s3_compatible_endpoint(client_for, data_root, tmp_path):
         # keys are sets/lance_03_tables/<table>/...: every table was read over S3
         asked = {key.split("/")[2] for method, key, _ in s3.requests if method in ("GET", "LIST") and key.count("/") >= 2}
         assert {"frames.lance", "videos.lance", "meta.lance"} <= asked
+
+
+def test_tos_tables_open_on_the_buckets_virtual_host(client_for, data_root):
+    """Lance's object store sends virtual-hosted requests to the endpoint as given, so TOS's S3 endpoint
+    has to name the bucket in its host - with the bare service endpoint every table listed empty and
+    read "not found" (TOS refuses path style with 403). Found on the requester's TOS datasets, 2026-10-05."""
+    from curation.viz.lance_layout import s3_options
+    from daemon.repo.protocol import DEFAULT_OWNER
+    from daemon.viz.service import viz_of
+    from daemon.viz.source import Access
+
+    c = client_for(base_path="/curation", local_data_root=data_root)
+    rt = c.app.state.runtime
+    ds = _register(rt, "lance_tos", "tos://galbot/sets/so101-lance", _preflight("lance"), source="public")
+    uri, opts = Access(rt, viz_of(rt).dataset_source(ds, DEFAULT_OWNER)).lance_target("frames.lance")
+    assert uri == "s3://galbot/sets/so101-lance/frames.lance"
+    assert opts["aws_endpoint"] == "https://galbot.tos-s3-cn-beijing.volces.com"
+    assert opts["aws_virtual_hosted_style_request"] == "true" and opts["aws_skip_signature"] == "true"
+    # an endpoint that already names the bucket is kept; path style (a local S3) is left as it is
+    assert s3_options("https://galbot.tos-s3-cn-beijing.ivolces.com/", "cn-beijing", bucket="galbot")["aws_endpoint"] \
+        == "https://galbot.tos-s3-cn-beijing.ivolces.com"
+    local = s3_options("http://127.0.0.1:9000", "cn-beijing", bucket="bkt", key_id="ak", secret="sk", virtual_hosted=False)
+    assert local["aws_endpoint"] == "http://127.0.0.1:9000" and local["aws_allow_http"] == "true"
+    assert local["aws_access_key_id"] == "ak" and "aws_skip_signature" not in local
