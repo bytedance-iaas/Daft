@@ -108,6 +108,8 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 
 改契约：改文件，不兼容的改动升版本号（`registry_version` / `schema_version` / `info.version`）；在 `examples/` 补合法与不合法示例；
+C4 的文案（`info.description`、tag 说明、示例标题）是接口文档页给客户看的：中英两版（中文在 `x-description-zh` / `x-summary-zh`）、
+不写内部编号，变更记录从 2.5.1 起只记客户可见的改动（`docs/contracts/README.md`「改契约的流程」）；
 `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）再 `… lock`；改了 C4 在 `frontend/` 跑
 `npm run gen:api`。`CONTRACTS.lock` 没刷新、生成的类型没更新，CI 都会红。
 

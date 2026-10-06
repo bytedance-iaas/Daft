@@ -5,280 +5,124 @@ info:
   description: |
     ## Overview
 
-    The REST API of the Curator v2 Daemon, Physical AI Kit's quality-check platform for robot
-    datasets (LeRobot v2 / v3, mcap, Lance): register datasets, run quality-check tasks over their
-    episodes, read the verdicts, findings and reports, adjudicate what needs a person, and export the
-    episodes that pass as a delivery dataset. C4 of the frozen contracts (design doc 03): the web
-    console uses nothing else, and the `curation task ...` commands are a thin client of it. JSON in,
-    JSON out, UTF-8. Coarse-grained: one endpoint does one thing a user would name, no client chains
-    calls to finish one.
+    The REST API of the Physical AI Kit data quality-check platform: register robot datasets (LeRobot
+    v2 / v3, mcap, Lance), run quality-check tasks over their episodes, read the verdicts, findings and
+    reports, adjudicate what needs a person, and export the episodes that pass as a delivery dataset.
+    The web console is built on this same API, so whatever it does can be done here. JSON in, JSON out,
+    UTF-8. Each endpoint does one whole thing a user would name; no task needs a chain of calls.
 
-    A typical run, by tag:
+    A typical run:
 
-    1. `datasets`: `GET /modules` lists the quality-check modules; `POST /preflight` checks a dataset
+    1. Check: `GET /modules` lists the quality-check modules; `POST /preflight` checks a dataset
        against them in seconds (the result is kept 30 minutes); `POST /datasets` registers the dataset
        (a task created with a plain address registers it too).
-    2. `tasks`: `POST /tasks` with that `preflight_id` creates the task and, with `params.start_now`,
-       starts it; otherwise `POST /tasks/{id}/actions/start`.
-    3. `system`: follow it over SSE (`GET {base}/events/tasks/{id}`) or poll `GET /tasks/{id}`.
-    4. `report`: read `GET /tasks/{id}/report` and the episodes with their findings
-       (`GET /tasks/{id}/episodes`, `GET /tasks/{id}/episodes/{index}`).
-    5. `report`: `GET /tasks/{id}/adjudication` lists what a person has to decide, `POST` on the same
-       path records decisions, and `POST /tasks/{id}/adjudication/apply` executes them as a subtask
-       that makes a new result revision; it never exports, `POST /tasks/{id}/reexport` does.
+    2. Create: `POST /tasks` with that `preflight_id` creates the task and, with `params.start_now`,
+       starts it; otherwise call `POST /tasks/{id}/actions/start`.
+    3. Follow: subscribe to SSE `GET {base}/events/tasks/{id}`, or poll `GET /tasks/{id}` every 5
+       seconds.
+    4. Read: `GET /tasks/{id}/report`, and the verdict and findings of each episode with
+       `GET /tasks/{id}/episodes` and `GET /tasks/{id}/episodes/{index}`.
+    5. Adjudicate: `GET /tasks/{id}/adjudication` lists what a person has to decide, `POST` on the same
+       path records decisions, and `POST /tasks/{id}/adjudication/apply` executes them as a subtask that
+       makes a new result revision. It does not export; `POST /tasks/{id}/reexport` does.
 
-    `credentials` and `vlm` hold the TOS access keys and the VLM backends a task names, `uploads`
-    takes the input files of module parameters, `viz` is the data visualizer and `overview` the
-    console's first page.
+    The `credentials` and `vlm` groups hold the TOS access keys and the VLM backends a task names,
+    `uploads` takes the input files of module parameters, `viz` is the data visualizer and `overview`
+    the console's first page.
 
     ## Conventions
 
     ### Mount prefix
 
-    Every route lives under the mount prefix `{base}` (empty by default, `/curation` in production;
-    the gateway does not strip it): the API under `{base}/api/v1`, SSE under `{base}/events`, the
-    probes `/healthz` and `/readyz` both at the root and under `{base}`.
+    Every route lives under the mount prefix `{base}` (empty by default, `/curation` in production; the
+    gateway does not strip it): the API under `{base}/api/v1`, SSE under `{base}/events`, the probes
+    `/healthz` and `/readyz` both at the root and under `{base}`.
 
     ### Authentication
 
-    HTTP Basic (`basicAuth`, doc 08 §5) on every route but the probes. A browser signed in to the
-    console sends the credentials by itself on same-origin requests.
+    HTTP Basic (`basicAuth`) on every route but the probes. A browser signed in to the console sends the
+    credentials by itself on same-origin requests.
 
     ### Writes
 
-    Write operations are asynchronous: they return the resource and its state, progress arrives over
-    SSE or polling. Write endpoints accept only `application/json` - send
-    `Content-Type: application/json` on every write, even without a body
-    (`POST /tasks/{id}/actions/{action}`, `DELETE /tasks/{id}` and other writes have none) - and
-    cross-site writes are refused (a browser's `Sec-Fetch-Site` other than `same-origin`); there is
-    no CORS.
+    Write operations are asynchronous: they return the resource and its state, progress arrives over SSE
+    or polling. Write endpoints accept only `application/json` - send `Content-Type: application/json`
+    on every write, even without a body (`POST /tasks/{id}/actions/{action}`, `DELETE /tasks/{id}` and
+    other writes have none) - and cross-site writes from a browser are refused (a `Sec-Fetch-Site` other
+    than `same-origin`); there is no CORS.
 
     Every write takes an `Idempotency-Key` header: the same key within 24 hours returns the first
     successful response, so a retry after a timeout does not create a second task.
 
     ### Errors
 
-    Errors use one body, `Error`; `code` is stable for machines, `message` is Chinese for people.
-    `precheck_failed` (422, any write that starts work) carries `error.details` shaped as
-    `PrecheckDetails`: one entry per pre-start check (D30). A write that does not fit the current
-    state answers 409 with a code that names the conflict (`task_state_conflict`, `subtask_active`,
+    Errors use one body, `Error`: `code` is stable for programs, `message` is Chinese for people. A write
+    that starts work and fails a pre-start check answers 422 `precheck_failed`, with `error.details`
+    shaped as `PrecheckDetails`: one entry per check. A write that does not fit the current state
+    answers 409 with a code that names the conflict (`task_state_conflict`, `subtask_active`,
     `dataset_in_use`, ...).
 
     ### Links
 
-    Responses that point people at a page carry `links` (D22): absolute URLs when
-    `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
+    Responses that point people at a page of the console carry `links`: absolute URLs when the site's
+    public address is configured, otherwise relative paths with `absolute: false`.
 
-    ### Ids
+    ### IDs
 
-    Ids are opaque strings. Records made since 1.10.0 get `<prefix>-<9 lowercase letters>` (task,
-    sub, ds, pf, cred, vb, vm, upl; e.g. `task-kqzmrtbwe`, D45); records made before keep their
-    `<prefix>_...` id, and both work everywhere. Ids carry no time: lists sort by creation time.
+    IDs are opaque strings. Records made now get `<prefix>-<9 lowercase letters>` (task, sub, ds, pf,
+    cred, vb, vm, upl; e.g. `task-kqzmrtbwe`); older records keep their `<prefix>_...` ID, and both work
+    everywhere. IDs carry no time: lists sort by creation time.
 
     ## Changelog
 
-    Oldest first.
+    **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
+    its changes here.
+  x-description-zh: |
+    ## 概览
 
-    **1.1.0** (2026-09-21): dataset registry (D36): `/datasets` now lists registered datasets and the
-    TOS / cache-bucket listing moved to `/datasets/browse`; `/overview`; starting a task re-checks
-    the dataset fingerprints and answers 409 `source_changed` with a `SourceChange`, after which
-    `/tasks/{id}/repreflight` re-runs preflight (D37); the task list filters by `module` and
-    `dataset_id` and lists the selected modules; request inputs may name a `dataset_id`;
-    `dataset_in_use`. No client consumed 1.0.0.
+    Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对其中的 episode 跑质检任务，读取判决、发现与质检报告，人工裁决需要人来判断的条目，再把通过的 episode 导出为交付数据集。网页控制台用的就是这套 API，控制台能做的事都能通过它完成。请求与响应都是 JSON，UTF-8 编码。每个接口完成一件完整的事，不需要连着调几个接口才办成一件事。
 
-    **1.2.0** (2026-09-21): every write request carries `Content-Type: application/json`, a body or
-    not, and `Idempotency-Key` is accepted on every write; `method_not_allowed`; `Task.vlm`
-    has its own schema with `snapshot`; access-key names are null in responses once the key
-    was deleted; SSE `state` and `done` carry `subtask_id` and `reason`; the log order and the
-    `subtask` filter are spelled out; call kinds and stage ids are open like in C2/C3 1.1.
+    一次典型的质检：
 
-    **1.3.0** (2026-09-21): `Idempotency-Key` is declared on every write; `Decision` and
-    `DatasetDetail` validate (shared fields plus `unevaluatedProperties: false` instead of an
-    allOf over a closed base); `precheck_failed` details (`PrecheckDetails`), probe error codes,
-    the confirmation rule for deleting keys and backends that finished tasks used, the media
-    signing prefix, optional session tokens on access keys, `Subtask.pause_reason`, `rel:
-    dataset` links, dataset ids and the overview's counting rules are spelled out.
+    1. 检查：`GET /modules` 列出质检模块；`POST /preflight` 几秒内查出数据集能跑哪些模块（结果保留 30 分钟）；`POST /datasets` 登记数据集（直接用地址建任务时也会自动登记）。
+    2. 建任务：`POST /tasks` 带上预检得到的 `preflight_id` 创建任务，`params.start_now` 为 true 时建完就开始，否则再调 `POST /tasks/{id}/actions/start`。
+    3. 跟进度：订阅 SSE `GET {base}/events/tasks/{id}`，或每 5 秒轮询一次 `GET /tasks/{id}`。
+    4. 看结果：`GET /tasks/{id}/report` 是质检报告，每条 episode 的判决与发现用 `GET /tasks/{id}/episodes` 和 `GET /tasks/{id}/episodes/{index}` 读取。
+    5. 人工裁决：`GET /tasks/{id}/adjudication` 列出需要人来判断的条目，对同一路径 `POST` 记录决定，`POST /tasks/{id}/adjudication/apply` 以子任务执行这些决定并产生新的结果版本。它不导出数据，需要时再调 `POST /tasks/{id}/reexport`。
 
-    **1.4.0** (2026-09-21): applying an adjudication takes an optional `AdjudicationApply` body -
-    `relabel_rerun` picks how relabelled episodes are judged again, v1's two layers by default
-    or the first run's full flow (D39) - and the subtask's `scope` records the choice;
-    `Summary.skipped` counts episodes left out because source files are missing (D40), which
-    the report lists under `integrity.skipped_episodes`.
+    `credentials`、`vlm` 两组管理任务用到的 TOS 访问密钥和 VLM 后端，`uploads` 上传模块参数需要的文件，`viz` 是数据可视化，`overview` 是控制台首页的数据。
 
-    **1.5.0** (2026-09-21): review kinds are declared by the registry (D43): `ModuleRegistry`
-    carries the `review_lines` catalog (id, title, the list its episodes are in, whether an
-    open item counts as pending, the decisions with their titles) and every module its
-    `review_lines` and `appealable`; adjudication `line` and `decision` are open strings the
-    Daemon checks against that catalog. Rejects attributed to dedup may be appealed and a
-    question can name `duplicate_of`; already-rejected episodes get no task-verdict question
-    (D42). Appeal candidates never count as pending.
+    ## 约定
 
-    **1.5.1** (2026-09-22): v1's optional task verdict after a relabel is back as a catalog
-    `follow_ups` entry (a card gains the question once its label answer adopts a new label;
-    answered, the machine takes it and does not judge again); the `status` filter, the label an
-    adopted suggestion gets without `new_label`, the episode view's `reasons` / `review` items
-    and the 404 reasons of the result readers are spelled out.
+    ### 挂载前缀
 
-    **1.5.2** (2026-09-22): a question a card gained as a follow-up says so (`follow_up_of`), and
-    a follow-up whose opening answer changed is left out of the card.
+    所有路径都在挂载前缀 `{base}` 之下（缺省为空，生产环境是 `/curation`；网关转发时不去掉前缀）：API 在 `{base}/api/v1`，SSE 在 `{base}/events`，探针 `/healthz`、`/readyz` 在根路径和 `{base}` 下都有。
 
-    **1.6.0** (2026-09-22): a model may be the default one (`VlmModel.is_default`, set through
-    `VlmModelPatch`): the new-task form starts with it instead of asking, and there is at most
-    one per owner across all backends.
+    ### 鉴权
 
-    **1.7.0** (2026-09-23): the module registry 1.4 (design doc 12): every module says its
-    `input_scope` (funnel / all_selected) and whether it `affects_dataset_verdict`; the need
-    `eef_input` and a module id as `depends_on` (eef_video_review on eef_video_consistency).
-    The two EEF-video consistency modules are advisory: they never change keep / drop / held.
+    除探针外都用 HTTP Basic 鉴权（`basicAuth`）。在浏览器里登录过控制台后，同源请求会自动带上凭据。
 
-    **1.8.0** (2026-09-23): file parameters (registry 1.5). `POST /uploads` stores an input file of a
-    module parameter after validating it (errors located to sample / frame / camera / point /
-    JSON path) and returns an `Upload` whose `handle` (`upload:<upload_id>`) is the parameter's
-    value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
-    task that selects a module needing `eef_input` preflights that module against the dataset with
-    the uploaded file; the task's preflight snapshot carries that entry.
+    ### 写请求
 
-    **1.10.0** (2026-09-23): new ids are `<prefix>-<9 lowercase letters>` (D45): the patterns of
-    dataset ids, `UploadId` and upload handles take both formats. `GET /overview?days=7|30|90|365`
-    picks the period of `recent`, which says its `bucket` (day / week / month) and `since`;
-    `recent.tokens_per_bucket` (`start`, `label`, `tokens`) replaces `tokens_per_day`.
-    `GET /tasks?state=running` also lists finished tasks whose subtask is queued or running (D46).
+    写操作是异步的：立即返回资源和它的状态，进度通过 SSE 或轮询获取。写接口只接受 `application/json`：每个写请求都要带 `Content-Type: application/json`，没有请求体的也要带（比如 `POST /tasks/{id}/actions/{action}`、`DELETE /tasks/{id}`）；浏览器发出的跨站写请求一律拒绝（`Sec-Fetch-Site` 不是 `same-origin`），不支持 CORS。
 
-    **1.10.1** (2026-09-23): running tasks expose per-episode funnel progress and immediate
-    machine verdicts through `/tasks/{id}/pipeline/episodes` and its single-episode reader;
-    `TaskParams.batch_size` lets API clients set the maximum number of episodes handed from
-    one funnel layer to the next per batch. (Written on 2026-09-22 as 1.7.0 / 1.7.1 on a branch
-    that predates 1.8.0-1.10.0; renumbered when merged.)
+    每个写请求都可以带 `Idempotency-Key` 请求头：24 小时内相同的 key 返回第一次成功的响应，超时重试不会重复建任务。
 
-    **1.11.0** (2026-09-23): the report's Episode tab (F6.2). `GET /tasks/{id}/episodes` lists the
-    episodes of a result revision - list, the modules behind it, whether a person still has to
-    answer something about it - filtered by list, by open questions and by an episode number
-    (`q`: `12`, `ep12`, `ep 12`), in episode order with a revision-bound cursor;
-    `GET /tasks/{id}/episodes/{index}/sync-curves` serves one episode's video-action sync curves
-    (picture motion and arm motion over time, the cross-correlation over the lag, the reading on
-    it). Module summaries in `report.json` gain chart-ready aggregates (design doc 06 §6.2);
-    their schema stays a free object. (Written as 1.9.0 on the F6.2 branch; renumbered when
-    merged after 1.10.1.)
+    ### 错误
 
-    **1.12.0** (2026-09-23): mcap and lance datasets (D44, v1's PR #155). `DatasetFormat` and the
-    `format` filter of `GET /datasets` take `mcap` and `lance` (lerobot-lance-convert >= 0.3.0);
-    `BrowsedDataset.format_hint` takes them too. `EpisodePreview` of such a dataset has no
-    cameras (their videos are inside the files / tables); an mcap episode whose task text is in
-    a task topic, which the preview does not read, says so with `task_unread`. The preflight
-    (C2) reports `kind` mcap / lance; exports of these datasets name their `dataset_dir`.
-    (Written as 1.11.0 on the F6.5 branch; renumbered when merged after the report's 1.11.0.)
+    错误统一用一种响应体 `Error`：`code` 是给程序判断的稳定取值，`message` 是给人看的中文说明。会启动工作的写请求在开始前的检查没通过时返回 422 `precheck_failed`，`error.details` 是 `PrecheckDetails`，每项检查一条。与当前状态冲突的写请求返回 409，`code` 写明是哪种冲突（`task_state_conflict`、`subtask_active`、`dataset_in_use` 等）。
 
-    **1.13.0** (2026-09-23): the module registry's stages take `profile_vlm` (registry 1.7): the
-    skill profile runs in a VLM stage of its own after dedup instead of `post_verdict`; the plan's
-    stage id for it is `profile_vlm`.
+    ### 链接
 
-    **1.14.0** (2026-09-23): texts only - the review line `eef_check` (registry 1.9, D49) is named
-    among `ReviewLineId` and the decisions of `DecisionInput`.
+    需要把人带到控制台某个页面的响应带有 `links`：配置了站点的公网地址时是完整网址，否则是相对路径，并带 `absolute: false`。
 
-    **1.15.0** (2026-09-24): `GET /tasks` takes `has_result` (tasks with a committed result: the
-    console's 质检报告 list) and `pending_adjudication` (tasks with pending adjudication items:
-    its 人工裁决 list); false or absent does not filter.
+    ### ID
 
-    **1.16.0** (2026-09-24): the data integrity module (registry 1.11, design doc 14, D50-D52): the
-    stage enums take `integrity`, first in the funnel (the registry's stages and module stage, the
-    pipeline's `last_stage` and `stage_processing_s`; `next_stage` takes `numeric`); the review line `integrity_check`
-    (decisions intact, broken, unsure) is named among `ReviewLineId` and `DecisionInput`.
+    ID 是不透明的字符串。现在新建的记录，ID 形如 `<前缀>-<9 个小写字母>`（task、sub、ds、pf、cred、vb、vm、upl，比如 `task-kqzmrtbwe`）；早先建的记录保留原来的 `<前缀>_…` 形式，两种在所有地方都能用。ID 不含时间，列表按创建时间排序。
 
-    **1.17.0** (2026-09-26): a TOS access key may be the default one (`Credential.is_default`, set
-    through `CredentialUpdate`): the new-task form starts with it, and there is at most one per
-    owner. Deleting the key leaves none.
+    ## 变更记录
 
-    **1.18.0** (2026-09-26): `PipelineActivity` may say when the layer was working and why it is not:
-    `busy` lists the spans during which episodes were out (at most 64; the rest of the layer's run
-    is waiting), `held_by_downstream` that it has episodes to hand out but holds them because the
-    next layer's queue is full. Both optional: snapshots written before have neither.
-
-    **1.19.0** (2026-09-28): the upload kind `eef_record_mapping` (registry 1.13, design doc 12 §8.7): the
-    EEF module's dataset-record mapping (`eef-mapping/1.1`), validated on arrival; its summary names
-    the sources, the robot, the columns / topics and the declared frames.
-
-    **1.20.0** (2026-09-28): a module's preflight entry may carry `drafts` (C2 preflight schema): files a
-    module drafts from the dataset's metadata for a person to confirm before use, by parameter key -
-    the EEF module's `record_mapping` from a LeRobot info.json, with every assumption listed (design
-    doc 12 §8.7, D-E17). Confirming uploads the draft as an `eef_record_mapping` like any other file.
-
-    **1.21.0** (2026-09-28): `POST /datasets/{id}/sign` (design doc 15, D55): the ReRun web viewer's
-    reads of a registered private TOS dataset, signed by the Daemon with the key bound to the
-    registration - one S3 SigV4 presigned URL per object read or ListObjectsV2 page, on TOS's
-    public S3-compatible endpoint. The caller names full object keys and listing prefixes, which
-    must lie under the dataset's prefix; bucket, region and key are the registration's.
-
-    **1.22.0** (2026-09-29): a module may ride on another (registry 1.14, `rides_on`): it is answered
-    inside its host's model requests, runs whenever the host runs and is never selected on its
-    own - the new-task form does not offer it, a task request naming it is accepted and the name
-    ignored, the report shows it. First one: `camera_defects` on `task_success`.
-
-    **2.0.0** (2026-10-01): findings, policy verdicts and the two parallel blocks (design doc 17,
-    D56-D59). The module registry is 2.0: a module has a `block` (cpu / vlm) and a `stage` of that
-    block (`integrity`, `numeric`, `frame`, `dedup`; `autolabel`, `vlm`, `profile` - `dedup` and
-    `profile` are the full-set stages), a catalogue of finding `codes` (each mapped to an item of
-    the taxonomy C6, with a default severity, a default level blocking / review / info, the review
-    line a review-level code raises and whether a blocking one may be appealed) and the items it
-    `covers`; `gate`, `input_scope`, `affects_dataset_verdict`, `produces_adjudication`,
-    `review_lines` and the module-level `appealable` are gone (the last three follow from the codes).
-    The registry carries the bound taxonomy (`taxonomy_version`, `taxonomy`), the `blocks`, the
-    `finding_levels` and the `unassessable_reasons`. `TaskParams.policy` names the verdict policy
-    (`default`: today's gates; `report_only`: report every finding, reject nothing; the funnel
-    keeps judging by `default` until the policy aggregate replaces it, F12.3). Optional, for the
-    two-block pipeline (F12.4): `StageProgress.block` / `full_set`, `PipelineEpisode.stages` /
-    `provisional`; for the findings (F12.3): `TaskEpisode.items` / `levels`. The report, the
-    plan and the result records follow C2 2.0, which keeps reading the 1.0 documents of tasks
-    made before (D59).
-
-    **2.1.0** (2026-10-01): the policy verdicts (F12.3). An `EpisodeNote` of the episode view's
-    `reasons` may carry what a C2 2.0 reason carries: the finding `code`, its taxonomy `item` and
-    whether it may be `appealable`; its `kind` is then `finding`, `human`, `execution_error` or
-    `duplicate`.
-
-    **2.2.0** (2026-10-01): the two blocks (F12.4, design doc 17 §3). A `PipelineEpisode` of a two-block
-    run has `stages` (every per-episode stage of both blocks: waiting / running / done / error) and a
-    `provisional` verdict; `last_stage` / `next_stage` are a funnel run's position and only appear on
-    tasks made before. `StageProgress` of a two-block run names its `block` and, for dedup and the
-    skill profile, `full_set`.
-
-    **2.3.0** (2026-10-02): the console's findings views (F12.5, design doc 17 §5). On a findings
-    revision every `TaskEpisode` carries the `items` and `levels` of its findings (its list
-    entry's, C2 final-list 2.0: the policy's levels after the applied human decisions) and
-    `listTaskEpisodes` filters by `level` and `item`; `EpisodeView.findings` lists every finding of
-    the episode with its level (`EpisodeFinding`); an `AdjudicationQuestion` names the finding
-    `codes` it asks about and their `items`; the live episode page of a two-block run counts per
-    module the episodes judged, failed on and with a finding (`modules`). The report (C2) adds
-    the rejects per item (`overview.reject_items`) and per module the episodes with a finding,
-    in all and per level (`summary.flagged_episodes`, `summary.levels`).
-
-    **2.4.0** (2026-10-04): the data visualizer (design doc 18, D60-D64). Two sets of readers share one
-    presentation model (`VizDataset`, `VizEpisode`, `VizSeries`): the dataset scope for the
-    visualize page (`/datasets/{id}/viz`, `/viz/episodes`, `/viz/meta`,
-    `/datasets/{id}/episodes/{index}/viz|series`, the cameras the Daemon serves:
-    `.../cameras/{camera}.mp4|.frames|.json`) and the task scope for the mini player of the report,
-    the adjudication cards and the live episodes (`/tasks/{id}/viz`,
-    `/tasks/{id}/episodes/{index}/viz|series|cameras/...`, read from the task's frozen input; the
-    `.mp4` route existed undeclared for mcap cameras). mcap datasets get a field mapping (C7
-    `viz-mapping.schema.json`): `POST /viz/mcap-probe` drafts it, `GET`/`PUT /datasets/{id}/mapping`
-    keep it per dataset (versioned, frozen into a task's run.json when it starts), `/viz/templates`
-    is the site's template library. External annotation files are a new upload kind
-    `viz_annotations` (JSON, or a zip of per-episode JSON sent as `application/zip`), attached with
-    `PUT /datasets/{id}/annotations` or at registration (`DatasetCreate.annotations_upload`, with
-    `viz_mapping`). `DatasetItem.viz` says whether a dataset can be visualized and
-    `GET /datasets?viz=true` lists only those; `DatasetDetail` names its `viz_mapping` and
-    `annotations`; `EpisodeView` gains `fps` and `dataset_id`.
-
-    **2.5.0** (2026-10-04): the visualizer's phase-two items done first (design doc 19). A Lance
-    reader (`VizFormat.reader: lance`, the lerobot-lancedb layout in `VizFormat.layout`) whose
-    videos the Daemon serves by Range out of the table's blob column (`VizAccess: blob`); the
-    browser decoding mcap H.264 / H.265 cameras itself with WebCodecs from a sample pack - the
-    existing `.frames` / `.json` routes, `VizEpisodeCamera.samples_url`, `VizFrameIndex` with
-    `h264` / `h265`, `key`, `codec_string` and `config` (`CURATOR_VIZ_CLIENT_DECODE`). Additions only.
-
-    **2.5.1** (2026-10-05): texts and examples only, for the API reference page (design doc 07 §2).
-    The description has headings (Overview, Conventions, Changelog), every tag says what it covers, and
-    the common operations carry request and response examples, each one valid against its schema
-    (`backend/tests/contracts/test_openapi.py`). No shape changed.
+    **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -290,54 +134,63 @@ security:
 tags:
   - name: credentials
     description: >-
-      TOS access keys that tasks and registered datasets read and deliver with: save (the identity is
-      verified on save), list, update, delete, verify again; at most one is the default. Secrets are
-      write-only, no response returns them. VLM API keys are stored with their backend (`vlm`).
+      TOS access keys that tasks and registered datasets read and deliver with: save (the identity
+      is verified on save), list, update, delete, verify again; at most one is the default. Secrets
+      are write-only, no response returns them. VLM API keys are stored with their backend (`vlm`).
+    x-description-zh: 任务与已登记的数据集读写 TOS 用的访问密钥：保存（保存时验证身份）、列出、修改、删除、重新验证；最多一把设为默认。密钥只写不读，任何响应都不会返回。VLM 的 API Key 跟着它的后端保存（见 `vlm`）。
   - name: vlm
     description: >-
-      VLM backends (Volcengine Ark or a custom endpoint) and their models, which a task's `vlm` names
-      for the modules that ask a vision-language model: save, verify, refresh the model list, add /
-      update / delete models, pick the default model. API keys are write-only.
+      VLM backends (Volcengine Ark or a custom endpoint) and their models, which a task's `vlm`
+      names for the modules that ask a vision-language model: save, verify, refresh the model list,
+      add / update / delete models, pick the default model. API keys are write-only.
+    x-description-zh: VLM 后端（火山方舟或自定义端点）及其模型，任务的 `vlm` 指定调用视觉语言模型的模块用哪一个：保存、验证、刷新模型列表、添加 / 修改 / 删除模型、设置默认模型。API Key 只写不读。
   - name: datasets
     description: >-
-      Before a task: the module registry (`GET /modules`), the dataset registry (register, list,
-      rename, recheck and re-preflight the fingerprints, sign reads for the ReRun viewer), browsing
-      TOS prefixes and the HuggingFace cache bucket, episode previews, the preflight and the
+      Before a task: the module list (`GET /modules`), the dataset registry (register, list, rename,
+      recheck and re-preflight the fingerprints, sign reads for the ReRun viewer), browsing TOS
+      prefixes and the HuggingFace cache bucket, episode previews, the preflight and the
       delivery-directory write probe.
+    x-description-zh: 建任务之前用到的接口：模块清单（`GET /modules`）、数据集登记（登记、列出、改名、重新核对与重新预检指纹、为 ReRun 查看器签发读取地址）、浏览 TOS 前缀与 HuggingFace 缓存桶、episode 预览、预检，以及交付目录的写入探测。
   - name: overview
     description: >-
       The console's first page in one call: what needs attention, what is running, and the chosen
       period's numbers (tasks finished, episodes checked, pass rate, tokens).
+    x-description-zh: 控制台首页的数据，一次取齐：需要处理的事、正在运行的任务，以及所选时间段的统计（完成的任务、质检的 episode、通过率、Token）。
   - name: tasks
     description: >-
       Quality-check tasks: create (one or a batch), edit (any field before it starts, name and note
       after), start / pause / resume / stop, delete and restore, delete its run directory on TOS,
       re-preflight, rebind keys, and the subtasks that retry, continue and re-export; a task's
       subtasks, plan, timeline, logs and token usage.
+    x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行、重新导出这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
   - name: report
     description: >-
       What a task found: the report and its detail tables, the episodes with their verdicts and
       findings (live ones while it runs: `pipeline/episodes`), sync curves, the performance profile,
       and adjudication (the open questions, recording decisions, applying them). They read a
-      committed result revision; when its files are not on the Daemon's disk and cannot be fetched
-      back from the delivery directory, the answer is 404 not_found with details.reason
-      run_dir_missing or revision_missing.
+      committed result revision; when its files are neither on the service's disk nor fetchable from
+      the delivery directory, the answer is 404 not_found with details.reason run_dir_missing or
+      revision_missing.
+    x-description-zh: 任务的质检结果：报告及其明细表、每条 episode 的判决与发现（运行中的实时结果见 `pipeline/episodes`）、同步曲线、性能剖析，以及人工裁决（待裁的问题、记录决定、执行决定）。这些接口读已提交的结果版本；它的文件既不在服务的磁盘上、也没法从交付目录取回时，返回 404 not_found，details.reason 为 run_dir_missing 或 revision_missing。
   - name: system
     description: >-
       Plumbing: presigned URLs for evidence media (`GET /media/sign`), the SSE stream of one task
       (under `{base}/events`, not `{base}/api/v1`), and the liveness / readiness probes (no
       authentication, at the root and under `{base}`).
+    x-description-zh: 基础接口：证据媒体的预签名地址（`GET /media/sign`）、单个任务的 SSE 事件流（在 `{base}/events` 下，不在 `{base}/api/v1` 下），以及存活 / 就绪探针（免鉴权，根路径和 `{base}` 下都有）。
   - name: uploads
     description: >-
-      Input files of module parameters (registry 1.5, format upload) and a dataset's external
-      annotation files (`viz_annotations`), validated on arrival; the returned `handle`
+      Input files of module parameters (parameters whose `format` is `upload`) and a dataset's
+      external annotation files (`viz_annotations`), validated on arrival; the returned `handle`
       (`upload:<upload_id>`) is what a task's module `params` or a dataset names.
+    x-description-zh: 模块参数要用的输入文件（`format` 为 `upload` 的参数）和数据集的外部标注文件（`viz_annotations`），上传时即校验；返回的 `handle`（`upload:<upload_id>`）填进任务模块的 `params` 或数据集登记里引用。
   - name: viz
     description: >-
-      The data visualizer (design docs 18, 19): one presentation model for a registered dataset (the
-      visualize page) or a task's frozen input (the mini player of the report, the adjudication cards
-      and the live episodes): episodes, curves, the cameras the Daemon serves (mp4, frame and sample
-      packs), mcap field mappings and the site's template library.
+      The data visualizer: one presentation model for a registered dataset (the visualize page) or a
+      task's frozen input (the mini player of the report, the adjudication cards and the live
+      episodes): episodes, curves, the cameras the service serves (mp4, frame and sample packs),
+      mcap field mappings and the site's template library.
+    x-description-zh: 数据可视化：已登记的数据集（「可视化」页）和任务冻结的输入（报告、人工裁决卡片与实时 episode 里的迷你播放器）用同一套展示模型：episode、曲线、由服务提供的相机画面（mp4、帧包与样本包）、mcap 字段映射和站点的模版库。
 
 paths:
   # ---------------------------------------------------------------- credentials
@@ -633,6 +486,7 @@ paths:
               examples:
                 busy:
                   summary: A busy week
+                  x-summary-zh: 忙碌的一周
                   value:
                     todo:
                       error_tasks: 1
@@ -677,6 +531,7 @@ paths:
                     generated_at: 1790650000000
                 quiet:
                   summary: A quiet site
+                  x-summary-zh: 没有任务在跑的站点
                   value:
                     todo:
                       error_tasks: 0
@@ -770,6 +625,7 @@ paths:
             examples:
               tos:
                 summary: A private TOS dataset
+                x-summary-zh: 私有 TOS 上的数据集
                 value:
                   input:
                     source: tos
@@ -780,6 +636,7 @@ paths:
                   note: DROID 抽检用
               public:
                 summary: A dataset in the HuggingFace cache bucket (no key)
+                x-summary-zh: HuggingFace 缓存桶里的数据集（不需要密钥）
                 value:
                   input: {source: public, uri: 'tos://hf-cache/lerobot/aloha_sim'}
       responses:
@@ -912,6 +769,7 @@ paths:
               examples:
                 changed:
                   summary: The dataset changed since it was registered
+                  x-summary-zh: 数据集在登记之后变了
                   value:
                     at: 1791231552154
                     trigger: recheck
@@ -925,6 +783,7 @@ paths:
                       preflighted_at: 1758300000000
                 same:
                   summary: Nothing changed
+                  x-summary-zh: 没有变化
                   value: {at: 1791231552154, trigger: recheck, result: same, change: null}
         default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/repreflight:
@@ -970,6 +829,7 @@ paths:
             examples:
               browse:
                 summary: Read meta/info.json and list two pages, URLs valid 30 minutes
+                x-summary-zh: 读 meta/info.json、列两页文件，地址 30 分钟内有效
                 value:
                   ttl: 1800
                   requests:
@@ -978,6 +838,7 @@ paths:
                     - {op: list, prefix: lerobot/droid_100/, continuation_token: 1/abc+def==, max_keys: 500}
               one:
                 summary: One video, default lifetime
+                x-summary-zh: 一个视频，默认有效期
                 value:
                   requests:
                     - {op: get, key: lerobot/droid_100/videos/chunk-000/front/episode_000001.mp4}
@@ -990,6 +851,7 @@ paths:
               examples:
                 signed:
                   summary: One presigned URL per request, in order
+                  x-summary-zh: 每项请求一个预签名地址，顺序与请求一致
                   value:
                     expires_at: 1790000000000
                     urls: ['https://bkt.tos-s3-cn-beijing.volces.com/lerobot/droid_100/meta/info.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKLTexample%2F20260928%2Fcn-beijing%2Fs3%2Faws4_request&X-Amz-Date=20260928T120000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000',
@@ -1243,6 +1105,7 @@ paths:
             examples:
               tos:
                 summary: A private TOS dataset
+                x-summary-zh: 私有 TOS 上的数据集
                 value:
                   input:
                     source: tos
@@ -1251,6 +1114,7 @@ paths:
                     credential: prod-tos
               public:
                 summary: A dataset in the HuggingFace cache bucket
+                x-summary-zh: HuggingFace 缓存桶里的数据集
                 value:
                   input: {source: public, uri: pusht}
       responses:
@@ -1262,6 +1126,7 @@ paths:
               examples:
                 lerobot:
                   summary: A LeRobot v2 dataset every module can check
+                  x-summary-zh: 所有模块都能检查的 LeRobot v2 数据集
                   value:
                     preflight_id: pf-kqzmrtbwe
                     expires_at: 1791233352154
@@ -1547,6 +1412,7 @@ paths:
               examples:
                 first:
                   summary: The first page (two of its rows shown)
+                  x-summary-zh: 第一页（只列出其中两行）
                   value:
                     items:
                       - id: task-zcnvbhqeo
@@ -1682,6 +1548,7 @@ paths:
             examples:
               head50:
                 summary: First 50 episodes of a private TOS dataset, started at once
+                x-summary-zh: 私有 TOS 数据集的前 50 条，建完就开始
                 value:
                   name: droid 前 50 条质检
                   note: 第一轮抽检
@@ -1712,6 +1579,7 @@ paths:
                     limits: {cpu_concurrency: 4, vlm_parallelism: 32}
               public:
                 summary: A HuggingFace cache-bucket dataset, every episode, one module
+                x-summary-zh: HuggingFace 缓存桶里的数据集，全部 episode，一个模块
                 value:
                   name: hf pusht
                   input: {source: public, uri: pusht}
@@ -1721,6 +1589,7 @@ paths:
                   modules: [timestamp_check]
               registered:
                 summary: A registered dataset by id
+                x-summary-zh: 按 ID 引用已登记的数据集
                 value:
                   name: droid 前 50 条质检
                   note: 第一轮抽检
@@ -1754,6 +1623,7 @@ paths:
               examples:
                 queued:
                   summary: Created and queued (start_now)
+                  x-summary-zh: 已创建并排队（start_now）
                   value:
                     id: task-kqzmrtbwe
                     state: queued
@@ -1799,7 +1669,8 @@ paths:
               schema: {$ref: "#/components/schemas/Task"}
               examples:
                 finished:
-                  summary: 'A finished two-block run: two episodes erred and wait for a retry, ten for a person'
+                  summary: 'A finished task: two episodes erred and wait for a retry, ten wait for a person'
+                  x-summary-zh: 已结束的任务：两条 episode 出错等待补跑，十条等人工裁决
                   value:
                     id: task-kqzmrtbwe
                     name: droid 前 50 条质检（两块并行）
@@ -2293,7 +2164,8 @@ paths:
                   links: {$ref: "#/components/schemas/Links"}
               examples:
                 findings:
-                  summary: A findings report (C2 2.0; two of its module sections shown)
+                  summary: A report (two of its module sections shown)
+                  x-summary-zh: 一份质检报告（只列出其中两个模块的小节）
                   value:
                     revision: 1
                     report:
@@ -2553,6 +2425,7 @@ paths:
               examples:
                 page:
                   summary: A page of the current revision
+                  x-summary-zh: 当前结果版本的一页
                   value:
                     items:
                       - episode_index: 12
@@ -2577,6 +2450,7 @@ paths:
                     revision: 2
                 empty:
                   summary: A filter nothing matches
+                  x-summary-zh: 筛选后没有匹配的条目
                   value:
                     items: []
                     next_cursor: null
@@ -2694,6 +2568,7 @@ paths:
               examples:
                 annotated:
                   summary: Two cameras, the reading on the cross-correlation
+                  x-summary-zh: 两路相机，以及互相关曲线上的读数
                   value:
                     episode_index: 26
                     revision: 2
@@ -2909,6 +2784,7 @@ paths:
               examples:
                 pending:
                   summary: The first cards of the pending tab
+                  x-summary-zh: 「待裁决」页签的前两张卡片
                   value:
                     items:
                       - episode_index: 29
@@ -2976,6 +2852,7 @@ paths:
             examples:
               decisions:
                 summary: Adopt a suggested label, judge the task a success, write a label of one's own
+                x-summary-zh: 采纳建议的标注、判定任务成功、自己写一条标注
                 value:
                   decisions:
                     - {episode_index: 29, line: label, decision: adopt_suggestion}
@@ -2993,6 +2870,7 @@ paths:
               examples:
                 counts:
                   summary: The three count cards after recording
+                  x-summary-zh: 记录之后的三个计数
                   value: {decided: 2, pending: 8, unapplied: 2}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/adjudication/apply:
@@ -3014,10 +2892,12 @@ paths:
             schema: {$ref: "#/components/schemas/AdjudicationApply"}
             examples:
               v1:
-                summary: Judge relabelled episodes again the way v1 does (the default; {} or no body is the same)
+                summary: Judge relabelled episodes again the v1 way (the default; {} or no body does the same)
+                x-summary-zh: 改了标注的 episode 按 v1 的方式重判（缺省；传 {} 或不带请求体效果相同）
                 value: {relabel_rerun: v1}
               full:
                 summary: Run the first run's full flow on relabelled episodes
+                x-summary-zh: 改了标注的 episode 按首次运行的完整流程重判
                 value: {relabel_rerun: full}
       responses:
         "202":
@@ -3028,6 +2908,7 @@ paths:
               examples:
                 queued:
                   summary: The subtask, queued
+                  x-summary-zh: 子任务已排队
                   value:
                     subtask:
                       id: sub-rnfqwzbke
@@ -3258,6 +3139,7 @@ components:
           examples:
             state_conflict:
               summary: '409: the write does not fit the task''s state'
+              x-summary-zh: 409：任务当前的状态不允许这个写操作
               value:
                 error:
                   code: task_state_conflict
@@ -3265,10 +3147,12 @@ components:
                   details: {state: running}
             not_json:
               summary: '400: a write without Content-Type: application/json'
+              x-summary-zh: '400：写请求没带 Content-Type: application/json'
               value:
                 error: {code: validation_failed, message: '写接口只接受 JSON：请带上 Content-Type: application/json（没有请求体也要带）'}
             precheck_failed:
               summary: '422: a pre-start check failed (details: PrecheckDetails)'
+              x-summary-zh: 422：开始前的检查没通过（details 是 PrecheckDetails）
               value:
                 error:
                   code: precheck_failed
@@ -3295,6 +3179,7 @@ components:
                         elapsed_ms: 1350
             source_changed:
               summary: '409: the dataset changed since its preflight (details: SourceChange)'
+              x-summary-zh: 409：数据集在预检之后变了（details 是 SourceChange）
               value:
                 error:
                   code: source_changed
@@ -3308,10 +3193,12 @@ components:
                     preflighted_at: 1758300000000
             not_found:
               summary: '404: no such object'
+              x-summary-zh: 404：对象不存在
               value:
                 error: {code: not_found, message: 要找的对象不存在，可能已被删除}
             unauthorized:
               summary: '401: not signed in'
+              x-summary-zh: 401：没有登录
               value:
                 error: {code: unauthorized, message: 需要登录：请输入质检平台的账号和密码}
     VizVideo:
