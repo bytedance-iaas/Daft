@@ -8,6 +8,12 @@ type Args = Record<string, unknown>;
 const S = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
 const L = (v: unknown): string => (Array.isArray(v) ? join(v.map(String)) : S(v));
 
+// EEF trajectory point / axis ids, spelled out where the convention is known; other ids are shown as given
+const EEF_POINTS: Record<string, string> = { tcp: '工具中心点（TCP）' };
+const EEF_AXES: Record<string, string> = { x: 'X 轴', y: 'Y 轴', z: 'Z 轴（接近方向）', finger_line: '手指连线' };
+const eefPointName = (id: string) => EEF_POINTS[id] ?? `标记点 ${id}`;
+const eefAxisName = (id: string) => EEF_AXES[id] ?? id;
+
 export const zh = {
   app: {
     product: 'Physical AI Kit · 数据质检平台',
@@ -1643,7 +1649,7 @@ export const zh = {
     onCamera: (camera: string) => `（相机 ${camera}）`,
     kind: { uniform: '均匀抽样', candidate: '候选段' } as Record<string, string>,
     frames: (from: number, to: number, n: number) => (from === to ? `帧 ${from + 1}` : `帧 ${from + 1}–${to + 1}（${n} 帧）`),
-    target: (point: string, axis: string | null) => (axis ? `点 ${point} · 方向 ${axis}` : `点 ${point}`),
+    target: (point: string, axis: string | null) => (axis ? `${eefPointName(point)} · 朝向 ${eefAxisName(axis)}` : eefPointName(point)),
     vote: { position: '位置', orientation: '朝向', tracking: '绿十字跟对了' } as Record<string, string>,
     offset: (direction: string, magnitude: string) => `偏移：${direction}${magnitude ? `，${magnitude}` : ''}`,
     offsetDirection: { up: '偏上', down: '偏下', left: '偏左', right: '偏右', toward_fingers: '偏向指尖', away_from_fingers: '偏离指尖', unclear: '方向不明' } as Record<string, string>,
@@ -1664,7 +1670,7 @@ export const zh = {
     opinion: {
       title: '模型意见',
       advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P、接近方向红箭头 A 和手指连线橙线 B），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
-      finger: (axis: string) => ` · 手指连线 ${axis}`,
+      finger: (axis: string) => (axis === 'finger_line' ? ' · 手指连线' : ` · 手指连线沿 ${eefAxisName(axis)}`),
       failed: (why: string) => `没问成：${why}`,
       skipped: '没有问',
       unseen: '模型说这一段看不清夹爪',

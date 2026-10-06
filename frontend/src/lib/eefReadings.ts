@@ -102,7 +102,7 @@ export interface EefWindowRow {
   title: string;
   /** e.g. 「帧 120–168（3 帧）」 */
   frames: string;
-  /** e.g. 「点 block_center · 轴 gripper_x」 */
+  /** e.g. 「工具中心点（TCP） · 朝向 Z 轴（接近方向）」 */
   target: string | null;
   answered: boolean;
   votes: EefVote[];

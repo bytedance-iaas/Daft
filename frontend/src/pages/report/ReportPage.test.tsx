@@ -249,7 +249,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('eef-conclusion')).toHaveTextContent(`为什么转人工：${why}`);
     expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');
     const cand = within(block).getByTestId('eef-window-ext-0');
-    expect(cand).toHaveTextContent('候选段 · 位置帧 121–151（3 帧）点 block_center · 方向 gripper_x');
+    expect(cand).toHaveTextContent('候选段 · 位置帧 121–151（3 帧）标记点 block_center · 朝向 gripper_x');
     expect(cand).toHaveTextContent('与 CPU 冲突：位置 CPU 可疑，模型支持');
     expect(cand.className).toContain('conflict');
     expect(within(block).getByTestId('eef-window-ext-1')).toHaveTextContent('模型超时');
@@ -297,7 +297,7 @@ describe('质检报告 (07 §5)', () => {
     expect(first).toHaveTextContent('片段 1帧 41–96（56 帧）2.7–6.3 秒中心不对不匹配置信度 85%');
     expect(first).toHaveTextContent('「红圈落在手指外侧」');
     expect(second).toHaveTextContent('片段 2帧 181–231（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
-    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z · 手指连线 y');
+    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('工具中心点（TCP） · 朝向 Z 轴（接近方向） · 手指连线沿 Y 轴');
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');
     expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');
     // the record comparison needs no gripper reference: here no mapping was given

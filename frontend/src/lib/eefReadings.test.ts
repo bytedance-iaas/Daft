@@ -57,7 +57,7 @@ describe('the EEF record for a person (F5.11, F5.12)', () => {
     const [a, b, c] = eefWindowRows(details);
     expect(a.title).toBe('候选段 · 位置');
     expect(a.frames).toBe('帧 41');                       // frame 40 of the data, counted from 1
-    expect(a.target).toBe('点 tcp');
+    expect(a.target).toBe('工具中心点（TCP）');
     expect(a.votes.map((v) => `${v.label}：${v.value}:${v.tone}`)).toEqual(['位置：反驳:bad', '朝向：拿不准:none', '绿十字跟对了：支持:good']);
     expect(a.offset).toBe('偏移：偏左，一到两指宽');
     expect([a.explanation, a.cached, a.failure]).toEqual(['红圈在夹爪左边', true, null]);
