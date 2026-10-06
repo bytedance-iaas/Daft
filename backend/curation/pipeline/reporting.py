@@ -312,11 +312,6 @@ def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> di
     elif m == "dedup":
         out.update(S.dedup_stats(_read(os.path.join(module_dir(rev.run_dir, "dedup"),
                                                     "groups.json"), {}) or {}))
-    elif m == "skill_profile":
-        base = module_dir(rev.run_dir, "skill_profile")
-        out.update(S.skill_stats(records, _read(os.path.join(base, "profile.json"), {}) or {},
-                                 _read(os.path.join(base, "label_audit.json"), {}) or {},
-                                 delivered={int(e["episode_index"]) for e in rev.episodes("passed")}))
     return out
 
 

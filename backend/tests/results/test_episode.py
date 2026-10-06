@@ -40,7 +40,7 @@ def test_every_episode_of_the_revision(world):
     ep0 = _view(world, 0)
     assert sorted(ep0["modules"]) == sorted(
         ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-         "video_action_sync", "task_success", "dedup", "skill_profile"])
+         "video_action_sync", "task_success", "dedup"])
     assert ep0["reasons"] == [] and ep0["review"] == [] and ep0["evidence"] == []
     assert (ep0["fps"], ep0["dataset_id"]) == (15.0, None)   # C4 2.4.0: the preflight's fps; no registration
     ep6 = _view(world, 6)
@@ -61,7 +61,7 @@ def test_every_finding_with_the_level_it_has(world):
     ep5 = _view(world, 5)
     assert rows(ep5) == [("visual_quality", "exposure_low", "IMG-2", "info", None, False)] * 2 + [
         ("task_success", "uncertain", "TASK-5", "review", "task_verdict", False),
-        ("skill_profile", "label_disagreement", "LABEL-5", "review", "label", False)]
+        ("task_success", "label_conflict_suspect", "LABEL-5", "review", "label", False)]
     assert ep5["findings"][2]["finding"] == ep5["modules"]["task_success"]["findings"][0]   # the record's own
     ep7 = _view(world, 7)
     assert rows(ep7)[-1] == ("dedup", "duplicate", "SET-1", "blocking", None, True)
@@ -93,7 +93,7 @@ def test_a_person_s_conclusion_is_a_finding_of_its_own(world):
 def test_review_items_task_text_and_evidence(world):
     ep5 = _view(world, 5)
     assert [(i["module"], i["kind"]) for i in ep5["review"]] == [
-        ("task_success", "task_verdict"), ("skill_profile", "label_conflict")]
+        ("task_success", "task_verdict"), ("task_success", "label_conflict")]
     assert ep5["review"][1]["priority"] == "重点"
     assert ep5["task_text"] == {"text": TEXT[5], "source": "原始标注"}
     assert ep5["evidence"] == [{"module": "task_success", "kind": "frame",

@@ -35,8 +35,8 @@ def test_every_episode_in_order_with_its_list_and_reasons(world):
     # 待裁: the cards still to decide (the appeal candidates ep 2 and ep 7 are optional)
     assert [ep for ep, i in by_ep.items() if i["review"]] == [3, 4, 5]
     assert by_ep[3]["review_modules"] == ["task_success"]
-    assert by_ep[4]["review_modules"] == ["skill_profile"]
-    assert sorted(by_ep[5]["review_modules"]) == ["skill_profile", "task_success"]
+    assert by_ep[4]["review_modules"] == ["task_success"]
+    assert sorted(by_ep[5]["review_modules"]) == ["task_success"]
 
 
 def test_filters_by_list_and_open_questions(world):

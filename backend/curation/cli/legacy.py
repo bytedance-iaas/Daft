@@ -264,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
               "· 被拒复议(human-decisions/reject_appeals.csv):人判可用的条目"
               "从“拒绝”翻回“通过”,并补回交付数据集。\n"
               "技能画像只重排被裁决的这几条;要在已有技能体系里对全部轨迹"
-              "重新分类,用 reprofile。")
+              "重新分类。")
     rj.add_argument("--delivery", required=True,
                     help="要更新的那一次跑批目录(<交付目录>/<时间戳>/);"
                          "只给交付目录时按 latest 记的那次执行")
@@ -621,12 +621,6 @@ REJUDGE_SKIP_DIRS = ("lerobot_curated/", "review_clips/",
                      "details/audit_clips/", "details/evidence/",
                      "details/plots/")
 
-#: reprofile 的镜像/写回跳过表:它只动画像(passed.json 的 skills 段、
-#: skill_assignment.csv、报告),视频/证据帧/曲线一个字节不读不写 ——
-#: 半镜像 + 写回对称跳过,pod 盘上只有 json/parquet 级小文件。
-REPROFILE_SKIP_DIRS = ("lerobot_curated/", "rrd_curated/", "review_clips/",
-                       "details/audit_clips/", "details/evidence/",
-                       "details/plots/")
 
 
 def _stage_tos_delivery(args, tag: str, skip_dirs: tuple = ()):
@@ -673,37 +667,6 @@ def _sync_tos_delivery(sync, tag: str) -> int:
     print(f"[{tag}] 已同步回 {url}:上传 {r['uploaded']} 个,删除 {r['deleted']} 个,"
           f"未变 {r['skipped']} 个", flush=True)
     return 0
-
-
-def _reprofile_parser() -> argparse.ArgumentParser:
-    """reprofile 的独立 parser(2026-08-27 用户定:对客户隐藏)。
-
-    它是方针变更日的运维工具:客户的正常闭环(质检→裁决→rejudge)走完后
-    reprofile 恒报 0 条变化,亮在 --help 里只会制造困惑 → 主 parser 里不注册
-    (help / usage / 错误提示的候选列表都不出现),main 入口按第一个词拦截,
-    功能与帮助原样保留(curation reprofile --help 仍有完整说明)。"""
-    p = argparse.ArgumentParser(
-        prog="curation reprofile",
-        description="在已有的技能体系里,按当前归类方针对交付的全部轨迹重新分配归属"
-                    "(归类文本描述优先:有可用 caption 用描述,否则退回原始标注)。"
-                    "不重新生成 caption、不重新归纳体系、不改交付数据集、不碰成败"
-                    "判定;连跑两次,第二次报 0 条变化。\n"
-                    "与 rejudge 的区别一句话:rejudge 只重排被人工裁决的那几条"
-                    "(并把裁决落实到数据集);reprofile 无需裁决,对全部轨迹重排一遍。",
-        formatter_class=_CjkHelpFormatter, add_help=False)
-    p.add_argument("-h", "--help", action="help", help="显示本命令的帮助并退出")
-    p.add_argument("--delivery", required=True,
-                   help="要重算的那一次跑批目录(<交付目录>/<时间戳>/);"
-                        "只给交付目录时按 latest 记的那次执行(同 rejudge)")
-    p.add_argument("--delivery-region", default=None, metavar="地区",
-                   help="--delivery 为 tos:// 时的桶地区(同 rejudge)")
-    p.add_argument("--config", default=None,
-                   help="流水线 YAML(缺省读环境变量 CURATION_CONFIG;仅用于"
-                        "「归不进体系时问一次 LLM 补漏」,没配 VLM 端点就诚实留"
-                        "「未归类」)")
-    p.add_argument("--vlm-backend", default=None, metavar="预设名",
-                   help="补漏用的 LLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
-    return p
 
 
 def _interactive_run_preflight(args) -> str | None:
@@ -782,11 +745,7 @@ def main(argv: list[str] | None = None) -> int:
     import os
     _tolerate_broken_log()
     _argv = list(sys.argv[1:] if argv is None else argv)
-    if _argv[:1] == ["reprofile"]:
-        args = _reprofile_parser().parse_args(_argv[1:])
-        args.command = "reprofile"
-    else:
-        args = build_parser().parse_args(_argv)
+    args = build_parser().parse_args(_argv)
     if args.command == "run":
         from ..pipeline.config import ConfigError, apply_overrides, load_config
         try:
@@ -994,31 +953,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
         return _sync_tos_delivery(_sync, "rejudge")
-
-    if args.command == "reprofile":
-        from ..delivery import is_legacy_delivery, resolve_run
-        from ..pipeline.config import load_config
-        from ..pipeline.reprofile import run_reprofile
-        _sync = _stage_tos_delivery(args, "reprofile", skip_dirs=REPROFILE_SKIP_DIRS)
-        if _sync is None and str(args.delivery).startswith("tos://"):
-            return 1
-        # 与 rejudge 同一套选运行语义:reprofile 也是写数据的命令,动了哪一份要明说
-        if not is_legacy_delivery(args.delivery):
-            _run = resolve_run(args.delivery)
-            if _run != args.delivery:
-                print(f"[reprofile] 按 latest 记录选中 {os.path.basename(_run)};"
-                      "要重算别的那次,把 --delivery 写到那一次的目录", flush=True)
-            args.delivery = _run
-        cfg = load_config(args.config)
-        if args.vlm_backend:
-            from ..pipeline.config import apply_vlm_backend
-            cfg = apply_vlm_backend(cfg, args.vlm_backend)
-        from ..ingest.public_catalog import apply_config as _public_apply_config
-        _public_apply_config(cfg)
-        summary = run_reprofile(args.delivery, cfg=cfg)
-        if summary.get("note"):
-            print(f"[reprofile] {summary['note']}")
-        return _sync_tos_delivery(_sync, "reprofile")
 
     if args.command == "ls":
         return _cmd_ls(args.path, args.region)

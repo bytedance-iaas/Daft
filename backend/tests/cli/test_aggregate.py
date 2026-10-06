@@ -21,7 +21,7 @@ from curation.pipeline.records import record_v2
 from .pipeline import read_jsonl, run
 
 ALL = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-       "video_action_sync", "task_success", "dedup", "skill_profile")
+       "video_action_sync", "task_success", "dedup")
 SCORED = ("motion_quality", "visual_quality")          # a score reading, never a reject (P18)
 TASK = "pick up the red block and place it in the bin"
 
@@ -209,7 +209,7 @@ def test_final_lists_are_disjoint_and_complete(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0, 1, 2, 3, 5)
     rd.replace("dedup", 1, "fail", details={"duplicate_of": 0})
     rd.drop("dedup", 2)                                        # dedup never saw it
-    rd.replace("skill_profile", 3, "error")
+    rd.replace("visual_quality", 3, "error")
     rd.put("timestamp_check", 4, "fail")                       # the funnel rejects it
     rd.replace("task_success", 5, "error")                     # the funnel holds it
     lists = final(rd.write(), "0-5")
@@ -223,7 +223,7 @@ def test_final_lists_are_disjoint_and_complete(tmp_path):
     gap = lists["reject"][4]["reasons"][0]
     assert (gap["kind"], gap["code"], gap["item"], gap["appealable"]) == ("finding", "gap", "STRM-3", False)
     assert [r["module"] for r in lists["held"][2]["reasons"]] == ["dedup"]
-    assert [r["module"] for r in lists["held"][3]["reasons"]] == ["skill_profile"]
+    assert [r["module"] for r in lists["held"][3]["reasons"]] == ["visual_quality"]
     assert lists["held"][5]["reasons"][0] == {
         "module": "task_success", "kind": "execution_error",
         "text": "「任务成败判定」执行出错（probe/probe: timeout）"}
@@ -271,7 +271,7 @@ def test_human_decisions_follow_v1s_priorities(tmp_path):
     assert after["reject"][0]["reasons"][0]["text"].startswith("人工裁决判失败")
     assert after["reject"][0]["reasons"][0]["kind"] == "human"
     assert after["reject"][3]["reasons"][0]["kind"] == "finding"     # gates are final
-    assert after["reject"][4]["reasons"] == [{"module": "skill_profile", "kind": "human",
+    assert after["reject"][4]["reasons"] == [{"module": "task_success", "kind": "human",
                                               "text": "人工裁决弃用"}]
     assert after["held"][6]["reasons"][0]["text"] == "改标后尚未按新标注重跑任务成败判定"
     assert {e: [i["kind"] for i in v["review"]] for e, v in after["review"].items()} == \
@@ -304,7 +304,7 @@ def _funnel_phase(run_dir: str, revision: int, episodes: str) -> dict:
 
 def test_a_restored_appeal_is_never_held_for_dedup_or_profile(tmp_path):
     """The run order the Daemon uses: ep 1 was rejected by task_success alone, so it
-    was not in keep.txt and neither dedup nor skill_profile ever saw it. A person
+    was not in keep.txt and dedup never saw it. A person
     restores it: keep.txt of the next revision takes it in, so the incremental
     profile files it, and dedup - not run again - is not asked about it."""
     rd = RunDir(str(tmp_path / "run")).good(0, 2)
@@ -324,8 +324,8 @@ def test_a_restored_appeal_is_never_held_for_dedup_or_profile(tmp_path):
     counts = _funnel_phase(run_dir, 2, "0-2")
     assert (counts["keep"], counts["decided_in"], counts["decided_out"]) == (2, 1, 0)
     assert _keep_txt(run_dir, 2) == [0, 1, 2]
-    # what `check skill_profile --incremental --episodes @r0002/keep.txt` adds for it
-    rd.put("skill_profile", 1, "pass", part="0002")
+    # what the next revision adds for it
+    rd.put("visual_quality", 1, "pass", part="0002")
     rd.write()
     after = final(run_dir, "0-2", revision=2)
     assert sorted(after["passed"]) == [0, 1, 2] and after["held"] == {}
@@ -344,7 +344,7 @@ def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
     rd.replace("task_success", 3, "abstain")
     rd.replace("dedup", 7, "fail", details={"duplicate_of": 3})        # 7 copies 3
     rd.drop("dedup", 6)                                                  # never compared
-    for m in ("timestamp_check", "kinematic_limits", "video_action_sync", "skill_profile"):
+    for m in ("timestamp_check", "kinematic_limits", "video_action_sync", "visual_quality"):
         rd.put(m, 5, "pass")
     for m in ("motion_quality", "visual_quality"):
         rd.put(m, 5, "scored")
@@ -536,37 +536,37 @@ def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
     items = {e: v["review"] for e, v in lists["review"].items()}
     assert [(i["kind"], i["line"], i["codes"]) for i in items[0]] == [
         ("task_verdict", "task_verdict", ["uncertain"]),
-        ("label_conflict", "label", ["label_disagreement"])]
+        ("label_conflict", "label", ["label_conflict_suspect"])]
     assert items[3] == [{"source_module": "dedup", "kind": "reject_appeal",
                          "line": "reject_appeal", "duplicate_of": 0, "codes": ["duplicate"],
                          "items": ["SET-1"], "reason": "与 ep000000 字节级完全重复"}]
 
 
 def _label_questions(rd: RunDir, *eps: int) -> str:
-    """The run directory of ``rd`` with the label audit queueing ``eps``: skill_profile's records
-    of them carry its label finding (the audit's flag) and ``label_audit.json`` their tier."""
+    """The run directory of ``rd`` with the label audit queueing ``eps``.
+
+    The queue used to have two sources, the skill profile and task_success's kill guard; the
+    profile left with registry 3.0, so the guard is the only one and the records carry its
+    ``label_conflict_suspect``."""
     for e in eps:
-        rd.replace("skill_profile", e, "abstain")
-    run_dir = rd.write()
-    audit = {"high": [{"id": f"ep{e:06d}", "reason": "标注与画面不一致"} for e in eps]}
-    os.makedirs(os.path.join(run_dir, "checks", "skill_profile"), exist_ok=True)
-    with open(os.path.join(run_dir, "checks", "skill_profile", "profile.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump({"families": []}, fh)
-    with open(os.path.join(run_dir, "checks", "skill_profile", "label_audit.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump(audit, fh)
-    return run_dir
+        rd.replace("task_success", e, "abstain",
+                   details={"verdict": "label_conflict_suspect", "task_desc": TASK,
+                            "task_desc_source": "原始标注",
+                            "label_check": {"annotation": "旧标注", "caption": "画面描述"}})
+    return rd.write()
 
 
 def test_a_task_verdict_after_a_relabel_is_taken_instead_of_a_re_judge(tmp_path):
-    """C1 1.3's follow-up (v1's relabel card): on an episode asked only about its label,
-    a person who adopts a new label may also conclude the task. A success or failure is
-    taken as it is and the episode is not judged again; "unsure" leaves the re-judge."""
+    """C1 1.3's follow-up (v1's relabel card): on an episode asked about its label, a person who
+    adopts a new label may also conclude the task. A success or failure is taken as it is and the
+    episode is not judged again; "unsure" leaves the re-judge.
+
+    Since the skill profile left (registry 3.0) the label question only ever comes from the kill
+    guard, which holds the episode, so the card always carries the task verdict question too."""
     run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1, 2), 0, 1, 2)
     first = final(run_dir, "0-2")
     assert {e: [i["line"] for i in v["review"]] for e, v in first["review"].items()} == \
-        {0: ["label"], 1: ["label"], 2: ["label"]}                  # label questions only
+        {0: ["task_verdict", "label"], 1: ["task_verdict", "label"], 2: ["task_verdict", "label"]}
 
     out = apply(run_dir, decisions(str(tmp_path / "d.json"),
                                    (0, "label", "adopt_suggestion", "stack the cups"),
@@ -607,6 +607,7 @@ def _apply_more(run_dir: str, path: str, first_id: int, *items) -> dict:
     return apply(run_dir, path)
 
 
+@pytest.mark.skip(reason="the follow-up question has no live path since the skill profile left (registry 3.0): the label question now only comes from the kill guard, which also leaves the task verdict open, so a task answer is a primary answer and never lapses")
 def test_a_follow_up_verdict_lapses_when_its_label_answer_changes(tmp_path):
     """The verdict given with a relabel on a label-only card (task_success passed)
     answers the registry's follow-up: it counts while the label answer that opened it
@@ -636,6 +637,7 @@ def test_a_follow_up_verdict_lapses_when_its_label_answer_changes(tmp_path):
     assert third["held"][1]["reasons"][0]["text"] == "改标后尚未按新标注重跑任务成败判定"
 
 
+@pytest.mark.skip(reason="the follow-up question has no live path since the skill profile left (registry 3.0): the label question now only comes from the kill guard, which also leaves the task verdict open, so a task answer is a primary answer and never lapses")
 def test_a_resubmitted_label_needs_its_verdict_again(tmp_path):
     """A new label answer lapses the verdict given before it: the new relabel is judged
     again, unless the verdict is given once more after it."""

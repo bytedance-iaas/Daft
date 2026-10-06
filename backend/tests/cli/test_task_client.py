@@ -156,10 +156,10 @@ def test_method_not_allowed_is_rejected(stub, monkeypatch):
 
 
 def test_retry_and_continue(cli, stub):
-    res = cli("task", "retry", "task_01", "--modules", "task_success, skill_profile")
+    res = cli("task", "retry", "task_01", "--modules", "task_success, dedup")
     assert res.rc == 0
     assert res.doc["subtask"]["kind"] == "retry" and res.doc["links"]
-    assert _last(stub)["body"] == {"modules": ["task_success", "skill_profile"]}
+    assert _last(stub)["body"] == {"modules": ["task_success", "dedup"]}
     res = cli("task", "retry", "task_01")
     assert res.rc == 0 and _last(stub)["body"] is None
     res = cli("task", "continue", "task_01")

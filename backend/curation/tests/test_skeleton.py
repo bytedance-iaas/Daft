@@ -103,15 +103,10 @@ def test_cli_top_help_is_a_directory_not_a_manual():
     assert p.parse_args(["public", "--refresh"]).refresh is True
     # 细节搬进了子命令 --help,一个字没丢
     assert "label_decisions.csv" in sub.choices["rejudge"].format_help()
-    # reprofile 整命令对客户隐藏(2026-08-27 用户定):顶层目录 / usage /
-    # 错误提示的候选列表都不出现;功能与自身 --help 原样保留(运维工具)
+    # reprofile 跟着技能画像一起退休(注册表 3.0):命令、parser 和跳过表都没了
     assert "reprofile" not in sub.choices and "reprofile" not in top
-    from curation.cli.legacy import _reprofile_parser
-    _flat = _reprofile_parser().format_help().replace("\n", "").replace(" ", "")
-    assert "第二次报0条变化" in _flat and "与rejudge的区别" in _flat
-    from curation.cli import main as _main
-    ns = _reprofile_parser().parse_args(["--delivery", "/tmp/x"])
-    assert ns.delivery == "/tmp/x"          # 隐藏≠删除,参数面原样
+    import curation.cli.legacy as _legacy
+    assert not hasattr(_legacy, "_reprofile_parser")
     # 80 列终端正文零超宽(中文双宽按显示宽度折行;usage 段是 argparse 自家
     # 折行逻辑,轻微超宽属可接受,不在此列)
     import unicodedata

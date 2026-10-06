@@ -623,22 +623,6 @@ def _dedup(passed, score, d, p) -> Derived:
     return out
 
 
-@deriver("skill_profile", defer="label_disagreement")
-def _skill_profile(passed, score, d, p) -> Derived:
-    """The family an episode is filed under (a reading) and the label audit's flag (passed None: the audit
-    queued it; its tier lives in ``label_audit.json``). Datasets keep one description per episode, so
-    descriptions cannot be compared (LABEL-2)."""
-    out = Derived()
-    m = "skill_profile"
-    for key in ("family", "subskill", "grouping_text_source"):
-        if d.get(key):
-            out.readings[key] = d.get(key)
-    if passed is None:
-        out.add(m, "label_disagreement", "标注与画面不一致，或画面描述与标注归到了不同的技能")
-    out.cannot("LABEL-2", "single_description", "每条只有一份任务描述，无从比较")
-    return out
-
-
 # ---------------------------------------------------------------- dataset-level findings
 
 def _quartiles(values: list[float]) -> tuple[float, float]:
@@ -697,14 +681,4 @@ def dataset_level(module: str, records: dict[int, dict], params: dict | None = N
                 found.append(finding(module, "action_semantics_undetermined",
                                      f"判断不了动作数据的含义（{len(unsure)} / {len(sem)} 条）：运动学极限与依赖动作语义的子项没有评估",
                                      unit="dataset", readings={"episodes": len(unsure)}))
-    elif module == "skill_profile":
-        prof = profile or {}
-        fams = prof.get("families") or {}
-        if fams:
-            readings["families"] = {f: (v or {}).get("count") for f, v in fams.items() if isinstance(v, dict)}
-        for fam in prof.get("undersampled") or []:
-            name = ((fams.get(fam) or {}).get("name_zh") if isinstance(fams.get(fam), dict) else None) or fam
-            found.append(finding(module, "undersampled_family", f"技能族「{name}」样本偏少（不足 5%）",
-                                 unit="dataset", readings={"family": fam, "pct": (fams.get(fam) or {}).get("pct")
-                                                           if isinstance(fams.get(fam), dict) else None}))
     return found, readings

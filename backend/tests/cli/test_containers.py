@@ -75,7 +75,7 @@ def test_preflight_reads_the_format(cli, mini_mcap, mini_lance, fmt):
     assert ds["total_frames"] == 516
     by = {m["id"]: m for m in doc["modules"]}
     for m in ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-              "video_action_sync", "task_success", "dedup", "skill_profile"):
+              "video_action_sync", "task_success", "dedup"):
         assert by[m]["availability"] == "available", by[m]
     eef = by["eef_video_consistency"]
     if fmt == "mcap":         # F5.13: it reads mcap image topics; the dataset preflight asks for the file

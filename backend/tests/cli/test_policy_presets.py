@@ -87,7 +87,6 @@ def test_report_only_keeps_what_was_judged_and_asks_nobody(chain):
     # profile files it (a duplicate the policy does not reject is no copy to leave out)
     assert sorted(_list(chain.rd, 1, "passed")) == list(range(8))
     assert _list(chain.rd, 1, "reject") == _list(chain.rd, 1, "held") == _list(chain.rd, 1, "review") == {}
-    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 8
     lines = {ln["episode_index"]: ln for ln in
              read_jsonl(os.path.join(chain.rd, "revisions", "r0001", "verdicts.jsonl"))}
     assert all(ln["blocking"] == [] and ln["review"] == [] for ln in lines.values())

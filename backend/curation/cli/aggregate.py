@@ -111,12 +111,11 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                             f"{counts['decided_in']} in, {counts['decided_out']} out")
     else:
         from ..pipeline.adjudication import Decisions
-        from ..pipeline.dataset_stages import load_profile
         from ..pipeline.records import write_json_atomic
 
         decisions = Decisions.of(run_dir)
         task_text = _task_text(ctx, args, run_dir, episodes)
-        profile = load_profile(run_dir) if "skill_profile" in modules else None
+        profile = None          # the skill profile was removed (registry 3.0)
         result = agg.final(state, args.revision, decisions, task_text,
                            (profile or {}).get("label_audit"))
         files = agg.write_final(out_dir, result)

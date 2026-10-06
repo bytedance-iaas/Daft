@@ -64,7 +64,7 @@ def test_the_queue_of_the_first_revision(world):
     assert all(c["status"] == "pending" for c in cards.values())
     assert [q["line"] for q in cards[5]["questions"]] == ["label", "task_verdict"]
     label = cards[4]["questions"][0]
-    assert label == {"line": "label", "source_module": "skill_profile",
+    assert label == {"line": "label", "source_module": "task_success",
                      "reason": label["reason"], "duplicate_of": None, "follow_up_of": None,
                      "annotation": TEXT[4],
                      "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "参考",
@@ -90,7 +90,7 @@ def test_the_queue_of_the_first_revision(world):
 
 
 def test_source_and_status_filters(world):
-    assert list(_cards(world, status="all", source="skill_profile")) == [4, 5]
+    assert list(_cards(world, status="all", source="task_success")) == [2, 3, 4, 5, 6]
     assert list(_cards(world, status="all", source="task_success")) == [3, 5]
     assert list(_cards(world, status="all", source="timestamp_check")) == []
     assert list(_cards(world, tab="appeals", status="all", source="task_success")) == [2]
@@ -240,7 +240,7 @@ def test_a_relabel_opens_the_optional_verdict_on_a_label_only_card(world):
     card = _cards(world, status="all")[4]
     assert [q["line"] for q in card["questions"]] == ["label", "task_verdict"]
     follow = card["questions"][1]
-    assert follow["source_module"] == "skill_profile"      # the card's source stays the label's
+    assert follow["source_module"] == "task_success"       # the card's source stays the label's
     assert "选填" in follow["reason"] and follow["latest_decision"] is None
     assert follow["follow_up_of"] == "label"               # C4 1.5.2
     assert card["questions"][0]["follow_up_of"] is None     # the card's own question

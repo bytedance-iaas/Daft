@@ -226,13 +226,6 @@ def test_caption_uses_continuous_video_with_wrapped_client(monkeypatch, video):
     assert any(c["type"] == "video_url" for c in sent[0]["messages"][0]["content"])
 
 
-def test_profile_prefers_video_description_and_falls_back_on_unobservable():
-    from curation.dataset_level.reassign import grouping_text_and_source
-
-    assert grouping_text_and_source("old annotation", "pick up object") == ("pick up object", "自产caption")
-    assert grouping_text_and_source("old annotation", "unclear") == ("old annotation", "原始标注")
-
-
 def test_video_caption_does_not_reuse_old_image_caption(monkeypatch, video):
     from curation.dataset_level.caption import VideoCaptionCache, caption_episodes, make_vlm_captioner
 

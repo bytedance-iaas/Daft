@@ -115,7 +115,7 @@ def comparable(rec: dict) -> dict:
 class Chain:
     """The commands of the Daemon's main run on one run directory (plan 2.0, design doc 17 §3): the two blocks
     one after the other - autolabel, the CPU checks, the VLM checks, then the full-set steps dedup and
-    skill_profile - every stage on the whole selection, then the final verdicts. The Daemon runs the blocks
+    every stage on the whole selection, then the final verdicts. The Daemon runs the blocks
     side by side; the records do not depend on it."""
 
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
@@ -147,7 +147,7 @@ class Chain:
             json.dump(pf.doc, fh)
         self.step("plan", "plan", "--preflight", self.path("preflight.json"), "--modules",
                   "timestamp_check,kinematic_limits,motion_quality,visual_quality,"
-                  "video_action_sync,task_success,dedup,skill_profile",
+                  "video_action_sync,task_success,dedup",
                   "--episodes", episodes, "--out", self.path("plan.json"))
         self.step("snapshot", "snapshot", "--input", self.ds, "--episodes", episodes,
                   "--out", self.path("source_manifest.json"))
@@ -175,8 +175,6 @@ class Chain:
         """The full-set steps on the whole selection, the final verdicts and the report."""
         r = str(revision)
         self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes", episodes)
-        self.step("profile", "check", "--modules", "skill_profile", *self.common(),
-                  "--episodes", episodes, *self.vlm)
         self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)

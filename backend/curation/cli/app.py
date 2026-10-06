@@ -17,9 +17,9 @@ from . import (adjudicate, aggregate, autolabel, check, export_cmd, plan, prefli
 from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
 
-#: Handed to the v1 command line as they are (``reprofile`` is v1's hidden command).
+#: Handed to the v1 command line as they are.
 LEGACY_COMMANDS = ("run", "rejudge", "review-page", "prune", "ls", "fetch", "backends",
-                   "public", "reprofile")
+                   "public")
 
 _SECRET_OPTION = re.compile(r"key|secret|password|passwd|token|credential", re.I)
 
@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Curator: quality checks for robot datasets. Each command does one thing; "
                     "--json gives machines one JSON document on stdout.",
         epilog="v1 commands, unchanged (help in Chinese: curation <command> --help):\n"
-               f"  {', '.join(c for c in LEGACY_COMMANDS if c != 'reprofile')}\n\n"
+               f"  {', '.join(LEGACY_COMMANDS)}\n\n"
                "Credentials come from the environment only: CURATION_INPUT_TOS_ACCESS_KEY / "
                "_SECRET_KEY,\nCURATION_OUTPUT_TOS_ACCESS_KEY / _SECRET_KEY (TOS_ACCESS_KEY / "
                "TOS_SECRET_KEY\nwhen unset), CURATOR_USER / CURATOR_PASSWORD for curation task.",

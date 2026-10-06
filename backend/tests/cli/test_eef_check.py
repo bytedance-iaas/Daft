@@ -25,7 +25,7 @@ URL = "http://fake-vlm.test/v1"
 VLM = ("--vlm-endpoint", URL, "--vlm-model", "fake-vlm", "--retry", "0")
 
 MODS = ("timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,"
-        "dedup,skill_profile")
+        "dedup")
 EEF = "eef_video_consistency"
 CAM = "exterior"
 

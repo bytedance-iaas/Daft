@@ -23,14 +23,14 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
                       "skipped": 0}                  # D40: the CLI always writes it
     assert [m["id"] for m in body["report"]["modules"]] == [
         "timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-        "video_action_sync", "task_success", "camera_defects", "dedup", "skill_profile"]
+        "video_action_sync", "task_success", "camera_defects", "dedup"]
     links = {(ln["rel"], ln["url"]) for ln in body["links"]}
     tid = world.task_id
     assert ("task", f"/curation/tasks/{tid}") in links
     assert ("report", f"/curation/tasks/{tid}/report") in links
     # one adjudication link per source module that still has pending cards
     assert ("adjudication", f"/curation/tasks/{tid}/adjudication?source=task_success") in links
-    assert ("adjudication", f"/curation/tasks/{tid}/adjudication?source=skill_profile") in links
+    assert ("adjudication", f"/curation/tasks/{tid}/adjudication?source=task_success") in links
     assert all(ln.get("absolute") is False for ln in body["links"])
 
 
@@ -55,8 +55,6 @@ def test_module_summaries_carry_chart_ready_statistics(world):
     assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
     assert task["text_sources"] == [{"name": "原始标注", "count": 8}]
     assert s["dedup"]["counts"]["fail"] == 1 and s["dedup"]["group_sizes"] == []   # no groups.json here
-    assert s["skill_profile"]["family_distribution"] == [{"name": "放置", "count": 5}]
-    assert s["skill_profile"]["disagreement_high"] == 2
     for m, summary in s.items():
         assert "ep0000" not in json.dumps(summary, ensure_ascii=False), m
 

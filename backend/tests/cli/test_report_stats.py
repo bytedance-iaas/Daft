@@ -204,33 +204,3 @@ def test_task_success_judgements_layers_and_sources():
                              {"name": "label_guard", "count": 1}, {"name": "arbitration", "count": 1}]
 
 
-def test_dedup_group_sizes_and_skill_families():
-    assert S.dedup_stats({"action_collisions": [[3, 7], [1, 2, 9], [4, 5]]})["group_sizes"] == [
-        {"name": "2", "count": 2}, {"name": "3", "count": 1}]
-    assert S.dedup_stats({}) == {"group_sizes": []}
-    profile = {"families": {
-        "grasp": {"count": 5, "pct": 62.5, "name_zh": "抓取搬运", "subskills": {
-            "place": {"count": 4, "name_zh": "放置"}, "stack": {"count": 1}}},
-        "wipe": {"count": 3, "pct": 37.5, "subskills": {"wipe": {"count": 3}}}},
-        "undersampled": ["wipe"]}
-    audit = {"high": [{"id": "ep000001"}], "mid_for_review": [{"id": "ep000002"}, {"id": "ep000003"}],
-             "low_caption_unstable": [{"id": "ep000004"}]}
-    records = [rec(0, "pass", {"grouping_text_source": "原始标注"}),
-               rec(1, "pass", {"grouping_text_source": "自产caption"})]
-    out = S.skill_stats(records, profile, audit)
-    assert out["family_distribution"] == [{"name": "抓取搬运", "count": 5}, {"name": "wipe", "count": 3}]
-    assert out["family_tree"][0]["subskills"] == [{"name": "放置", "count": 4}, {"name": "stack", "count": 1}]
-    assert out["family_tree"][1]["undersampled"] is True
-    assert (out["label_disagreements"], out["disagreement_high"], out["disagreement_review"],
-            out["unstable"]) == (3, 1, 2, 1)
-    assert names(out["grouping_sources"]) == {"原始标注": 1, "自产caption": 1}
-    no_episode_lists(out)
-    # the records' own assignments win: counts per family and sub-skill, names from the profile
-    records = [rec(i, "pass", {"family": "grasp", "subskill": "place"}) for i in range(3)] + [
-        rec(3, "pass", {"family": "wipe", "subskill": "wipe"}),
-        rec(4, "error", error={"kind": "execution", "incidents": []})]
-    out = S.skill_stats(records, profile, None)
-    assert out["family_distribution"] == [{"name": "抓取搬运", "count": 3}, {"name": "wipe", "count": 1}]
-    assert out["family_tree"][0] == {"name": "抓取搬运", "count": 3, "pct": 75.0, "undersampled": False,
-                                     "subskills": [{"name": "放置", "count": 3}]}
-    assert out["label_disagreements"] == 0 and out["grouping_sources"] == []

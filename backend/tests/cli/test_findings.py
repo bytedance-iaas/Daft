@@ -195,9 +195,6 @@ CASES = [
     ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, set()),
     ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
     ("dedup", True, None, {}, set(), set()),
-    ("skill_profile", None, None, {"family": "放置", "subskill": "放进容器", "grouping_text_source": "原始标注"},
-     {"label_disagreement"}, {"LABEL-2"}),
-    ("skill_profile", True, None, {"family": "放置", "subskill": "放进容器"}, set(), {"LABEL-2"}),
 ] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
      for f, code in INTEG_CASES]
 
@@ -223,9 +220,8 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
     assert passes_funnel(rec) == (passed is not False)
 
 
-#: codes no answer can raise yet: the readers keep one description per episode, so the skill profile has
-#: nothing to compare (LABEL-2 is declared unassessable on every record until a reader keeps more)
-NO_SOURCE_YET = {("skill_profile", "descriptions_conflict")}
+#: codes no answer can raise yet; every module's codes have a fixture since the skill profile left
+NO_SOURCE_YET: set[tuple[str, str]] = set()
 
 
 def test_every_code_is_drawn_from_a_real_answer():
@@ -233,9 +229,6 @@ def test_every_code_is_drawn_from_a_real_answer():
     seen = {(m, f["code"]) for m, passed, score, d, *_ in CASES for f in _record(m, passed, score, d)["findings"]}
     wanted = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind != "dataset"}
     assert wanted - seen == NO_SOURCE_YET
-    for m, passed, score, d, *_ in CASES:
-        if m == "skill_profile":
-            assert "LABEL-2" in {u["item"] for u in _record(m, passed, score, d)["unassessable"]}
 
 
 def test_intervals_scopes_and_readings():
@@ -328,25 +321,23 @@ def test_dataset_level_findings():
     found, _ = F.dataset_level("data_integrity", {}, integrity=integ)
     assert [f["code"] for f in found] == ["orphan_files", "dark_camera", "table_overlap"]
     assert found[0]["item"] is None
-    found, readings = F.dataset_level("skill_profile", {}, profile={
-        "families": {"pick": {"count": 30, "pct": 96.8}, "wipe": {"count": 1, "pct": 3.2, "name_zh": "擦拭"}},
-        "undersampled": ["wipe"]})
-    assert [f["message_zh"] for f in found] == ["技能族「擦拭」样本偏少（不足 5%）"]
     every = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind == "dataset"}
     assert every == {("data_integrity", "orphan_files"), ("data_integrity", "dark_camera"),
                      ("data_integrity", "table_overlap"), ("timestamp_check", "duration_outlier"),
-                     ("motion_quality", "action_semantics_undetermined"), ("skill_profile", "undersampled_family")}
+                     ("motion_quality", "action_semantics_undetermined")}
     for f in found:
         assert schemas.errors("cli/common.schema.json#/$defs/finding", f) == []
 
 
 def test_p20_items_have_fixtures():
-    """P20: the eight items that needed only a mapping (LABEL-2 can only be declared unassessable: datasets
-    keep one description per episode)."""
+    """P20: the items that needed only a mapping.
+
+    LABEL-2 (several descriptions of one episode that disagree) left the list with the skill
+    profile - it was the only module that compared them - and nothing covers it now."""
     items = set()
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
-        items |= {u["item"] for u in rec["unassessable"] if u["item"] == "LABEL-2"}
     items |= {"SET-3", "ACT-6"}                       # dataset level, test_dataset_level_findings
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "SET-3", "ACT-6"} <= items
+    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= items
+    assert "LABEL-2" not in items

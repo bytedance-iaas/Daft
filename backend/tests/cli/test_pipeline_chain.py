@@ -19,7 +19,7 @@ from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, read_jsonl, results
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "camera_defects", "dedup", "skill_profile"]
+           "video_action_sync", "task_success", "camera_defects", "dedup"]
 
 
 @pytest.fixture(scope="module")
@@ -42,32 +42,9 @@ def chain(tmp_path_factory, mini_dataset):
 
 def test_every_step_ran_and_fits_its_contract(chain):
     assert list(chain.steps) == ["preflight", "plan", "snapshot", "autolabel", "numeric",
-                                 "frame", "vlm", "dedup", "profile", "final",
+                                 "frame", "vlm", "dedup", "final",
                                  "report", "export", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
-
-
-def test_incremental_profile_rebuilds_historical_image_outputs(chain, tmp_path):
-    import shutil
-    from curation.dataset_level.caption import VIDEO_CAPTION_PROTOCOL
-    from curation.pipeline.dataset_stages import load_profile
-    from .pipeline import run
-
-    rd = str(tmp_path / "video-migration")
-    shutil.copytree(chain.rd, rd)
-    path = os.path.join(rd, "checks", "skill_profile", "profile.json")
-    with open(path, encoding="utf-8") as fh:
-        profile = json.load(fh)
-    profile.pop("media_protocol", None)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(profile, fh)
-    with FakeVlmServer() as vlm:
-        res = run("check", "--modules", "skill_profile", "--input", chain.ds,
-                  "--run-dir", rd, "--episodes", "@" + os.path.join(rd, "revisions", "r0001", "keep.txt"),
-                  "--incremental", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-        assert res.rc == 0, res.doc
-        assert vlm.count("All cameras show the SAME robot episode") > 0
-    assert load_profile(rd)["profile"]["media_protocol"] == VIDEO_CAPTION_PROTOCOL
 
 
 def test_by_default_one_model_request_at_a_time(chain):
@@ -88,7 +65,6 @@ def test_every_stage_judges_every_episode(chain):
     assert task["findings"] == {"uncertain": 4, "task_text_missing": 2}  # 0 2 3 7; 4 and 6: captions
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
     assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
-    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 8
 
 
 def test_files_fit_their_contracts(chain):
@@ -150,15 +126,17 @@ def test_export_delivers_passed_and_verify_writes_complete(chain):
 
 def test_usage_is_booked_per_module_on_both_ledgers(chain):
     lines = []
-    for name in ("autolabel", "vlm", "profile"):
+    for name in ("autolabel", "vlm"):
         lines += [e for e in chain.steps[name].events if e["kind"] == "usage"]
-    assert {e["module"] for e in lines} == {"autolabel", "task_success", "skill_profile"}
+    assert {e["module"] for e in lines} == {"autolabel", "task_success"}
     assert {e["ledger"] for e in lines} == {"actual", "attributed"}
     actual = [e for e in lines if e["ledger"] == "actual"]
     posts = [c for c in chain.vlm_calls if c["path"].endswith("/chat/completions")]
     assert sum(e["requests"] for e in actual) == len(posts)          # every request, once
     assert sum(e["requests_unknown_usage"] for e in actual) == 0
-    assert {e["call_kind"] for e in actual} >= {"probe", "endstate", "caption", "llm"}
+    # "llm" was the skill profile's taxonomy induction and left with it (registry 3.0)
+    assert {e["call_kind"] for e in actual} >= {"probe", "endstate", "caption"}
+    assert "llm" not in {e["call_kind"] for e in actual}
     report = json.load(open(os.path.join(chain.rd, "revisions", "r0001", "report.json"),
                             encoding="utf-8"))
     tu = report["overview"]["token_usage"]
@@ -226,11 +204,6 @@ def test_report_summaries_are_chart_ready(chain):
     assert "arbitration" in task and "abstain_reasons" in task                # kept as in 1.0
     assert s["dedup"]["group_sizes"] == [{"name": "2", "count": 1}]
     assert (s["dedup"]["collision_groups"], s["dedup"]["removed"]) == (1, 1)
-    sp = s["skill_profile"]
-    assert sum(f["count"] for f in sp["family_distribution"]) == sp["counts"]["total"]
-    assert sp["families"] == len([f for f in sp["family_tree"] if f["name"] != "未归类"])
-    # the delivered set's distribution next to the profiled set's (design doc 17 §4.5): 5 passed
-    assert sum(f["count"] for f in sp["delivered_family_distribution"]) == 5
 
 
 def test_a_committed_revision_is_never_rewritten(chain):

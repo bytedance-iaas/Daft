@@ -5,7 +5,7 @@ The most important command. One call runs the modules of **one** stage (D18):
 ``visual_quality,video_action_sync`` (frame: one shared decode per camera),
 ``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or one
 dataset-level module, ``dedup`` or
-``skill_profile`` (the whole kept set in one call). Mixing stages is a usage
+the whole kept set in one call. Mixing stages is a usage
 error. The modules v2 runs itself (``data_integrity``, ``eef_video_consistency``)
 take their parameters as ``--param``.
 Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
@@ -28,7 +28,7 @@ from . import modparams, runctx
 from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
 
-DATASET_MODULES = ("dedup", "skill_profile")
+DATASET_MODULES = ("dedup",)
 
 
 def add_parser(sub, parents) -> None:
@@ -51,7 +51,7 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--plan-stage", metavar="FILE",
                    help="this stage of plan.json (gates, concurrency, merge proposal)")
     p.add_argument("--incremental", action="store_true",
-                   help="skill_profile: keep the taxonomy, re-file only what changed")
+                   help="a whole-set stage: re-file only what changed")
     p.add_argument("--survivors-out", metavar="FILE",
                    help="write the episodes that go on to the next stage, one per line")
     p.add_argument("--pipeline-state", metavar="SQLITE",
@@ -86,8 +86,7 @@ def _modules(raw: str) -> tuple[list[str], str]:
                              f"--modules {host} brings it along; it cannot run on its own")
     mods = registry.with_riders(mods)                  # a host's riders always run with it
     if stage in registry.FULL_SET_STAGES and len(mods) != 1:
-        raise UsageError("dedup and skill_profile run one at a time (profile reads the "
-                         "kept set after dedup)")
+        raise UsageError("a whole-set stage runs one module at a time")
     ordered = [m for m in registry.ids() if m in mods]
     return ordered, stage
 
@@ -130,11 +129,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     elif stage == "vlm":
         payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard)
-    elif modules == ["dedup"]:
-        payload, survivors = _dedup(ctx, args, run_dir, src, episodes, part, guard)
     else:
-        payload, survivors = _profile(ctx, args, run_dir, src, episodes, part,
-                                      plan_stage, guard)
+        payload, survivors = _dedup(ctx, args, run_dir, src, episodes, part, guard)
     if args.survivors_out:
         records.write_text_atomic(os.path.abspath(args.survivors_out),
                                   "".join(f"{e}\n" for e in survivors))
@@ -380,83 +376,6 @@ def _latest(run_dir, module):
     from ..pipeline.records import latest_results
 
     return latest_results(run_dir, module)
-
-
-def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
-    from ..adapters import vlm_client
-    from ..dataset_level.caption import make_vlm_captioner
-    from ..pipeline.dataset_stages import run_skill_profile
-    from ..pipeline.tasktext import load_autolabel, load_relabels, precomputed_captions
-
-    gates = runctx.vlm_gates(args, plan_stage)
-    cfg = runctx.stage_config(ctx, ["skill_profile"], gates=gates, args=args)
-    episodes, restored = _profile_members(ctx, run_dir, episodes)
-    if guard is not None:
-        guard(episodes)
-    rows = runctx.meta_rows(src, episodes, args, what="check:skill_profile")
-    from ..pipeline.dataset_stages import leave_out_missing_source
-    from ..pipeline.rows import index_of
-    from ..pipeline.skipped import as_list
-
-    got = {index_of(r["episode_id"]) for r in rows}
-    missing = leave_out_missing_source(ctx, run_dir, src.input_dir,
-                                       [e for e in episodes if e not in got])
-    from ..dataset_level.caption import VIDEO_CAPTION_PROTOCOL, VideoCaptionCache
-    auto_lines = load_autolabel(run_dir)
-    auto_caps = VideoCaptionCache({f"ep{i:06d}": c
-                 for i, c in precomputed_captions(auto_lines).items()
-                 if auto_lines[i].get("media_protocol") == VIDEO_CAPTION_PROTOCOL})
-    sp = cfg.get("skill_profile") or {}
-    with runctx.VlmSession(ctx, args, cfg, "skill_profile", run_dir):
-        v = cfg["checks"]["task_success"]["vlm"]
-        captioner = make_vlm_captioner(v["endpoint"], v["model"],
-                                       timeout_s=vlm_client.timeout_for("caption", v),
-                                       api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(sp.get("caption_concurrency", 8)),
-                                       video_options=v.get("video"),
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
-        llm_ask = vlm_client.make_llm_ask(
-            v["endpoint"], v["model"], timeout_s=vlm_client.timeout_for("llm", v),
-            api_key_env=v.get("api_key_env"),
-            thinking=cfg.get("pipeline", {}).get("thinking"),
-            max_in_flight=max(int(sp.get("llm_concurrency", 16)),
-                              int(sp.get("audit_concurrency", 16))))
-        payload = run_skill_profile(ctx, run_dir, rows, cfg, captioner, llm_ask, auto_caps,
-                                    part, incremental=args.incremental,
-                                    relabels=load_relabels(run_dir), restored=restored)
-    if missing:
-        payload["modules"]["skill_profile"]["skipped_missing_source"] = as_list(missing)
-    errors = set(payload["modules"]["skill_profile"]["error_episodes"])
-    return payload, [e for e in episodes if e not in errors and e not in missing]
-
-
-def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int], set[int]]:
-    """The given episodes skill_profile files, and the ones a person restored.
-
-    Plan 2.0 (design doc 17 §3.2): every given episode - the profile files the whole selection, and the
-    report gives the delivered set's distribution next to it. A funnel run leaves out the byte copies dedup
-    found: after an adjudication ``--episodes`` is the new ``keep.txt`` and dedup is not run again, its
-    first result stands (v1's rejudge); an episode a person brought into the delivery is never
-    deduplicated and is filed from its text (v1's ``_sync_profile``).
-    """
-    from ..pipeline import aggregate as agg
-    from ..pipeline.adjudication import Decisions
-    from ..pipeline.records import latest_results, two_blocks
-
-    if two_blocks(run_dir):
-        return list(episodes), set()
-    decisions = Decisions.of(run_dir)
-    if not latest_results(run_dir, "dedup") and not decisions.applied:
-        return list(episodes), set()
-    task = [m for m in runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
-            if m != "skill_profile"]
-    state = agg.RunState(run_dir, task, episodes)
-    members, restored = agg.profile_members(state, decisions)
-    left_out = len(episodes) - len(members)
-    if left_out:
-        ctx.log("info", f"skill_profile: {left_out} episode(s) dedup found to be byte copies "
-                        f"are left out")
-    return members, restored
 
 
 def render(payload: dict) -> str:

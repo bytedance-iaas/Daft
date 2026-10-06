@@ -46,7 +46,6 @@ EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
 FULL_SET = tuple(m.id for m in registry.MODULES if m.stage in registry.FULL_SET_STAGES)
 NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
 DEDUP = "dedup"
-PROFILE = "skill_profile"
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
 LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "label", "reject_appeal")
@@ -99,8 +98,8 @@ def _without(recs: dict[str, dict | None], module: str) -> dict[str, dict | None
 
 
 def machine(state: RunState, ep: int) -> Verdict:
-    """The machine's verdict of the funnel modules (no human decisions, no dedup / profile)."""
-    recs = _without(_without(state.records(ep), DEDUP), PROFILE)
+    """The machine's verdict of the funnel modules (no human decisions, no dedup)."""
+    recs = _without(state.records(ep), DEDUP)
     return judge(ep, recs, expected(state, ep, recs), state.policy)
 
 
@@ -157,9 +156,9 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
            keeper: dict[int, bool] | None = None) -> Decided:
     """``ep`` after the human decisions. ``phase``: ``funnel`` judges the funnel modules only; ``final`` adds
     dedup (``keeper[ep]``: this member is the one its group keeps, so its duplicate finding is dropped) and
-    skill_profile. A kept episode a person did not bring in needs a judgement of both."""
+    dedup. A kept episode a person did not bring in needs a judgement of both."""
     recs = state.records(ep)
-    funnel_recs = _without(_without(recs, DEDUP), PROFILE)
+    funnel_recs = _without(recs, DEDUP)
     need = expected(state, ep, funnel_recs)
     mach = judge(ep, funnel_recs, need, state.policy)
     answers = answers_of(decisions, ep)
@@ -167,8 +166,6 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
     if phase == "final":
         if DEDUP in state.modules:
             use[DEDUP] = _strip_duplicate(recs.get(DEDUP)) if (keeper or {}).get(ep) else recs.get(DEDUP)
-        if PROFILE in state.modules:
-            use[PROFILE] = recs.get(PROFILE)
     base = judge(ep, use, need, state.policy, answers=answers)
     discard = decisions.discarded(ep)
     admissible = discard is None and base.appeal_admissible()
@@ -177,7 +174,7 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
     restored = verdict.verdict == "keep" and (mach.verdict == "drop" or base.verdict == "drop") \
         and (answers.get("task_verdict") == "success" or appeal == "restore")
     if phase == "final" and verdict.verdict == "keep":
-        extra = [m for m in (DEDUP, PROFILE) if m in state.modules and not (m == DEDUP and restored)]
+        extra = [DEDUP] if DEDUP in state.modules and not restored else []
         if extra:
             verdict = judge(ep, use, need + extra, state.policy, answers=answers, appeal=appeal)
     relabel = decisions.relabel(ep)
@@ -237,7 +234,7 @@ def _error_reasons(v: Verdict, *, rejected: bool) -> list[dict]:
 
 def reasons_of(d: Decided) -> list[dict]:
     if d.discard is not None:
-        return [{"module": PROFILE if d.discard["line"] == "label" else TASK, "kind": "human", "text": "人工裁决弃用"}]
+        return [{"module": TASK, "kind": "human", "text": "人工裁决弃用"}]
     v = d.verdict
     if d.state == "drop":
         return [_reason(g) for g in v.blocking] + _error_reasons(v, rejected=True)
@@ -250,8 +247,9 @@ def reasons_of(d: Decided) -> list[dict]:
 
 
 def merged_label_audit(state: RunState, profile_audit: dict | None) -> dict | None:
-    """v1's label-conflict queue: skill_profile's audit with the kill guard's holds from task_success merged
-    in front, each entry tagged with the task line (``dataset_level.audit``)."""
+    """The label-conflict queue: the kill guard's holds from task_success, each entry tagged with
+    the task line (``dataset_level.audit``). ``profile_audit`` is always None since the skill
+    profile left (registry 3.0); the parameter stays so an older run directory still reads."""
     from ..dataset_level.audit import attach_task_context, guard_hold_entries, merge_guard_holds
 
     task_detail, task_of = {}, {}
@@ -307,7 +305,7 @@ def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
             spec = registry.review_line("label")
             entries = audit_entries or [("", {})]
             for tier, entry in entries:
-                src = TASK if entry.get("guard_layer") else next((g.module for g in label), PROFILE)
+                src = TASK if entry.get("guard_layer") else next((g.module for g in label), TASK)
                 mine = [g for g in label if g.module == src] or label
                 item = {"source_module": src, "kind": spec.review_kind, "line": "label",
                         "codes": [g.code for g in mine], "items": [g.item for g in mine if g.item],
@@ -360,7 +358,7 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
           profile_audit: dict | None) -> dict:
     """The four lists (``cli/final-list.schema.json`` 2.0) plus the merged label audit."""
     decided = decide_all(state, decisions)
-    audit = merged_label_audit(state, profile_audit) if PROFILE in state.modules or TASK in state.modules else None
+    audit = merged_label_audit(state, profile_audit) if TASK in state.modules else None
     entries = _audit_entries(audit)
     passed, reject, held, review = [], [], [], []
     for ep in state.episodes:

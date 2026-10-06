@@ -26,7 +26,7 @@ WRIST = "observation.images.wrist"
 PARQUET_1 = "data/chunk-000/episode_000001.parquet"
 VIDEO_4 = f"videos/chunk-000/{WRIST}/episode_000004.mp4"
 MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup", "skill_profile")
+           "video_action_sync", "task_success", "dedup")
 
 
 def _json(*parts):
