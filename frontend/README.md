@@ -23,7 +23,7 @@ C2 2.0（设计 17）改了结果记录、报告和计划，契约里两种写�
 | `src/mocks/` | MSW 模拟：内存里的一套「模拟世界」，每个 C4 接口都有处理器，数字和静态稿一致；`findings.ts` 是两块并行、策略判决的那个任务（报告 2.0），主任务是旧任务（报告 1.0） |
 | `src/test/` | 测试环境：jsdom 补丁、契约校验器、渲染与 Arco 操作的小工具 |
 | `scripts/` | 类型生成与校验、`serve-dist.mjs`（按 Daemon 的方式托管构建产物） |
-| `api-docs.html`、`src/apiDocs.ts` | 接口文档页（Scalar），配置在 `src/lib/apiDocs.ts`；`public/llms.txt` 是给 agent 的导读 |
+| `api-docs.html`、`src/apiDocs.ts` | 接口文档页（Scalar），配置在 `src/lib/apiDocs.ts`，页面自己的中英文案在 `src/locales/apiDocs.ts`；发布前去内部编号在 `src/lib/publicText.ts`；`public/llms.txt`、`public/llms-zh.txt` 是给 agent 的导读（英 / 中） |
 
 ## 本地环境
 
@@ -54,13 +54,13 @@ npm ci
 
 - **默认用模拟数据**：`npm run dev` 启动后浏览器里由 Service Worker 应答所有接口，SSE 也有模拟。打不开 Service Worker 的环境（一些内嵌浏览器、无痕模式）自动改成在页面里拦截 fetch，此时 SSE 不可用，页面会自己降级成 5 秒轮询 —— 这条路径本身也值得看。模拟世界里的子任务（重试、继续运行、执行裁决、重新导出）会自己跑：排队 3 秒、运行 30 秒，结束后按结果重算任务状态（`src/mocks/subtaskSim.ts`；测试里关着，用 `finishSubtask()` 手动结束）。刷新页面会重置模拟世界，所以跟着步骤走时在页面里点链接，不要直接改地址栏。
 - **帮助**：侧边栏「帮助」下两项的地址只写在 `src/components/AppLayout.tsx` 的 `HELP_LINKS`，都在新标签页打开（完整网址原样开，路径按挂载前缀拼）。「使用文档」（`docs`）现在留空：点了只提示「使用文档还没配置」，填上地址后就能打开；「接口文档」（`api`）指向构建产出的 `api-docs.html`。
-- **接口文档**：独立页面 `api-docs.html`（入口脚本 `src/apiDocs.ts`，配置与纯逻辑在 `src/lib/apiDocs.ts`），用 Scalar（`@scalar/api-reference`，Vue 写的，只在这一页加载）渲染 `{前缀}/openapi.json`。`openapi.json` 由 `vite.config.ts` 的插件从 `../docs/contracts/openapi.yaml` 生成（外部 `$ref` 用 `@redocly/openapi-core` 收进 `components`，一份文件自成一体）：`npm run build` 写进 `dist/`，`npm run dev` 现场生成。Scalar 停在 1.46.4：之后的版本要求 Node 22，而镜像与 CI 还要在 Node 20 上构建。它的 3 MB 大包会让构建打出「Some chunks are larger than 1200 kB」，说的就是 `api-docs-*.js`，控制台自己的包不受影响。
+- **接口文档**：独立页面 `api-docs.html`（入口脚本 `src/apiDocs.ts`，配置与纯逻辑在 `src/lib/apiDocs.ts`），用 Scalar（`@scalar/api-reference`，Vue 写的，只在这一页加载）渲染 `{前缀}/openapi.json`。`openapi.json` 由 `vite.config.ts` 的插件从 `../docs/contracts/openapi.yaml` 生成（外部 `$ref` 用 `@redocly/openapi-core` 收进 `components`，一份文件自成一体）：`npm run build` 写进 `dist/`，`npm run dev` 现场生成；生成时说明文字里的内部编号（C4、D36、设计 18 §4.0……）被去掉（`src/lib/publicText.ts`），契约原文不动。页面给客户看：契约里的文案有中英两版（`description` / `summary` 是英文，`x-description-zh` / `x-summary-zh` 是中文），页面把它拆成「中文」「English」两份文档，左上角切换，缺省跟浏览器语言；接口自身的说明两份都是英文。Scalar 停在 1.46.4：之后的版本要求 Node 22，而镜像与 CI 还要在 Node 20 上构建。它的 3 MB 大包会让构建打出「Some chunks are larger than 1200 kB」，说的就是 `api-docs-*.js`，控制台自己的包不受影响。
 - **接真的 Daemon**：`VITE_API_TARGET=http://127.0.0.1:8080 npm run dev`，开发服务器把 `{前缀}/api` 和 `{前缀}/events` 代理过去，模拟数据关闭。
 - **挂载前缀**：`CURATOR_BASE=/curation npm run dev`，然后打开 http://localhost:5173/curation/ 。开发服务器在 `index.html` 里做和 Daemon 一样的注入。
 
 ## 构建与部署：Daemon 要做的事
 
-`npm run build` 的产物在 `frontend/dist/`：`index.html`、`favicon.svg`、`assets/*`（文件名带内容哈希），以及接口文档的 `api-docs.html`、`openapi.json`（契约原文转成的 JSON）和给 agent 的导读 `llms.txt`（`public/llms.txt` 原样拷过去）。资源路径全部是相对的，同一份产物能挂在任何前缀下。Daemon 托管时要做三件事：
+`npm run build` 的产物在 `frontend/dist/`：`index.html`、`favicon.svg`、`assets/*`（文件名带内容哈希），以及接口文档的 `api-docs.html`、`openapi.json`（契约原文转成的 JSON）和给 agent 的导读 `llms.txt`（英文）、`llms-zh.txt`（中文）（`public/` 下的原样拷过去）。资源路径全部是相对的，同一份产物能挂在任何前缀下。Daemon 托管时要做三件事：
 
 1. **静态文件**：`{base}/` 下按路径返回 `dist/` 里的文件。`assets/*` 可以长缓存（`Cache-Control: public, max-age=31536000, immutable`），`index.html` 用 `no-cache`。
 2. **SPA 回退**：`{base}/` 下不是文件、也不在 `{base}/api/`、`{base}/events/` 下的 GET 请求，一律返回 `index.html`（刷新 `/curation/tasks/<id>/report` 不能 404）。`assets/` 下找不到的文件返回 404，不要回退。
@@ -209,19 +209,24 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
 
 ## 手动验证：接口文档（真 Daemon）
 
-1. `npm run build`：`dist/` 下有 `api-docs.html`、`openapi.json`、`llms.txt`。
+1. `npm run build`：`dist/` 下有 `api-docs.html`、`openapi.json`、`llms.txt`、`llms-zh.txt`。
 2. 用 `.claude/launch.json` 的 `curator-daemon-dev` 起 Daemon（`/curation` 前缀、不鉴权、端口 8080、托管 `frontend/dist`）。
 3. 打开 http://127.0.0.1:8080/curation/ ，点侧栏「帮助」下的「接口文档」：新标签页打开 `/curation/api-docs.html`，标题「Curator v2 API」，
-   右侧 Server 是 `http://127.0.0.1:8080/curation/api/v1`；左侧目录先是首页说明的「Overview / Conventions / Changelog」，再是 9 个 tag
-   （credentials、vlm、datasets、overview、tasks、report、system、uploads、viz）下的 85 个操作，最后是 Models。常用接口（新建任务、任务详情、
-   任务列表、报告、裁决、预检、错误体等）的请求 / 响应旁有示例下拉。
+   右侧 Server 是 `http://127.0.0.1:8080/curation/api/v1`。浏览器语言是中文时缺省是中文版：左侧目录先是首页说明的「概览 / 约定 / 变更记录」，
+   变更记录只有 2.5.1 一条；再是 9 个 tag（credentials、vlm、datasets、overview、tasks、report、system、uploads、viz）下的 85 个操作，tag 的
+   说明是中文，最后是 Models。左上角的文档选择器切到「English」：首页变成「Overview / Conventions / Changelog」，tag 说明与示例标题变成英文；
+   接口标题与参数说明两边都是英文。地址加 `?api=en` 直接打开英文版。常用接口（新建任务、任务详情、任务列表、报告、裁决、预检、错误体等）
+   的请求 / 响应旁有示例下拉，标题跟着语言变。
+   页面上任何地方都没有 C4、D36、F12.3、design doc 18 §4.0、registry 1.5 这类内部编号（比如任务列表接口的标题是
+   「Task list, page-number pagination, newest first」，原文末尾的「(D21)」不见了）。
 4. 试调用：打开 overview 下的 `GET /overview`，「Test Request」→「Send」，返回 200。打开 `POST /tasks/{id}/actions/{action}`
    （无请求体的写操作），Variables 里 `id` 填 `task-nothere`、`action` 选 `pause`，发送：返回 404 `not_found`（「要找的对象不存在」），
    不是 422「写接口只接受 JSON」——页面给每个写请求补了 `Content-Type: application/json`。再打开 `POST /tasks`（带请求体），选一个示例发送：
    返回的是业务上的错误（比如 404 / 409 / 422 的预检或数据集问题），不是「不接受来自其它站点的写请求」。
 5. 开发者工具的网络面板：从打开文档页到试调用，除 `127.0.0.1:8080` 外没有任何请求（没有字体、统计、AI 助手、公网代理）。
 6. `curl -s http://127.0.0.1:8080/curation/openapi.json | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])"`
-   打出的版本与 `docs/contracts/openapi.yaml` 的 `info.version` 一致；`curl -s http://127.0.0.1:8080/curation/llms.txt` 是导读原文（`text/plain`）。
+   打出的版本与 `docs/contracts/openapi.yaml` 的 `info.version` 一致；`curl -s http://127.0.0.1:8080/curation/openapi.json | grep -c '(D21)'` 是 0
+   （发布的版本去掉了内部编号）。`curl -s http://127.0.0.1:8080/curation/llms.txt` 是英文导读、`llms-zh.txt` 是中文导读（都是 `text/plain`）。
 7. 开了鉴权的 Daemon（`CURATOR_AUTH_MODE=basic` 加 `CURATOR_AUTH_USER` / `CURATOR_AUTH_PASSWORD`）：浏览器登录控制台后打开接口文档，
    鉴权框留空直接试调用 `GET /overview`，返回 200（请求带的是浏览器登录的凭据）；在鉴权框里填别的账号，就按填的发。
 

@@ -50,6 +50,11 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
    接口文档页把它们放在每个接口旁边，见设计 07 §2）：改了这些接口的结构，就地的示例要跟着改；
    `backend/tests/contracts/test_openapi.py` 逐条拿所在位置的 Schema 校验（`test_every_example_fits_its_schema`），
    并要求常用接口都有示例（`EXAMPLES_EXPECTED`）。
+   C4 里给客户看的文案（`info.description` 的概览 / 约定 / 变更记录、tag 的 `description`、示例的 `summary`）要写中英两版：英文在原字段，
+   中文在 `x-description-zh` / `x-summary-zh`；文案里不写内部编号（C4、D36、F12.3、设计 18 §4.0、registry 1.5 等）。变更记录从 2.5.1 记起，
+   写给客户看的改动，不写内部过程。接口自身的说明（`summary`、`description`、参数与字段描述）只写英文，可以带内部编号，发布到
+   `{base}/openapi.json` 时由 `frontend/src/lib/publicText.ts` 去掉。测试：`test_the_reference_copy_has_both_languages_and_no_internal_references`、
+   `test_the_changelog_starts_at_the_first_published_version`，前端 `src/lib/publicText.test.ts`（发布的版本里一个内部编号都不剩）。
 3. `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）
    和 `../.venv/bin/python -m curation.contracts lock`。
 4. 提交时 `CONTRACTS.lock` 的差异让评审一眼看到哪些契约动了。没刷新锁，CI 就红。
