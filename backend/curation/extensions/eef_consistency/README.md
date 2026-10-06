@@ -78,6 +78,28 @@ Camera→TCP 参数作为显式几何来源保存，投影相机位姿取 CSV，
 验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi.py`。
 实际像素重投影、当前帧相机锚定、坐标系变换抵消、双手独立性、缺测断线、视频帧对齐和动作证据帧均有回归。
 
+#### 本地手动检查叠加视频
+
+`data/umi-test/render_own_hand.py` 调用正式的 CPU 渲染和连续视频编码路径，不调用 VLM。
+先用上面的 `export-umi --horizon-s 1` 生成数据，再在仓库根目录执行：
+
+```bash
+PYTHONPATH=backend .venv/bin/python data/umi-test/render_own_hand.py \
+  --dataset-root /path/to/umi-lerobot --episode 0 --out data/umi-test/history-hand
+.venv/bin/python data/umi-test/build_preview.py \
+  --input data/umi-test/history-hand --out data/umi-test/preview
+.venv/bin/python -m http.server 8081 --directory data/umi-test/preview
+```
+
+打开 `http://127.0.0.1:8081/`，确认每路只有本手标记，曲线只含过去 1 秒到当前帧，夹爪静止时不提前出现后续动作。
+渲染器默认读 `<dataset-root>/trajectory.json`，可用 `--trajectory` 指定其他上传件；`--max-side` 默认 720。
+历史窗口取上传件里的 `umi.horizon_s`，预览页显示实际值。每路输出一个 `*_marked.mp4`，
+`manifest.json` 记录 episode、相机/手对应关系、帧数、时间范围、摘要和提示词版本。
+默认参数适用于 `data/umi-test/lerobot`；构建预览页默认输出到 `frontend/dist/umi-preview`，
+已有本地 Daemon 服务时可访问 `/curation/umi-preview/index.html`（应在前端 build 后生成，避免被清理）。
+脚本已入库，数据、生成的 MP4、JSON 和 HTML 仍由 `data/` 忽略规则排除。
+控制台正式报告的视频由任务生成并通过 `/media/sign` 访问，不依赖此静态预览页。
+
 ### 原有 EEF 数据
 
 在 `backend/` 下执行（DEMO 数据在仓库外 `~/ws/ws_general/galbot/`，可用 `CURATOR_EEF_DEMO_DATA` 改位置；

@@ -2,6 +2,7 @@
 // the CPU's sub-item readings, and the model's answer on every review window next to the marked crops
 // it was shown. The adjudication card (F5.11) and the report's Episode tab (F5.12) both show it.
 import { Space, Table, Tag } from '@arco-design/web-react';
+import { useState } from 'react';
 import type { ResultRecord } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import {
@@ -17,7 +18,7 @@ import {
   type EefWindowRow,
 } from '../../lib/eefReadings';
 import { zh } from '../../locales/zh';
-import { SignedImage, useSignedUrl } from '../media/SignedMedia';
+import { MEDIA_CONFIG, SignedImage, useSignedUrl } from '../media/SignedMedia';
 
 type D = Record<string, unknown>;
 const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
@@ -174,9 +175,22 @@ export function EefCpuEvidence({ taskId, record }: { taskId: string; record: Res
  */
 function OpinionVideo({ task, path }: { task: string; path: string }) {
   const sign = useSignedUrl({ task, path, scope: 'delivery' }, true);
-  return sign.data ? (
-    <video controls preload="none" src={sign.data.url} aria-label={Z().opinion.video} style={{ width: '100%', maxWidth: 960 }} />
-  ) : sign.error ? <div className="episode-line warn">{Z().opinion.videoFailed}</div> : null;
+  const [attempts, setAttempts] = useState(0);
+  const [failed, setFailed] = useState(false);
+  if (failed || sign.error) return <div className="episode-line warn" role="alert">{Z().opinion.videoFailed}</div>;
+  return (
+    <div className="eef-opinion-video">
+      <div className="episode-line">{Z().opinion.video}</div>
+      {sign.data ? (
+        <video key={`${sign.data.url}:${attempts}`} controls preload="metadata" src={sign.data.url}
+          aria-label={Z().opinion.video} style={{ width: '100%', maxWidth: 960 }}
+          onError={() => {
+            if (attempts >= MEDIA_CONFIG.maxResign) setFailed(true);
+            else void sign.resign().then(() => setAttempts((n) => n + 1));
+          }} />
+      ) : <div className="episode-line muted">{Z().opinion.videoLoading}</div>}
+    </div>
+  );
 }
 
 export function EefOpinion({ taskId, record }: { taskId: string; record: ResultRecord }) {
@@ -208,6 +222,7 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
             </div>
           ))}
           {c.status !== 'skipped' && !c.segments.length && !c.failures.length ? <div className="episode-line">{O.none}</div> : null}
+          {c.videos.map((path) => <OpinionVideo key={path} task={taskId} path={path} />)}
           {c.segments.map((g, i) => (
             <div key={g.key} className="eef-opinion-segment" data-testid="eef-opinion-segment">
               <Space wrap size={6}>
@@ -232,7 +247,6 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
             </div>
           ))}
           {c.summaries.length ? <div className="episode-line muted">{O.summary}：{c.summaries.join('；')}</div> : null}
-          {c.videos.map((path) => <OpinionVideo key={path} task={taskId} path={path} />)}
         </div>
       ))}
     </div>

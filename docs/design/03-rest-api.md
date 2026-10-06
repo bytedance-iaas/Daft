@@ -387,6 +387,10 @@ GET /api/v1/media/sign?task=task-kqzmrtbwe&scope=delivery&path=details/clips/ep0
   v3 源是多条拼接的 mp4，返回里带 `from_ts` / `to_ts`，前端用 `#t=from,to` 片段播放。
 - 必须用**公网端点**签名。Pod 里用的内网端点对浏览器是死链（v1 注释里的实锤）。
 - TTL 默认 30 分钟。前端在 403/过期时自动重签一次再重试，不弹错。
+- 配置了 `CURATOR_LOCAL_DELIVERY_ROOT` 的本地调试环境，`scope=delivery` 从该任务的本地交付批次读取媒体，
+  返回同源的内部 `/api/v1/media/local?task=…&path=…` 地址，不能为实际不存在于 TOS 的文件生成 TOS URL。
+  此字节路由随每次请求校验任务归属、路径和文件类型，只允许视频及位图，支持 Range；禁用本地交付时返回 404。
+  `media/sign` 的请求和返回结构保持不变，生产 TOS 交付仍直接签名。
 
 ### 7.1 ReRun 读登记的数据集：`POST /api/v1/datasets/{id}/sign`
 

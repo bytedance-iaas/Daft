@@ -1673,6 +1673,7 @@ export const zh = {
       seconds: (from: number, to: number) => `${from.toFixed(1)}–${to.toFixed(1)} 秒`,
       aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对', action: '动作与画面不符' } as Record<string, string>,
       video: '动作投影视频',
+      videoLoading: '正在加载动作投影视频…',
       videoFailed: '动作投影视频加载失败',
       confidence: (pct: number) => `不匹配置信度 ${pct}%`,
       evidenceFrames: (frames: string) => `证据帧 ${frames}（没存图）`,

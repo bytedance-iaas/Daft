@@ -22,7 +22,7 @@ TOS 访问密钥、VLM 后端与模型、交付目录写探针、媒体预签名
 | `presign.py` | 给浏览器的对象地址：前缀校验、公网端点签名、公共桶直给地址（`/media/sign` 与 episode 预览共用）；ReRun 代签用的对象键 / 列举前缀校验（只校验、不改写） |
 | `sigv4.py` | S3 SigV4 查询串签名（标准库、不做 I/O、不读时钟）：给 ReRun web viewer 的地址，TOS 的公网 S3 兼容端点（设计 15，D55） |
 | `views.py`、`http.py` | 响应组装；路由共用的校验（不回显密钥）、幂等、审计 |
-| `../routes/access_keys.py`、`vlm.py`、`media.py` | `/credentials`、`/vlm-backends`、`/deliveries/probe`、`/media/sign`、`/datasets/{id}/sign` |
+| `../routes/access_keys.py`、`vlm.py`、`media.py` | `/credentials`、`/vlm-backends`、`/deliveries/probe`、`/media/sign`、`/datasets/{id}/sign`；本地交付的媒体由内部 `/media/local` 提供，仍校验任务归属与路径 |
 
 ## 行为要点
 
