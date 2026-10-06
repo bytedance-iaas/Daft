@@ -222,15 +222,50 @@ def pending_body(job: Job) -> dict:
 BLOB_CHUNK = 1 << 20
 
 
-def ranged_response(read_range: Callable[[int, int], bytes], size: int, media_type: str, request_headers) -> object:
+def _etag_matches(request_headers, etag: str) -> bool:
+    """Whether the request's ``If-None-Match`` lists ``etag`` (``*`` matches anything; weak ``W/``
+    tags compare on the opaque value)."""
+    if request_headers is None or not etag:
+        return False
+    inm = request_headers.get("if-none-match")
+    if not inm:
+        return False
+    for tag in inm.split(","):
+        tag = tag.strip()
+        if tag == "*":
+            return True
+        if tag.startswith("W/"):
+            tag = tag[2:].strip()
+        if tag == etag:
+            return True
+    return False
+
+
+def _cache_headers(etag: str | None, immutable: bool) -> dict:
+    """``Cache-Control`` (and ``ETag`` when there is one) for a camera byte response. Without an
+    ETag the old short private cache stands; with one the browser may revalidate with the ETag, and
+    ``immutable`` lets it reuse the bytes without even that - safe only where the URL's bytes never
+    change (design doc 18 §5.8)."""
+    if not etag:
+        return {"Cache-Control": "private, max-age=600"}
+    cc = "private, max-age=31536000, immutable" if immutable else "private, max-age=600"
+    return {"ETag": etag, "Cache-Control": cc}
+
+
+def ranged_response(read_range: Callable[[int, int], bytes], size: int, media_type: str, request_headers,
+                    etag: str | None = None, immutable: bool = True) -> object:
     """Bytes that live somewhere a ``FileResponse`` cannot serve from - a Lance blob (design doc 19 §4.3) -
     with ``Range``: one ``bytes=a-b`` / ``a-`` / ``-n`` range answers 206 with the range streamed in
-    :data:`BLOB_CHUNK` reads, a range past the end 416, anything else the whole body (200)."""
+    :data:`BLOB_CHUNK` reads, a range past the end 416, anything else the whole body (200). A request
+    whose ``If-None-Match`` matches ``etag`` answers 304 (before any range)."""
     import re as _re
 
     from starlette.responses import Response, StreamingResponse
 
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=600"}
+    cache = _cache_headers(etag, immutable)
+    if etag and _etag_matches(request_headers, etag):
+        return Response(status_code=304, headers={**cache, "Accept-Ranges": "bytes"})
+    headers = {"Accept-Ranges": "bytes", **cache}
     raw = (request_headers.get("range") if request_headers is not None else None) or ""
     m = _re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", raw)
     start, end, status = 0, size - 1, 200
@@ -259,10 +294,17 @@ def ranged_response(read_range: Callable[[int, int], bytes], size: int, media_ty
     return StreamingResponse(body(), status_code=status, media_type=media_type, headers=headers)
 
 
-def file_response(path: pathlib.Path, media_type: str, request_headers) -> object:
-    """A local file with Range (Starlette's FileResponse answers 206 / 416 itself)."""
-    from starlette.responses import FileResponse
+def file_response(path: pathlib.Path, media_type: str, request_headers, etag: str | None = None,
+                  immutable: bool = True) -> object:
+    """A local file with Range (Starlette's FileResponse answers 206 / 416 itself). A request whose
+    ``If-None-Match`` matches ``etag`` answers 304 (before any range); otherwise the ETag replaces
+    the stat-based one FileResponse sets so the validator follows the content, not the mtime."""
+    from starlette.responses import FileResponse, Response
 
+    cache = _cache_headers(etag, immutable)
+    if etag and _etag_matches(request_headers, etag):
+        return Response(status_code=304, headers=cache)
     resp = FileResponse(str(path), media_type=media_type)
-    resp.headers["Cache-Control"] = "private, max-age=600"
+    for k, v in cache.items():
+        resp.headers[k] = v
     return resp

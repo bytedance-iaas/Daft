@@ -341,14 +341,17 @@ def write_probe(client, uri: str, *, key: TosKey, region: str, endpoint: str) ->
     return ProbeOutcome(True, "ok", "")
 
 
-def presign_get(client, bucket: str, key: str, ttl_s: int) -> str:
+def presign_get(client, bucket: str, key: str, ttl_s: int, cache_control: str | None = None) -> str:
     try:
         import tos
 
         method = tos.HttpMethodType.Http_Method_Get
     except ImportError:          # tests without the SDK: the fake ignores the method
         method = "GET"
-    return client.pre_signed_url(method, bucket, key, expires=int(ttl_s)).signed_url
+    # ``response-cache-control`` is signed into the URL, so TOS echoes it as the response's
+    # ``Cache-Control`` - otherwise TOS sends none and the browser only caches heuristically.
+    query = {"response-cache-control": cache_control} if cache_control else None
+    return client.pre_signed_url(method, bucket, key, expires=int(ttl_s), query=query).signed_url
 
 
 def anonymous_url(bucket: str, key: str, region: str) -> str:
