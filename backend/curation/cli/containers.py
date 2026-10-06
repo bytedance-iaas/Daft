@@ -31,6 +31,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import struct
 import tempfile
@@ -51,6 +52,8 @@ LANCE_META_TABLE = "meta.lance"
 LANCE_PREFIXES = ("meta/", "frames.lance/", "videos.lance/", "meta.lance/")
 #: where the Daemon keeps a task's source cache (one sub-directory per dataset)
 CACHE_ENV = "CURATION_SOURCE_CACHE"
+#: a download in flight: _fetch_one writes here and renames once the object is whole
+_PART_RE = re.compile(r"\.part-\d+-\d+$")
 
 
 # ---------------------------------------------------------------- recognising
@@ -575,15 +578,22 @@ class SourceCache:
 
     def _prune(self) -> None:
         """Local files whose object is gone from the source leave the copy (a table
-        version must not survive its deletion in the source)."""
+        version must not survive its deletion in the source).
+
+        A download in flight is NOT such a file: it is written to ``<name>.part-<pid>-<thread>``
+        and renamed when it is whole, so its name is never one of the source's keys. Deleting it
+        here takes the file out from under the thread writing it, which then fails to rename it
+        (FileNotFoundError). Stages overlap and a task's cache is shared between commands, so the
+        pruning context and the fetching one are routinely different ones."""
         wanted = set(lance_keys(self.listing))
         for dirpath, _dirs, names in os.walk(self.data):
             for name in names:
                 full = os.path.join(dirpath, name)
                 key = os.path.relpath(full, self.data).replace(os.sep, "/")
-                if key not in wanted:
-                    os.unlink(full)
-                    self._index.pop(key, None)
+                if key in wanted or _PART_RE.search(name):
+                    continue                    # the source has it, or it is being written now
+                os.unlink(full)
+                self._index.pop(key, None)
 
     def fresh(self, key: str) -> bool:
         return self._index.get(key) == self._identity(key) and os.path.isfile(self._path(key))
