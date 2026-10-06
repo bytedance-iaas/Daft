@@ -42,14 +42,20 @@ object, next to the five fields above (keep those five exactly as specified):
   "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
   "contamination":{"level":"none|minor|severe|unknown",
                    "kind":"none|dirt|smudge|water|obstruction|other","times":[[start_s,end_s]],"note":"..."}}}
-glitch: corrupted, torn, blocky, smeared or garbled frames, or a frozen picture with artifacts.
-shake: the camera body itself moving or vibrating, not the robot or objects moving; a wrist camera
-moving with the arm is normal, report only jitter beyond that. contamination: dirt, smudges, water
-drops or an object stuck to or covering the lens. "minor" is visible but leaves the scene readable;
-"severe" hides or distorts the scene for part of the episode. times are episode-relative seconds
-within this camera's window, like evidence; leave times empty for "none", and give at most two
-intervals, the worst ones, rounded to the nearest half second. When the defect is there for the whole
-clip, leave times empty and write "persistent" in the note. Keep every note under twelve words.
+glitch: the picture CONTENT is damaged - corrupted, torn, blocky, smeared or garbled frames, wrong
+colours in patches, or a frozen picture with artifacts. shake: the WHOLE picture moves as one while
+the scene itself stays intact - the view jolts, drifts or wobbles, the framing jumps, and the edges
+may show black bars or a changed field of view; the camera body is moving, not the robot or the
+objects. A wrist camera moving with the arm is normal, report only jitter beyond that. Decide
+between the two by asking whether the scene is still whole: a whole scene that jumps is shake, a
+broken-looking scene is glitch; report both only when both are really there. contamination: dirt,
+smudges, water drops or an object stuck to or covering the lens. "minor" is visible but leaves the
+scene readable; "severe" hides or distorts the scene for part of the episode. times are
+episode-relative seconds within this camera's window, like evidence; leave times empty for "none".
+Give up to four intervals; when the defect recurs in short bursts across the clip, give the span
+that encloses them rather than one burst, and say "intermittent" in the note. When the defect is
+there for the whole clip, leave times empty and write "persistent" in the note. Keep every note
+under twelve words.
 Use "unknown" when you cannot judge an item. This field never changes verdict, completion or
 evidence, and it must be valid JSON like the rest of the object."""
 
