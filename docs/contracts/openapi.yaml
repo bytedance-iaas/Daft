@@ -75,13 +75,13 @@ info:
 
     ## Changelog
 
+    **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
+    its changes here.
+
     **2.6.0** (2026-10-06): `GET /tasks/{id}/episodes/{index}/eef-overlay` returns the marks of the
     end-effector check's video opinion (gripper centre, direction, fingers and recent trail) for drawing
     over the episode's own camera video. Opinion records no longer carry a marked video or evidence
     images; each segment still lists its evidence frame numbers.
-
-    **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
-    its changes here.
   x-description-zh: |
     ## 概览
 
@@ -127,10 +127,10 @@ info:
 
     ## 变更记录
 
+    **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
+
     **2.6.0**（2026-10-06）：新增 `GET /tasks/{id}/episodes/{index}/eef-overlay`，返回末端执行器检查中模型意见的标记（夹爪中心、朝向、手指连线与最近一段轨迹），
     供叠加在该 episode 的原始相机视频上显示。模型意见的记录不再附带标记视频和证据图片，各片段仍给出证据帧号。
-
-    **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
 servers:
   - url: "{base}/api/v1"
     variables:
