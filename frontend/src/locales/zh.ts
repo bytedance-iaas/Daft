@@ -31,6 +31,8 @@ export const zh = {
     groupHelp: '帮助',
     docs: '使用文档',
     docsMissing: '使用文档还没配置',
+    apiDocs: '接口文档',
+    apiDocsMissing: '接口文档还没配置',
   },
 
   common: {
@@ -1114,7 +1116,7 @@ export const zh = {
     policyName: { default: '默认（今天的判废规则）', report_only: '只报不拒' } as Record<string, string>,
     policyHint: {
       default: '复刻今天的判废规则：一票否决的问题判废，拿不准的转人工，其余只报告',
-      report_only: '每个发现都只报告：不判废、不转人工；模块执行出错的条目仍待补跑',
+      report_only: '每个发现都只报告、不转人工；只有数据完整性的致命问题（文件为空、截断、读不出来等）照样判废，后面的模块用不了这样的条目；模块执行出错的条目仍待补跑',
     } as Record<string, string>,
     // the coverage matrix (report)
     coverageTitle: '检测项覆盖',
@@ -1124,7 +1126,6 @@ export const zh = {
     coverageFound: (n: number) => `${n} 条检出`,
     coverageWhy: (title: string, n: number) => `${title}（${n} 条）`,
     coverageJump: (name: string) => `去「${name}」小节`,
-    coverageNobody: '本次没有模块评估这一项',
     // a module's statistics (report section, task detail)
     assessed: '评估条数',
     flagged: '检出条数',
@@ -2106,6 +2107,7 @@ export const zh = {
     fps: (v: number) => `${Number.isInteger(v) ? v : v.toFixed(2)} fps`,
     framesDuration: (n: number, dur: string) => `${n} 帧 · ${dur}`,
     play: '播放 / 暂停（空格）',
+    playBlocked: '平台转码中，转好后才能播放',
     prevFrame: '上一帧（←）',
     nextFrame: '下一帧（→）',
     speed: '播放速度',

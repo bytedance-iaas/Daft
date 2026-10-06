@@ -98,6 +98,7 @@ F13.8：转封装在扫描之后约 0.05 s 出第一帧，冷开的大头是扫�
   向后跳、跳过整个 GOP、或要的帧已经解过又被挤出缓存，就 `reset` 从它的关键帧重来。纯逻辑（起解关键帧、何时接着解）在 `lib/vizSamples.ts`。
   解出的 `VideoFrame` 立刻转成 `ImageBitmap` 并 `close()`（不占硬件解码器的帧池），按帧号缓存一小段（按字节数封顶）。
   时钟在这一路第一帧之前时解并画第一帧（同停在开头的 `<video>`；2026-10-04 起不写「这一路相机还没有画面」），还没解出画面时格子写「正在解码…」。
+  播放时按 GOP 往后多取约 5 s 的字节（只取不解），钟起播前等它攒够（`ahead`，2026-10-05 预缓存）；取到的 GOP 按字节数封顶，先丢播放点后面的。
 - 字节按 GOP 用 Range 取（一个关键帧到下一个关键帧，连续的几段并成一次请求），与帧包同一套取法。
 - 解码报错（`error` 回调、`configure` 失败）→ 这一路改用 `<video>`（`url`），不再回来；信息侧栏的「读取方式」写「浏览器解码（WebCodecs）」或「转封装」。
 
@@ -178,6 +179,13 @@ F13.8：转封装在扫描之后约 0.05 s 出第一帧，冷开的大头是扫�
   逐项对照 LeRobot 原件（模型、episode、曲线逐点、标注、相机字节、帧包），任务级迷你版，以及经一个最小的本地 S3（`tests/viz/fake_s3.py`，路径风格、不验签）读同一份表。
 - 本机实测（内置浏览器，本机 Daemon）：`scripts/make_lance_dataset.py` 把 F13.4 的三路 1280×720 数据集转成 0.3 与 0.2 视频两表，三路 blob 视频同步播放，1x 偏差 4 ms；
   把 droid200 的一份转成 0.2 逐帧图片，三路帧包画布同一时刻显示同一帧（第 46 帧，3.0 s）。TOS 上的 Lance 数据集要等有密钥时实测（F14.4）。
+- TOS 实测（2026-10-05，需求方的 `tos://galbot/so101-pick-place-lance/`，lerobot-lancedb 0.3、blob v2，47 条、两路 H.264）：原先每张表都报「找不到 `_versions`」。
+  原因是 Lance 的对象存储在虚拟主机风格下**按给定的端点原样发请求**，端点要自己带上桶名；我们给的是不带桶的 `tos-s3-<地区>`，列目录列到了服务根、一个对象也没有，
+  而 TOS 不接受路径风格（403）。现在虚拟主机风格时端点写成 `https://<桶>.tos-s3-<地区>.volces.com`（`ivolces` 同理；`CURATOR_VIZ_LANCE_S3_ENDPOINT` 给的端点不带桶也照样补上），
+  本地 S3 仍走路径风格。修好后同一份数据经 Daemon 读通：数据集模型、episode、曲线、两路相机按 Range 出字节（`tests/viz/test_lance.py` 加了端点的用例）。
+- HuggingFace 上 `lance-format` 组织发的 LeRobot 数据集（如 `lerobot-pusht-lance`、`lerobot-xvla-soft-fold`）是另一种「frames / episodes / videos」三表布局：
+  表在 `data/` 下，没有 `meta/` 也没有 `meta.lance`（没有 info.json、特征名、任务文字），不是 lerobot-lancedb 转出来的。预检照旧判为 `lancedb`（不支持），可视化也读不了；
+  要不要支持待需求方定。
 
 ## 5. 契约与接口改动
 

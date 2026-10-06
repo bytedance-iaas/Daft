@@ -37,6 +37,12 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(within(matrix).getByTestId('coverage-ACT-4')).toHaveAttribute('data-status', 'unassessable');
     expect(within(matrix).getByTestId('coverage-TASK-5')).toHaveAttribute('data-status', 'covered');
     expect(within(matrix).getByTestId('coverage-TASK-5')).toHaveTextContent('TASK-5');
+    // the tip says what the colour cannot: the item and why some episodes were not assessed (2026-10-05)
+    await user.hover(within(matrix).getByTestId('coverage-ACT-4'));
+    const tip = await screen.findByText(/^ACT-4 /);
+    expect(tip).toHaveTextContent(/条）/);
+    expect(tip).not.toHaveTextContent('部分条目评估不了');
+    expect(tip).not.toHaveTextContent(/^ACT-4 \S+ 覆盖/);
     // a covered item opens the section of the module that reports it
     await user.click(within(matrix).getByTestId('coverage-TASK-5'));
     await waitFor(() => expect(document.getElementById('module-task_success')).not.toBeNull());
@@ -148,7 +154,7 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
     const seen = recordRequests();
     const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
     const card = await screen.findByTestId('pipeline-episodes');
-    // ep 44: the duplicate the dedup module rejected (the newest 20 rows are eps 30-49)
+    // ep 44: the duplicate the dedup module rejected (the newest 15 rows are eps 35-49)
     await user.click(await within(card).findByRole('button', { name: 'ep 44' }));
     const mini = await screen.findByTestId('vz-mini');
     await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/44`)).toBe(true));

@@ -29,6 +29,7 @@ export function ModuleSection({
   section,
   v2 = null,
   preset,
+  policyVersion,
   subtasks,
   readOnly,
   retryBlocked,
@@ -43,6 +44,8 @@ export function ModuleSection({
   /** the section as a report 2.0 has it; null for a report of the funnel */
   v2?: ReportModuleSectionV2 | null;
   preset?: string;
+  /** the version of the policy the report was judged with (version 1: report_only rejected nothing) */
+  policyVersion?: string;
   subtasks: readonly Subtask[];
   readOnly: boolean;
   retryBlocked: string | null;
@@ -60,7 +63,7 @@ export function ModuleSection({
   const fpRest = Object.entries(fp).filter(([k]) => k !== 'from_subtask');
   const Own = SECTION_VIEWS[section.id];
   const View = Own ?? DefaultSectionView;
-  const role = moduleRole(spec, preset);
+  const role = moduleRole(spec, preset, policyVersion);
   const disabledReason = readOnly ? zh.report.historyDisabled : retryBlocked;
   const bodyId = `section-body-${section.id}`;
   const adjudicate = pending ? (

@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { PREFLIGHT_DEBOUNCE } from '../../features/preflight/usePreflight';
 import { db } from '../../mocks/db';
 import { server } from '../../mocks/server';
+import { DATASET_PROFILES, datasetDetail } from '../../mocks/world';
 import { fill, findDrawer, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
 import { currentLocation, renderApp } from '../../test/render';
@@ -181,6 +182,18 @@ describe('数据集列表 (07 §4.4)', () => {
 });
 
 describe('数据集详情', () => {
+  it('a failed preflight shows its error as it is: no 格式 label and no 模块可用性 (2026-10-05)', async () => {
+    const rrd = DATASET_PROFILES.find((p) => p.name === 'warehouse_rrd')!;
+    db.datasets.push(datasetDetail('ds_rrd', rrd, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));
+    renderApp('/datasets/ds_rrd');
+    const error = await screen.findByTestId('dataset-preflight-error');
+    expect(error).toHaveTextContent('rrd');
+    const card = error.closest('.arco-card') as HTMLElement;
+    expect(within(card).queryByText('格式')).toBeNull();
+    expect(screen.queryByTestId('dataset-modules')).toBeNull();
+    expect(screen.queryByText('模块可用性')).toBeNull();
+  });
+
   it('VLM modules ask the backends: one verified model is enough for 可用 (third round)', async () => {
     renderApp('/datasets/ds_droid200');
     const modules = await screen.findByTestId('dataset-modules');

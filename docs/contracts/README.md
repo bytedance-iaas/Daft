@@ -50,7 +50,15 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 ## 改契约的流程
 
 1. 改文件；不兼容的改动把对应的 `schema_version` / `info.version` / `registry_version` 升一级。
-2. 在 `examples/` 里补上合法与不合法的示例。
+2. 在 `examples/` 里补上合法与不合法的示例。C4 的常用接口还在 `openapi.yaml` 里就地带着请求 / 响应示例（媒体类型的 `examples`，
+   接口文档页把它们放在每个接口旁边，见设计 07 §2）：改了这些接口的结构，就地的示例要跟着改；
+   `backend/tests/contracts/test_openapi.py` 逐条拿所在位置的 Schema 校验（`test_every_example_fits_its_schema`），
+   并要求常用接口都有示例（`EXAMPLES_EXPECTED`）。
+   C4 里给客户看的文案（`info.description` 的概览 / 约定 / 变更记录、tag 的 `description`、示例的 `summary`）要写中英两版：英文在原字段，
+   中文在 `x-description-zh` / `x-summary-zh`；文案里不写内部编号（C4、D36、F12.3、设计 18 §4.0、registry 1.5 等）。变更记录从 2.5.1 记起，
+   写给客户看的改动，不写内部过程。接口自身的说明（`summary`、`description`、参数与字段描述）只写英文，可以带内部编号，发布到
+   `{base}/openapi.json` 时由 `frontend/src/lib/publicText.ts` 去掉。测试：`test_the_reference_copy_has_both_languages_and_no_internal_references`、
+   `test_the_changelog_starts_at_the_first_published_version`，前端 `src/lib/publicText.test.ts`（发布的版本里一个内部编号都不剩）。
 3. `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）
    和 `../.venv/bin/python -m curation.contracts lock`。
 4. 提交时 `CONTRACTS.lock` 的差异让评审一眼看到哪些契约动了。没刷新锁，CI 就红。
@@ -67,6 +75,8 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 逐项核对：
 - 把 `cli/check.schema.json` 里随便一个 `minimum` 改掉再跑 `check`，应报 `cli/check.schema.json: changed since CONTRACTS.lock`、退出码 1；改回来恢复。
 - `examples/` 下每个文件的 `valid` 都能通过、`invalid` 都会被拒；测试里对应 `test_examples[...]`。
+- `openapi.yaml` 里就地的示例（C4 2.5.1 起）都能通过所在位置的 Schema：把 `POST /tasks` 的 201 示例里 `state: queued` 改成 `state: sleeping`
+  再跑 `pytest -q tests/contracts/test_openapi.py`，`test_every_example_fits_its_schema[#/paths/~1tasks/post/responses/201/… queued]` 失败；改回来恢复。
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
 - 注册表 2.0 与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
   `curl -s localhost:8080/curation/api/v1/modules | jq '.registry_version, .taxonomy_version, [.blocks[].stages], (.modules[] | {id, block, stage, covers})'`

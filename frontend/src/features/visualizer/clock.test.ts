@@ -52,6 +52,15 @@ class FakeMedia extends EventTarget implements MediaLike {
   }
 }
 
+/** A video with bytes up to `bufferedTo` (media seconds), as a slow network brings them. */
+class BufferedMedia extends FakeMedia {
+  bufferedTo = 0;
+  get buffered() {
+    const end = this.bufferedTo;
+    return { length: end > 0 ? 1 : 0, start: () => 0, end: () => end };
+  }
+}
+
 class FakeLoop implements ClockEnv {
   time = 0;
   now(): number {
@@ -81,6 +90,76 @@ class FakeLoop implements ClockEnv {
 }
 
 describe('PlayerClock', () => {
+  it('waits until a video holds about 5 s before it starts, and holds again before it runs dry (2026-10-05)', () => {
+    const loop = new FakeLoop();
+    const clock = new PlayerClock(20, loop);
+    const v = new BufferedMedia();
+    v.duration = 20;
+    v.bufferedTo = 1; // a slow network: 1 s so far
+    clock.attach('v', v, { offset: 0, from: 0, end: null });
+    clock.play();
+    loop.run(16, 30, [v]);
+    expect(clock.getSnapshot()).toMatchObject({ waiting: true, t: 0 });
+    v.bufferedTo = CLOCK_CONFIG.readyAheadS + 0.5;
+    loop.run(16, 3, [v]);
+    expect(clock.getSnapshot().waiting).toBe(false);
+    loop.run(16, 60, [v]);
+    expect(clock.getSnapshot().t).toBeGreaterThan(0.8);
+    // no more bytes come, and the browser says it may stall: the clock holds a little before they run out
+    v.maxReady = 3;
+    v.readyState = 3;
+    loop.run(16, 400, [v]);
+    expect(clock.getSnapshot().waiting).toBe(true);
+    const at = clock.getSnapshot().t;
+    expect(at).toBeGreaterThan(v.bufferedTo - CLOCK_CONFIG.lowWaterS - 0.2);
+    expect(at).toBeLessThanOrEqual(v.bufferedTo);
+  });
+
+  it('a video buffered to its end does not wait for more; waited maxWaitS, the clock starts on what there is', () => {
+    const loop = new FakeLoop();
+    const short = new PlayerClock(3, loop);
+    const end = new BufferedMedia();
+    end.duration = 3;
+    end.bufferedTo = 3;
+    short.attach('v', end, { offset: 0, from: 0, end: null });
+    short.play();
+    loop.run(16, 3, [end]);
+    expect(short.getSnapshot().waiting).toBe(false);
+
+    const clock = new PlayerClock(20, loop);
+    const v = new BufferedMedia();
+    v.duration = 20;
+    v.bufferedTo = 1;
+    clock.attach('v', v, { offset: 0, from: 0, end: null });
+    clock.play();
+    loop.run(100, CLOCK_CONFIG.maxWaitS * 10 - 5, [v]);
+    expect(clock.getSnapshot().waiting).toBe(true);
+    loop.run(100, 10, [v]);
+    expect(clock.getSnapshot().waiting).toBe(false);
+  });
+
+  it('waits for the frame-pack and sample-pack cells too, and holds before one runs dry', () => {
+    const loop = new FakeLoop();
+    const clock = new PlayerClock(20, loop);
+    let ahead = 1;
+    const detach = clock.attachSource('frames', { ahead: () => ahead });
+    clock.play();
+    loop.run(16, 10);
+    expect(clock.getSnapshot()).toMatchObject({ waiting: true, t: 0 });
+    ahead = CLOCK_CONFIG.readyAheadS + 1;
+    loop.run(16, 2);
+    expect(clock.getSnapshot().waiting).toBe(false);
+    loop.run(16, 30);
+    expect(clock.getSnapshot().t).toBeGreaterThan(0.3);
+    ahead = 0.2; // the fetches fell behind
+    loop.run(16, 2);
+    expect(clock.getSnapshot().waiting).toBe(true);
+    // gone, it is not waited for
+    detach();
+    loop.run(16, 2);
+    expect(clock.getSnapshot().waiting).toBe(false);
+  });
+
   it('runs on the wall clock without videos, pauses at the end, loops when asked', () => {
     const loop = new FakeLoop();
     const clock = new PlayerClock(1, loop);

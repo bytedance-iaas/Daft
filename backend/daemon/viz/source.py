@@ -220,7 +220,7 @@ class Access:
         endpoint = override or s3_endpoint_of(ends.server)
         host = endpoint.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
         bucket, prefix = split_uri(self.src.uri)
-        opts = s3_options(endpoint, ends.region,
+        opts = s3_options(endpoint, ends.region, bucket=bucket,
                           key_id=key.access_key_id if key is not None else None,
                           secret=key.secret_access_key if key is not None else None,
                           token=key.session_token if key is not None else None,

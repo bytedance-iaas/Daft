@@ -7,6 +7,7 @@ import {
   fmtClock,
   frameAt,
   frameCount,
+  framesIn,
   firstEpisode,
   frameStep,
   hasEpisode,
@@ -21,6 +22,12 @@ const FPS30: VizTimeline = { kind: 'frame', fps: 30, frame_reference: null, fram
 const TS: VizTimeline = { kind: 'timestamp', fps: null, frame_reference: '/action', frame_times: [0, 0.1, 0.2, 0.35, 0.4] };
 
 describe('vizTime', () => {
+  it('counts the frames that cover some seconds at the index rate (the 5 s prefetch, 2026-10-05)', () => {
+    expect(framesIn(Array.from({ length: 31 }, (_, i) => i / 10), 6)).toBe(60);   // 10 fps
+    expect(framesIn([0, 0.5, 1], 2)).toBe(4);                                     // 2 fps
+    expect(framesIn([3], 5)).toBe(150);                                           // one frame: 30 fps
+  });
+
   it('bisects to the last element at or before x', () => {
     expect(bisectRight([0, 1, 2, 2, 3], 2)).toBe(3);
     expect(bisectRight([0, 1, 2], -1)).toBe(-1);

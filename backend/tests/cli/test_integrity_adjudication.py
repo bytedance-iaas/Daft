@@ -62,6 +62,26 @@ def _world(tmp_path) -> str:
     return rd.write()
 
 
+def test_report_only_still_rejects_on_a_broken_file(tmp_path):
+    """Under 只报不拒 nobody is asked, but data integrity's blocking findings still reject: the modules
+    after it cannot use an episode whose file is empty, cut or unreadable (requester 2026-10-05)."""
+    from curation.pipeline import policy as P
+
+    rd = _world(tmp_path)
+    path = os.path.join(rd, "run.json")
+    doc = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    doc["policy"] = P.Policy.of("report_only").to_json()                 # what the Daemon freezes at start
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+    lists = final(rd, "0-4")
+    assert sorted(lists["reject"]) == [1] and sorted(lists["passed"]) == [0, 2, 3, 4]
+    assert lists["review"] == {} and lists["held"] == {}                   # the suspects and ep 4's abstention: info
+    assert lists["reject"][1]["reasons"][0]["code"] == "file_truncated"
+
+
 def test_a_reject_is_final(tmp_path):
     lists = final(_world(tmp_path), "0-4")
     assert sorted(lists["passed"]) == [0, 2, 3, 4] and sorted(lists["reject"]) == [1]

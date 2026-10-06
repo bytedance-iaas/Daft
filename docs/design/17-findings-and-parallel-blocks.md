@@ -410,11 +410,17 @@ A 类算法不动，壳里读 `details` 生成。
 
 ```yaml
 # 预设 default：空覆盖，级别全部取细码目录的默认（P18）
-# 预设 report_only：
+# 预设 report_only（策略版本 2，2026-10-05 起）：
 overrides:
-  - match: {level: any}            # 所有发现
+  - match: {module: data_integrity, level: blocking}   # 数据完整性的致命问题照样判废
+    level: blocking
+  - match: {level: any}            # 其余所有发现
     level: info
 ```
+
+「只报不拒」也让数据完整性的致命问题（文件为空、截断、读不出来、时间戳坏了…… 默认级别是 blocking 的那些细码）判废（需求方 2026-10-05）：
+这样的条目后面的模块都用不了，报出来也没有意义；完整性的可疑项照样只报告、不转人工。策略版本 1（之前）只有第二条，
+已冻结它的任务照旧按自己的表判（`run.json` 与 `policy.json` 存的是完整的规则表）；报告头带着策略的版本号，控制台据此给模块打标签。
 
 规则按顺序匹配，`match` 可以写 `module` + `code`、`item`、`severity`、`level`；第一条命中的生效，没命中取细码的默认级别。
 任务参数 `policy: {preset: default | report_only}`，默认 `default`；生效的完整表在任务开始时冻结进 `run.json`（同 P17），

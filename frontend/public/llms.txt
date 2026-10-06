@@ -1,0 +1,54 @@
+# Curator v2 API (data quality-check platform)
+
+English. 中文版：[llms-zh.txt](./llms-zh.txt)
+
+> The REST API of the Physical AI Kit data quality-check platform: register robot datasets (LeRobot v2 / v3, mcap, Lance), run quality-check tasks over their episodes, read verdicts, findings and reports, adjudicate, and export the episodes that pass. The web console is built on this same API, so an agent can do everything the console does.
+
+This file and `openapi.json` live under the mount prefix `{base}` (`/curation` in production) and ship with the service, so their version always matches the running service.
+Request and response shapes are defined by `openapi.json` (OpenAPI 3.1) alone; this page is a guide to it.
+
+## Documents
+
+- [openapi.json](./openapi.json): the complete API definition in one file; `info.description` holds the overview, conventions and changelog in English (Chinese in `info.x-description-zh`), and the common operations carry request / response examples
+- [API reference](./api-docs.html): the same definition for people, in Chinese or English, with requests you can send from the page
+
+## How to call it
+
+- Addresses: the API is under `{base}/api/v1`, SSE under `{base}/events/tasks/{id}`, the probes `/healthz` and `/readyz` both at the root and under `{base}`.
+- Authentication: HTTP Basic (`Authorization: Basic base64(user:password)`); the probes need none. Without it: 401 `unauthorized`.
+- Reads: `GET`, JSON in, JSON out, UTF-8.
+- Writes (POST / PUT / PATCH / DELETE):
+  - Send `Content-Type: application/json` on every write, **even without a body** (e.g. `POST /tasks/{id}/actions/pause`, `DELETE /tasks/{id}`); without it: 400 `validation_failed`.
+  - Send `Idempotency-Key: <random string>`: the same key within 24 hours returns the first successful response, so a retry after a timeout does not create a second task.
+  - Cross-site writes from a browser are refused and there is no CORS; command-line and server-side calls are not affected.
+  - Writes are asynchronous: they return the resource and its `state` at once; progress comes over SSE or polling.
+- Errors: always `{"error": {"code": "...", "message": "...", "details": {...}}}`. Programs read `code` (a stable enum); `message` is Chinese for people.
+  Common ones: `validation_failed` (400), `not_found` (404), `task_state_conflict` / `subtask_active` / `source_changed` / `preflight_expired` (409),
+  `precheck_failed` (422; `details.checks` says per check whether the input is readable, the delivery directory writable and the model callable).
+- IDs are opaque strings (e.g. `task-kqzmrtbwe`); do not parse them. Lists sort by creation time.
+- `links` in a response point at console pages and can be handed to a person (relative paths with `absolute: false` when no public address is configured).
+
+## A typical run
+
+1. See which modules exist: `GET /modules`.
+2. Preflight: `POST /preflight` with `{"input": {"source": "tos", "uri": "tos://bucket/prefix/dataset", "region": "cn-beijing", "credential": "<access key name>"}}`
+   returns a `preflight_id` (valid 30 minutes) and whether each module can run. Optionally `POST /datasets` registers the dataset first; creating a task with a plain address registers it too.
+3. Create the task: `POST /tasks` with `name`, `input`, `output` (the delivery directory), `preflight_id`, `episodes` (`{"mode": "all"}` / `{"mode": "head", "n": 50}`),
+   `modules`, and `vlm` when a module asks a model; `params.start_now: true` starts it at once, otherwise call `POST /tasks/{id}/actions/start`.
+   Before it starts, the input, the delivery directory and the model are checked; a failure answers 422 `precheck_failed`. A dataset that changed since the preflight answers 409 `source_changed`; after confirming, call `POST /tasks/{id}/repreflight`.
+4. Wait for it: subscribe to SSE `GET {base}/events/tasks/{id}` (events `state`, `progress`, `log`, `usage`, `done`, `reset`; reconnect with `Last-Event-ID`, and reload the task on `reset`),
+   or poll `GET /tasks/{id}` every 5 seconds. The final states are `succeeded`, `completed_with_errors`, `failed` and `stopped`; pause / resume / stop with `POST /tasks/{id}/actions/{pause|resume|stop}`.
+5. Read the results: `GET /tasks/{id}/report` (the summary and one section per module); `GET /tasks/{id}/episodes?list=reject` (verdicts and findings per episode, cursor pages, `list` is `passed` / `reject` / `held`);
+   one episode with `GET /tasks/{id}/episodes/{index}`.
+6. Adjudicate: `GET /tasks/{id}/adjudication` (pending cards by default; each question names its review line `line` and the decisions it takes),
+   then `POST /tasks/{id}/adjudication` with `{"decisions": [{"episode_index": 29, "line": "task_verdict", "decision": "success"}]}` (recorded, not executed).
+7. Apply: `POST /tasks/{id}/adjudication/apply` runs the decisions as a subtask (202 with the `subtask`) and makes a new result revision. It does not export;
+   call `POST /tasks/{id}/reexport` to update the delivery dataset. Follow a subtask the same way, over SSE or `GET /tasks/{id}` (`active_subtask`).
+
+Episodes that erred are run again with `POST /tasks/{id}/retry`; an interrupted run carries on with `POST /tasks/{id}/continue`.
+
+## More
+
+- Access keys: `/credentials` (secrets are write-only and no response returns them); model services: `/vlm-backends`.
+- Overview: `GET /overview` returns what needs attention, what is running and recent numbers in one call.
+- Data visualizer: `/datasets/{id}/viz…`, `/tasks/{id}/viz…`.

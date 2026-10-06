@@ -246,6 +246,19 @@ function PlayerView({
     });
   }, []);
 
+  // -- cells the platform is transcoding: 播放 waits for them (requester 2026-10-05)
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const onBusy = useCallback((id: string, on: boolean) => {
+    setBusy((cur) => {
+      if (cur.has(id) === on) return cur;
+      const next = new Set(cur);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const playBlocked = busy.size ? zh.viz.playBlocked : null;
+
   // -- curves shown, per group
   const [hidden, setHidden] = useState<Record<string, string[]>>({});
   const hiddenOf = useCallback((key: string) => new Set(hidden[key] ?? []), [hidden]);
@@ -283,6 +296,7 @@ function PlayerView({
     if (/INPUT|SELECT|TEXTAREA/.test(tag) || (e.target as HTMLElement).isContentEditable) return;
     if (e.code === 'Space') {
       e.preventDefault();
+      if (playBlocked && !clock.getSnapshot().playing) return;
       clock.toggle();
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
@@ -439,9 +453,9 @@ function PlayerView({
                     {cam.kind === 'frames' || e.access === 'frames' ? (
                       <FramesCell cam={cam} ep={e} clock={clock} />
                     ) : decodes ? (
-                      <SamplesCell cam={cam} ep={e} clock={clock} onMode={onDecodeMode} />
+                      <SamplesCell cam={cam} ep={e} clock={clock} onMode={onDecodeMode} onBusy={onBusy} />
                     ) : (
-                      <VideoCell cam={cam} ep={e} clock={clock} />
+                      <VideoCell cam={cam} ep={e} clock={clock} onBusy={onBusy} />
                     )}
                     <span className="vz-cap">
                       <i className="dot" style={{ color: cameraColor(cam.key) }} />
@@ -531,6 +545,7 @@ function PlayerView({
         tl={tl}
         onPrevEpisode={full ? onPrevEpisode : undefined}
         onNextEpisode={full ? onNextEpisode : undefined}
+        playBlocked={playBlocked}
         progress={
           <Progress
             clock={clock}

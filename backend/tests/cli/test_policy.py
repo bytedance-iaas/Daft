@@ -26,9 +26,24 @@ def test_the_default_policy_is_the_registry_default_levels():
     assert pol.appealable("task_success", _f("failure")) and not pol.appealable("timestamp_check", _f("gap"))
 
 
-def test_report_only_rejects_nothing_and_asks_nobody():
+def test_report_only_asks_nobody_and_rejects_only_on_data_integrity():
     pol = P.Policy.of("report_only")
-    assert {pol.level(s.id, _f(c.code, c.item, c.severity)) for s in registry.MODULES for c in s.codes} == {"info"}
+    levels = {(s.id, c.code): pol.level(s.id, _f(c.code, c.item, c.severity)) for s in registry.MODULES for c in s.codes}
+    # an empty, cut or unreadable file still rejects (requester 2026-10-05): nothing after it can use it
+    integrity = next(s for s in registry.MODULES if s.id == "data_integrity")
+    for c in integrity.codes:
+        assert levels[("data_integrity", c.code)] == ("blocking" if c.level == "blocking" else "info"), c.code
+    assert levels[("data_integrity", "file_empty")] == "blocking"
+    # everything else is reported only, and nobody is asked
+    assert {lv for (m, _), lv in levels.items() if m != "data_integrity"} == {"info"}
+    assert "review" not in levels.values()
+
+
+def test_a_frozen_version_1_report_only_keeps_its_own_rules():
+    # a task started before 2026-10-05 froze report_only as one rule: everything info
+    old = P.Policy.from_json({"preset": "report_only", "version": "1", "rules": [{"match": {"level": "any"}, "level": "info"}]})
+    assert old.level("data_integrity", _f("file_empty", "FILE-1", "high")) == "info"
+    assert P.Policy.of("report_only").to_json()["version"] == "2"
 
 
 def test_rules_match_in_order_and_cannot_invent_a_question():

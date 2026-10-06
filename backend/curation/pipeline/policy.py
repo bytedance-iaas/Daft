@@ -14,10 +14,12 @@ rest - the retired soft scores among them - is info). A rule matches on any of `
 makes a finding review keeps the review line of its code; a code without one cannot be raised to
 review (there is nobody to ask) and stays as it was.
 
-Two presets ship (``PRESETS``): ``default`` (no rule) and ``report_only`` (everything info: nothing is
-rejected, nobody is asked, every finding is reported). The task names one in ``params.policy`` (C4
-``TaskParams.policy``); the Daemon freezes the full table into ``run.json`` at start (``policy``) and
-every result revision keeps a copy (``policy.json``).
+Two presets ship (``PRESETS``): ``default`` (no rule) and ``report_only`` (nobody is asked and every
+finding is reported; only data integrity's blocking findings still reject - an empty, cut or unreadable
+file leaves nothing for the modules after it, requester 2026-10-05, policy version 2; version 1 made
+everything info). The task names one in ``params.policy`` (C4 ``TaskParams.policy``); the Daemon freezes
+the full table into ``run.json`` at start (``policy``) and every result revision keeps a copy
+(``policy.json``), so a task keeps the rules it started with.
 """
 from __future__ import annotations
 
@@ -27,14 +29,20 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 
-POLICY_VERSION = "1"
+#: 2 (2026-10-05): report_only keeps data integrity's blocking findings; 1 made everything info.
+POLICY_VERSION = "2"
 LEVELS = tuple(lv for lv, _ in registry.FINDING_LEVELS)
 MATCH_KEYS = ("module", "code", "item", "severity", "level")
+
+#: Modules whose blocking findings reject even under report_only: the modules after them cannot use
+#: an episode whose files are empty, cut short or unreadable (requester, 2026-10-05).
+REPORT_ONLY_GATES = ("data_integrity",)
 
 #: The presets a task can name (C4 TaskParams.policy.preset).
 PRESETS: dict[str, tuple[dict, ...]] = {
     "default": (),
-    "report_only": ({"match": {"level": "any"}, "level": "info"},),
+    "report_only": tuple({"match": {"module": m, "level": "blocking"}, "level": "blocking"} for m in REPORT_ONLY_GATES)
+    + ({"match": {"level": "any"}, "level": "info"},),
 }
 #: Chinese names for the report and the console.
 PRESET_TITLES = {"default": "默认（今天的判废规则）", "report_only": "只报不拒"}

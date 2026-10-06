@@ -49,13 +49,23 @@ export function unassessableTitle(reg: ModuleRegistry | undefined, reason: strin
 }
 
 /**
- * What a module can do to an episode, for its tag: reject it (a blocking code), ask a person (a review
- * code) or only report. The registry's default levels (P18); under the report_only preset nothing is
- * rejected or asked (design doc 17 §4.1).
+ * Modules whose blocking codes reject even under 只报不拒 (pipeline/policy.py REPORT_ONLY_GATES, policy
+ * version 2 on): data integrity - the modules after it cannot use an empty, cut or unreadable file.
  */
-export function moduleRole(m: Pick<ModuleSpec, 'codes'> | undefined, preset?: string): Level {
-  if (preset === 'report_only') return 'info';
+export const REPORT_ONLY_GATES: readonly string[] = ['data_integrity'];
+
+/**
+ * What a module can do to an episode, for its tag: reject it (a blocking code), ask a person (a review
+ * code) or only report. The registry's default levels (P18); under the report_only preset nobody is asked
+ * and only data integrity rejects - a task frozen with policy version 1 (before 2026-10-05) rejected
+ * nothing (design doc 17 §4.1). No version: the policy a new task gets.
+ */
+export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, preset?: string, policyVersion?: string | null): Level {
   const levels = new Set((m?.codes ?? []).map((c) => c.level));
+  if (preset === 'report_only') {
+    const gate = policyVersion !== '1' && m !== undefined && REPORT_ONLY_GATES.includes(m.id);
+    return gate && levels.has('blocking') ? 'blocking' : 'info';
+  }
   return levels.has('blocking') ? 'blocking' : levels.has('review') ? 'review' : 'info';
 }
 

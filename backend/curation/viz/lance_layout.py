@@ -175,11 +175,20 @@ def video_rows(ds) -> dict[tuple[str, int, int], int]:
 
 # ---------------------------------------------------------------- where a table lives
 
-def s3_options(endpoint: str, region: str, *, key_id: str | None = None, secret: str | None = None,
-               token: str | None = None, virtual_hosted: bool = True) -> dict[str, str]:
+def s3_options(endpoint: str, region: str, *, bucket: str | None = None, key_id: str | None = None,
+               secret: str | None = None, token: str | None = None, virtual_hosted: bool = True) -> dict[str, str]:
     """Lance's object-store options for an S3-compatible endpoint (TOS's ``tos-s3-<region>``); no key
-    is an anonymous (unsigned) read."""
-    opts = {"aws_endpoint": endpoint.rstrip("/"), "aws_region": region,
+    is an anonymous (unsigned) read.
+
+    Virtual-hosted style puts ``bucket`` in the endpoint's host (``https://<bucket>.tos-s3-cn-beijing.volces.com``):
+    Lance's object store sends requests to the endpoint as given in that style, so a bare service
+    endpoint would list the service root and find no ``_versions/``; TOS refuses path style (403)."""
+    endpoint = endpoint.rstrip("/")
+    if virtual_hosted and bucket:
+        scheme, sep, rest = endpoint.partition("://")
+        if not rest.startswith(bucket + "."):
+            endpoint = f"{scheme}{sep}{bucket}.{rest}" if sep else f"{bucket}.{endpoint}"
+    opts = {"aws_endpoint": endpoint, "aws_region": region,
             "aws_virtual_hosted_style_request": "true" if virtual_hosted else "false"}
     if endpoint.startswith("http://"):
         opts["aws_allow_http"] = "true"

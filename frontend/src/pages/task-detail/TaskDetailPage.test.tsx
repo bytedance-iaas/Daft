@@ -53,10 +53,10 @@ describe('任务详情 (07 §4.2)', () => {
     // the header facts are parted by centred dots, not a · glyph that sat low like a full stop (sixth round)
     expect(screen.getAllByTestId('meta-sep').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('task_01HXR2D8').closest('.arco-space')).not.toHaveTextContent('·');
-    // 20 a page (sixth round, was 30)
+    // the latest 15 (requester 2026-10-05; the sixth round had 20, before it 30)
     const page = seen.find((r) => r.path === `/tasks/${MAIN}/pipeline/episodes`);
-    expect(page?.query.get('limit')).toBe('20');
-    expect(card.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
+    expect(page?.query.get('limit')).toBe('15');
+    expect(card.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(15);
     // the link opens the episode in the visualizer; no card of its records below (2026-10-04)
     await user.click(within(card).getByRole('button', { name: 'ep 49' }));
     const mini = await screen.findByTestId('vz-mini');

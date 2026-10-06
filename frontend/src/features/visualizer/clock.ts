@@ -4,7 +4,12 @@
 // drift by a seek. Starting, seeking while playing, and any video running short of data hold the
 // clock (`waiting`): every video is put on the clock's time, and once each has data they start
 // together; the clock goes on from where they actually are. Paused, every video sits exactly on the
-// clock's frame. Frame-pack and curve cells just read `t`. A video that failed to load is left out.
+// clock's frame. Curve cells just read `t`. A video that failed to load is left out.
+//
+// Starting (and after a seek, a loop or a camera running short) the clock also waits until every camera
+// holds about `readyAheadS` seconds from its time on - a video's buffered range, a frame-pack or
+// sample-pack cell's own fetched frames (`FrameSource`) - so a slow network buffers once instead of
+// stuttering (requester 2026-10-05); waited `maxWaitS`, it starts on whatever each camera has.
 //
 // It knows media elements only through MediaLike, so tests drive fake ones and a fake frame loop.
 
@@ -18,6 +23,8 @@ export interface MediaLike extends EventTarget {
   readonly error?: unknown;
   /** played to its end: play() would start it over from 0 */
   readonly ended?: boolean;
+  /** what is buffered (media seconds); without it a video counts as buffered all the way */
+  readonly buffered?: { readonly length: number; start(index: number): number; end(index: number): number };
   playbackRate: number;
   play(): Promise<void> | void;
   pause(): void;
@@ -32,6 +39,15 @@ export interface ClockSnapshot {
   speed: number;
   loop: boolean;
   duration: number;
+}
+
+/**
+ * A cell that loads its own frames - a JPEG frame pack, a sample pack the browser decodes (design doc 19
+ * §3): how many seconds from the clock's `t` on it holds (Infinity once it holds them to its end), so the
+ * clock waits for it as it waits for a video.
+ */
+export interface FrameSource {
+  ahead(t: number): number;
 }
 
 /** Where a video's time sits on the clock: media = t - offset + from, until `end` (media seconds). */
@@ -66,10 +82,17 @@ export const CLOCK_CONFIG = {
   maxStepS: 0.25,
   /** Paused videos land this far (s) inside the frame the clock shows. */
   frameEpsS: 0.001,
+  /** Seconds every camera holds from the clock's time on before the clock (re)starts (requester 2026-10-05). */
+  readyAheadS: 5,
+  /** Playing, a camera holding less than this (a video only when the browser also expects to stall) holds the clock. */
+  lowWaterS: 0.5,
+  /** Waited this long (s) for `readyAheadS`, the clock starts once every camera has the frame it shows. */
+  maxWaitS: 8,
 };
 
 const HAVE_METADATA = 1;
 const HAVE_FUTURE_DATA = 3;
+const HAVE_ENOUGH_DATA = 4;
 
 interface Attached {
   el: MediaLike;
@@ -87,9 +110,12 @@ export class PlayerClock {
   private snap: ClockSnapshot;
   private readonly listeners = new Set<() => void>();
   private readonly media = new Map<string, Attached>();
+  private readonly sources = new Map<string, FrameSource>();
   private raf: number | null = null;
   private last: number | null = null;
   private disposed = false;
+  /** when the clock began to wait (env.now() ms), null while it runs or is paused */
+  private waitingSince: number | null = null;
 
   constructor(
     duration: number,
@@ -113,6 +139,7 @@ export class PlayerClock {
     const next = { ...this.snap, ...patch };
     const keys = Object.keys(next) as (keyof ClockSnapshot)[];
     if (keys.every((k) => next[k] === this.snap[k])) return;
+    if (next.waiting !== this.snap.waiting) this.waitingSince = next.waiting ? this.env.now() : null;
     this.snap = next;
     for (const fn of [...this.listeners]) fn();
   }
@@ -121,7 +148,7 @@ export class PlayerClock {
   play(): void {
     if (this.disposed || this.snap.duration <= 0 || this.snap.playing) return;
     const atEnd = this.snap.t >= this.snap.duration - 1e-6;
-    this.set({ playing: true, waiting: this.liveMedia().length > 0, t: atEnd ? 0 : this.snap.t });
+    this.set({ playing: true, waiting: this.liveMedia().length > 0 || this.sources.size > 0, t: atEnd ? 0 : this.snap.t });
     this.last = null;
     this.syncMedia();
     this.loop();
@@ -174,6 +201,15 @@ export class PlayerClock {
     return () => this.detach(id, entry);
   }
 
+  /** A frame-pack or sample-pack cell, waited for like a video; returns the detach function. */
+  attachSource(id: string, src: FrameSource): () => void {
+    this.sources.set(id, src);
+    if (this.snap.playing) this.hold();
+    return () => {
+      if (this.sources.get(id) === src) this.sources.delete(id);
+    };
+  }
+
   private detach(id: string, only?: Attached): void {
     const m = this.media.get(id);
     if (!m || (only && m !== only)) return;
@@ -190,6 +226,7 @@ export class PlayerClock {
       m.el.pause();
     }
     this.media.clear();
+    this.sources.clear();
     this.listeners.clear();
   }
 
@@ -274,7 +311,27 @@ export class PlayerClock {
     if (!this.snap.playing) return;
     const live = this.liveMedia();
     for (const m of live) if (!m.el.paused) m.el.pause();
-    this.set({ waiting: live.length > 0 });
+    this.set({ waiting: live.length > 0 || this.sources.size > 0 });
+  }
+
+  /** Seconds a video has buffered from where it is; Infinity once that reaches the end of its range. */
+  private videoAhead(m: Attached): number {
+    const r = m.el.buffered;
+    if (!r) return Infinity;
+    const at = m.el.currentTime;
+    const end = m.b.end ?? (Number.isFinite(m.el.duration) ? m.el.duration : null);
+    for (let i = 0; i < r.length; i += 1) {
+      if (r.start(i) <= at + 0.05 && at <= r.end(i)) {
+        if (end !== null && r.end(i) >= end - 0.05) return Infinity;
+        return r.end(i) - at;
+      }
+    }
+    return 0;
+  }
+
+  /** Seconds waited so far (0 when not waiting). */
+  private waited(): number {
+    return this.waitingSince === null ? 0 : Math.max(0, this.env.now() - this.waitingSince) / 1000;
   }
 
   /** Puts a video exactly where the clock is (outside its range: parked at the nearer end). */
@@ -317,7 +374,8 @@ export class PlayerClock {
       // running: each video follows the clock
       let held = false;
       for (const m of live) {
-        if (unready(m)) {
+        // running short (a slow network): stop now and buffer again, rather than stutter frame by frame
+        if (unready(m) || (m.el.readyState < HAVE_ENOUGH_DATA && this.videoAhead(m) < this.cfg.lowWaterS)) {
           held = true;
           continue;
         }
@@ -329,14 +387,23 @@ export class PlayerClock {
         this.setRate(m, diff);
         if (m.el.paused) start(m.el); // a camera whose range the clock just entered
       }
+      if (!held && [...this.sources.values()].some((src) => src.ahead(this.snap.t) < this.cfg.lowWaterS)) held = true;
       if (held) {
         this.hold();
         this.syncMedia();
       }
       return;
     }
-    // waiting: every video on the clock's time with data, then all start, then the clock goes on
-    if (live.some(unready)) {
+    // waiting: every video on the clock's time with data and every camera holding readyAheadS (after maxWaitS:
+    // the frame it shows), then all start, then the clock goes on
+    const relaxed = this.waited() >= this.cfg.maxWaitS;
+    const need = relaxed ? 0 : this.cfg.readyAheadS;
+    const short = (m: Attached) => unready(m) || this.videoAhead(m) < need;
+    const sourcesShort = [...this.sources.values()].some((src) => {
+      const a = src.ahead(this.snap.t);
+      return relaxed ? a <= 0 : a < need;
+    });
+    if (live.some(short) || sourcesShort) {
       for (const m of live) {
         if (!m.el.paused) m.el.pause();
         this.align(m, false);

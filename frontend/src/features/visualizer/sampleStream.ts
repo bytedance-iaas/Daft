@@ -3,9 +3,11 @@
 // description: Annex-B). A frame is decoded from the keyframe before it - the index's parameter sets go in
 // front of that keyframe - and while playing the frames ahead are fed too. Decoded frames become bitmaps
 // at once (a held VideoFrame keeps the hardware decoder's picture) in a small cache by frame number; the
-// cell draws the frame at the clock, or the newest one before it.
+// cell draws the frame at the clock, or the newest one before it. Playing, the bytes of about 5 s ahead are
+// fetched too (requester 2026-10-05), and `ahead` tells the clock how far the fetched GOPs reach.
 import type { VizFrameIndex } from '../../api/types';
 import { concat, continues, fromBase64, keyBefore, nextKey } from '../../lib/vizSamples';
+import { bisectRight } from '../../lib/vizTime';
 import type { Drawable } from './framePack';
 
 /** What the stream needs of a VideoDecoder. */
@@ -53,15 +55,19 @@ export async function canDecodeSamples(index: VizFrameIndex): Promise<boolean> {
   }
 }
 
-/** Decoded frames kept, and how many may wait in the decoder's queue. */
+/** Decoded frames kept, how many may wait in the decoder's queue, and the bytes of fetched GOPs kept. */
 const CACHE = 48;
 const QUEUE = 8;
+const GOP_BYTES = 64 << 20;
 
 export class SampleStream {
   private readonly deps: SampleStreamDeps;
   private readonly config: Uint8Array;
   private readonly frames = new Map<number, Drawable>();
   private readonly gops = new Map<number, Promise<Uint8Array>>();
+  /** GOPs whose bytes are here, by their keyframe, with their sizes */
+  private readonly ready = new Map<number, number>();
+  private readyBytes = 0;
   private decoder: DecoderLike | null = null;
   private gen = 0;
   private runStart = -1;
@@ -104,6 +110,29 @@ export class SampleStream {
     let best = -1;
     for (const k of this.frames.keys()) if (k <= i && k > best) best = k;
     return best >= 0 ? this.frames.get(best) : undefined;
+  }
+
+  /** The bytes of the GOPs holding frames i to i + frames, on their way now (playing: about 5 s ahead). */
+  prefetch(i: number, frames: number): void {
+    if (this.disposed || this.failed || frames <= 0 || i < 0 || i >= this.count) return;
+    const last = Math.min(this.count - 1, i + frames);
+    let g = Math.max(0, keyBefore(this.key, i));
+    while (g <= last && g < this.count) {
+      this.gop(g).catch(() => undefined);
+      g = nextKey(this.key, g);
+    }
+  }
+
+  /** Seconds from t on that the fetched GOPs hold; Infinity once they reach the last frame. */
+  ahead(t: number): number {
+    const times = this.index.t;
+    if (!this.count) return Infinity;
+    const k = Math.max(0, bisectRight(times, t + 1e-6));
+    let g = keyBefore(this.key, k);
+    if (g < 0) return 0;
+    while (g < this.count && this.ready.has(g)) g = nextKey(this.key, g);
+    if (g >= this.count) return Infinity;
+    return Math.max(0, times[g] - Math.max(t, times[k]));
   }
 
   /** Frame i is wanted now, and `ahead` frames after it soon. */
@@ -216,14 +245,40 @@ export class SampleStream {
         const buf = new Uint8Array(await r.arrayBuffer());
         return r.status === 206 ? buf : buf.slice(start, stop + 1);
       });
-      p.catch(() => this.gops.delete(k));
+      const mine = p;
+      p.then(
+        (buf) => {
+          if (this.gops.get(k) !== mine || this.disposed) return;
+          this.ready.set(k, buf.byteLength);
+          this.readyBytes += buf.byteLength;
+          this.trim();
+        },
+        () => {
+          if (this.gops.get(k) === mine) this.gops.delete(k);
+        },
+      );
       this.gops.set(k, p);
-      if (this.gops.size > 6) {
-        const far = [...this.gops.keys()].sort((a, b) => Math.abs(b - this.focus) - Math.abs(a - this.focus))[0];
-        if (far !== k) this.gops.delete(far);
-      }
     }
     return p;
+  }
+
+  /** Over the byte budget the GOPs behind the one shown go first, then the farthest ahead. */
+  private trim(): void {
+    if (this.readyBytes <= GOP_BYTES) return;
+    const here = Math.max(0, keyBefore(this.key, this.focus));
+    const order = [...this.ready.keys()]
+      .filter((g) => g !== here)
+      .sort((a, b) => {
+        const da = a < here ? (here - a) * 4 : a - here;
+        const db = b < here ? (here - b) * 4 : b - here;
+        return db - da;
+      });
+    for (const g of order) {
+      if (this.readyBytes <= GOP_BYTES) break;
+      this.readyBytes -= this.ready.get(g) ?? 0;
+      this.ready.delete(g);
+      this.gops.delete(g);
+    }
   }
 
   private async sample(i: number): Promise<Uint8Array> {
@@ -285,5 +340,7 @@ export class SampleStream {
     for (const img of this.frames.values()) (img as ImageBitmap).close?.();
     this.frames.clear();
     this.gops.clear();
+    this.ready.clear();
+    this.readyBytes = 0;
   }
 }
