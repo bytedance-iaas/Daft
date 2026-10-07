@@ -41,3 +41,7 @@ spikes/smoke_out/
 
 # EEF evaluator run artifacts (evidence images, curves); the summary JSONs next to them are kept
 tools/eef_eval/reports/run/
+
+# 本机临时脚本：手搭 Lance 夹具用的，不属于产品（2026-10-06 约定）
+backend/scripts/lerobot_to_lance.py
+backend/scripts/wrap_videos.py
