@@ -1,0 +1,54 @@
+# Curator v2 API（数据质检平台）
+
+中文版。English: [llms.txt](./llms.txt)
+
+> Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对 episode 跑质检任务，读判决、发现与质检报告，人工裁决，导出通过的数据。网页控制台用的就是这套 API，agent 能做的事和控制台一样多。
+
+本文件与 `openapi.json` 都在挂载前缀 `{base}` 下（生产环境是 `/curation`），随镜像一起发版，版本永远与正在运行的服务一致。
+请求与响应的形状只以 `openapi.json`（OpenAPI 3.1）为准；本页只是导读。
+
+## 文档
+
+- [openapi.json](./openapi.json)：完整的接口定义，单个文件；`info.description` 是英文的概览、约定与变更记录（中文版在 `info.x-description-zh`），常用接口带请求 / 响应示例
+- [接口文档](./api-docs.html)：给人看的同一份接口定义，中英文可切换，可以在页面上直接试调用
+
+## 怎么调用
+
+- 地址：接口在 `{base}/api/v1`，SSE 在 `{base}/events/tasks/{id}`，探针 `/healthz`、`/readyz`（根路径和 `{base}` 下都有）。
+- 鉴权：HTTP Basic（`Authorization: Basic base64(用户:密码)`），探针免鉴权。没登录返回 401 `unauthorized`。
+- 读：`GET`，JSON 进、JSON 出，UTF-8。
+- 写（POST / PUT / PATCH / DELETE）：
+  - 每个写请求都带 `Content-Type: application/json`，**没有请求体的也要带**（如 `POST /tasks/{id}/actions/pause`、`DELETE /tasks/{id}`）；不带返回 400 `validation_failed`「写接口只接受 JSON」。
+  - 建议带 `Idempotency-Key: <随机串>`：24 小时内同一个 key 返回第一次成功的结果，超时重试不会重复建任务。
+  - 浏览器发的跨站写请求一律拒绝，没有 CORS；命令行与服务端调用不受影响。
+  - 写操作是异步的：立即返回资源和它的 `state`，进度靠 SSE 或轮询。
+- 错误：统一是 `{"error": {"code": "...", "message": "...", "details": {...}}}`。程序认 `code`（稳定的枚举），`message` 是给人看的中文。
+  常见的：`validation_failed`（400）、`not_found`（404）、`task_state_conflict` / `subtask_active` / `source_changed` / `preflight_expired`（409）、
+  `precheck_failed`（422，`details.checks` 逐项写输入能否读、交付目录能否写、模型能否调用）。
+- ID 是不透明字符串（如 `task-kqzmrtbwe`），不要解析；列表按创建时间排。
+- 响应里的 `links` 指向控制台页面，可以直接发给人（没配置公网地址时是相对路径，带 `absolute: false`）。
+
+## 一次典型的质检
+
+1. 看有哪些模块：`GET /modules`。
+2. 预检：`POST /preflight`，请求体 `{"input": {"source": "tos", "uri": "tos://桶/前缀/数据集", "region": "cn-beijing", "credential": "访问密钥名"}}`，
+   拿到 `preflight_id`（30 分钟有效）和每个模块能否用。（可选）`POST /datasets` 先登记数据集；直接用地址建任务时也会自动登记。
+3. 建任务：`POST /tasks`，带 `name`、`input`、`output`（交付目录）、`preflight_id`、`episodes`（`{"mode": "all"}` / `{"mode": "head", "n": 50}`）、
+   `modules`，要调用模型的模块再带 `vlm`；`params.start_now: true` 建完就开始，否则再调 `POST /tasks/{id}/actions/start`。
+   开始前会检查输入、交付目录和模型，任一不过返回 422 `precheck_failed`；数据集和预检时不一样返回 409 `source_changed`，确认后调 `POST /tasks/{id}/repreflight`。
+4. 等它跑完：订阅 SSE `GET {base}/events/tasks/{id}`（事件 `state`、`progress`、`log`、`usage`、`done`、`reset`；断线带 `Last-Event-ID` 重连，收到 `reset` 就重新取任务），
+   或每 5 秒轮询 `GET /tasks/{id}`。终态是 `succeeded`、`completed_with_errors`、`failed`、`stopped`；暂停 / 继续 / 停止用 `POST /tasks/{id}/actions/{pause|resume|stop}`。
+5. 读结果：`GET /tasks/{id}/report`（汇总与各模块小节）；`GET /tasks/{id}/episodes?list=reject`（逐条判决与发现，游标分页，`list` 取 `passed` / `reject` / `held`）；
+   单条 `GET /tasks/{id}/episodes/{index}`。
+6. 人工裁决：`GET /tasks/{id}/adjudication`（缺省列待裁的卡片，每张卡片上的问题写明裁决线 `line` 与可选的决定），
+   `POST /tasks/{id}/adjudication` 提交 `{"decisions": [{"episode_index": 29, "line": "task_verdict", "decision": "success"}]}`（只记录，不执行）。
+7. 执行裁决：`POST /tasks/{id}/adjudication/apply`，作为子任务运行（返回 202 与 `subtask`），产生新的结果版本；它不导出，
+   要更新交付数据集再调 `POST /tasks/{id}/reexport`。子任务的进度同样看 SSE 或 `GET /tasks/{id}`（`active_subtask`）。
+
+出错的条目用 `POST /tasks/{id}/retry` 补跑；中断的主流程用 `POST /tasks/{id}/continue` 接着跑。
+
+## 其它
+
+- 访问密钥：`/credentials`（密钥只写不读，任何响应都不返回）；模型服务：`/vlm-backends`。
+- 概览：`GET /overview`，一次拿到待处理的事、运行情况和近期统计。
+- 数据可视化：`/datasets/{id}/viz…`、`/tasks/{id}/viz…`。

@@ -1,13 +1,14 @@
 """Browser-facing TOS access with a task's keys (W8; design docs 03 §7, 08 §6; D16).
 
 * ``GET /media/sign`` - a presigned GET URL for a video or evidence frame. The browser fetches
-  it straight from TOS; the Daemon never relays the bytes - except an mcap episode's cameras,
+  it straight from TOS; the Daemon relays bytes only for local deliveries and an mcap episode's cameras,
   which have no object to sign: their virtual ``stream/cameras/...`` path resolves to this
   Daemon's own streaming URL (:mod:`daemon.results.clips`). Two scopes, each with its own key
   and prefix: ``delivery`` = the task's run directory ``<delivery>/<run_id>/`` (output key),
   ``input`` = the task's input dataset (input key; the public cache bucket is not signed, the
   plain public URL is returned). ``path`` is relative to that prefix and checked by
   :mod:`daemon.secrets.presign` before anything is signed. TTL 60-3600 s, default 30 minutes.
+  With ``CURATOR_LOCAL_DELIVERY_ROOT``, delivery media uses the private ``/media/local`` route.
 * ``POST /deliveries/probe`` - the new-task form's check when the delivery directory loses
   focus: a real write of a probe object with the named key, deleted right after.
 * ``POST /datasets/{id}/sign`` - the ReRun web viewer's reads of a registered TOS dataset
@@ -21,11 +22,12 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Query, Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 
 from .. import taskspec
 from ..errors import ApiError
@@ -55,6 +57,45 @@ _NO_STORE = {"Cache-Control": "no-store"}
 VIEWER_SIGN_AUDIT_MS = 3600 * 1000
 _AUDIT_LOCK = threading.Lock()
 
+# Only inert media can be served from the console's own origin.
+_LOCAL_MEDIA_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".jpg": "image/jpeg",
+                      ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def _local_delivery_file(rt, task: P.Task, rel: str) -> Path | None:
+    """A task's media in the configured local delivery, or None for a real TOS delivery."""
+    from ..orchestr.delivery import local_root_for
+    from ..orchestr.service import orchestrator_of
+
+    root = orchestrator_of(rt).cfg.local_delivery_root
+    if root is None:
+        return None
+    if not task.run_id:
+        raise ApiError("not_found", "这个任务还没有交付文件")
+    base = local_root_for(root.resolve(), task.output_uri) / task.run_id
+    path = (base / rel).resolve()
+    if not path.is_relative_to(base):
+        raise bad("媒体路径不能离开这个任务的交付目录", "path")
+    if path.suffix.lower() not in _LOCAL_MEDIA_TYPES or not path.is_file():
+        raise ApiError("not_found", "这个任务的媒体文件不存在")
+    return path
+
+
+@router.get("/media/local", include_in_schema=False)
+def local_media(request: Request, task: str = Query(...), path: str = Query(...)):
+    """Private byte transport returned by /media/sign in local-delivery development mode."""
+    rt = runtime(request)
+    row = rt.repo.get_task(task, owner=principal(request).owner_id)
+    try:
+        rel = relative_key(path)
+    except BadPath as err:
+        raise bad(err.message_zh, "path") from None
+    file = _local_delivery_file(rt, row, rel)
+    if file is None:
+        raise ApiError("not_found")
+    return FileResponse(file, media_type=_LOCAL_MEDIA_TYPES[file.suffix.lower()],
+                        headers={"Cache-Control": "private, no-cache", "X-Content-Type-Options": "nosniff"})
+
 
 @router.get("/media/sign")
 def sign_media(request: Request, task: str = Query(...),
@@ -73,6 +114,9 @@ def sign_media(request: Request, task: str = Query(...),
         episode, camera = stream
         url = (f"{rt.links.base_path}/api/v1/tasks/{quote(row.id)}/episodes/{episode}"
                f"/cameras/{quote(camera)}.mp4")
+        return JSONResponse({"url": url, "expires_at": rt.clock() + ttl * 1000}, headers=_NO_STORE)
+    if scope == "delivery" and _local_delivery_file(rt, row, rel) is not None:
+        url = f"{rt.links.base_path}/api/v1/media/local?{urlencode({'task': row.id, 'path': rel})}"
         return JSONResponse({"url": url, "expires_at": rt.clock() + ttl * 1000}, headers=_NO_STORE)
     key = None
     try:

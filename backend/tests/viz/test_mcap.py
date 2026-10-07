@@ -295,6 +295,11 @@ def test_episode_frames_curves_and_video(mc):
     assert_schema("VizFrameIndex", idx)
     r = mc.get(cam["url"], headers={"Range": f"bytes={idx['offset'][2]}-{idx['offset'][2] + idx['size'][2] - 1}"})
     assert r.status_code == 206 and r.content[:2] == b"\xff\xd8" and len(r.content) == idx["size"][2]
+    # an mcap dataset's mapping can be re-confirmed in place, so its camera bytes carry an ETag
+    # to revalidate by but are not marked immutable (design doc 18 §5.8)
+    whole = mc.get(cam["url"])
+    assert whole.headers["cache-control"] == "private, max-age=600" and whole.headers.get("etag")
+    assert mc.get(cam["url"], headers={"If-None-Match": whole.headers["etag"]}).status_code == 304
     s = mc.get(f"{API}/datasets/{ds}/episodes/1/series", params={"stream": "robot0_vio_eef_pose"}).json()
     assert_schema("VizSeries", s)
     assert s["total_points"] == 20 and s["lines"][0]["name"] == "robot0_x"

@@ -1,0 +1,150 @@
+{
+  "schema_version": "umi-calibration/1",
+  "dataset_id": "DecisionFacts/Physical-AI-UMI-transfer-objects-from-cups",
+  "instruction": "Pick objects out of cups and transfer them to a new location using both grippers.",
+  "T_world_slam": [
+    [
+      0.9966613505884382,
+      0.07134510672174182,
+      0.03969940504209326,
+      -0.08458280779914111
+    ],
+    [
+      0.03459289173281112,
+      -0.809431406696403,
+      0.586194608325047,
+      -0.40067787217636924
+    ],
+    [
+      0.07395605843305808,
+      -0.5828641704678834,
+      -0.8091970522312144,
+      0.416888414759816
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "cameras": {
+    "camera0": {
+      "K": [
+        [
+          948.163,
+          0,
+          1353.79
+        ],
+        [
+          0,
+          948.163,
+          1008.91
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "model": "opencv_fisheye",
+      "distortion_coefficients": [
+        -0.0560438,
+        -0.0599787,
+        0.0694283,
+        -0.0286672
+      ],
+      "image_size_wh": [
+        2704,
+        2028
+      ],
+      "T_camera_tcp": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.086
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.21965
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "camera1": {
+      "K": [
+        [
+          948.163,
+          0,
+          1353.79
+        ],
+        [
+          0,
+          948.163,
+          1008.91
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "model": "opencv_fisheye",
+      "distortion_coefficients": [
+        -0.0560438,
+        -0.0599787,
+        0.0694283,
+        -0.0286672
+      ],
+      "image_size_wh": [
+        2704,
+        2028
+      ],
+      "T_camera_tcp": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.086
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.21965
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "provenance": {
+    "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+    "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+    "assurance": "declared"
+  }
+}

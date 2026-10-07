@@ -1310,6 +1310,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/episodes/{index}/eef-overlay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
+         * @description Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
+         *     plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+         *     `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
+         *     bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
+         *     own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
+         *     past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
+         *     bundle has no such episode.
+         */
+        get: operations["getTaskEpisodeEefOverlay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/episodes/{index}/cameras/{camera}.mp4": {
         parameters: {
             query?: never;
@@ -3077,6 +3107,41 @@ export interface components {
             /** @description raw samples in the window */
             total_points: number;
             downsampled: boolean;
+        };
+        EefOverlay: {
+            task_id: string;
+            episode_index: number;
+            cameras: components["schemas"]["EefOverlayCamera"][];
+        };
+        EefOverlayCamera: {
+            /** @description the bundle's camera id, as in the opinion record's `cameras` */
+            camera_id: string;
+            /** @description key of the `VizEpisodeCamera` playing the same file (LeRobot) or topic (mcap); null when none does */
+            viz_camera: string | null;
+            /** @description the source video's size; every coordinate is a pixel of it */
+            image_size_wh: number[];
+            /** @description the camera clip's frame rate */
+            fps: number | null;
+            /** @description per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps. */
+            media_frames: (number | null)[];
+            /** @description why the opinion skipped this camera; its layers are then empty */
+            skipped: string | null;
+            /** @description drawn in order, later on top */
+            layers: components["schemas"]["EefOverlayLayer"][];
+        };
+        EefOverlayLayer: {
+            /**
+             * @description point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end); polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+             * @enum {unknown}
+             */
+            kind: "point" | "segment" | "arrow" | "polyline";
+            /** @description text by the mark (P, A, B, a UMI hand) */
+            label: string | null;
+            color: string;
+            /** @description line width in source pixels at full size */
+            width: number;
+            /** @description one entry per sample frame; null where nothing is drawn */
+            frames: ((number | null)[] | null)[];
         };
         VizFrameIndex: {
             camera: components["schemas"]["VizCameraKey"];
@@ -6083,6 +6148,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VizSeries"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskEpisodeEefOverlay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one entry per camera of the bundle's sample */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EefOverlay"];
                 };
             };
             default: components["responses"]["Error"];

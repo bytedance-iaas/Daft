@@ -41,8 +41,7 @@ class EpisodeUrls:
             return out
         access = cam["access"]
         if access == "direct":
-            out["url"] = Access(self.svc.rt, src).browser_url(rel, URL_TTL_S)
-            out["expires_at"] = self.svc.rt.clock() + URL_TTL_S * 1000
+            out["url"], out["expires_at"] = self.svc.presigned_camera_url(src, rel)
             if out["url"] is None:                                 # a local source after all
                 out["access"], out["url"] = "local", self.daemon(src, index, cam["key"], "mp4")
         elif access in ("local", "transcode", "remux", "blob"):
@@ -63,6 +62,10 @@ class EpisodeUrls:
 
 class VizService:
     META_TTL_S = 600.0
+    #: presigned camera URL lifetime, and the bucket a signature is reused within so the frontend's
+    #: pre-expiry refresh (design doc 18 §5.8) signs a byte-identical URL and the browser keeps cache
+    PRESIGN_TTL_S = URL_TTL_S
+    PRESIGN_BUCKET_S = 600
 
     def __init__(self, rt):
         self.rt = rt
@@ -70,6 +73,7 @@ class VizService:
         self.transcode_enabled = bool(getattr(s, "viz_transcode", True))
         self.client_decode = bool(getattr(s, "viz_client_decode", True))
         self.meta_cache = LRU(max_items=32)
+        self.presign_cache = LRU(max_items=512)
         self.frames_cache = LRU(max_items=64, max_bytes=256 << 20)
         self.label_cache = LRU(max_items=8)
         self.disk = DiskCache(getattr(s, "viz_cache_dir", None) or pathlib.Path(s.scratch_dir) / "viz-cache",
@@ -98,6 +102,27 @@ class VizService:
             cand = store_of(self.rt).task_dir(task.id)
             run_dir = cand if cand.is_dir() else None
         return task_source(self.rt, task, owner, run_dir)
+
+    def presigned_camera_url(self, src: VizSource, rel: str):
+        """A browser URL for a TOS camera object, or ``(None, None)`` for a local source. The object
+        is immutable, so the URL is signed with an immutable ``Cache-Control`` (TOS echoes it) and is
+        reused within a :data:`PRESIGN_BUCKET_S` time bucket: the frontend refreshes a camera URL just
+        before it expires (design doc 18 §5.8), and within a bucket that refresh signs a byte-identical
+        URL, so the browser keeps the bytes it cached instead of re-fetching under a new signature.
+        ``expires_at`` is reported from the bucket start, so it never outlasts the signature it names."""
+        now_ms = self.rt.clock()
+        bucket = int(now_ms // 1000 // self.PRESIGN_BUCKET_S) * self.PRESIGN_BUCKET_S
+        k = (src.scope, src.id, src.fingerprint, rel, bucket)
+        hit = self.presign_cache.get(k)
+        if hit is not None:
+            return hit
+        cc = f"private, max-age={self.PRESIGN_TTL_S}, immutable"
+        url = Access(self.rt, src).browser_url(rel, self.PRESIGN_TTL_S, cache_control=cc)
+        if url is None:
+            return None, None
+        out = (url, (bucket + self.PRESIGN_TTL_S) * 1000)
+        self.presign_cache.put(k, out)
+        return out
 
     def reader_of(self, src: VizSource) -> str | None:
         # mcap and LeRobot whether or not the check reader takes them (status.viz_format); Lance
@@ -249,11 +274,23 @@ class VizService:
 
         return self.transcoder.ensure(key, out, prepare, start=frm, end=to, keep=(source_copy,))
 
-    def _transcode_answer(self, job, request_headers):
+    def _cam_cache(self, src: VizSource, index: int, camera: str, suffix: str, transcode: bool = False):
+        """ETag and whether the bytes are immutable, for one camera byte response. The bytes a URL
+        serves are fixed by the source fingerprint and (mcap) the confirmed mapping version, so the
+        ETag folds both in; a changed fingerprint / mapping yields a new ETag. They are immutable at
+        a stable URL except for an mcap *dataset* whose mapping can be re-confirmed in place - there
+        the URL is unchanged while the bytes are not, so ``immutable`` is dropped and the browser
+        revalidates with the ETag instead (304 while the mapping stands)."""
+        etag = '"' + digest("viz-cam", src.scope, src.id, src.fingerprint, src.mapping_version or 0,
+                            int(index), camera, suffix, bool(transcode)) + '"'
+        immutable = src.scope == "task" or self.reader_of(src) != "mcap"
+        return etag, immutable
+
+    def _transcode_answer(self, job, request_headers, etag: str | None = None, immutable: bool = True):
         from starlette.responses import JSONResponse
 
         if job.state == "done":
-            return file_response(job.out, "video/mp4", request_headers)
+            return file_response(job.out, "video/mp4", request_headers, etag=etag, immutable=immutable)
         if job.state == "failed":
             raise ApiError("internal", job.message, details={"reason": "transcode_failed"})
         return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
@@ -307,11 +344,14 @@ class VizService:
     def camera_frames(self, src: VizSource, index: int, camera: str, request_headers):
         self._reader(src)
         reader = self.reader_of(src)
+        etag, immutable = self._cam_cache(src, index, camera, "frames")
         if reader == "lance":
-            return file_response(self.lance.frame_pack(src, index, camera)[0], "application/octet-stream", request_headers)
+            return file_response(self.lance.frame_pack(src, index, camera)[0], "application/octet-stream",
+                                 request_headers, etag=etag, immutable=immutable)
         if reader != "mcap":
             raise ApiError("not_found", "只有 mcap 与 Lance 逐帧图片的相机有帧包", details={"reason": "not_frames"})
-        return file_response(self.mcap.frames_file(src, index, camera), "application/octet-stream", request_headers)
+        return file_response(self.mcap.frames_file(src, index, camera), "application/octet-stream",
+                             request_headers, etag=etag, immutable=immutable)
 
     def camera_frame_index(self, src: VizSource, index: int, camera: str) -> dict:
         self._reader(src)
@@ -328,24 +368,35 @@ class VizService:
         if self.reader_of(src) == "mcap":
             self._reader(src)
             if transcode:
-                return self._transcode_answer(self.mcap_transcode(src, index, camera), request_headers)
+                etag, immutable = self._cam_cache(src, index, camera, "mp4", transcode=True)
+                return self._transcode_answer(self.mcap_transcode(src, index, camera), request_headers,
+                                              etag=etag, immutable=immutable)
             video = self.mcap.video_file(src, index, camera)
             if video is None:
                 video = self.mcap.mjpeg_file(src, index, camera)
-            return file_response(video, "video/mp4", request_headers)
+            etag, immutable = self._cam_cache(src, index, camera, "mp4")
+            return file_response(video, "video/mp4", request_headers, etag=etag, immutable=immutable)
         if self.reader_of(src) == "lance":
             self._reader(src)
             cam, blob, _, _ = self.lance.blob(src, index, camera)
             if transcode or cam["access"] in ("transcode", "unsupported"):
-                return self._transcode_answer(self.lance_transcode(src, index, camera), request_headers)
-            return ranged_response(blob.read_range, int(blob.size()), "video/mp4", request_headers)
+                etag, immutable = self._cam_cache(src, index, camera, "mp4", transcode=True)
+                return self._transcode_answer(self.lance_transcode(src, index, camera), request_headers,
+                                              etag=etag, immutable=immutable)
+            etag, immutable = self._cam_cache(src, index, camera, "mp4")
+            return ranged_response(blob.read_range, int(blob.size()), "video/mp4", request_headers,
+                                   etag=etag, immutable=immutable)
         if self.reader_of(src) != "lerobot":
             raise ApiError("not_found", "这个数据集的相机不经这条路由", details={"reason": "not_lerobot"})
         cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
         if transcode or cam["access"] in ("transcode", "unsupported"):
-            return self._transcode_answer(self.lerobot_transcode(src, index, camera), request_headers)
+            etag, immutable = self._cam_cache(src, index, camera, "mp4", transcode=True)
+            return self._transcode_answer(self.lerobot_transcode(src, index, camera), request_headers,
+                                          etag=etag, immutable=immutable)
         if src.is_local:
-            return file_response(Access(self.rt, src).local_file(rel), "video/mp4", request_headers)
+            etag, immutable = self._cam_cache(src, index, camera, "mp4")
+            return file_response(Access(self.rt, src).local_file(rel), "video/mp4", request_headers,
+                                 etag=etag, immutable=immutable)
         raise ApiError("not_found", f"相机 {camera} 直连 TOS，不经 Daemon（用 episode 记录里的 url）",
                        details={"reason": "direct"})
 

@@ -107,11 +107,12 @@ def object_under(uri: str, rel: str) -> tuple[str, str]:
 
 
 def browser_url(svc: SecretsService, uri: str, rel: str, *, ttl_s: int,
-                key: T.TosKey | None, region: str | None = None) -> str:
+                key: T.TosKey | None, region: str | None = None, cache_control: str | None = None) -> str:
     """A URL the browser can GET for ``rel`` under ``uri``: presigned with ``key`` on the
-    public endpoint, or - ``key=None``, the anonymous public bucket - the plain public URL."""
+    public endpoint, or - ``key=None``, the anonymous public bucket - the plain public URL.
+    ``cache_control``, when given, is signed into the presigned URL so TOS echoes it."""
     bucket, object_key = object_under(uri, rel)
     if key is None:
         return T.anonymous_url(bucket, object_key, region or T.DEFAULT_REGION)
     with svc.tos(key, region, browser=True) as (client, _):
-        return T.presign_get(client, bucket, object_key, ttl_s)
+        return T.presign_get(client, bucket, object_key, ttl_s, cache_control=cache_control)

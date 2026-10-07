@@ -310,3 +310,14 @@ async def get_task_episode_series(request: Request, task_id: str, index: int, st
     _index(index)
     _window(start, end)
     return await in_thread(lambda: svc.series(svc.task_source(task_id, owner), index, stream, start, end, points))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/eef-overlay")
+async def get_task_episode_eef_overlay(request: Request, task_id: str, index: int):
+    """The EEF opinion's marks, computed from the task's trajectory bundle (design doc 20)."""
+    from ..viz.eef_overlay import episode_overlay
+
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    return await in_thread(lambda: episode_overlay(rt, svc, task_id, owner, index))

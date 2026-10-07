@@ -191,7 +191,7 @@ def encode_rendered_video(camera: str, frames, *, fps: float, end_s: float,
                     raise ValueError("rendered video timestamps must increase")
                 if first is None:
                     first = t
-                    stream = out.add_stream("libx264", rate=Fraction(str(fps)))
+                    stream = out.add_stream("libx264", rate=Fraction(str(fps)).limit_denominator(1_000_000))
                     stream.width, stream.height = rgb.shape[1] // 2 * 2, rgb.shape[0] // 2 * 2
                     stream.pix_fmt = "yuv420p"
                     stream.time_base = stream.codec_context.time_base = tb

@@ -8,6 +8,12 @@ type Args = Record<string, unknown>;
 const S = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
 const L = (v: unknown): string => (Array.isArray(v) ? join(v.map(String)) : S(v));
 
+// EEF trajectory point / axis ids, spelled out where the convention is known; other ids are shown as given
+const EEF_POINTS: Record<string, string> = { tcp: '工具中心点（TCP）' };
+const EEF_AXES: Record<string, string> = { x: 'X 轴', y: 'Y 轴', z: 'Z 轴（接近方向）', finger_line: '手指连线' };
+const eefPointName = (id: string) => EEF_POINTS[id] ?? `标记点 ${id}`;
+const eefAxisName = (id: string) => EEF_AXES[id] ?? id;
+
 export const zh = {
   app: {
     product: 'Physical AI Kit · 数据质检平台',
@@ -1593,7 +1599,7 @@ export const zh = {
         failed: '没问成',
         confidenceChart: '不匹配片段的置信度',
         aspectChart: '不匹配的方面',
-        aspect: { position: '中心', orientation: '朝向', both: '中心与朝向' } as Record<string, string>,
+        aspect: { position: '中心', orientation: '朝向', both: '中心与朝向', action: '动作合理性' } as Record<string, string>,
       },
       humanPending: (pending: number, human: number) => (pending === human ? `都在人工裁决里待裁` : `人工裁决里待裁 ${pending} 条，其余已裁或已被别的检查判废`),
       humanChart: '转人工的原因',
@@ -1652,7 +1658,7 @@ export const zh = {
     onCamera: (camera: string) => `（相机 ${camera}）`,
     kind: { uniform: '均匀抽样', candidate: '候选段' } as Record<string, string>,
     frames: (from: number, to: number, n: number) => (from === to ? `帧 ${from + 1}` : `帧 ${from + 1}–${to + 1}（${n} 帧）`),
-    target: (point: string, axis: string | null) => (axis ? `点 ${point} · 方向 ${axis}` : `点 ${point}`),
+    target: (point: string, axis: string | null) => (axis ? `${eefPointName(point)} · 朝向 ${eefAxisName(axis)}` : eefPointName(point)),
     vote: { position: '位置', orientation: '朝向', tracking: '绿十字跟对了' } as Record<string, string>,
     offset: (direction: string, magnitude: string) => `偏移：${direction}${magnitude ? `，${magnitude}` : ''}`,
     offsetDirection: { up: '偏上', down: '偏下', left: '偏左', right: '偏右', toward_fingers: '偏向指尖', away_from_fingers: '偏离指尖', unclear: '方向不明' } as Record<string, string>,
@@ -1662,6 +1668,7 @@ export const zh = {
       timeout: '模型超时',
       malformed_json: '答复不是合法 JSON',
       schema_violation: '答复不合格式',
+      bad_frame: '答复的帧号超出范围或证据帧不在片段内',
       unknown_frame: '答复引用了请求里没有的帧',
       measured_value: '答复里给了测量值',
       frames_unreadable: '画面解码失败',
@@ -1673,16 +1680,22 @@ export const zh = {
     opinion: {
       title: '模型意见',
       advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P、接近方向红箭头 A 和手指连线橙线 B），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
-      finger: (axis: string) => ` · 手指连线 ${axis}`,
+      finger: (axis: string) => (axis === 'finger_line' ? ' · 手指连线' : ` · 手指连线沿 ${eefAxisName(axis)}`),
       failed: (why: string) => `没问成：${why}`,
       skipped: '没有问',
       unseen: '模型说这一段看不清夹爪',
       none: '模型认为全程一致',
       segment: (i: number) => `片段 ${i}`,
       seconds: (from: number, to: number) => `${from.toFixed(1)}–${to.toFixed(1)} 秒`,
-      aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对' } as Record<string, string>,
+      aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对', action: '动作与画面不符' } as Record<string, string>,
+      video: '动作投影视频',
+      videoLoading: '正在加载动作投影视频…',
+      videoFailed: '动作投影视频加载失败',
+      noSource: (why: string | null) => `原始视频放不了${why ? `（${why}）` : ''}，没法叠加标记`,
       confidence: (pct: number) => `不匹配置信度 ${pct}%`,
-      evidenceFrames: (frames: string) => `证据帧 ${frames}（没存图）`,
+      evidenceFrames: '证据帧',
+      repaired: (frames: string, why: string) => `${frames}：第 1 次答复不合格（${why}），已让模型修正后采用第 2 次答复`,
+      seekFrame: (frame: number) => `跳到第 ${frame} 帧`,
       summary: '模型总结',
     },
     // the upload against the dataset's own record (design doc 12 §8.7, D-E16)

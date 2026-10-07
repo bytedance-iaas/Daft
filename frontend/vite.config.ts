@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { bundle, createConfig } from '@redocly/openapi-core';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { publicContract } from './src/lib/publicText';
 
 // The mock service worker ships with msw; we serve it in dev and emit it only into demo builds,
 // so production bundles never contain mocks.
@@ -57,15 +58,16 @@ function curatorDevPlugin(base: string, emitWorker: boolean, injectBase: boolean
 /**
  * The contract as one self-contained JSON document: its external $refs (cli/*.schema.json,
  * viz-mapping.schema.json) are hoisted into components.schemas, so the page and agents need no
- * other file. JSON, not YAML: the Daemon serves .json as a static file with its MIME type, while
- * an unknown extension like .yaml would get index.html (backend/daemon/routes/static.py).
+ * other file, and its texts lose the internal references (src/lib/publicText.ts). JSON, not YAML:
+ * the Daemon serves .json as a static file with its MIME type, while an unknown extension like
+ * .yaml would get index.html (backend/daemon/routes/static.py).
  */
 async function contractJson(): Promise<string> {
   const config = await createConfig({});
   const { bundle: doc, problems } = await bundle({ ref: CONTRACT, config, dereference: false });
   const errors = problems.filter((p) => p.severity === 'error');
   if (errors.length) throw new Error(`cannot bundle ${CONTRACT}: ${errors.map((p) => p.message).join('; ')}`);
-  return `${JSON.stringify(doc.parsed, null, 1)}\n`;
+  return `${JSON.stringify(publicContract(doc.parsed), null, 1)}\n`;
 }
 
 /** {base}/openapi.json next to api-docs.html: emitted by the build, served by the dev server. */

@@ -143,6 +143,26 @@ def test_local_camera_bytes_with_range_and_the_transcode(app, data_root):
     assert_error(app.get(f"{API}/datasets/{ds}/episodes/0/cameras/nope.mp4"), "not_found")
 
 
+def test_camera_bytes_are_etagged_and_immutable(app):
+    ds = app.ids["v2"]
+    url = f"{API}/datasets/{ds}/episodes/0/cameras/front.mp4"
+    full = app.get(url)
+    assert full.status_code == 200
+    etag = full.headers.get("etag")
+    assert etag and full.headers["cache-control"] == "private, max-age=31536000, immutable"
+    # a matching If-None-Match answers 304 with no body, whatever the range asked
+    same = app.get(url, headers={"If-None-Match": etag})
+    assert same.status_code == 304 and same.content == b"" and same.headers["etag"] == etag
+    ranged = app.get(url, headers={"If-None-Match": etag, "Range": "bytes=0-9"})
+    assert ranged.status_code == 304
+    # a stale validator falls through to the bytes
+    assert app.get(url, headers={"If-None-Match": '"stale"'}).status_code == 200
+    # a different episode / camera is a different resource
+    other = app.get(f"{API}/datasets/{ds}/episodes/1/cameras/front.mp4")
+    assert other.headers["etag"] != etag
+    assert app.get(url, headers={"If-None-Match": other.headers["etag"]}).status_code == 200
+
+
 def test_v3_reads_its_row_window_and_subtasks(app, data_root):
     ds = app.ids["v3"]
     body = app.get(f"{API}/datasets/{ds}/viz").json()

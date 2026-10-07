@@ -1,0 +1,389 @@
+{
+  "schema": "eef/frame.schema.json",
+  "valid": [
+    {
+      "schema_version": "eef-video/1.0.0",
+      "sample_id": "umi_000000",
+      "frame_index": 0,
+      "timestamp_s": 0.0,
+      "source_state_index": 0,
+      "source_timing": [],
+      "eef": {
+        "pose_type": "absolute",
+        "frame_id": "robot0",
+        "reference_frame": "umi_world",
+        "position_m": [
+          0.039514367885218234,
+          -0.2260647687073784,
+          0.15851165052817803
+        ],
+        "quaternion_xyzw": [
+          -0.9392889602358806,
+          -0.042096211478227154,
+          0.010599019083647906,
+          0.3403701205344605
+        ],
+        "relative_to": null,
+        "provenance": {
+          "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+          "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+          "assurance": "declared"
+        }
+      },
+      "gripper": null,
+      "hands": {
+        "robot0": {
+          "pose": {
+            "pose_type": "absolute",
+            "frame_id": "robot0",
+            "reference_frame": "umi_world",
+            "position_m": [
+              0.039514367885218234,
+              -0.2260647687073784,
+              0.15851165052817803
+            ],
+            "quaternion_xyzw": [
+              -0.9392889602358806,
+              -0.042096211478227154,
+              0.010599019083647906,
+              0.3403701205344605
+            ],
+            "relative_to": null,
+            "provenance": {
+              "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+              "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+              "assurance": "declared"
+            }
+          },
+          "opening_m": 0.08032168490799524
+        },
+        "robot1": {
+          "pose": {
+            "pose_type": "absolute",
+            "frame_id": "robot1",
+            "reference_frame": "umi_world",
+            "position_m": [
+              -0.11656291896181524,
+              -0.34745694423900797,
+              0.21860428703404414
+            ],
+            "quaternion_xyzw": [
+              -0.9472086362591683,
+              -0.002874521030318723,
+              0.03283907809490204,
+              0.3189186910088051
+            ],
+            "relative_to": null,
+            "provenance": {
+              "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+              "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+              "assurance": "declared"
+            }
+          },
+          "opening_m": 0.08089125237522052
+        }
+      },
+      "cameras": {
+        "camera0": {
+          "video_frame_index": 0,
+          "video_timestamp_s": 0.0,
+          "image_size_wh": [
+            960,
+            720
+          ],
+          "calibration_id": "camera0",
+          "T_reference_camera": [
+            [
+              0.9962311471265619,
+              0.0718658341828765,
+              -0.04856766560888484,
+              0.044001793067617576
+            ],
+            [
+              0.0862961941712848,
+              -0.7647521674061646,
+              0.6385194425022911,
+              -0.30054687868887553
+            ],
+            [
+              0.008745499403736017,
+              -0.6403041404970022,
+              -0.768071697848859,
+              0.38228475463110767
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "H_media_from_calibration": [
+            [
+              0.35502958579881655,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.35502958579881655,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "projection": null
+        },
+        "camera1": {
+          "video_frame_index": 0,
+          "video_timestamp_s": 0.0,
+          "image_size_wh": [
+            960,
+            720
+          ],
+          "calibration_id": "camera1",
+          "T_reference_camera": [
+            [
+              0.9978266716713058,
+              -0.015500451963214035,
+              -0.06404439133056705,
+              -0.10116252905209519
+            ],
+            [
+              0.026391536119232867,
+              -0.7965651985543757,
+              0.6039762912628327,
+              -0.4116157278440411
+            ],
+            [
+              -0.06037744262257298,
+              -0.6043538601808444,
+              -0.7944249399664671,
+              0.44507415252016735
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "H_media_from_calibration": [
+            [
+              0.35502958579881655,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.35502958579881655,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "projection": null
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "schema_version": "eef-video/1.0.0",
+      "sample_id": "umi_000000",
+      "frame_index": 0,
+      "timestamp_s": 0.0,
+      "source_state_index": 0,
+      "source_timing": [],
+      "eef": {
+        "pose_type": "absolute",
+        "frame_id": "robot0",
+        "reference_frame": "umi_world",
+        "position_m": [
+          0.039514367885218234,
+          -0.2260647687073784,
+          0.15851165052817803
+        ],
+        "quaternion_xyzw": [
+          -0.9392889602358806,
+          -0.042096211478227154,
+          0.010599019083647906,
+          0.3403701205344605
+        ],
+        "relative_to": null,
+        "provenance": {
+          "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+          "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+          "assurance": "declared"
+        }
+      },
+      "gripper": null,
+      "hands": {
+        "robot0": {
+          "pose": {
+            "pose_type": "absolute",
+            "frame_id": "robot0",
+            "reference_frame": "umi_world",
+            "position_m": [
+              0.039514367885218234,
+              -0.2260647687073784,
+              0.15851165052817803
+            ],
+            "quaternion_xyzw": [
+              -0.9392889602358806,
+              -0.042096211478227154,
+              0.010599019083647906,
+              0.3403701205344605
+            ],
+            "relative_to": null,
+            "provenance": {
+              "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+              "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+              "assurance": "declared"
+            }
+          },
+          "opening_m": -1
+        },
+        "robot1": {
+          "pose": {
+            "pose_type": "absolute",
+            "frame_id": "robot1",
+            "reference_frame": "umi_world",
+            "position_m": [
+              -0.11656291896181524,
+              -0.34745694423900797,
+              0.21860428703404414
+            ],
+            "quaternion_xyzw": [
+              -0.9472086362591683,
+              -0.002874521030318723,
+              0.03283907809490204,
+              0.3189186910088051
+            ],
+            "relative_to": null,
+            "provenance": {
+              "source": "Dataset SLAM logs and tx_slam_tag.json; TrossenRobotics/trumi 06_generate_dataset_plan.py",
+              "method": "Declared Kannala-Brandt intrinsics; explicit Camera->TCP geometry verified against plan and CSV; no fitting",
+              "assurance": "declared"
+            }
+          },
+          "opening_m": 0.08089125237522052
+        }
+      },
+      "cameras": {
+        "camera0": {
+          "video_frame_index": 0,
+          "video_timestamp_s": 0.0,
+          "image_size_wh": [
+            960,
+            720
+          ],
+          "calibration_id": "camera0",
+          "T_reference_camera": [
+            [
+              0.9962311471265619,
+              0.0718658341828765,
+              -0.04856766560888484,
+              0.044001793067617576
+            ],
+            [
+              0.0862961941712848,
+              -0.7647521674061646,
+              0.6385194425022911,
+              -0.30054687868887553
+            ],
+            [
+              0.008745499403736017,
+              -0.6403041404970022,
+              -0.768071697848859,
+              0.38228475463110767
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "H_media_from_calibration": [
+            [
+              0.35502958579881655,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.35502958579881655,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "projection": null
+        },
+        "camera1": {
+          "video_frame_index": 0,
+          "video_timestamp_s": 0.0,
+          "image_size_wh": [
+            960,
+            720
+          ],
+          "calibration_id": "camera1",
+          "T_reference_camera": [
+            [
+              0.9978266716713058,
+              -0.015500451963214035,
+              -0.06404439133056705,
+              -0.10116252905209519
+            ],
+            [
+              0.026391536119232867,
+              -0.7965651985543757,
+              0.6039762912628327,
+              -0.4116157278440411
+            ],
+            [
+              -0.06037744262257298,
+              -0.6043538601808444,
+              -0.7944249399664671,
+              0.44507415252016735
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "H_media_from_calibration": [
+            [
+              0.35502958579881655,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.35502958579881655,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "projection": null
+        }
+      }
+    }
+  ]
+}
