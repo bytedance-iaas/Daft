@@ -270,8 +270,8 @@ export const vizHandlers = [
       if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const b = await body<{ mapping: VizMapping }>(request, 'putDatasetMapping');
       if (vizFormatOf(d) !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
-      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...mcapProbe('x', 1, null).topics.map((t) => t.topic), ...mcapProbe('x', 1, null, 'abc').topics.map((t) => t.topic)]);
-      const unknown = [...b.mapping.cameras, ...b.mapping.series].map((x) => x.topic).filter((t) => !known.has(t));
+      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...(['umi', 'abc', 'robomind'] as const).flatMap((f) => mcapProbe('x', 1, null, f).topics.map((t) => t.topic))]);
+      const unknown = [...b.mapping.cameras, ...(b.mapping.depths ?? []), ...b.mapping.series].map((x) => x.topic).filter((t) => !known.has(t));
       if (unknown.length) {
         return err(400, 'validation_failed', `映射里有数据集没有的 topic：${unknown.join('、')}`, { errors: unknown.map((t) => ({ field: 'mapping', problem: `unknown topic ${t}` })) });
       }
@@ -304,7 +304,7 @@ export const vizHandlers = [
       if ('dataset_id' in input && !ds) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const uri = ds ? ds.uri : 'uri' in input ? input.uri : '';
       if (ds ? vizFormatOf(ds) !== 'mcap' : !MCAP_URI.test(uri)) return err(400, 'validation_failed', '这不是 mcap 数据集：没有 episode_N.mcap', { reason: 'not_mcap' });
-      const flavor = /abc/i.test(uri) ? 'abc' : /warehouse/i.test(uri) ? 'warehouse' : 'umi';
+      const flavor = /abc/i.test(uri) ? 'abc' : /warehouse/i.test(uri) ? 'warehouse' : /robomind/i.test(uri) ? 'robomind' : 'umi';
       const team = b.template && !b.template.startsWith('builtin:') ? db.vizTemplates.find((t) => t.id === b.template) : undefined;
       if (b.template && !b.template.startsWith('builtin:') && !team) return err(404, 'not_found', '没有这个模版');
       const first = flavor === 'umi' ? 'episode_100110.mcap' : 'episode_0.mcap';

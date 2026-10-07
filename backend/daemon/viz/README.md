@@ -12,7 +12,7 @@
 | `source.py` | 数据源：数据集级（登记的地址、密钥、文件清单、映射、展示配置、外部标注）与任务级（任务冻结的输入、`preflight.json`、`source_manifest.json`、`run.json` 里的映射）；打开存储、签浏览器地址、本地文件只在数据集目录之内 |
 | `lerobot.py` | LeRobot v2 / v3 读取器：`meta/` 的 episode 表、相机、曲线组、标注来源、字段树；一条 episode 的逐帧列只读一次（v3 只读它的行组）进缓存，episode 记录与曲线请求共用 |
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
-| `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
+| `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、深度帧包 `depth-<键>.frames` 与索引——设计 21 §5.4，映射 1.1 的 `depths`——曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
 | `segments.py` | 切片（设计 21 §4）：按 GOP 从共用 mp4 里切出单条 episode（内核 `curation/viz/segment.py`，PyAV 流拷贝，只按区间读 `moov` 与这一条的字节），落在 `segment/<摘要>/ep<N>/`；转码的输入、开关下的切片播放与 `moov` 在头的版本都用它 |
 | `depth.py` | LeRobot / Lance 的深度流（设计 21 §5.3）：一条 episode 的深度列按批读（v3 只读它的行组，Lance 按行窗扫帧表），在几个线程上编成 16 位 PNG，写进 `depth/<摘要>/ep<N>/<流>.frames` 与索引 `.json`（时刻、偏移、大小、2% / 98% 范围）；第一次请求在生成池里做、回 202 带进度。格式层在内核 `curation/viz/depth.py` |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
@@ -24,7 +24,7 @@
 `annotations.py`（标注识别 §4.5：`subtask_index`、`language_*`、逐帧 `task_index`、`*_index` 查表、文字列、`*_segment` 布尔段、成败 / 质量 / 评分 / `task_status`、Argus 外部标注）、
 `series.py`（按行组读 episode 的列、min / max 抽稀）、`transcode.py`（PyAV 转 H.264 fMP4）；mcap 的 `mcap_messages.py`（解码、数值叶子与字段路径、
 画面编码与尺寸、显示用的变换）、`mcap_probe.py`（summary 加每个 topic 的首条消息）、`mcap_mapping.py`（三个内置模版、起草与按覆盖率匹配、校验、派生质检映射
-`check_mapping`）、`mcap_episode.py`（一条 episode 的一遍扫描；样本包的索引与按需转封装 `remux_samples`）、`annexb.py`（只看 NAL 头与 SPS / PPS 前几个字节：关键帧、参数集、B 帧、`codec_string`）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
+`check_mapping`；1.1 的深度 topic 按主干配相机）、`mcap_episode.py`（一条 episode 的一遍扫描，深度 topic 在几个线程上转成 16 位 PNG；样本包的索引与按需转封装 `remux_samples`）、`depth.py`（16 位 PNG 编解码、深度单位与范围、mcap 深度编码的识别与还原：png16、ROS compressedDepth、16UC1 / 32FC1 原始图）、`annexb.py`（只看 NAL 头与 SPS / PPS 前几个字节：关键帧、参数集、B 帧、`codec_string`）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
 
 mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准缺省是第一组 `role=action`（与质检的行同一口径），没有才用第一路相机；`check_clock` 是质检的锚
 （第一条 action 消息相对零点的秒数）与 action 的频率，迷你版用它把发现的帧号换成时刻。一条 episode 按文件顺序扫一遍，相机字节边读边落盘；H.264 / H.265 从第一个
@@ -224,6 +224,19 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     第一次 `curl -si $B/datasets/$D/episodes/1/streams/observation_images_front_depth.json` 是 202（`深度图生成中`，带进度），稍后 200：`codec: png16`、9 帧、`depth.unit: mm`；
     用索引里第 0 帧的 `offset` / `size` 按 Range 取出那一段存成 `f0.png`，`python3 -c "from PIL import Image;import numpy as np;print(np.asarray(Image.open('f0.png'))[10,20])"`
     打出 `834`（`500 + 10·20 + 5·10 + 7·12`，与 parquet 第 12 行同一个值）。缓存目录里多了 `depth/`。
+
+24. **mcap 深度图（设计 21 §5.4，F15.5）**：
+    `../.venv/bin/python -c "from tests.viz.mcap_fixtures import make_rgbd; make_rgbd('$L/inputs/viz_rgbd')"` 造一份 12 帧的合成 RGB-D（深度的四种写法：
+    16 位 PNG、16UC1、32FC1 米、ROS compressedDepth；还有一路 rgb8 原始图与一路点云），登记后 `POST $B/viz/mcap-probe`（`{"input": {"dataset_id": "<编号>"}}`）：
+    `/front-depth`、`/raw-depth`、`/float-depth`、`/wrist/depth/compressedDepth` 的 `use` 都是 `depth`，`image.codec` 依次 `png16`、`raw16`、`raw32f`、`cdepth`；
+    `/raw-color` 是 `camera`、注「原始图像（raw）本期不支持」，`/cloud` 是 `ignore`。草稿是 `viz-mapping/1.1`，`depths` 四路，`/front-depth` 配 `/front-camera`、
+    `/raw-depth` 配 `/raw-color`（主干都空），另两路不配。把草稿 PUT 到 `$B/datasets/$D/mapping` 确认后，`$B/datasets/$D/episodes/0/viz` 的 `streams` 四路，
+    `.json` 直接 200（深度随 episode 一遍扫描生成，没有 202），`codec: png16`、12 帧、`depth` 范围 630–1337；四路各按索引取第 5 帧存成 PNG，
+    `[10, 20]` 处都是 `785`（`500 + 10·20 + 5·10 + 7·5`，32FC1 由米换成毫米、compressedDepth 去掉 12 字节头）。
+    真数据：h200-14 上 RoboMIND 的 `/data08/yichen/dataset/raw/Voxel51__RoboMIND/data/ur/1018_102225/episode.fo.mcap`（40 MB）拷成
+    `$L/inputs/robomind_ur/episode_0.mcap` 后登记，详情页「mcap 配置」里 `/top-depth` 起草为「深度图」、「叠放的相机」是 `/top-camera`，确认后可视化页
+    「+」→「深度图」→ `top-depth`：伪彩，色标 649–2425 mm；悬停 (320, 240) 是 1119 mm，与 PIL 解 mcap 里第一条 `/top-depth` 的 PNG 同一像素一致；
+    「设置」里「叠在 RGB 上」后抽屉、机械臂的轮廓与相机对得上，连播时深度与相机同帧。
 
 ## 自动化测试
 

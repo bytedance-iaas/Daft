@@ -8,11 +8,14 @@ import type { McapProbe, McapProbeRequest, McapTopic, VizMapping, VizTemplate } 
 import { readText } from '../../api/uploads';
 import {
   canBeCamera,
+  canBeDepth,
   canBeSeries,
+  depthOf,
   exportName,
   mappingJson,
   PATH_RE,
   seriesOf,
+  setDepthPair,
   setFields,
   setName,
   setPair,
@@ -108,6 +111,7 @@ function MappingTable({ probe, value, onChange }: { probe: McapProbe; value: Viz
         const current = selectValueOf(value, r.topic);
         const options = [
           { value: 'camera', label: zh.mcap.use.camera, disabled: !canBeCamera(r) },
+          { value: 'depth', label: zh.mcap.use.depth, disabled: !canBeDepth(r) },
           ...(['action', 'state', 'other'] as const).map((role) => ({ value: `series:${role}`, label: zh.mcap.use[role], disabled: !canBeSeries(r) })),
           { value: 'task', label: zh.mcap.use.task },
           { value: 'segments', label: zh.mcap.use.segments },
@@ -135,8 +139,8 @@ function MappingTable({ probe, value, onChange }: { probe: McapProbe; value: Viz
       width: 150,
       render: (_: unknown, r) => {
         const use = usageOf(value, r.topic);
-        if (use === 'camera' || use === 'series') {
-          const entry = use === 'camera' ? value.cameras.find((c) => c.topic === r.topic) : seriesOf(value, r.topic);
+        if (use === 'camera' || use === 'depth' || use === 'series') {
+          const entry = use === 'camera' ? value.cameras.find((c) => c.topic === r.topic) : use === 'depth' ? depthOf(value, r.topic) : seriesOf(value, r.topic);
           return <Input size="small" value={entry?.name ?? ''} placeholder={zh.mcap.namePlaceholder} aria-label={zh.mcap.nameAria(r.topic)} status={entry?.name ? undefined : 'error'} onChange={(v) => onChange(setName(value, r.topic, v))} />;
         }
         return <span className="muted">{use === 'task' || use === 'segments' ? zh.mcap.use[use] : '—'}</span>;
@@ -164,10 +168,13 @@ function MappingTable({ probe, value, onChange }: { probe: McapProbe; value: Viz
 }
 
 function cameraSchema(m: VizMapping, topic: string): string | null {
-  return m.cameras.find((c) => c.topic === topic)?.schema ?? seriesOf(m, topic)?.schema ?? null;
+  return m.cameras.find((c) => c.topic === topic)?.schema ?? depthOf(m, topic)?.schema ?? seriesOf(m, topic)?.schema ?? null;
 }
 
-/** 字段 / 说明: the picture of a camera; a curve's fields, pairing and layout; the text fields of a task or segment topic. */
+/**
+ * 字段 / 说明: the picture of a camera; a depth's picture and the camera it is drawn over; a curve's
+ * fields, pairing and layout; the text fields of a task or segment topic.
+ */
 function FieldsCell({ row, value, onChange }: { row: Row; value: VizMapping; onChange: (m: VizMapping) => void }) {
   const use = usageOf(value, row.topic);
   const notes = row.probed?.notes ?? [];
@@ -175,6 +182,27 @@ function FieldsCell({ row, value, onChange }: { row: Row; value: VizMapping; onC
   if (use === 'camera') {
     const img = row.probed?.image;
     body = <span className="mcap-small">{img ? zh.mcap.image(img.codec, img.width, img.height) : '—'}</span>;
+  } else if (use === 'depth') {
+    const d = depthOf(value, row.topic)!;
+    const img = row.probed?.image;
+    // the picture, then the camera it is drawn over (a narrow column: one under the other)
+    body = (
+      <div className="mcap-series">
+        <span className="mcap-small">{img ? zh.mcap.image(img.codec, img.width, img.height) : '—'}</span>
+        <div className="mcap-depth-pair">
+          <span className="muted mcap-small">{zh.mcap.depthPair}</span>
+          <Select
+            size="mini"
+            allowClear
+            value={d.pair_with ?? undefined}
+            placeholder={zh.mcap.depthPairNone}
+            aria-label={zh.mcap.depthPairAria(row.topic)}
+            options={value.cameras.map((c) => ({ label: c.topic, value: c.topic }))}
+            onChange={(v?: string) => onChange(setDepthPair(value, row.topic, v ?? null))}
+          />
+        </div>
+      </div>
+    );
   } else if (use === 'series') {
     const s = seriesOf(value, row.topic)!;
     const opposite = s.role === 'state' ? 'action' : s.role === 'action' ? 'state' : null;
@@ -248,7 +276,7 @@ function FieldsCell({ row, value, onChange }: { row: Row; value: VizMapping; onC
 /** 时间轴 / 帧号基准 / 任务描述来源 / 分段标注来源. */
 function SourceSelects({ probe, value, onChange }: { probe: McapProbe; value: VizMapping; onChange: (m: VizMapping) => void }) {
   const source = value.timeline?.source ?? 'log_time';
-  const textTopics = probe.topics.map((t) => t.topic).filter((t) => !['camera', 'series'].includes(usageOf(value, t)));
+  const textTopics = probe.topics.map((t) => t.topic).filter((t) => !['camera', 'depth', 'series'].includes(usageOf(value, t)));
   const metaKeys = new Map<string, string>();
   for (const rec of Object.values(probe.metadata)) for (const [k, v] of Object.entries(rec)) if (!metaKeys.has(k)) metaKeys.set(k, v);
   const task = value.task;
@@ -328,6 +356,7 @@ function Summary({ probe, value, shown }: { probe: McapProbe; value: VizMapping;
     <div className="mcap-sum" data-testid="mcap-summary">
       <div className="mcap-counts">
         <span>{zh.mcap.sumCameras(s.cameras)}</span>
+        {s.depths ? <span>{zh.mcap.sumDepths(s.depths)}</span> : null}
         <span>{zh.mcap.sumSeries(s.series, s.action, s.state, s.other)}</span>
         <span>{zh.mcap.sumTask(s.task)}</span>
         <span>{zh.mcap.sumSegments(s.segments)}</span>

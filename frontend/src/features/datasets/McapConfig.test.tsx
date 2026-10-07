@@ -101,6 +101,38 @@ describe('mcap 配置 in 添加数据集 (design doc 18 §6.4, F13.7)', () => {
     expect(sent.task).toEqual({ metadata_key: 'task_name' });
   });
 
+  it('RoboMIND: the 16-bit depth topic is drafted as a depth picture over its camera, which can change (design doc 21 §5.4)', async () => {
+    const seen = registrations();
+    const { user, drawer, section } = await openAdd('tos://pai-kit-datasets/raw/robomind_ur');
+    expect(within(section).getByTestId('mcap-summary')).toHaveTextContent('相机 1 路深度图 1 路曲线 3 组');
+    expect(within(section).getByRole('combobox', { name: '/top-depth 的用途' })).toHaveTextContent('深度图');
+    expect(within(section).getByRole('combobox', { name: zh.mcap.depthPairAria('/top-depth') })).toHaveTextContent('/top-camera');
+    expect(mappingIn(section)).toMatchObject({ schema_version: 'viz-mapping/1.1', depths: [{ topic: '/top-depth', pair_with: '/top-camera' }] });
+    // a depth picture is no camera, a camera no depth picture
+    const optionsOf = async (label: string) => {
+      await user.click(within(section).getByRole('combobox', { name: label }));
+      const list = await waitFor(() => {
+        const opts = [...([...document.querySelectorAll('.arco-select-popup')].at(-1)?.querySelectorAll('[role="option"]') ?? [])];
+        if (!opts.length) throw new Error(`no options for ${label}`);
+        return opts;
+      });
+      await user.keyboard('{Escape}');
+      return Object.fromEntries(list.map((o) => [o.textContent?.trim(), o.getAttribute('aria-disabled') === 'true' || o.classList.contains('arco-select-option-disabled')]));
+    };
+    expect(await optionsOf('/top-depth 的用途')).toMatchObject({ 相机: true, 深度图: false });
+    expect(await optionsOf('/top-camera 的用途')).toMatchObject({ 相机: false, 深度图: true });
+    // drawn over no camera, then renamed; the JSON follows
+    await user.click(within(section).getByRole('combobox', { name: zh.mcap.depthPairAria('/top-depth') }).parentElement!.querySelector('.arco-select-clear-icon') as HTMLElement);
+    await waitFor(() => expect(mappingIn(section).depths?.[0].pair_with).toBeNull());
+    await pick(user, zh.mcap.depthPairAria('/top-depth'), '/top-camera', section);
+    await fill(user, '/top-depth 的显示名', '顶部深度', section);
+    await waitFor(() => expect(mappingIn(section).depths?.[0]).toMatchObject({ name: '顶部深度', pair_with: '/top-camera' }));
+    await user.click(within(drawer).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds-[a-z]{9}$/));
+    const sent = seen[0].viz_mapping as VizMapping;
+    expect(sent.depths).toEqual([{ topic: '/top-depth', name: '顶部深度', schema: 'foxglove.CompressedImage', pair_with: '/top-camera' }]);
+  });
+
   it('a template picked by hand drafts again; 另存为模版 puts the mapping in the library for the next dataset', async () => {
     const { user, section } = await openAdd('tos://pai-kit-datasets/raw/genrobot_drawer');
     await pick(user, zh.mcap.template, '内置 · Foxglove 通用（内置）', section);

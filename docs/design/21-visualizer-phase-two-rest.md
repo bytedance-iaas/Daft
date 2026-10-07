@@ -145,6 +145,27 @@
 - **扫描**：深度 topic 与相机同一遍读，逐条消息变成 16 位 PNG（可原样转发的直接写，其余解码再编码），写 `<键>.frames`，索引进 `episode.json` 的 `depths`；抽样约 30 帧算 2% / 98% 分位。
 - **mcap 配置**：用途下拉加「深度图」，深度 topic 可选「叠放的相机」。
 
+### 5.4a 落地时的细化（F15.5，2026-10-07）
+
+- **探测**：深度 topic 的 `image.codec` 是 `png16`、`cdepth`（32FC1 的是 `cdepth32`）、`raw16`、`raw32f` 或 `rvl`（认得、不读）；其他编码的原始图仍是相机，
+  `codec: raw`，注「原始图像（raw）本期不支持」；点云（`PointCloud` / `PointCloud2`）忽略。
+- **配对**：去掉的词是 depth(s)、camera、cam、color / colour、rgb、image(s)、img、raw、compressed、compresseddepth、aligned、to、rect、sensor
+  （`/wrist_cam/aligned_depth_to_color/image_raw` 的主干是 `wrist`）；主干恰好对上一路相机才配，空主干也算一个主干（`/camera/depth/image_raw` ↔
+  `/camera/color/image_raw`，合成夹具里 `/raw-depth` ↔ `/raw-color`）。前端 `lib/vizMapping.ts` 的 `stemOf` / `pairCamera` 用同一张词表，
+  手工改成深度图时照样配；相机改掉或忽略时，配它的深度 `pair_with` 置空。
+- **扫描**：深度与相机同一遍读；16 位 PNG 原样写，其余在 4 个线程上解码再编（队列 16 条）；产物是 `depth-<键>.frames` 与 `.json`，`episode.json` 的
+  `depths` 记编码、帧数、尺寸、`offset_s` 与错误。不走生成池：episode 扫完深度就在，第一次请求不回 202（LeRobot / Lance 才有 202）。
+  2% / 98% 分位按每隔 `帧数 / 30` 帧抽一帧算。
+- **旧映射**：1.0 里被当成相机的深度 topic 照旧是相机，`access: unsupported`、原因「这是深度图：到「mcap 配置」把它的用途改成「深度图」」；
+  映射一有深度就写 `viz-mapping/1.1`（Daemon 起草与前端改用途都是），没有深度的 1.0 映射不改写。
+- **mcap 配置**：探测认出的深度 topic 不能选「相机」，别的图像不能选「深度图」；「叠放的相机」下拉在编码与尺寸下面单独一行（列窄，标签不折行）；
+  导入按 Daemon 的规则校验 `depths`（`pair_with` 必须是映射里的相机、`unit` 只能 mm / m）。模拟世界加了 RoboMIND 式的 `robomind_ur`。
+- **实测**（本机 `curator-daemon-local`，h200-14 拷来的 RoboMIND `ur/1018_102225`、`ur/1018_151137` 两条，各约 40 MB、217 帧 640×480、21.7 s）：
+  探测 0.5 s，起草出 `depths: [/top-depth → /top-camera]`；一条 episode 的扫描（JPEG 帧包 13 MB、深度帧包 28 MB——PNG 原样转发，每帧约 129 KB）不到 1 s；
+  索引的范围 649–2425 mm；悬停 (320, 240)、(100, 400)、(500, 120) 读到 1119、878、2274 mm，与 PIL 解 mcap 第一条 `/top-depth` 同一像素一致；
+  叠在 top-camera 上抽屉、机械臂、水果的轮廓对得上；连播 4 s 后相机与深度都在 3.8 s、第 39 帧。合成夹具（四种写法各 12 帧）逐帧与原始毫米数相同，
+  32FC1 的 compressedDepth（反深度量化）误差不超过 12 mm；对账回放（e2e）全过，判决不变。
+
 ### 5.5 播放器
 
 - **深度格子**（`cells/DepthCell.tsx`）：按时钟画「时刻 ≤ t 的最后一帧」，不拖住时钟、挂 `attachSource` 预取（同 `FramesCell`，复用 `FramePack`，解码函数换成 PNG16 → 上色）；生成中显示进度（「深度图生成中 N%」）。

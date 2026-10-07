@@ -94,7 +94,8 @@ info:
     a LeRobot or Lance depth column is a `depth` stream the player draws (`VizStream.depth`), an episode
     lists its packs in `streams`, read from `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames`
     and `.json` (and the task's) - every frame a 16-bit greyscale PNG, the index with the depth's unit and
-    value range.
+    value range. An mcap dataset's depth topics (a 16-bit PNG, a ROS compressedDepth picture, a 16UC1 / mono16 /
+    32FC1 raw image) are listed under the mapping's `depths` (field mapping 1.1) and drawn the same way.
   x-description-zh: |
     ## 概览
 
@@ -151,6 +152,7 @@ info:
     LeRobot v3 或 Lance 的一条 episode 从它与别的 episode 共用的文件里切出的那一段，或把索引挪到文件开头的单条 mp4；部署打开这项时，episode 记录里的地址就带着它。
     深度：LeRobot 或 Lance 的深度列是播放器能画的 `depth` 流（`VizStream.depth`），episode 在 `streams` 里列出各自的深度帧包，从
     `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames` 与 `.json`（任务级同样一对）读取——每帧一张 16 位灰度 PNG，索引里带深度的单位与取值范围。
+    mcap 数据集的深度 topic（16 位 PNG、ROS compressedDepth、16UC1 / mono16 / 32FC1 原始图）列在字段映射的 `depths` 里（字段映射 1.1），同样能画。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -5595,13 +5597,14 @@ components:
         start_s: {type: [number, "null"], description: "first message, seconds after the file's first message"}
         end_s: {type: [number, "null"]}
         image:
+          description: a camera's or a depth topic's picture (depth since 2.7.0)
           oneOf:
             - type: "null"
             - type: object
               additionalProperties: false
               required: [codec, width, height]
               properties:
-                codec: {type: string}
+                codec: {type: string, description: "jpeg, png, h264, h265, raw ...; a depth topic: png16, cdepth, cdepth32, raw16, raw32f, rvl"}
                 width: {type: [integer, "null"]}
                 height: {type: [integer, "null"]}
         fields:
@@ -5614,7 +5617,7 @@ components:
             properties:
               path: {type: string}
               size: {type: integer, minimum: 1}
-        use: {enum: [camera, series, task, segments, ignore, unmapped], description: "what the draft does with it"}
+        use: {enum: [camera, depth, series, task, segments, ignore, unmapped], description: "what the draft does with it; depth: a depth picture (2.7.0, design doc 21 §5.4)"}
         role: {enum: [state, action, other, null]}
         name: {type: string}
         notes: {type: array, items: {type: string}, description: "Chinese: high rate, unsupported encoding ..."}

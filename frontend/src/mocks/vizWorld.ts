@@ -663,10 +663,66 @@ function warehouseProbe(file: string, files: number, template: string | null): M
   };
 }
 
+/** A RoboMIND episode (real probe of ur/1018_102225, its .plot copies left out): a 16-bit PNG depth beside its camera, 10 Hz. */
+const ROBOMIND_TOPICS: [string, string, [string, number][], McapTopic['image']][] = [
+  ['/instruction', 'Instructions', [], null],
+  ['/master-joint-position', 'RobotState', [['position', 7]], null],
+  ['/puppet-end-effector', 'RobotState', [['position', 6]], null],
+  ['/puppet-joint-position', 'RobotState', [['position', 7]], null],
+  ['/top-camera', 'foxglove.CompressedImage', [], { codec: 'jpeg', width: 640, height: 480 }],
+  ['/top-depth', 'foxglove.CompressedImage', [], { codec: 'png16', width: 640, height: 480 }],
+];
+
+/** The probe of a RoboMIND-like dataset: builtin:foxglove drafts it, the depth topic paired with its camera (design doc 21 §5.4). */
+function robomindProbe(file: string, files: number, template: string | null): McapProbe {
+  const topics: McapTopic[] = ROBOMIND_TOPICS.map(([topic, schema, fields, image]) => {
+    const use: McapTopic['use'] = topic === '/instruction' ? 'task' : image?.codec === 'png16' ? 'depth' : image ? 'camera' : 'series';
+    return {
+      topic,
+      schema,
+      schema_encoding: 'protobuf',
+      message_encoding: 'protobuf',
+      count: use === 'task' ? 1 : 217,
+      rate_hz: use === 'task' ? null : 10,
+      start_s: 0,
+      end_s: 21.6,
+      image,
+      fields: fields.map(([path, size]) => ({ path, size })),
+      use,
+      role: use === 'series' ? (topic.includes('joint') ? 'state' : 'other') : null,
+      name: use === 'task' ? '任务描述' : topic.slice(1),
+      notes: [],
+    };
+  });
+  const draft: VizMapping = {
+    schema_version: 'viz-mapping/1.1',
+    name: 'Foxglove 通用',
+    base: 'builtin:foxglove',
+    timeline: { source: 'log_time', frame_reference: null },
+    cameras: [{ topic: '/top-camera', name: 'top-camera', schema: 'foxglove.CompressedImage' }],
+    depths: [{ topic: '/top-depth', name: 'top-depth', schema: 'foxglove.CompressedImage', pair_with: '/top-camera' }],
+    series: topics.filter((t) => t.use === 'series').map((t) => ({ topic: t.topic, name: t.name, schema: t.schema ?? undefined, role: t.role ?? 'other', fields: ['position'] })),
+    task: { topic: '/instruction' },
+    segments: null,
+    ignore: [],
+  };
+  return {
+    file,
+    files,
+    topics,
+    metadata: {},
+    attachments: [],
+    draft,
+    matched: template ? { template_id: 'builtin:foxglove', name: 'Foxglove 通用（内置）', coverage: 1 } : null,
+    warnings: [],
+  };
+}
+
 /** The probe of a UMI-like mcap dataset (GenRobot), drafted with builtin:umi or another template; `abc` an ABC-130k-like one. */
-export function mcapProbe(file: string, files: number, template: string | null, flavor: 'umi' | 'abc' | 'warehouse' = 'umi'): McapProbe {
+export function mcapProbe(file: string, files: number, template: string | null, flavor: 'umi' | 'abc' | 'warehouse' | 'robomind' = 'umi'): McapProbe {
   if (flavor === 'abc') return abcProbe(file, files, template);
   if (flavor === 'warehouse') return warehouseProbe(file, files, template);
+  if (flavor === 'robomind') return robomindProbe(file, files, template);
   const umi = !template || template === 'builtin:umi';
   const topics: McapTopic[] = UMI_TOPICS.map(([topic, schema, use, count, rate]) => {
     const asCamera = use === 'camera';

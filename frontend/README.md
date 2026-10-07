@@ -191,6 +191,9 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     换成 `tos://pai-kit-datasets/raw/abc130k_arrange_flowers`（ABC-130k 一类自定义 schema）：预检说不支持（找不到 /action），下面蓝色提示「按站点缺省的 topic，质检读不了这个数据集…保存时按下面确认的映射重新预检」；
     映射写「没有模版对得上这些 topic，按「Foxglove 通用」起草」，`-state` / `-action` 两两叠画，摘要下面两条橙字是质检读取器的已知差距（repeated 字段、H.265）；`/left-arm-state` 的字段下拉列出
     `position ×6`、`velocity ×6`、`torque ×6`，勾上 velocity 后 JSON 跟着变；「任务描述来源」可以从 /instruction 改成「metadata 键：task_name（arrange the flowers…）」，/instruction 随之变「忽略」。
+    换成 `tos://pai-kit-datasets/raw/robomind_ur`（RoboMIND 一类 RGB-D，设计 21 §5.4）：摘要写「相机 1 路 · 深度图 1 路 · 曲线 3 组…」，`/top-depth` 的用途是「深度图」
+    （下拉里「相机」置灰；`/top-camera` 反过来「深度图」置灰），字段 / 说明写「png16 · 640×480」，下面「叠放的相机」是 `/top-camera`；清掉再选回、改显示名，
+    「映射 JSON」的 `depths[0]` 跟着变，`schema_version` 是 `viz-mapping/1.1`。
     「外部标注文件」选一个 Argus JSON（如 `episode_3.json`：`{"timeline":[{"start":0,"end":1,"label":"reach"}],"key_events":[{"t":0.5,"label":"grasp"}]}`）：写「episode_3.json · 1 条 episode · 1 段 · 1 个事件」，
     任何格式的数据集都能带；认不出的格式写「标注格式不支持…」。已登记的：warehouse_mcap 详情页头点「mcap 配置」（或列表行「更多」里的同名操作），抽屉写「已确认第 1 版「warehouse（Foxglove 通用）」」、
     表格从这一版开始（「下表是已确认的第 1 版…」），底下折叠着「质检读取用的映射（由已确认的版本派生，只读）」；改个显示名点「确认为第 2 版」，详情变「第 2 版」。
@@ -227,6 +230,7 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     取消「自动」后近 / 远两个框带着 560、1450，改成 800 / 1000 画面对比变强；开「叠在 RGB 上」后下层出现 wrist 相机，深度按透明度叠在上面，拖滑杆变化。
     点深度格子开「详细信息」：键名、分辨率、单位「mm，0 为空洞」、本条范围、配对的相机「wrist_image_left」、读取方式「16 位深度帧包（Daemon 生成）」。
     真 Daemon：按 `backend/daemon/viz/README.md` 第 23 步造 `viz_depth`，同样能看，且画面与 parquet 里的值一致（悬停读数与第 23 步的 Python 打印对得上）。
+    mcap 的深度（设计 21 §5.4，F15.5）按同一份 README 第 24 步：合成的 `viz_rgbd` 四种写法都能看；RoboMIND 真数据在「mcap 配置」确认后，`top-depth` 叠在 `top-camera` 上。
 
 ## 手动验证：接口文档（真 Daemon）
 

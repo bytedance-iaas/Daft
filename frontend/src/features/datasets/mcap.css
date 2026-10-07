@@ -79,6 +79,20 @@
   flex-direction: column;
   gap: 6px;
 }
+/* a depth topic's camera: the label on one line, the select taking the rest (design doc 21 §5.4) */
+.mcap-depth-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+}
+.mcap-depth-pair > span {
+  white-space: nowrap;
+}
+.mcap-depth-pair .arco-select {
+  flex: 1;
+  min-width: 0;
+}
 .mcap-sources {
   margin-top: 14px;
 }

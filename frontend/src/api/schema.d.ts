@@ -3363,7 +3363,9 @@ export interface components {
             /** @description first message, seconds after the file's first message */
             start_s: number | null;
             end_s: number | null;
+            /** @description a camera's or a depth topic's picture (depth since 2.7.0) */
             image: null | {
+                /** @description jpeg, png, h264, h265, raw ...; a depth topic: png16, cdepth, cdepth32, raw16, raw32f, rvl */
                 codec: string;
                 width: number | null;
                 height: number | null;
@@ -3374,10 +3376,10 @@ export interface components {
                 size: number;
             }[] | null;
             /**
-             * @description what the draft does with it
+             * @description what the draft does with it; depth: a depth picture (2.7.0, design doc 21 §5.4)
              * @enum {unknown}
              */
-            use: "camera" | "series" | "task" | "segments" | "ignore" | "unmapped";
+            use: "camera" | "depth" | "series" | "task" | "segments" | "ignore" | "unmapped";
             /** @enum {unknown} */
             role: "state" | "action" | "other" | null;
             name: string;
@@ -3433,6 +3435,18 @@ export interface components {
             /** @description the schema name seen when it was mapped (informational; encoding and picture size come from probing) */
             schema?: string;
         };
+        depth: {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+            /** @description the camera topic (one of cameras) the depth belongs to: the player can draw the depth over it */
+            pair_with?: null | components["schemas"]["topic"];
+            /**
+             * @description the unit of the topic's numbers: 16-bit pictures are millimetres, 32-bit floats metres, unless said otherwise
+             * @enum {unknown}
+             */
+            unit?: "mm" | "m";
+        };
         series: {
             topic: components["schemas"]["topic"];
             name: string;
@@ -3463,12 +3477,15 @@ export interface components {
             smart?: boolean;
         };
         /**
-         * viz-mapping/1.0 - the field mapping of an mcap dataset (C7, design doc 18 §6)
-         * @description Which topics of an mcap dataset are cameras, which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.
+         * viz-mapping/1.1 - the field mapping of an mcap dataset (C7, design doc 18 §6, design doc 21 §5.4)
+         * @description Which topics of an mcap dataset are cameras, which are depth pictures (1.1), which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.
          */
         "viz-mapping.schema": {
-            /** @constant */
-            schema_version: "viz-mapping/1.0";
+            /**
+             * @description 1.1 adds depths; a 1.0 mapping stays valid as it is
+             * @enum {unknown}
+             */
+            schema_version: "viz-mapping/1.0" | "viz-mapping/1.1";
             /** @description shown in the template picker and on the dataset page */
             name?: string;
             /**
@@ -3490,6 +3507,8 @@ export interface components {
             };
             /** @description in display order; compressed images (JPEG, PNG) and compressed video (H.264, H.265) */
             cameras: components["schemas"]["camera"][];
+            /** @description depth pictures in display order (1.1, design doc 21 §5.4): a 16-bit PNG CompressedImage, a ROS compressedDepth CompressedImage, a 16UC1 / mono16 / 32FC1 raw image. The visualizer draws them; the check reader does not read them */
+            depths?: components["schemas"]["depth"][];
             /** @description curve groups, in display order; a state and an action topic of the same thing are paired with pair_with and drawn in one group */
             series: components["schemas"]["series"][];
             /** @description where the episode's task text is; null = none (the player shows 无任务描述) */

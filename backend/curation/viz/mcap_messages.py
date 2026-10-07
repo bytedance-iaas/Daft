@@ -299,6 +299,11 @@ def raw_kind(schema_name: str | None, decoded) -> str | None:
     return None
 
 
+def raw_image_bytes(decoded) -> bytes:
+    """The pixel bytes of a raw image message."""
+    return bytes(_attr(decoded, "data") or b"")
+
+
 def raw_image_info(decoded) -> dict:
     """``{encoding, width, height, step, bigendian}`` of a raw image message."""
     def num(name):

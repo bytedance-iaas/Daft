@@ -73,6 +73,76 @@ def decode_png(data: bytes) -> np.ndarray:
     return a
 
 
+# ---------------------------------------------------------------- mcap depth messages (design doc 21 §5.4)
+
+#: raw image encodings that hold depth, and what they are
+RAW_DEPTH = {"16uc1": "raw16", "mono16": "raw16", "32fc1": "raw32f"}
+#: the 12-byte header of a ROS compressed_depth_image_transport message: format, depthQuantA, depthQuantB
+CDEPTH_HEADER = 12
+
+
+def raw_depth_codec(encoding: str | None) -> str | None:
+    """raw16 / raw32f for a raw image whose encoding holds depth, else None."""
+    return RAW_DEPTH.get((encoding or "").strip().lower())
+
+
+def frame_depth_codec(fmt: str | None, data: bytes) -> str | None:
+    """What a compressed picture message is when it is depth: ``png16`` (a 16-bit greyscale PNG, RoboMIND),
+    ``cdepth`` / ``cdepth32`` (ROS compressedDepth of a 16UC1 / 32FC1 picture), ``rvl`` (not decoded); None
+    for a picture that is no depth."""
+    f = (fmt or "").lower()
+    if "compresseddepth" in f:
+        if "rvl" in f:
+            return "rvl"
+        return "cdepth32" if f.startswith("32fc1") else "cdepth"
+    if data[:8] == PNG_SIG and is_png16(data):
+        return "png16"
+    return None
+
+
+def depth_size(codec: str, data: bytes, info: dict | None = None) -> tuple[int | None, int | None]:
+    """(width, height) of a depth message without decoding its pixels."""
+    if codec in ("raw16", "raw32f"):
+        return (info or {}).get("width"), (info or {}).get("height")
+    png = data[CDEPTH_HEADER:] if codec in ("cdepth", "cdepth32") else data
+    hd = png_header(png)
+    return (hd["width"], hd["height"]) if hd else (None, None)
+
+
+def passthrough_png(codec: str, data: bytes) -> bytes | None:
+    """The message's own 16-bit PNG when the pack can keep it as it is (no re-encoding), else None."""
+    if codec == "png16":
+        return data
+    if codec == "cdepth" and is_png16(data[CDEPTH_HEADER:]):
+        return data[CDEPTH_HEADER:]
+    return None
+
+
+def depth_message(codec: str, data: bytes, info: dict | None = None, unit: str | None = None) -> np.ndarray:
+    """A depth message's picture in millimetres (``uint16``); ``unit`` overrides the codec's own (16 bits:
+    mm, 32-bit floats: m)."""
+    if codec in ("raw16", "raw32f"):
+        info = info or {}
+        w, h, step = int(info["width"]), int(info["height"]), int(info.get("step") or 0)
+        be = bool(info.get("bigendian"))
+        size = 2 if codec == "raw16" else 4
+        step = step or w * size
+        dtype = (">" if be else "<") + ("u2" if codec == "raw16" else "f4")
+        a = np.frombuffer(data, dtype=dtype, count=h * step // size).reshape(h, step // size)[:, :w]
+        return to_mm(a, unit or ("mm" if codec == "raw16" else "m"))
+    if codec == "png16":
+        return to_mm(decode_png(data), unit or "mm")
+    if codec == "cdepth":
+        return to_mm(decode_png(data[CDEPTH_HEADER:]), unit or "mm")
+    if codec == "cdepth32":
+        _, qa, qb = struct.unpack("<iff", data[:CDEPTH_HEADER])
+        inv = decode_png(data[CDEPTH_HEADER:]).astype(np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            metres = np.where(inv > 0, qa / (inv - qb), 0.0)
+        return to_mm(metres, "m")
+    raise ValueError(f"深度编码 {codec} 本期不支持")
+
+
 # ---------------------------------------------------------------- values
 
 def to_mm(frame: np.ndarray, unit: str = "mm") -> np.ndarray:

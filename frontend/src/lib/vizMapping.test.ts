@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { McapTopic, VizMapping } from '../api/types';
 import {
+  canBeCamera,
+  canBeDepth,
   displayName,
   emptyMapping,
   exportName,
+  pairCamera,
   partnerTopic,
   roleByName,
+  setDepthPair,
   setFields,
   setName,
   setPair,
@@ -15,6 +19,7 @@ import {
   setTask,
   setTimeline,
   setUse,
+  stemOf,
   summarize,
   usageOf,
   validateMapping,
@@ -186,6 +191,49 @@ describe('vizMapping (design doc 18 §6)', () => {
       { field: 'series.1', problem: '数据集里没有 topic /robot0/sensor/magnetic_encoder' },
     ]);
     expect(validateMapping({ ...UMI, timeline: { source: 'message_timestamp' } }).map((p) => p.field)).toEqual(['timeline.timestamp_field']);
+  });
+
+  it('takes a depth topic as a depth picture paired with the camera of its stem, as the Daemon drafts it (design doc 21 §5.4)', () => {
+    expect(['/top-depth', '/top-camera', '/camera/depth/image_raw', '/camera/color/image_raw', '/wrist_cam/aligned_depth_to_color/image_raw'].map(stemOf)).toEqual(['top', 'top', '', '', 'wrist']);
+    const cam = topic('/top-camera', 'foxglove.CompressedImage', [], { codec: 'jpeg', width: 640, height: 480 });
+    const depth = topic('/top-depth', 'foxglove.CompressedImage', [], { codec: 'png16', width: 640, height: 480 });
+    expect([canBeCamera(cam), canBeDepth(cam), canBeCamera(depth), canBeDepth(depth)]).toEqual([true, false, false, true]);
+    // a topic only the mapping names: by its schema
+    expect(canBeDepth({ topic: '/x', schema: 'sensor_msgs/msg/Image' })).toBe(true);
+    let m: VizMapping = { ...setUse(emptyMapping(), cam, 'camera'), schema_version: 'viz-mapping/1.0' };
+    m = setUse(m, depth, 'depth');
+    expect(m.schema_version).toBe('viz-mapping/1.1');
+    expect(m.depths).toEqual([{ topic: '/top-depth', name: 'top-depth', schema: 'foxglove.CompressedImage', pair_with: '/top-camera' }]);
+    expect(usageOf(m, '/top-depth')).toBe('depth');
+    expect(summarize(m, { topics: [cam, depth] })).toMatchObject({ cameras: 1, depths: 1, unmapped: [] });
+    // two cameras of one stem: no guess
+    expect(pairCamera(setUse(m, topic('/top/camera/compressed', 'foxglove.CompressedImage', []), 'camera'), '/top-depth')).toBeNull();
+    // by hand: drawn over no camera, renamed
+    m = setName(setDepthPair(m, '/top-depth', null), '/top-depth', '顶部深度');
+    expect(m.depths?.[0]).toMatchObject({ name: '顶部深度', pair_with: null });
+    // its camera ignored: the depth no longer names it
+    m = setUse(setDepthPair(m, '/top-depth', '/top-camera'), cam, 'ignore');
+    expect(m.depths?.[0].pair_with).toBeNull();
+    // made a camera, it keeps its name
+    m = setUse(m, depth, 'camera');
+    expect(m.depths).toEqual([]);
+    expect(m.cameras).toEqual([{ topic: '/top-depth', name: '顶部深度', schema: 'foxglove.CompressedImage' }]);
+  });
+
+  it('validates depth topics like the Daemon: a mapped camera to draw over, mm or m, 1.0 and 1.1', () => {
+    const cam = UMI.cameras[0].topic;
+    const ok: VizMapping = { ...UMI, schema_version: 'viz-mapping/1.1', depths: [{ topic: '/robot0/sensor/depth0', name: 'robot0 depth0', pair_with: cam, unit: 'mm' }] };
+    expect(validateMapping(ok)).toEqual([]);
+    expect(validateMapping({ ...ok, depths: [{ ...ok.depths![0], unit: 'cm' }] })).toEqual([{ field: 'depths.0.unit', problem: '只能是 mm 或 m' }]);
+    expect(validateMapping({ ...ok, schema_version: 'viz-mapping/2.0' })).toEqual([{ field: 'schema_version', problem: '应为 viz-mapping/1.0 或 viz-mapping/1.1' }]);
+    const wrong: VizMapping = { ...ok, depths: [{ topic: '/robot0/sensor/depth0', name: 'd', pair_with: '/robot0/vio/eef_pose' }, { topic: cam, name: 'x' }] };
+    expect(validateMapping(wrong).map((p) => [p.field, p.problem])).toEqual([
+      ['depths.0.pair_with', '/robot0/vio/eef_pose 不是映射里的相机'],
+      ['depths.1', `topic ${cam} 同时出现在 cameras.0 与 depths.1`],
+    ]);
+    expect(validateMapping(ok, new Set([cam, '/robot0/vio/eef_pose', '/robot0/sensor/magnetic_encoder', '/robot0/sensor/imu']))).toEqual([
+      { field: 'depths.0', problem: '数据集里没有 topic /robot0/sensor/depth0' },
+    ]);
   });
 
   it('names an exported file after the mapping', () => {

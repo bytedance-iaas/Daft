@@ -589,15 +589,19 @@ def probe(svc: VizService, spec: dict, owner: str, *, file: str | None = None, t
             notes.append("高频：作曲线时下采样到 ≤ 2000 点")
         if not tp.decodable:
             notes.append(f"{tp.message_encoding} 消息解不开")
-        if tp.kind == "camera" and tp.codec not in ("jpeg", "png", "h264", "h265"):
+        if tp.kind == "camera" and tp.codec == "raw":
+            notes.append("原始图像（raw）本期不支持")
+        elif tp.kind == "camera" and tp.codec not in ("jpeg", "png", "h264", "h265"):
             notes.append(f"编码 {tp.codec} 本期不支持")
+        if tp.kind == "depth" and tp.codec == "rvl":
+            notes.append("RVL 编码的压缩深度本期不支持")
         if tp.kind == "camera" and tp.codec == "h265":
             notes.append("H.265：浏览器放不了时由平台转码")
         topics.append({"topic": t, "schema": tp.schema, "schema_encoding": tp.schema_encoding,
                        "message_encoding": tp.message_encoding, "count": tp.count, "rate_hz": rate,
                        "start_s": round((tp.first_ns - pr.start_ns) / 1e9, 3) if tp.first_ns and pr.start_ns else None,
                        "end_s": round((pr.end_ns - pr.start_ns) / 1e9, 3) if pr.end_ns and pr.start_ns else None,
-                       "image": {"codec": tp.codec, "width": tp.width, "height": tp.height} if tp.kind == "camera" else None,
+                       "image": {"codec": tp.codec, "width": tp.width, "height": tp.height} if tp.kind in ("camera", "depth") else None,
                        "fields": [{"path": f["path"], "size": f["size"]} for f in tp.fields] if tp.fields else None,
                        "use": use, "role": role if role in ("state", "action", "other") else None, "name": name,
                        "notes": notes})

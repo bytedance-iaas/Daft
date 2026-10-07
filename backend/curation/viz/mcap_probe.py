@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import depth as D
 from . import mcap_messages as M
 
 #: messages of a video topic read at most to find its picture size (a recording that starts mid-GOP
@@ -30,7 +31,7 @@ class TopicProbe:
     message_encoding: str | None
     count: int | None
     first_ns: int | None = None
-    kind: str = "unknown"                     # camera | series | text | other | unknown
+    kind: str = "unknown"                     # camera | depth | series | text | other | unknown
     codec: str | None = None
     format: str | None = None                 # the first picture message's own format string
     width: int | None = None
@@ -140,12 +141,18 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
             return True
         if raw == "raw":
             tp.image = M.raw_image_info(decoded)
-            tp.kind, tp.codec = "camera", "raw"
+            depth = D.raw_depth_codec(tp.image["encoding"])       # 16UC1 / mono16 / 32FC1: depth (design doc 21 §5.4)
+            tp.kind, tp.codec = ("depth", depth) if depth else ("camera", "raw")
             tp.width, tp.height = tp.image["width"], tp.image["height"]
             return True
         frame = M.as_frame(decoded)
         if frame is not None:
             fmt, data = frame
+            depth = D.frame_depth_codec(fmt, data)
+            if depth:                                  # a 16-bit PNG, a ROS compressedDepth picture
+                tp.kind, tp.codec, tp.format = "depth", depth, fmt or None
+                tp.width, tp.height = D.depth_size(depth, data)
+                return True
             tp.kind = "camera"
             tp.format = fmt or None
             tp.codec = M.frame_codec(fmt, data)

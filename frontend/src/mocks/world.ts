@@ -362,8 +362,8 @@ export const DATASET_PROFILES: DatasetProfile[] = [
 
 export const PUBLIC_BUCKET = 'hf-cache';
 
-/** An address the mock world takes for an mcap dataset (GenRobot UMI, ABC-130k, anything …mcap…). */
-export const MCAP_URI = /mcap|genrobot|abc130k/i;
+/** An address the mock world takes for an mcap dataset (GenRobot UMI, ABC-130k, RoboMIND, anything …mcap…). */
+export const MCAP_URI = /mcap|genrobot|abc130k|robomind/i;
 
 export function profileFor(uri: string): DatasetProfile {
   const clean = uri.replace(/\/+$/, '');
@@ -371,9 +371,10 @@ export function profileFor(uri: string): DatasetProfile {
   if (hit) return hit;
   const name = clean.split('/').pop() || 'dataset';
   if (MCAP_URI.test(clean)) {
-    // design doc 18 §6: GenRobot reads with the site's defaults (UMI); ABC-130k's topics are its own,
-    // so the checks call it unsupported until a mapping names them - the visualizer still takes it as mcap
-    const abc = /abc/i.test(clean);
+    // design doc 18 §6: GenRobot reads with the site's defaults (UMI); ABC-130k's and RoboMIND's topics
+    // are their own, so the checks call them unsupported until a mapping names them - the visualizer still takes them as mcap
+    const robomind = /robomind/i.test(clean);
+    const abc = robomind || /abc/i.test(clean);
     return {
       uri: clean,
       source: 'tos',
@@ -382,7 +383,7 @@ export function profileFor(uri: string): DatasetProfile {
         ? { kind: 'mcap', version: null, supported: false, detail: 'mcap episode files found, but no required action topic (/action) - confirm a field mapping' }
         : { kind: 'mcap', version: null, supported: true, detail: 'mcap, 4 episodes, 2 cameras; UMI layout' },
       episodes: 4,
-      cameras: abc ? ['top-left-camera', 'left-wrist-camera'] : ['robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed'],
+      cameras: robomind ? ['top-camera'] : abc ? ['top-left-camera', 'left-wrist-camera'] : ['robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed'],
       fps: null,
       robotType: abc ? null : 'das_gripper',
       withTask: abc ? 4 : 0,
