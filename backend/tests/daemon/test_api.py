@@ -243,7 +243,7 @@ def test_running_filter_includes_tasks_whose_subtask_runs(client_for, clock):
     clock.advance(1)
     exported = seed_task(rt.repo, "export paused")
     _finish(rt, exported.id)
-    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=exported.id, kind="reexport",
+    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=exported.id, kind="apply_adjudication",
                                               scope={}, state="queued"))
     for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
                         ("pausing", "paused", {})):
@@ -476,7 +476,7 @@ def test_patch_a_created_task_resolves_every_field(client_for, tmp_path):
                         {"id": "task_success", "params": {"evidence_frames": "all"}}],
             "embodiment_id": "franka", "vlm": {"backend": "ark-prod", "model": "doubao",
                                               "reasoning_effort": "low"},
-            "params": {"start_now": True, "export": False, "limits": {"cpu_concurrency": 4}}}
+            "params": {"start_now": True, "vlm_hedge": False, "limits": {"cpu_concurrency": 4}}}
     r = _patch(c, t.id, body)
     assert r.status_code == 200, r.text
     got = r.json()
@@ -487,7 +487,7 @@ def test_patch_a_created_task_resolves_every_field(client_for, tmp_path):
     assert got["episodes"] == {"mode": "explicit", "expr": "3,10-12", "indices": [3, 10, 11, 12]}
     assert got["vlm"] == {"backend": "ark-prod", "model": "doubao", "reasoning_effort": "low",
                           "snapshot": None}                     # frozen only at start
-    assert got["params"] == {"export": False, "limits": {"cpu_concurrency": 4}}
+    assert got["params"] == {"vlm_hedge": False, "limits": {"cpu_concurrency": 4}}
     mods = {m["id"]: m for m in got["modules"]}
     assert [m for m in mods if mods[m]["selected"]] == ["timestamp_check", "kinematic_limits",
                                                        "task_success"]
@@ -665,7 +665,8 @@ def test_delete_waits_for_an_active_subtask(client_for):
     rt = _rt(c)
     t = seed_task(rt.repo)
     _finish(rt, t.id)
-    rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={}, state="queued"))
+    rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="apply_adjudication", scope={},
+                                     state="queued"))
     body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "subtask_active")
     assert "子任务" in body["error"]["message"] and body["error"]["details"]["active_subtask"]
 

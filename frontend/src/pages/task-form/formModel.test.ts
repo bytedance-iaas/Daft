@@ -69,7 +69,7 @@ describe('conversions to the contract', () => {
       episodes: { mode: 'all' },
       modules: ['timestamp_check', 'video_action_sync', { id: 'task_success', params: { evidence_frames: 'all' } }],
       vlm: { backend: 'ark-prod', model: 'doubao-seed-2-0-pro-260215', reasoning_effort: null },
-      params: { start_now: false, export: true, clips: false, vlm_retry: 3, vlm_hedge: true, limits: { cpu_concurrency: 4 } },
+      params: { start_now: false, clips: false, vlm_retry: 3, vlm_hedge: true, limits: { cpu_concurrency: 4 } },
     });
     expect(c).not.toHaveProperty('embodiment_id');
     const withRobot = toTaskCreate({ ...v, skipped: [], embodiment: 'franka' }, registry, droid200, 'pf_1', null, true);

@@ -68,7 +68,7 @@ def _snapshot(run_dir: str) -> dict:
 
 
 #: model parallelism 2: the VLM stage judges one episode at a time (episode gate N // 2)
-ONE_AT_A_TIME = {"start_now": True, "export": True, "vlm_hedge": False,
+ONE_AT_A_TIME = {"start_now": True, "vlm_hedge": False,
                  "limits": {"vlm_parallelism": 2}}
 
 

@@ -88,14 +88,14 @@ class Daemon:
         assert_schema("PreflightResponse", r.json())
         return r.json()
 
-    def task_body(self, *, modules=None, start_now=True, episodes=None, export=True, **extra):
+    def task_body(self, *, modules=None, start_now=True, episodes=None, **extra):
         pf = self.preflight()
         body = {"name": "fixture 8 episodes", "input": {"source": "local", "uri": self.dataset},
                 "output": {"uri": "tos://deliveries/mini", "credential": "out-key"},
                 "preflight_id": pf["preflight_id"], "episodes": episodes or {"mode": "all"},
                 "modules": modules or list(ALL_MODULES),
                 "vlm": {"backend": "fake", "model": "fake-vlm"},
-                "params": {"start_now": start_now, "export": export, "vlm_hedge": False}}
+                "params": {"start_now": start_now, "vlm_hedge": False}}
         body.update(extra)
         return body
 

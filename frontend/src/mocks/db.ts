@@ -180,7 +180,6 @@ export function toListItem(t: Task): TaskListItem {
     progress: t.progress,
     summary: t.summary ?? null,
     pending_adjudication: t.pending_adjudication,
-    delivery_stale: t.delivery_stale,
     active_subtask: t.active_subtask ? t.active_subtask.id : null,
     modules: registry.modules.map((m) => m.id).filter((id) => selected.some((s) => s.id === id)),
     module_counts: counts,

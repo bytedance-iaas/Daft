@@ -621,7 +621,6 @@ function overview(days: number): Overview {
     todo: {
       error_tasks: live.filter((t) => t.state === 'completed_with_errors').length,
       adjudication: { tasks: live.filter((t) => t.pending_adjudication > 0).length, episodes: live.reduce((a, t) => a + t.pending_adjudication, 0) },
-      delivery_pending: live.filter((t) => t.delivery_stale).length,
       datasets_changed: db.datasets.filter((d) => d.check_state === 'changed').length,
       credentials_failed: db.credentials.filter((c) => c.verify_state === 'failed').length,
       backends_failed: db.backends.filter((b) => b.verify_state === 'failed').length,
@@ -767,7 +766,7 @@ function buildNewTask(req: TaskCreate): Task | Response {
     episodes: req.episodes,
     embodiment_id: req.embodiment_id ?? null,
     vlm: req.vlm ? { ...req.vlm } : null,
-    params: { start_now: true, export: true, vlm_retry: 3, vlm_hedge: true, clips: false, ...(req.params ?? {}) },
+    params: { start_now: true, vlm_retry: 3, vlm_hedge: true, clips: false, ...(req.params ?? {}) },
     source: null,
     progress: { stages: [] },
     modules: registry.modules.map((m) => ({
@@ -786,7 +785,6 @@ function buildNewTask(req: TaskCreate): Task | Response {
     result_rev: 0,
     usage: { ...ZERO_USAGE },
     pending_adjudication: 0,
-    delivery_stale: false,
     active_subtask: null,
     created_at: now,
     updated_at: now,
@@ -1018,16 +1016,6 @@ const tasks = [
       if (t.state !== 'stopped' && t.state !== 'failed') return err(409, 'task_state_conflict', '只有已停止或失败的任务可以继续运行', { state: t.state });
       if (t.state_reason?.includes('source_changed')) return err(409, 'task_state_conflict', '源数据中途变了的任务不能继续，请复制为新任务', { state: t.state });
       const s = newSubtask(t, 'resume', { episodes: 'all' });
-      return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
-    }),
-  ),
-  http.post(`${API}/tasks/:id/reexport`, ({ request, params }) =>
-    idempotent(request, () => {
-      const t = findTask(String(params.id));
-      if (!t) return err(404, 'not_found', '任务不存在');
-      if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务');
-      if (!TERMINAL.includes(t.state)) return err(409, 'task_state_conflict', '任务结束后才能导出', { state: t.state });
-      const s = newSubtask(t, 'reexport', {});
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
     }),
   ),
@@ -1387,7 +1375,6 @@ const report = [
       const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
       // The answers in force; a bare 拿不准 changes nothing, one that rewrote the text is applied.
       for (const d of executable(t.id)) if (d.decision !== 'unsure' || d.new_label) d.applied = true;
-      t.delivery_stale = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
     }),
   ),

@@ -317,7 +317,7 @@ def test_overview_of_an_empty_site(client_for):
     body = r.json()
     assert_schema("Overview", body)
     assert body["todo"] == {"error_tasks": 0, "adjudication": {"tasks": 0, "episodes": 0},
-                            "delivery_pending": 0, "datasets_changed": 0,
+                            "datasets_changed": 0,
                             "credentials_failed": 0, "backends_failed": 0}
     assert body["running"] == {"running": 0, "queued": 0, "paused": 0, "active": []}
     recent = body["recent"]
@@ -375,12 +375,10 @@ def test_overview_counts(client_for, clock):
     _to(rt, ok.id, "running", "succeeded", at=T0 - DAY)
     rt.repo.set_task_summary(ok.id, {**summary, "total": 30, "passed": 30, "review": 0})
     rt.repo.switch_result_rev(ok.id, 0, 1)
-    rt.repo.set_export_fingerprint(ok.id, "sha256:x", delivery_stale=False)
     old = seed_task(rt.repo, "last week")                      # outside the 7 days, stale
     _to(rt, old.id, "running", "succeeded", at=T0 - 8 * DAY)
     rt.repo.set_task_summary(old.id, {**summary, "pending_adjudication": 0})   # all judged
     rt.repo.switch_result_rev(old.id, 0, 1)
-    rt.repo.set_export_fingerprint(old.id, "sha256:y", delivery_stale=True)
     failed = seed_task(rt.repo, "failed")
     _to(rt, failed.id, "running", "failed", at=T0)
     gone = seed_task(rt.repo, "deleted")
@@ -412,7 +410,7 @@ def test_overview_counts(client_for, clock):
     body = c.get(OVERVIEW).json()
     assert_schema("Overview", body)
     assert body["todo"] == {"error_tasks": 1, "adjudication": {"tasks": 1, "episodes": 3},
-                            "delivery_pending": 2, "datasets_changed": 1,
+                            "datasets_changed": 1,
                             "credentials_failed": 1, "backends_failed": 1}
     assert body["running"] == {
         "running": 2, "queued": 2, "paused": 1,
@@ -456,7 +454,7 @@ def test_overview_counts_subtasks_as_work(client_for, clock):
                                      state="queued"))
     clock.advance(1)
     held = parent("export paused", "succeeded")
-    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=held.id, kind="reexport", scope={},
+    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=held.id, kind="apply_adjudication", scope={},
                                               state="queued"))
     for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
                         ("pausing", "paused", {})):

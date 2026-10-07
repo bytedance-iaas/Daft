@@ -159,8 +159,8 @@ def test_run_ids_never_collide(tmp_path):
 def test_the_sync_sends_what_changed_and_never_work_in_progress(tmp_path):
     root = tmp_path / "run"
     files = {"plan.json": "{}", "checks/a/parts/0001.jsonl": "{}\n",
-             "checks/a/inflight.json": "{}", "export/lerobot_curated/data/x.parquet": "p",
-             "export/manifest.json": "{}", ".orchestr/main.json": "{}", "_COMPLETE": "",
+             "checks/a/inflight.json": "{}", "revisions/r0001/report.json": "{}",
+             ".orchestr/main.json": "{}", "_COMPLETE": "",
              "logs/numeric.jsonl": "{}\n", "report.md.tmp-1": "x"}
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -168,8 +168,8 @@ def test_the_sync_sends_what_changed_and_never_work_in_progress(tmp_path):
     d = D.LocalDelivery(tmp_path / "tos", "tos://b/x")
     state = tmp_path / "sync.json"
     assert D.sync_run_dir(d, "r1", root, state) == {"uploaded": 4}
-    assert sorted(d.list("r1")) == ["r1/checks/a/parts/0001.jsonl", "r1/export/manifest.json",
-                                    "r1/logs/numeric.jsonl", "r1/plan.json"]
+    assert sorted(d.list("r1")) == ["r1/checks/a/parts/0001.jsonl", "r1/logs/numeric.jsonl",
+                                    "r1/plan.json", "r1/revisions/r0001/report.json"]
     assert D.sync_run_dir(d, "r1", root, state) == {"uploaded": 0}
     (root / "plan.json").write_text('{"changed": 1}')
     os.utime(root / "plan.json", ns=(1, 10**18))
@@ -185,9 +185,9 @@ def test_the_sync_sends_what_changed_and_never_work_in_progress(tmp_path):
 def test_what_a_restore_brings_back():
     for rel in ("plan.json", "revisions/r0001/commit.json", "checks/dedup/groups.json",
                 "logs/numeric.jsonl", "human-decisions/task_verdicts.csv",
-                "details/vlm_latency.csv", "export/manifest.json"):
+                "details/vlm_latency.csv", "revisions/r0001/report.json"):
         assert D.restorable(rel), rel
-    for rel in ("_COMPLETE", "export/lerobot_curated/meta/info.json", ".orchestr/main.json",
+    for rel in ("_COMPLETE", ".orchestr/main.json",
                 "details/evidence/task_success/ep000001_0.jpg", "details/audit_clips/a.mp4",
                 "checks/video_action_sync/curves/ep000001.json", "checks/a/inflight.json",
                 "report.md.tmp-1"):

@@ -361,7 +361,6 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(findTask(MAIN_TASK)!.active_subtask?.scope.relabel_rerun).toBe('v1');
     await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('0 条尚未应用'));
     expect(screen.getByRole('button', { name: '执行裁决' })).toBeDisabled();
-    expect(findTask(MAIN_TASK)!.delivery_stale).toBe(true);
   });
 
   it('按首轮的完整流程重判 sends relabel_rerun: full; a text the person judged with is not re-judged', async () => {

@@ -19,7 +19,7 @@ from .viz.status import mapping_info, viz_status
 _STAGE_KEYS = ("id", "block", "full_set", "state", "done", "total", "elapsed_s", "eta_s", "note",
                "pipeline")
 _SUMMARY_KEYS = ("total", "passed", "rejected", "held", "review", "pass_rate")
-_PARAM_KEYS = ("start_now", "export", "batch_size", "vlm_retry", "vlm_hedge",
+_PARAM_KEYS = ("start_now", "batch_size", "vlm_retry", "vlm_hedge",
                "vlm_timeouts_s", "clips", "policy", "limits")
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
                "requests", "requests_unknown_usage")
@@ -229,7 +229,7 @@ def task_detail(task: P.Task, *, repo: P.Repository, names: Names, links: Links,
         "modules": [module_state(m, now) for m in mods],
         "summary": summary(task.summary), "result_rev": task.result_rev,
         "usage": usage_totals(repo.usage_buckets(task.id, ledger="actual")),
-        "pending_adjudication": pending, "delivery_stale": bool(task.delivery_stale),
+        "pending_adjudication": pending,
         "active_subtask": subtask(active) if active else None,
         "created_at": task.created_at, "updated_at": task.updated_at,
         "started_at": task.started_at, "finished_at": task.finished_at,
@@ -246,7 +246,6 @@ def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
         "dataset": dataset_name(task.input_uri), "created_at": task.created_at,
         "progress": stage_progress(task.progress), "summary": summary(task.summary),
         "pending_adjudication": pending_adjudication(task),
-        "delivery_stale": bool(task.delivery_stale),
         "active_subtask": active.id if active else None,
         "modules": [m.module_id for m in mods if m.selected],
         "dataset_id": task.dataset_id,

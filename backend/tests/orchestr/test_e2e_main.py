@@ -20,11 +20,11 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     # the fixture: 2 captions, 2 rejected on their timestamps, 7 a copy of 3 -> 5 / 3 / 0 / 2
     assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
-    assert task["result_rev"] == 1 and task["delivery_stale"] is False
+    assert task["result_rev"] == 1
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]
     assert [s["id"] for s in stages] == [
-        "numeric", "frame", "dedup", "autolabel", "vlm", "final", "report", "export", "verify"]
+        "numeric", "frame", "dedup", "autolabel", "vlm", "final", "report", "verify"]
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
         "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm"}
     assert [s["id"] for s in stages if s.get("full_set")] == ["dedup"]
@@ -40,7 +40,8 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     batch = d.delivery(run_id)
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
     assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "commit.json"))
-    assert os.path.isfile(os.path.join(batch, "export", "manifest.json"))
+    assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "report.json"))
+    assert not os.path.isdir(os.path.join(batch, "export"))      # D69: no dataset is delivered
     with open(os.path.join(d.delivery(), "latest"), encoding="utf-8") as fh:
         assert fh.read().strip() == run_id
     plan = d.api("GET", f"/tasks/{task['id']}/plan")

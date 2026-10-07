@@ -56,7 +56,6 @@ export interface FormValues {
   timeouts: Record<TimeoutKey, number>;
   cpuLimit: number | undefined;
   vlmLimit: number | undefined;
-  exportDataset: boolean;
   clips: boolean;
   embodiment: string;
   /** Modules skipped on screen 2 (「跳过该模块」). */
@@ -94,7 +93,6 @@ export function defaultValues(): FormValues {
     timeouts: { ...DEFAULT_TIMEOUTS },
     cpuLimit: undefined,
     vlmLimit: undefined,
-    exportDataset: true,
     clips: false,
     embodiment: '',
     skipped: [],
@@ -262,7 +260,6 @@ export function taskParams(v: FormValues, reg: ModuleRegistry | undefined, start
   };
   return {
     start_now: startNow,
-    export: v.exportDataset,
     clips: v.clips,
     ...(usesVlm(v, reg) ? { vlm_retry: v.vlmRetry, vlm_hedge: v.vlmHedge, vlm_timeouts_s: { ...v.timeouts } } : {}),
     ...(Object.keys(limits).length ? { limits } : {}),
@@ -334,7 +331,6 @@ export function fromTask(t: Task, reg: ModuleRegistry | undefined): FormValues {
     timeouts: { ...DEFAULT_TIMEOUTS, ...(p.vlm_timeouts_s ?? {}) } as Record<TimeoutKey, number>,
     cpuLimit: p.limits?.cpu_concurrency,
     vlmLimit: p.limits?.vlm_parallelism,
-    exportDataset: p.export ?? true,
     clips: p.clips ?? false,
     embodiment: t.embodiment_id ?? '',
     policy: p.policy?.preset === 'report_only' ? 'report_only' : 'default',

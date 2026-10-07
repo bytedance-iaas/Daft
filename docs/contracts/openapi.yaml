@@ -1,13 +1,14 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 3.0.0
+  version: 4.0.0
   description: |
     ## Overview
 
     The REST API of the Physical AI Kit data quality-check platform: register robot datasets (LeRobot
     v2 / v3, mcap, Lance), run quality-check tasks over their episodes, read the verdicts, findings and
-    reports, adjudicate what needs a person, and export the episodes that pass as a delivery dataset.
+    reports, and adjudicate what needs a person. The delivery is the report: the platform does not
+    write a curated dataset.
     The web console is built on this same API, so whatever it does can be done here. JSON in, JSON out,
     UTF-8. Each endpoint does one whole thing a user would name; no task needs a chain of calls.
 
@@ -24,7 +25,7 @@ info:
        `GET /tasks/{id}/episodes` and `GET /tasks/{id}/episodes/{index}`.
     5. Adjudicate: `GET /tasks/{id}/adjudication` lists what a person has to decide, `POST` on the same
        path records decisions, and `POST /tasks/{id}/adjudication/apply` executes them as a subtask that
-       makes a new result revision. It does not export; `POST /tasks/{id}/reexport` does.
+       makes a new result revision.
 
     The `credentials` and `vlm` groups hold the TOS access keys and the VLM backends a task names,
     `uploads` takes the input files of module parameters, `viz` is the data visualizer and `overview`
@@ -85,10 +86,18 @@ info:
     person rewrote while judging; it replaces the decisions `adopt_suggestion`, `custom_label` and
     `keep_label`. Follow-up questions are gone (`follow_ups` on a review line, `follow_up_of` on a
     question).
+
+    **4.0.0** (2026-10-07): the platform delivers the quality report, not a curated dataset. Gone with
+    the export: `POST /tasks/{id}/reexport`, the subtask kind `reexport`, `delivery_stale` on a task,
+    `params.export`, the overview's `todo.delivery_pending`, and the episode video origin
+    `delivery_dataset` (an episode's cameras now play from the source dataset, or from a clip cut for
+    the adjudication page). The delivery directory itself stays: a task's run directory - the result
+    revisions, the report and its details - is synced into `<delivery>/<run_id>/`, read back, and marked
+    `_COMPLETE`; `latest` still points at the newest complete batch.
   x-description-zh: |
     ## 概览
 
-    Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对其中的 episode 跑质检任务，读取判决、发现与质检报告，人工裁决需要人来判断的条目，再把通过的 episode 导出为交付数据集。网页控制台用的就是这套 API，控制台能做的事都能通过它完成。请求与响应都是 JSON，UTF-8 编码。每个接口完成一件完整的事，不需要连着调几个接口才办成一件事。
+    Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对其中的 episode 跑质检任务，读取判决、发现与质检报告，人工裁决需要人来判断的条目。交付的是质检报告，平台不再写交付数据集。网页控制台用的就是这套 API，控制台能做的事都能通过它完成。请求与响应都是 JSON，UTF-8 编码。每个接口完成一件完整的事，不需要连着调几个接口才办成一件事。
 
     一次典型的质检：
 
@@ -96,7 +105,7 @@ info:
     2. 建任务：`POST /tasks` 带上预检得到的 `preflight_id` 创建任务，`params.start_now` 为 true 时建完就开始，否则再调 `POST /tasks/{id}/actions/start`。
     3. 跟进度：订阅 SSE `GET {base}/events/tasks/{id}`，或每 5 秒轮询一次 `GET /tasks/{id}`。
     4. 看结果：`GET /tasks/{id}/report` 是质检报告，每条 episode 的判决与发现用 `GET /tasks/{id}/episodes` 和 `GET /tasks/{id}/episodes/{index}` 读取。
-    5. 人工裁决：`GET /tasks/{id}/adjudication` 列出需要人来判断的条目，对同一路径 `POST` 记录决定，`POST /tasks/{id}/adjudication/apply` 以子任务执行这些决定并产生新的结果版本。它不导出数据，需要时再调 `POST /tasks/{id}/reexport`。
+    5. 人工裁决：`GET /tasks/{id}/adjudication` 列出需要人来判断的条目，对同一路径 `POST` 记录决定，`POST /tasks/{id}/adjudication/apply` 以子任务执行这些决定并产生新的结果版本。
 
     `credentials`、`vlm` 两组管理任务用到的 TOS 访问密钥和 VLM 后端，`uploads` 上传模块参数需要的文件，`viz` 是数据可视化，`overview` 是控制台首页的数据。
 
@@ -136,6 +145,12 @@ info:
     裁决改成一张卡片只问一个问题：`label` 这条问题线去掉，「标注与画面疑似不符」并入 `task_verdict` 的问题；
     判成败时可以顺带带上 `new_label`，就是人改写的任务描述，原来的 `adopt_suggestion`、`custom_label`、
     `keep_label` 三个决定不再需要。追加问题机制去掉（问题线上的 `follow_ups`、问题上的 `follow_up_of`）。
+
+    **4.0.0**（2026-10-07）：平台交付的是质检报告，不再写交付数据集。随导出一起去掉的有：
+    `POST /tasks/{id}/reexport`、子任务种类 `reexport`、任务上的 `delivery_stale`、`params.export`、
+    总览的 `todo.delivery_pending`，以及 episode 视频的来源 `delivery_dataset`（相机现在从源数据集放，
+    或者放裁决页裁好的片段）。交付目录本身保留：任务的运行目录（结果版本、报告与明细）同步到
+    `<交付>/<run_id>/`，回读无误后写 `_COMPLETE`；`latest` 仍指向最新的完整一批。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -173,7 +188,7 @@ tags:
     description: >-
       Quality-check tasks: create (one or a batch), edit (any field before it starts, name and note
       after), start / pause / resume / stop, delete and restore, delete its run directory on TOS,
-      re-preflight, rebind keys, and the subtasks that retry, continue and re-export; a task's
+      re-preflight, rebind keys, and the subtasks that retry and continue; a task's
       subtasks, plan, timeline, logs and token usage.
     x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行、重新导出这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
   - name: report
@@ -504,7 +519,6 @@ paths:
                     todo:
                       error_tasks: 1
                       adjudication: {tasks: 2, episodes: 15}
-                      delivery_pending: 1
                       datasets_changed: 1
                       credentials_failed: 0
                       backends_failed: 0
@@ -549,7 +563,6 @@ paths:
                     todo:
                       error_tasks: 0
                       adjudication: {tasks: 0, episodes: 0}
-                      delivery_pending: 0
                       datasets_changed: 0
                       credentials_failed: 0
                       backends_failed: 0
@@ -1370,7 +1383,7 @@ paths:
           in: query
           description: >-
             a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also
-            lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+            lists finished tasks whose subtask (retry, resume, adjudication run) is queued or
             running: the console shows them as running (D46); their `state` stays terminal and
             `active_subtask` names the subtask
           schema:
@@ -1456,11 +1469,9 @@ paths:
                             - {id: dedup, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: export, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: verify, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                         summary: null
                         pending_adjudication: 0
-                        delivery_stale: false
                         active_subtask: null
                         modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
                           dedup]
@@ -1501,18 +1512,10 @@ paths:
                             - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - {id: dedup, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
                             - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                            - id: export
-                              state: skipped
-                              done: 0
-                              total: 0
-                              elapsed_s: null
-                              eta_s: null
-                              note: 主流程结束时没有可交付的条目，没有导出
                             - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                             - {id: verify, state: skipped, done: 0, total: 0, elapsed_s: null, eta_s: null}
                         summary: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82}
                         pending_adjudication: 10
-                        delivery_stale: true
                         active_subtask: null
                         modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
                           dedup]
@@ -1573,7 +1576,6 @@ paths:
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
                     vlm_retry: 3
-                    export: true
                     start_now: true
                     limits: {cpu_concurrency: 4, vlm_parallelism: 32}
               public:
@@ -1609,7 +1611,6 @@ paths:
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
                     vlm_retry: 3
-                    export: true
                     start_now: true
                     limits: {cpu_concurrency: 4, vlm_parallelism: 32}
       responses:
@@ -1692,7 +1693,6 @@ paths:
                     vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                     params:
                       start_now: true
-                      export: true
                       vlm_retry: 3
                       vlm_hedge: true
                       clips: false
@@ -1766,7 +1766,6 @@ paths:
                           block: vlm
                           full_set: true
                         - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                        - {id: export, state: succeeded, done: 41, total: 41, elapsed_s: 64, eta_s: null}
                         - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                         - {id: verify, state: succeeded, done: 1, total: 1, elapsed_s: 9, eta_s: null}
                     modules:
@@ -1820,7 +1819,6 @@ paths:
                       requests: 912
                       requests_unknown_usage: 12
                     pending_adjudication: 10
-                    delivery_stale: false
                     active_subtask: null
                     created_at: 1791231708043
                     updated_at: 1791231768043
@@ -2016,22 +2014,6 @@ paths:
       tags: [tasks]
       operationId: continueTask
       summary: Resume a stopped or failed task from its checkpoints (not after source_changed)
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: subtask created
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/SubtaskCreated"}
-        default: {$ref: "#/components/responses/Error"}
-  /tasks/{id}/reexport:
-    parameters:
-      - $ref: "#/components/parameters/PathId"
-    post:
-      tags: [tasks]
-      operationId: reexportTask
-      summary: Incremental re-export of the delivered dataset (also the first export when export=false)
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
@@ -2863,7 +2845,7 @@ paths:
     post:
       tags: [report]
       operationId: applyAdjudication
-      summary: Execute the recorded decisions as a subtask (D10); never exports (D9)
+      summary: Execute the recorded decisions as a subtask (D10)
       description: |
         The body is optional; without one (or with `{}`) relabelled episodes are judged again the
         way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
@@ -3794,7 +3776,7 @@ components:
         todo:
           type: object
           additionalProperties: false
-          required: [error_tasks, adjudication, delivery_pending, datasets_changed, credentials_failed, backends_failed]
+          required: [error_tasks, adjudication, datasets_changed, credentials_failed, backends_failed]
           properties:
             error_tasks: {type: integer, minimum: 0, description: "completed_with_errors, can be retried"}
             adjudication:
@@ -3804,7 +3786,6 @@ components:
               properties:
                 tasks: {type: integer, minimum: 0}
                 episodes: {type: integer, minimum: 0}
-            delivery_pending: {type: integer, minimum: 0, description: "tasks whose delivered dataset is stale or was never exported"}
             datasets_changed: {type: integer, minimum: 0}
             credentials_failed: {type: integer, minimum: 0}
             backends_failed: {type: integer, minimum: 0}
@@ -4044,7 +4025,6 @@ components:
       description: task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31)
       properties:
         start_now: {type: boolean, default: true}
-        export: {type: boolean, default: true}
         batch_size: {type: integer, minimum: 1, maximum: 256, description: "Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections."}
         vlm_retry: {type: integer, minimum: 0, maximum: 5, default: 3}
         vlm_hedge: {type: boolean, default: true}
@@ -4158,7 +4138,7 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report, export, verify; subtasks add adjudicate; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
         full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
@@ -4270,7 +4250,7 @@ components:
     TaskListItem:
       type: object
       additionalProperties: false
-      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, delivery_stale, modules,
+      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, modules,
                  module_counts, usage]
       properties:
         id: {type: string}
@@ -4287,7 +4267,6 @@ components:
             stages: {type: array, items: {$ref: "#/components/schemas/StageProgress"}}
         summary: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Summary"}]}
         pending_adjudication: {type: integer, minimum: 0}
-        delivery_stale: {type: boolean}
         active_subtask: {type: [string, "null"]}
         modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}, description: "selected modules, registry order"}
         module_counts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: "selected modules per ModuleState state"}
@@ -4297,7 +4276,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, name, state, input, output, episodes, modules, params, progress, result_rev,
-                 pending_adjudication, delivery_stale, usage, created_at, updated_at, links]
+                 pending_adjudication, usage, created_at, updated_at, links]
       properties:
         id: {type: string}
         name: {type: string}
@@ -4333,7 +4312,6 @@ components:
         result_rev: {type: integer, minimum: 0}
         usage: {$ref: "#/components/schemas/UsageTotals"}
         pending_adjudication: {type: integer, minimum: 0}
-        delivery_stale: {type: boolean}
         active_subtask: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Subtask"}]}
         created_at: {type: integer}
         updated_at: {type: integer}
@@ -4348,7 +4326,7 @@ components:
       properties:
         id: {type: string}
         task_id: {type: string}
-        kind: {enum: [retry, resume, apply_adjudication, reexport]}
+        kind: {enum: [retry, resume, apply_adjudication]}
         scope:
           type: object
           properties:
@@ -4497,7 +4475,7 @@ components:
             properties:
               camera: {type: string}
               scope: {enum: [delivery, input]}
-              origin: {enum: [clip, delivery_dataset, source_dataset]}
+              origin: {enum: [clip, source_dataset]}
               path: {type: string}
               from_ts: {type: number}
               to_ts: {type: number}

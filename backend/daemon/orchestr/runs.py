@@ -4,7 +4,7 @@ Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the pla
 (:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame on the episode pipeline, then dedup on the
 whole selection; the VLM block's autolabel, vlm on the episode pipeline, then the skill profile on the
 whole selection - no stage filters another (D57). Then ``final`` (aggregate: the policy verdicts into
-revision N), ``report`` (commit.json last), ``export`` when the task exports, and ``verify``: the run
+revision N), ``report`` (commit.json last) and ``verify``: the run
 directory is synced to ``<delivery>/<run_id>/``, read back, ``_COMPLETE`` written; only then does
 ``result_rev`` switch (D25) and ``latest`` move for a complete batch (D29, P13). Every per-episode stage
 runs with ``--resume``: after a pause or a crash nothing finished is done twice.
@@ -16,10 +16,8 @@ runs with ``--resume``: after a pause or a crash nothing finished is done twice.
   revision (design doc 17 §3.4; D35).
 * ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
   relabelled episodes without a human verdict
-  when it has something to re-file -> aggregate final -> report -> verify. dedup is not run again (its
-  groups stand; aggregate picks each group's keeper after the decisions). It never exports (D9); the
-  delivery becomes stale.
-* ``reexport``: ``export --incremental`` of the current revision, then verify.
+  -> aggregate final -> report -> verify. dedup is not run again (its groups stand; aggregate picks
+  each group's keeper after the decisions).
 """
 from __future__ import annotations
 
@@ -256,23 +254,16 @@ class StageRun(Run):
         self.stage_done(sid, "succeeded")
 
     # -- publishing -------------------------------------------------------------------
-    def publish(self, rev: int, *, export: bool) -> None:
-        """Export (optional), sync, verify, then switch the revision - one delivery at a time."""
+    def publish(self, rev: int) -> None:
+        """Sync, verify, then switch the revision - one delivery directory at a time."""
         with self.orch.locks.lock(self.task.delivery_key):
             with self.delivery() as d:
-                if export and not self.journal.done("export"):
-                    incremental = (self.wd.root / "export" / "manifest.json").is_file()
-                    doc = self.export("export", d, rev, incremental=incremental)
-                    self.stage_done("export", "succeeded", fingerprint=doc.get("fingerprint"))
                 if not self.journal.done("verify"):
                     vdoc = self.sync_and_verify("verify", d)
                     self.log("verify", "info", f"交付核验通过：回读 {vdoc.get('checked', 0)} 个文件，"
                                                "写了 _COMPLETE")
                     self.stage_done("verify", "succeeded")
                 self.switch_revision(rev)
-                fingerprint = self.journal.stage("export").get("fingerprint")
-                if export and fingerprint:
-                    self.repo.set_export_fingerprint(self.task_id, fingerprint, False)
                 self.refresh_results(rev)
                 self.maybe_latest(d, "verify")
 
@@ -291,10 +282,7 @@ class MainRun(StageRun):
             self.repo.set_subtask_progress(self.sub_id, doc)
 
     def stage_ids(self, plan: dict) -> list[str]:
-        ids = [s["id"] for s in plan["stages"]] + ["report"]
-        if (self.task.params or {}).get("export", True):
-            ids.append("export")
-        return ids + ["verify"]
+        return [s["id"] for s in plan["stages"]] + ["report", "verify"]
 
     def execute(self) -> str:
         from .blocks import run_blocks
@@ -314,7 +302,7 @@ class MainRun(StageRun):
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=bool((self.task.params or {}).get("export", True)))
+        self.publish(rev)
         return self.recomputed_state(rev)
 
 
@@ -392,7 +380,7 @@ class RetryRun(StageRun):
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=False)
+        self.publish(rev)
         return self.recomputed_state(rev)
 
     def sync_full_set(self, st: dict, episodes: list[int], scope: set, rows: dict) -> None:
@@ -437,7 +425,7 @@ class AdjudicationRun(StageRun):
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=False)
+        self.publish(rev)
         ids_applied = applied.get("ids") or []
         if ids_applied:
             self.repo.mark_adjudications_applied(ids_applied, self.sub_id)
@@ -531,38 +519,8 @@ class AdjudicationRun(StageRun):
         self.stage_done(sid, "completed_with_errors" if errors else "succeeded")
 
 
-class ReexportRun(StageRun):
-    """``export --incremental`` of the current revision, then verify (06 §4; D9)."""
-
-    kind = "reexport"
-
-    def execute(self) -> str:
-        self.reload()
-        rev = int(self.task.result_rev or 0)
-        if rev < 1:
-            raise TaskFailure("no_result", "这个任务还没有结果，没什么可导出的")
-        self.ensure_local()
-        self.require_current_format()
-        self.plan_progress(["export", "verify"])
-        with self.orch.locks.lock(self.task.delivery_key):
-            with self.delivery() as d:
-                if not self.journal.done("export"):
-                    doc = self.export("export", d, rev, incremental=True)
-                    self.stage_done("export", "succeeded", fingerprint=doc.get("fingerprint"))
-                if not self.journal.done("verify"):
-                    self.sync_and_verify("verify", d)
-                    self.stage_done("verify", "succeeded")
-                fingerprint = self.journal.stage("export").get("fingerprint")
-                current = self.current_fingerprint(rev)
-                self.repo.set_export_fingerprint(self.task_id, fingerprint,
-                                                 current is None or current != fingerprint)
-                self.maybe_latest(d, "verify")
-        self.reload()
-        return self.recomputed_state(rev)
-
-
 RUNS = {"main": MainRun, "resume": ResumeRun, "retry": RetryRun,
-        "apply_adjudication": AdjudicationRun, "reexport": ReexportRun}
+        "apply_adjudication": AdjudicationRun}
 
 
 def run_for(orch, task, subtask=None) -> Run:

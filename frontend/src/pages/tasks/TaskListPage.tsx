@@ -18,7 +18,7 @@ import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent, totalTokens } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
-import { actionsFor, activeSubtask, currentStage, exportedBefore, groupStages, isTerminalState, overallPercent } from '../../lib/taskView';
+import { actionsFor, activeSubtask, currentStage, groupStages, isTerminalState, overallPercent } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const STATES: TaskState[] = ['created', 'queued', 'running', 'pausing', 'paused', 'stopping', 'stopped', 'succeeded', 'completed_with_errors', 'failed'];
@@ -148,7 +148,7 @@ export function TaskListPage() {
 
   // Widths (07 §4.1): every column has room for its longest value, so a state tag or a longer
   // name scrolls the table rather than squeezing the others. Rows take two lines at most
-  // (fourth round): the name and its id; 待裁决 and 交付待重新导出 go by the state.
+  // (fourth round): the name and its id; 待裁决 goes by the state.
   const columns: ColumnProps<TaskListItem>[] = [
     {
       title: zh.taskList.colName,
@@ -176,11 +176,6 @@ export function TaskListPage() {
                 {zh.taskList.pendingBadge(t.pending_adjudication)}
               </Tag>
             </Link>
-          ) : null}
-          {t.delivery_stale ? (
-            <Tag size="small" color="orange">
-              {exportedBefore(t.progress.stages) ? zh.taskList.deliveryStale : zh.taskList.deliveryNeverExported}
-            </Tag>
           ) : null}
         </div>
       ),
@@ -220,8 +215,7 @@ export function TaskListPage() {
           plan={actionsFor(t)}
           held={t.summary?.held}
           pending={t.pending_adjudication}
-          exported={exportedBefore(t.progress.stages)}
-          onAction={(key) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, exported: exportedBefore(t.progress.stages) })}
+          onAction={(key) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held })}
         />
       ),
     },

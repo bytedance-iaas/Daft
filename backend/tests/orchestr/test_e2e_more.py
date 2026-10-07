@@ -48,7 +48,6 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
     # 3 judged failed; its byte copy 7 is delivered in its place (design doc 17 §4.5)
     assert (done["summary"]["passed"], done["summary"]["rejected"]) == (5, 3)
-    assert done["delivery_stale"] is True                  # D9: no export, it is stale now
     assert d.rt.repo.latest_adjudications(task_id, unapplied_only=True) == []
     queue = d.api("GET", f"/tasks/{task_id}/adjudication", params={"status": "all"}).json()
     assert {c["episode_index"]: c["status"] for c in queue["items"]}.get(3) == "applied"
@@ -67,12 +66,10 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))
     assert [r["episode_index"] for r in part2] == [4]       # the relabelled one, re-judged
     assert os.listdir(os.path.join(rd, "checks", "dedup", "parts")) == ["0001.jsonl"]
-    export_before = os.path.getmtime(os.path.join(rd, "export", "manifest.json"))
-    r = d.api("POST", f"/tasks/{task_id}/reexport")
-    assert r.status_code == 202
-    exported = d.wait(task_id)
-    assert exported["delivery_stale"] is False
-    assert os.path.getmtime(os.path.join(rd, "export", "manifest.json")) > export_before
+    # the new revision reached the delivery: its report is there, read back, marked complete
+    batch = d.delivery(done["run_id"])
+    assert os.path.isfile(os.path.join(batch, "revisions", "r0002", "report.json"))
+    assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
 
 
 def test_a_dataset_changed_since_registration_stops_the_start_until_repreflight(daemon):
@@ -167,7 +164,7 @@ def test_publishing_into_one_delivery_is_serial(daemon, monkeypatch):
                     calls.append((self.task_id, t0, time.monotonic()))
         monkeypatch.setattr(runbase.Run, name, wrapper)
 
-    for name in ("export", "sync_and_verify"):       # both run under the delivery's lock
+    for name in ("sync_and_verify",):                # it runs under the delivery's lock
         timed(name)
     monkeypatch.setenv("CURATOR_MAX_RUNNING_TASKS", "2")
     d = daemon()

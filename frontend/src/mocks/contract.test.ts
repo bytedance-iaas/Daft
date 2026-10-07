@@ -212,7 +212,6 @@ const calls = (): Call[] => [
   { op: 'retryTask', method: 'POST', path: `/tasks/${T}/retry`, body: { modules: ['task_success'] } },
   { op: 'retryTask', method: 'POST', path: `/tasks/${T}/retry`, body: {} },
   { op: 'continueTask', method: 'POST', path: '/tasks/task_01HXPJ3C/continue' },
-  { op: 'reexportTask', method: 'POST', path: '/tasks/task_01HXQ5R9/reexport' },
   { op: 'listSubtasks', method: 'GET', path: `/tasks/${T}/subtasks` },
   { op: 'getTaskTimeline', method: 'GET', path: `/tasks/${T}/timeline` },
   { op: 'getTaskTimeline', method: 'GET', path: '/tasks/task_01HXPX4W/timeline' },

@@ -52,7 +52,7 @@ describe('report view helpers', () => {
     ];
     const subs = [
       { ...sub('a', 'retry'), started_at: 2_000_000, finished_at: 2_412_000, result_rev: 2 },
-      { ...sub('b', 'reexport'), started_at: 3_000_000, finished_at: 3_060_000, result_rev: null },
+      { ...sub('b', 'apply_adjudication'), started_at: 3_000_000, finished_at: 3_060_000, result_rev: null },
     ];
     expect(runParts(task, timeline, subs, 2)).toEqual([
       { label: '主流程', seconds: 1016 },
@@ -63,9 +63,9 @@ describe('report view helpers', () => {
   });
 
   it('names subtasks by kind and ordinal', () => {
-    const subs = [sub('a', 'retry'), sub('b', 'reexport'), sub('c', 'retry')];
+    const subs = [sub('a', 'retry'), sub('b', 'apply_adjudication'), sub('c', 'retry')];
     expect(subtaskName(subs, 'c')).toBe('重试 #2');
-    expect(subtaskName(subs, 'b')).toBe('重新导出 #1');
+    expect(subtaskName(subs, 'b')).toBe('执行裁决 #1');
     expect(subtaskName(subs, '')).toBe('主流程');
     expect(subtaskName(subs, 'zzz')).toBe('zzz');
   });

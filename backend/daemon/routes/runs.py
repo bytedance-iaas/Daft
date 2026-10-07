@@ -1,7 +1,7 @@
 """``{base}/api/v1`` routes that start, steer and extend tasks (W5a; C4 1.4).
 
 createTask, createTasksBatch, taskAction (start / pause / resume / stop), repreflightTask,
-retryTask, continueTask, reexportTask, applyAdjudication, purgeTaskArtifacts and
+retryTask, continueTask, applyAdjudication, purgeTaskArtifacts and
 getTaskPlan. The work itself is :class:`daemon.orchestr.service.Orchestrator`'s; every
 write accepts ``Idempotency-Key`` and only JSON (``read_json_body``).
 """
@@ -149,18 +149,6 @@ async def continue_task(request: Request, task_id: str):
                                 who.owner_id)
 
     return await _idem(request, rt, who, "continueTask", None, handler)
-
-
-@router.post("/tasks/{task_id}/reexport")
-async def reexport_task(request: Request, task_id: str):
-    await read_json_body(request, required=False)
-    rt, who = runtime(request), principal(request)
-
-    def handler() -> Response:
-        return _subtask_created(rt, orchestrator_of(rt).create_subtask(task_id, "reexport", who),
-                                who.owner_id)
-
-    return await _idem(request, rt, who, "reexportTask", None, handler)
 
 
 @router.post("/tasks/{task_id}/adjudication/apply")

@@ -6,7 +6,6 @@ import {
   activeSubtask,
   currentStage,
   displayState,
-  exportedBefore,
   groupStages,
   hasResult,
   mergedStageState,
@@ -47,14 +46,6 @@ describe('stages and export', () => {
   it('current stage is the running one, else the last started', () => {
     expect(currentStage([stage('numeric', 'succeeded'), stage('vlm', 'running', 3, 9)])?.id).toBe('vlm');
     expect(currentStage([stage('numeric', 'succeeded'), stage('frame', 'succeeded'), stage('vlm', 'pending')])?.id).toBe('frame');
-  });
-
-  it('「导出」 until an export ever succeeded, then 「重新导出」', () => {
-    expect(exportedBefore([stage('export', 'skipped')])).toBe(false);
-    expect(exportedBefore([stage('export', 'succeeded')])).toBe(true);
-    expect(
-      exportedBefore([stage('export', 'skipped')], [{ id: 's', task_id: 't', kind: 'reexport', scope: {}, state: 'succeeded', created_at: 1 }]),
-    ).toBe(true);
   });
 
   it('module problems: red errors, gray not run', () => {
@@ -154,8 +145,8 @@ describe('display state while a subtask runs (D46)', () => {
   });
 
   it('a subtask paused by the system or being stopped shows that, still named', () => {
-    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'reexport', 'paused', { pause_reason: 'system' }) })).toEqual({ state: 'paused', pauseReason: 'system', subtask: '重新导出', bySubtask: true });
-    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'reexport', 'stopping') })).toMatchObject({ state: 'stopping', subtask: '重新导出' });
+    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'apply_adjudication', 'paused', { pause_reason: 'system' }) })).toEqual({ state: 'paused', pauseReason: 'system', subtask: '执行裁决', bySubtask: true });
+    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'apply_adjudication', 'stopping') })).toMatchObject({ state: 'stopping', subtask: '执行裁决' });
   });
 
   it('reads the stages of a subtask progress document defensively', () => {
@@ -170,7 +161,7 @@ function allDoneStages(): StageProgress[] {
 }
 
 describe('actionsFor (07 §4.1)', () => {
-  const base = { pause_reason: null, pending_adjudication: 0, delivery_stale: false, summary: null, deleted_at: null, active_subtask: null } as const;
+  const base = { pause_reason: null, pending_adjudication: 0, summary: null, deleted_at: null, active_subtask: null } as const;
   it('by state', () => {
     expect(actionsFor({ ...base, state: 'created' })).toMatchObject({ primary: 'start', more: ['edit', 'copy', 'delete'] });
     expect(actionsFor({ ...base, state: 'running' }).more).toEqual(['pause', 'stop', 'delete']);
@@ -180,7 +171,7 @@ describe('actionsFor (07 §4.1)', () => {
     expect(actionsFor({ ...base, state: 'completed_with_errors' }).more[0]).toBe('retry');
     expect(actionsFor({ ...base, state: 'failed' }).primary).toBe('continue');
     expect(actionsFor({ ...base, state: 'stopped' }).primary).toBe('continue');
-    expect(actionsFor({ ...base, state: 'succeeded', pending_adjudication: 3, delivery_stale: true }).more).toEqual(['adjudicate', 'export', 'copy', 'purge', 'delete']);
+    expect(actionsFor({ ...base, state: 'succeeded', pending_adjudication: 3 }).more).toEqual(['adjudicate', 'copy', 'purge', 'delete']);
     expect(actionsFor({ ...base, state: 'succeeded', deleted_at: 1 })).toEqual({ primary: 'restore', more: [], disabled: {} });
   });
 

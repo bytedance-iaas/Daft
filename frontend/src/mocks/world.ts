@@ -714,7 +714,7 @@ export function buildTask(s: TaskSeed): Task {
     embodiment_id: s.embodiment ?? null,
     // No `snapshot`: C4 1.1.0 composes it with the closed VlmChoice, so no instance with it validates.
     vlm: vlm ? { backend: s.vlmChoice?.backend ?? 'ark-prod', model: s.vlmChoice?.model ?? 'doubao-seed-2-0-pro-260215', reasoning_effort: null } : null,
-    params: { start_now: s.state !== 'created', export: true, vlm_retry: 3, vlm_hedge: true, clips: false },
+    params: { start_now: s.state !== 'created', vlm_retry: 3, vlm_hedge: true, clips: false },
     source: started ? { objects: 204, bytes: 1_520_331_122, digest: DIGEST2 } : null,
     progress: { stages: s.stages },
     modules: moduleStates(s.selected, s.modules ?? {}, s.total),
@@ -722,7 +722,6 @@ export function buildTask(s: TaskSeed): Task {
     result_rev: s.resultRev ?? (terminal ? 1 : 0),
     usage: s.usage ?? ZERO_USAGE,
     pending_adjudication: s.pending ?? 0,
-    delivery_stale: s.stale ?? false,
     active_subtask: null,
     created_at: s.created,
     updated_at: s.created + 60_000,
@@ -1087,7 +1086,7 @@ export function so101Subtasks(now: number): Subtask[] {
     {
       id: 'sub_export1',
       task_id: SO101_TASK,
-      kind: 'reexport',
+      kind: 'apply_adjudication',
       scope: {},
       state: 'succeeded',
       state_reason: null,
@@ -1488,9 +1487,9 @@ export function episodeView(ep: number, revision: number): EpisodeView {
     evidence: TS_REJECTS.includes(ep) || VERDICT_REVIEW.includes(ep) ? [0, 1].map((k) => ({ module: 'task_success', path: `details/evidence/task_success/ep${String(ep).padStart(6, '0')}_${k}.jpg`, kind: 'frame' })) : [],
     videos: CAMERAS.map((camera) => ({
       camera,
-      scope,
-      origin: scope === 'delivery' ? ('delivery_dataset' as const) : ('source_dataset' as const),
-      path: scope === 'delivery' ? `export/lerobot_curated/videos/chunk-000/${camera}/episode_${String(ep).padStart(6, '0')}.mp4` : `videos/chunk-000/${camera}/file-000.mp4`,
+      scope: 'input' as const,
+      origin: 'source_dataset' as const,
+      path: `videos/chunk-000/${camera}/file-000.mp4`,
       ...(scope === 'input' ? { from_ts: ep * 14, to_ts: ep * 14 + 14 } : {}),
     })),
   };

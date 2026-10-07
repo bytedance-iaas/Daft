@@ -49,7 +49,7 @@ def _spec(name="droid 前 50 条质检", *, state="queued", owner=P.DEFAULT_OWNE
     return P.TaskCreate(
         name=name, input_source="tos", input_uri="tos://bucket/datasets/droid_lerobot",
         output_uri=delivery, delivery_key=delivery, episode_selector={"mode": "head", "n": 50},
-        params={"export": True}, modules=modules, state=state, owner_id=owner,
+        params={"vlm_retry": 3}, modules=modules, state=state, owner_id=owner,
         input_cred_id=input_cred, output_cred_id=output_cred, vlm_model_id=vlm_model,
         input_region="cn-beijing", dataset_id=dataset)
 
@@ -723,8 +723,8 @@ def test_create_and_get_task(repo, clock):
     t = repo.create_task(_spec(state="created"))
     assert _is_new_id(t.id, "task") and t.state == "created" and t.created_at == clock()
     assert t.updated_at == t.created_at and t.result_rev == 0 and t.deleted_at is None
-    assert t.episode_selector == {"mode": "head", "n": 50} and t.params == {"export": True}
-    assert t.owner_id == P.DEFAULT_OWNER and t.delivery_stale is False
+    assert t.episode_selector == {"mode": "head", "n": 50} and t.params == {"vlm_retry": 3}
+    assert t.owner_id == P.DEFAULT_OWNER
     mods = {m.module_id: m for m in repo.get_task_modules(t.id)}
     assert set(mods) == {"timestamp_check", "kinematic_limits", "task_success"}
     assert mods["timestamp_check"].selected and not mods["kinematic_limits"].selected
@@ -795,8 +795,8 @@ def test_running_can_include_finished_tasks_whose_subtask_runs(repo, clock):
     retry_waits = finished("retry queued", "completed_with_errors")
     repo.create_subtask(P.Subtask(id="", task_id=retry_waits.id, kind="retry", scope={},
                                   state="queued"))
-    export_runs = finished("reexport running", "succeeded")
-    s = repo.create_subtask(P.Subtask(id="", task_id=export_runs.id, kind="reexport", scope={},
+    export_runs = finished("adjudication running", "succeeded")
+    s = repo.create_subtask(P.Subtask(id="", task_id=export_runs.id, kind="apply_adjudication", scope={},
                                       state="queued"))
     _sub_drive(repo, s.id, "running")
     resume_paused = finished("resume paused", "failed")
@@ -810,7 +810,7 @@ def test_running_can_include_finished_tasks_whose_subtask_runs(repo, clock):
     theirs = repo.create_task(_spec("not mine", owner=OTHER))
     for frm, to in (("queued", "running"), ("running", "succeeded")):
         assert repo.update_task_state(theirs.id, {frm}, to, at=T0)
-    repo.create_subtask(P.Subtask(id="", task_id=theirs.id, kind="reexport", scope={},
+    repo.create_subtask(P.Subtask(id="", task_id=theirs.id, kind="apply_adjudication", scope={},
                                   state="queued"))
 
     def ids(**kw):
@@ -912,8 +912,8 @@ def test_update_task_fields_if_match(repo, clock):
     with pytest.raises(P.PreconditionFailed):
         repo.update_task_fields(t.id, if_updated_at=t.updated_at - 1, name="x")
     u = repo.update_task_fields(t.id, if_updated_at=t.updated_at, name="renamed",
-                                params={"export": False}, episode_selector={"mode": "all"})
-    assert (u.name, u.params, u.episode_selector) == ("renamed", {"export": False}, {"mode": "all"})
+                                params={"vlm_hedge": False}, episode_selector={"mode": "all"})
+    assert (u.name, u.params, u.episode_selector) == ("renamed", {"vlm_hedge": False}, {"mode": "all"})
     assert u.updated_at > t.updated_at                                # even within one millisecond
     with pytest.raises(P.PreconditionFailed):
         repo.update_task_fields(t.id, if_updated_at=t.updated_at, note="stale window")
@@ -1028,10 +1028,6 @@ def test_progress_summary_revision_export_freeze(repo):
     with pytest.raises(ValueError):
         repo.switch_result_rev(t.id, 1, 1)
 
-    repo.set_export_fingerprint(t.id, "sha256:abc", delivery_stale=True)
-    got = repo.get_task(t.id)
-    assert (got.export_fingerprint, got.delivery_stale) == ("sha256:abc", True)
-
     repo.freeze_task_inputs(t.id, run_id="20260920-130514", preflight={"format": "v2"},
                             source_fingerprint={"objects": 204}, vlm_snapshot=None)
     got = repo.get_task(t.id)
@@ -1071,7 +1067,8 @@ def test_soft_delete_restore_purge(repo, clock):
 
     done = repo.create_task(_spec("done"))
     _drive(repo, done.id, "running", "succeeded")
-    repo.create_subtask(P.Subtask(id="", task_id=done.id, kind="reexport", scope={}, state="queued"))
+    repo.create_subtask(P.Subtask(id="", task_id=done.id, kind="apply_adjudication", scope={},
+                                 state="queued"))
     with pytest.raises(P.Conflict) as err:
         repo.soft_delete_task(done.id, at=T0)                           # its subtask is still active
     assert err.value.code == "subtask_active"
@@ -1149,13 +1146,13 @@ def _sub_drive(repo, sub_id, *states):
 def test_subtask_rules(repo, clock):
     t = repo.create_task(_spec())
     with pytest.raises(P.StateConflict):                                 # parent still queued
-        repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={}, state="queued"))
+        repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="apply_adjudication", scope={}, state="queued"))
     _drive(repo, t.id, "running", "completed_with_errors")
     s1 = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", state="queued",
                                        scope={"modules": ["task_success"], "episodes": "errors"}))
     assert _is_new_id(s1.id, "sub") and s1.created_at == clock() and s1.scope["episodes"] == "errors"
     with pytest.raises(P.Conflict) as err:
-        repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
+        repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={},
                                       state="queued"))
     assert err.value.code == "subtask_active"
     assert repo.active_subtask(t.id).id == s1.id

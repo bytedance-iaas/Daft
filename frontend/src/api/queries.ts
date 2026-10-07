@@ -79,7 +79,6 @@ export function showTaskState(qc: QueryClient, task: Task): void {
     pause_reason: task.pause_reason ?? null,
     active_subtask: task.active_subtask?.id ?? null,
     progress: task.progress,
-    delivery_stale: task.delivery_stale,
     pending_adjudication: task.pending_adjudication,
   }));
 }

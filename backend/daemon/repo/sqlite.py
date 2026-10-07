@@ -404,9 +404,9 @@ def _task(row) -> Task:
         vlm_reasoning_effort=row["vlm_reasoning_effort"],
         vlm_snapshot=_loads(row["vlm_snapshot"]), preflight=_loads(row["preflight"]),
         source_fingerprint=_loads(row["source_fingerprint"]), result_rev=row["result_rev"],
-        export_fingerprint=row["export_fingerprint"], run_id=row["run_id"],
+        run_id=row["run_id"],
         progress=_loads(row["progress"]), summary=_loads(row["summary"]),
-        delivery_stale=bool(row["delivery_stale"]), started_at=row["started_at"],
+        started_at=row["started_at"],
         finished_at=row["finished_at"], deleted_at=row["deleted_at"], owner_id=row["owner_id"],
         created_at=row["created_at"], updated_at=row["updated_at"])
 
@@ -1406,15 +1406,6 @@ class SqliteRepository:
 
         return self._write(op)
 
-    def set_export_fingerprint(self, task_id: str, fingerprint: str | None,
-                               delivery_stale: bool) -> None:
-        def op(c):
-            cur = c.execute("UPDATE task SET export_fingerprint=?, delivery_stale=? WHERE id=?",
-                            (fingerprint, int(bool(delivery_stale)), task_id))
-            if cur.rowcount == 0:
-                raise NotFound(f"task {task_id}")
-        self._write(op)
-
     def freeze_task_inputs(self, task_id: str, *, run_id: str, preflight: dict,
                            source_fingerprint: dict, vlm_snapshot: dict | None) -> None:
         def op(c):
@@ -1807,12 +1798,6 @@ class SqliteRepository:
             return int(row[0]), int(row[1])
 
         return self._read(op)
-
-    def delivery_pending_count(self, *, owner: str = DEFAULT_OWNER) -> int:
-        return self._read(lambda c: c.execute(
-            "SELECT COUNT(*) FROM task WHERE owner_id=? AND deleted_at IS NULL"
-            f" AND state IN {_TERMINAL_SQL} AND result_rev >= 1"
-            " AND (delivery_stale=1 OR export_fingerprint IS NULL)", (owner,)).fetchone()[0])
 
     def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
         def total(key: str) -> str:

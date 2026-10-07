@@ -511,7 +511,7 @@ function MoreInfo({ task }: { task: Task }) {
     { label: zh.taskDetail.cfgEffort, value: task.vlm ? task.vlm.reasoning_effort ?? zh.taskDetail.cfgEffortDefault : '—' },
     { label: zh.taskDetail.cfgRetry, value: task.vlm ? zh.taskDetail.cfgRetryValue(p.vlm_retry ?? 3, p.vlm_hedge !== false) : '—' },
     { label: zh.taskDetail.cfgLimits, value: `CPU ${p.limits?.cpu_concurrency ?? zh.taskForm.cpuLimitPlaceholder} · VLM ${p.limits?.vlm_parallelism ?? zh.common.unlimited}` },
-    { label: zh.taskDetail.cfgExport, value: `${p.export === false ? zh.taskDetail.noExport : zh.taskDetail.yesExport}${p.clips ? ` · ${zh.taskDetail.clipsOn}` : ''}` },
+    ...(p.clips ? [{ label: zh.taskDetail.cfgClips, value: zh.taskDetail.clipsOn }] : []),
   ];
   return (
     <Collapse>

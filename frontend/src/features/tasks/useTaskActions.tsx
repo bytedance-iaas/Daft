@@ -184,23 +184,6 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
           zh.actions.confirmContinue.ok,
         );
         return;
-      case 'export':
-        confirm(
-          t.exported ? zh.actions.confirmExport.titleAgain : zh.actions.confirmExport.titleFirst,
-          zh.actions.confirmExport.content(t.deliveryUri ?? zh.taskForm.outputUri),
-          async () => {
-            try {
-              const r = await unwrap(api().POST('/tasks/{id}/reexport', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
-              showSubtask(qc, id, r.subtask);
-              Message.success(zh.actions.done.reexport);
-              refresh(id);
-            } catch (e) {
-              fail(e);
-            }
-          },
-          zh.actions.confirmExport.ok,
-        );
-        return;
       case 'delete':
         setDeleting({ id, name: t.name });
         return;

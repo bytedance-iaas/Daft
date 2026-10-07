@@ -150,7 +150,7 @@ def seed_task(repo, name="droid 前 50 条质检", *, state="queued", selected=(
     return repo.create_task(P.TaskCreate(
         name=name, input_source="tos", input_uri=input_uri, output_uri=delivery,
         delivery_key=delivery, episode_selector={"mode": "head", "n": 50},
-        params={"export": True, "vlm_retry": 3}, modules=rows, state=state, owner_id=owner,
+        params={"vlm_retry": 3}, modules=rows, state=state, owner_id=owner,
         input_cred_id=input_cred_id, output_cred_id=output_cred_id, vlm_model_id=vlm_model_id,
         input_region="cn-beijing", output_region="cn-beijing", dataset_id=dataset_id))
 

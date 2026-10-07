@@ -7,8 +7,6 @@ export function actionLabel(key: TaskActionKey, opts: { held?: number; exported?
   switch (key) {
     case 'retry':
       return zh.taskList.retryCount(opts.held ?? 0);
-    case 'export':
-      return opts.exported ? zh.actions.reexport : zh.actions.export;
     case 'adjudicate':
       // D47: the count when there are pending items, the plain entry otherwise.
       return opts.pending ? zh.actions.adjudicateCount(opts.pending) : zh.actions.adjudicate;

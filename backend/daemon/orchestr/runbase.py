@@ -1,7 +1,7 @@
 """What every run shares: stages as CLI processes, progress, logs, results, publishing.
 
 A *run* is the work a worker does for one queue entry: the main run of a task, or
-one of its subtasks (retry, resume, apply_adjudication, reexport; design doc 00
+one of its subtasks (retry, resume, apply_adjudication; design doc 00
 §4.1). The main run overlaps batch commands of different funnel stages; other
 steps run in plan order. It keeps its place in a journal on the work directory, and
 leaves the task in the state the rules say.
@@ -582,26 +582,6 @@ class Run:
         return (self.wd.revision_dir(rev) / "commit.json").is_file()
 
     # ------------------------------------------------------------------ publishing
-    def export_format(self) -> str:
-        kind = self.container_kind()
-        if kind:
-            return kind                                  # mcap / lance (D44)
-        version = (self.preflight.get("format") or {}).get("version")
-        return "lerobot_v3" if version == "v3" else "lerobot_v2"
-
-    def source_digest(self) -> str:
-        doc = read_json(self.wd.manifest, {}) or {}
-        return str((doc.get("summary") or {}).get("digest") or "")
-
-    def current_fingerprint(self, rev: int) -> str | None:
-        from curation.export.manifest import export_fingerprint
-
-        passed = rules.read_list(self.wd.revision_dir(rev), "passed")
-        if passed is None:
-            return None
-        return export_fingerprint(passed.get("episodes") or [], source_format=self.export_format(),
-                                  source_digest=self.source_digest())
-
     def delivery(self):
         """``with self.delivery() as d:`` - the task's delivery directory."""
         key = None
@@ -637,37 +617,6 @@ class Run:
         if not self.wd.manifest.is_file():
             raise TaskFailure("workdir_incomplete", f"交付目录 {where}/ 里也没有源文件清单，"
                                                     "没法接着做：请复制为新任务")
-
-    def export(self, stage: str, delivery, rev: int, *, incremental: bool) -> dict:
-        self.progress(stage, state="running", done=0, total=0)
-        run_uri = delivery.cli_uri(self.task.run_id)
-        scratch = pathlib.Path(self.orch.settings.scratch_dir) / self.task_id
-        shutil.rmtree(scratch, ignore_errors=True)         # what a killed export left behind
-        (scratch / "tmp").mkdir(parents=True, exist_ok=True)
-        argv = ["export", "--run-dir", str(self.wd.root),
-                *self.source_args(manifest=True, semantics=False), "--revision", str(rev),
-                "--output", run_uri, "--scratch", str(scratch)]
-        if incremental:
-            argv.append("--incremental")
-        try:
-            outcome = self.cli(stage, argv, need_input=True, need_output=True,
-                               extra_env={"CURATION_EXPORT_SCRATCH": str(scratch),
-                                          "TMPDIR": str(scratch / "tmp")})
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
-        if not outcome.ok:
-            self.fail_on(outcome, stage)
-        doc = outcome.doc
-        d = doc.get("diff") or {}
-        self.log(stage, "info",
-                 f"导出 {doc.get('episodes')} 条（{'增量' if doc.get('incremental') else '全量'}）："
-                 f"保留 {d.get('keep', 0)}、改标 {d.get('relabel', 0)}、改号 {d.get('renumber', 0)}、"
-                 f"新增 {d.get('add', 0)}、剔除 {d.get('drop', 0)}"
-                 + (f"；交付数据集在 {doc['dataset_dir']}/" if doc.get("dataset_dir") else "")
-                 + (f"；退回全量的原因：{doc['full_reason']}" if doc.get("full_reason") else ""))
-        if doc.get("note"):                                # lance (D44): no native delivery yet
-            self.log(stage, "info", doc["note"])
-        return doc
 
     def check_stop(self) -> None:
         """Only a stop cuts short work in hand; a pause lets it finish (it starts nothing new)."""
@@ -742,7 +691,7 @@ class Run:
         self.reload()
 
     def refresh_results(self, rev: int) -> None:
-        """Summary and ``delivery_stale`` after a revision switched (01 §2.3).
+        """The task's summary after a revision switched (01 §2.3).
 
         The summary is the result readers' (W5b ``refresh_summary``): its
         ``pending_adjudication`` counts the adjudication queue the way the queue does.
@@ -755,10 +704,6 @@ class Run:
             log.warning("summary of task %s not refreshed by the result readers; counting "
                         "the lists of r%04d", self.task_id, rev, exc_info=True)
             self.repo.set_task_summary(self.task_id, rules.summary(self.wd.revision_dir(rev)))
-        current = self.current_fingerprint(rev)
-        self.reload()
-        stale = current is None or current != self.task.export_fingerprint
-        self.repo.set_export_fingerprint(self.task_id, self.task.export_fingerprint, stale)
         self.reload()
 
     def held_count(self, rev: int) -> int:
@@ -773,8 +718,6 @@ class Run:
     def maybe_latest(self, delivery, stage: str) -> None:
         """Move ``latest`` to this batch when it is complete (06 §1, P13)."""
         self.reload()
-        if self.task.delivery_stale or not self.task.export_fingerprint:
-            return
         if self.recomputed_state() != "succeeded":
             return
         try:

@@ -11,14 +11,13 @@
 * **run ids** are the start time (``YYYYMMDD-HHMMSS``, site time zone); a name
   already taken gets ``-2``, ``-3``... and is claimed at once by writing its
   ``run.json``, so two tasks never share a batch;
-* **sync**: the Daemon uploads the run directory (not the delivered dataset - the
-  CLI's ``export --output`` uploads that - and not work in progress: hidden files,
-  ``inflight.json``, temporary files, ``_COMPLETE``); a local record of what went up
-  keeps each sync to what changed;
-* **publishing is serial per delivery directory**: export, sync, verify,
-  ``_COMPLETE`` and ``latest`` run under one lock per normalized delivery key;
-  ``latest`` moves only when the batch is complete (task succeeded, dataset
-  exported and not stale, verified).
+* **sync**: the Daemon uploads the run directory - the result revisions, the report
+  and its details, which is the whole delivery since D69 - and not work in progress
+  (hidden files, ``inflight.json``, temporary files, ``_COMPLETE``); a local record of
+  what went up keeps each sync to what changed;
+* **publishing is serial per delivery directory**: sync, verify, ``_COMPLETE`` and
+  ``latest`` run under one lock per normalized delivery key; ``latest`` moves only
+  when the batch is complete (task succeeded, verified).
 
 Two back ends: TOS through W8's client (the output key), and - experimental, for
 debugging and tests only - a local directory standing in for the bucket
@@ -41,12 +40,8 @@ log = logging.getLogger("daemon.orchestr")
 
 LATEST = "latest"
 COMPLETE = "_COMPLETE"
-EXPORT_DATASET = "export/lerobot_curated"
-#: every delivered dataset directory ``curation export`` uploads itself: LeRobot, and the
-#: mcap / lance deliveries (D44, ``curation/export/containers.py``)
-EXPORT_DATASETS = (EXPORT_DATASET, "export/mcap_curated", "export/lance_episodes")
 #: names in the run directory that are never delivered by the sync (verify skips them too)
-_SKIP_NAMES = frozenset({"inflight.json", COMPLETE, LATEST, "_EXPORTING"})
+_SKIP_NAMES = frozenset({"inflight.json", COMPLETE, LATEST})
 _LIST_PAGE = 1000
 
 
@@ -347,8 +342,6 @@ def _delivered(rel: str) -> bool:
     parts = rel.split("/")
     if any(p.startswith(".") for p in parts):
         return False
-    if any(rel == d or rel.startswith(d + "/") for d in EXPORT_DATASETS):
-        return False                      # the CLI's export uploads the dataset itself
     name = parts[-1]
     if name in _SKIP_NAMES:
         return False
@@ -398,10 +391,10 @@ def forget_sync(state_path: pathlib.Path) -> None:
 
 
 #: What a restore from the delivery leaves there (00 §4.2 "大文件不回灌", v1's
-#: ``REPROFILE_SKIP_DIRS``): the delivered dataset, review clips, evidence frames and
-#: plot data - nothing local reads them; readers sign their delivery URLs.
-RESTORE_SKIP = (*(d + "/" for d in EXPORT_DATASETS), "details/audit_clips/",
-                "details/evidence/", "details/plots/", "checks/video_action_sync/curves/")
+#: ``REPROFILE_SKIP_DIRS``): review clips, evidence frames and plot data - nothing local
+#: reads them; readers sign their delivery URLs.
+RESTORE_SKIP = ("details/audit_clips/", "details/evidence/", "details/plots/",
+                "checks/video_action_sync/curves/")
 
 
 def restorable(rel: str) -> bool:

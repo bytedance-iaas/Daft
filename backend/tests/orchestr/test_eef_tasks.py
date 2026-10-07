@@ -4,7 +4,7 @@ Upload validation with located errors, the task rules for the EEF module (an upl
 server path; the module is preflighted against the dataset with the uploaded file; it needs a model)
 and - in the slow tests - a task that runs it end to end (the files are copied into the run
 directory, it judges the frame stage's survivors next to task_success, the report has its section and
-the delivery its artifacts) and one where a person settles what it could not, through to the re-export.
+the delivery its artifacts) and one where a person settles what it could not.
 """
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ def test_an_eef_task_runs_end_to_end(daemon):
     seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
     params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
               "review_windows_per_camera": 1, "review_frames_per_window": 2}
-    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params}], export=False)
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params}])
     task = d.wait(created["id"])
     assert task["state"] in ("succeeded", "completed_with_errors"), json.dumps(task)[:2000]
     rd = d.run_dir(created["id"])
@@ -318,7 +318,6 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     assert r.status_code == 202, r.text
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == first["result_rev"] + 1, json.dumps(done)[:2000]
-    assert done["delivery_stale"] is True
     assert d.api("GET", f"/tasks/{task_id}/episodes/{drop}").json()["reasons"] == [
         {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
          "text": "人工裁决判为 EEF 与视频不一致"}]
@@ -329,10 +328,7 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     assert cards[drop]["status"] == "applied"
     with open(os.path.join(rd, "human-decisions", "eef_checks.csv"), encoding="utf-8") as fh:
         assert f"ep{drop:06d}" in fh.read()
-    r = d.api("POST", f"/tasks/{task_id}/reexport")
-    assert r.status_code == 202, r.text
-    exported = d.wait(task_id)
-    assert exported["delivery_stale"] is False
-    with open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8") as fh:
+    with open(os.path.join(rd, "revisions", f"r{done['result_rev']:04d}", "passed.json"),
+              encoding="utf-8") as fh:
         delivered = {e["episode_index"] for e in json.load(fh)["episodes"]}
     assert drop not in delivered and (keep == drop or keep in delivered)

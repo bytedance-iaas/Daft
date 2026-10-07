@@ -100,7 +100,6 @@
 | POST | `/api/v1/tasks/{id}/repreflight` | 开始时指纹对不上、用户确认之后调：重新预检，相容就直接开始（D37，§12） |
 | POST | `/api/v1/tasks/{id}/retry` | 重试 → 建子任务，见 §3.2 |
 | POST | `/api/v1/tasks/{id}/continue` | stopped / failed 的任务继续运行 → 建子任务 |
-| POST | `/api/v1/tasks/{id}/reexport` | 重新导出交付数据集 → 建子任务 |
 | GET | `/api/v1/tasks/{id}/subtasks` | 子任务列表 |
 | GET | `/api/v1/tasks/{id}/timeline` | 执行时间线：主流程、子任务、暂停与恢复、结果版本（任务详情页用，W2 补） |
 | GET | `/api/v1/tasks/{id}/plan` | planner 生成的执行计划，**只读** |
@@ -185,7 +184,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
    第 5 步取到的源文件清单（`source_manifest.json`，D27）。
 7. 入队。交付目录下已经有别的输入数据集跑出来的批次时，不拦，只在 `warnings` 里提醒一句。
 
-`retry` / `continue` / `reexport` / 执行裁决 在建子任务之前同样走第 4 步里与它相关的检查。
+`retry` / `continue` / 执行裁决 在建子任务之前同样走第 4 步里与它相关的检查。
 
 ### 3.1 `params` 全表
 
@@ -223,7 +222,6 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
 - **补跑后任务的终态按当前结果重算**：出错的条目都救回来了，列表和报告上就从「错误」变为「已完成」；
   原先的失败和这次补跑留在任务详情的执行时间线里。
 - `continue` 没有请求体：从断点接着跑主流程里没完成的部分。因 `source_changed` 失败的任务不能继续，只能复制为新任务。
-- `reexport` 没有请求体：走增量导出；创建时 `export=false` 的任务也用它补做首次导出。
 - 三者都建子任务。同一任务已有未结束的子任务时返回 409。
 
 ### 3.3 任务详情的响应

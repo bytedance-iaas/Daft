@@ -22,7 +22,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
 | `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内依次是 autolabel、逐条交接的段、全量步骤；一块失败另一块随之停下 |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 一块的逐条段（一条链）：每段一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`（只在块内），每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
-| `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5） |
+| `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |
 | `start.py` | 启动前：三项检查（D30）、数据集指纹核对（D37）、固化输入并入队 |
@@ -38,7 +38,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 ## 接口
 
 `POST /tasks`、`POST /tasks/batch`、`POST /tasks/{id}/actions/{start|pause|resume|stop}`、`POST /tasks/{id}/repreflight`、
-`POST /tasks/{id}/retry`、`POST /tasks/{id}/continue`、`POST /tasks/{id}/reexport`、`POST /tasks/{id}/adjudication/apply`、
+`POST /tasks/{id}/retry`、`POST /tasks/{id}/continue`、`POST /tasks/{id}/adjudication/apply`、
 `POST /tasks/{id}/purge-artifacts`、`GET /tasks/{id}/plan`、`POST /preflight`、`GET /datasets/browse`、`GET /datasets/episodes`、
 `POST /datasets`、`POST /datasets/{id}/recheck`、`POST /datasets/{id}/repreflight`、`POST /uploads`、`GET /uploads/{id}`。写接口都支持 `Idempotency-Key`，
 每个响应在测试里按 C4 校验。
@@ -72,8 +72,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   终态按 01 篇 §2.5 约束 3 与 D35：没有 `failed` 的模块、`held` 为空才是 `succeeded`。
 - **结果版本**：一次运行写一个新版本 `revisions/rNNNN/`，`commit.json` 最后写；同步并核验通过之后才 CAS 切换 `result_rev`
   并记审计事件（D25），然后按 W5b 的 `refresh_summary` 刷新任务汇总（含 `pending_adjudication`、1.4 的 `skipped`），
-  并判断交付是否过期（`export_fingerprint` 与当前版本的指纹比较）。同一交付目录的导出、同步、核验、`latest` 串行（每个目录一把锁）；
-  `latest` 只在任务成功、已导出且不过期、核验通过时移动。
+  同一交付目录的同步、核验、`latest` 串行（每个目录一把锁）；`latest` 只在任务成功、核验通过时移动。
 - **暂停 / 恢复 / 停止**：暂停发 SIGTERM，在途的 episode 做完后退出，任务 `paused`；恢复重新入队，从日志本接着做。
   停止发 SIGINT，10 秒不退就 SIGKILL，整个进程组都不留。有子任务在跑时，这三个动作作用在子任务上。非法迁移一律 409
   `task_state_conflict`，`details.state` 是当前状态。
@@ -91,9 +90,8 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   - `resume`（「继续运行」）：已停止或失败的任务接着主流程的日志本往下做，两块各自从未完成处继续，不重做完成的（模块 × 条目）。
   - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（追问的回答在打开它的判断变了之后作废，
     C4 1.5.1，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
-    用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改标的条目按新标注重跑任务成败判定，
-    画像对全部所选增量同步（改标的条重新归类），去重不重跑（每组留哪条由终判在人工决定之后选）；新版本，不导出（D9）；执行完标记这些裁决已应用。
-  - `reexport`：当前版本 `export --incremental`，再核验；交付不再过期，`latest` 可能移动。
+    用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改了描述的条目按新描述重跑任务成败判定，
+    去重不重跑（每组留哪条由终判在人工决定之后选）；新版本，执行完标记这些裁决已应用。
 - **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去，
   再删掉工作目录里除 `.orchestr/` 之外的一切，导出临时目录也删。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
   目录留着，下一轮（每小时）再试；只有被清理过交付产物（D28）的任务不上传、直接删。
@@ -110,8 +108,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   运行时，读源数据的命令多带 `--selection <任务的所选>`（数据集语义取它的前 100 条，与 v1 一致），环境里多 `CURATION_SOURCE_CACHE`
   （TOS 上的数据先拉到 `CURATOR_SOURCE_CACHE_DIR/<task_id>/`，同一次运行的各条命令复用）和指向它下面 `tmp/` 的 `TMPDIR`（读取器转出的视频）。
   运行结束（完成、失败、暂停、停止都算）就删掉这个目录，下次运行重新拉；崩溃留下的由清理线程在任务没有运行时删掉。
-  导出的数据集在 `export/mcap_curated/` 或 `export/lance_episodes/`，和 `lerobot_curated/` 一样由 CLI 自己上传、同步时跳过、不取回；
-  Lance 导出的说明（原格式交付未做）写进任务日志。
+  这两种格式和 LeRobot 一样只交付报告（D69 起不写交付数据集）。
 
 ## 配置
 
@@ -159,12 +156,11 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
 
    201，`state` 是 `queued`。记下 `T=<id>`；`c $B/tasks/$T` 里的 `dataset_id` 说明数据集顺带登记了。
 3. **看它跑**：`curl -N -u demo:demo-pass localhost:18080/curation/events/tasks/$T` 能看到 `state`、`progress`（CPU 块的 numeric → frame →
-   dedup，没有判决档；两块都做完后 final → report → export → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志；
+   dedup，没有判决档；两块都做完后 final → report → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志；
    `c $B/tasks/$T/plan` 是执行计划。十几秒后 `c $B/tasks/$T` 是 `succeeded`，`result_rev` 1，`summary.total` 8。
-4. **交付**：`ls $D/tos/deliveries/mini/*/` 有 `_COMPLETE`、`revisions/r0001/commit.json`、`export/`；`cat $D/tos/deliveries/mini/latest`
-   是这个任务的 `run_id`。
+4. **交付**：`ls $D/tos/deliveries/mini/*/` 有 `_COMPLETE`、`revisions/r0001/commit.json`、`revisions/r0001/report.json`（没有
+   `export/`：D69 起不交付数据集）；`cat $D/tos/deliveries/mini/latest` 是这个任务的 `run_id`。
 5. **非法迁移**：`c -X POST $B/tasks/$T/actions/pause` 是 409 `task_state_conflict`，`details.state` 是 `succeeded`。
-6. **重新导出**：`c -X POST $B/tasks/$T/reexport` 是 202 与一个 `reexport` 子任务；`c $B/tasks/$T/subtasks` 里它很快 `succeeded`。
 7. **启动前的指纹核对（D37）**：用同一个 `preflight_id` 再建一个 `params: {"start_now": false}` 的任务（记为 `T2`，`created`），
    然后 `touch $D/inputs/mini/meta/episodes.jsonl`，`c -X POST $B/tasks/$T2/actions/start` 是 409 `source_changed`，
    `details` 里 `meta_changed: true`、`modified: 1`；`c -X POST $B/tasks/$T2/repreflight` 返回 `compatible: true`，任务进入 `queued`。
@@ -172,7 +168,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
    `c "$B/datasets/episodes?source=local&uri=$D/inputs/mini&limit=3"` 三条，`has_more: true`，带 `next_cursor` 接着翻。
 9. **清理与取回**：停掉 Daemon，加上 `CURATOR_WORK_RETENTION_DAYS=0.0001`（约 9 秒）重启，一分钟后 `ls -a $D/data/runs/$T`
    只剩 `.orchestr`，Daemon 日志里有 `janitor: task … cleaned`；`c $B/tasks/$T/report` 照样 200，工作目录从交付目录取回了，
-   但大文件不取回：`ls $D/data/runs/$T/export` 只有两份清单，没有 `lerobot_curated/`。
+   但大文件不取回：`ls $D/data/runs/$T/details` 里没有 `evidence/`、`plots/`（证据帧与曲线图留在交付目录）。
    **注意**：保留期对数据目录里所有已结束的任务都生效（交付目录接得住的就会被清理），别拿存着别的数据的目录做这一步。
 10. **停机**：再建一个任务，趁它在跑 `kill -TERM` Daemon：日志里 `shutdown: 1 running job(s) asked to pause`，
     任务停在 `paused`（`pause_reason: system`，原因「Daemon 停机」）；重启 Daemon（去掉上一步的保留期）后启动对账把它放回队列，
@@ -189,9 +185,8 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
     然后按第 1、2 步各建一个任务（`uri` 换成 `$D/inputs/mini_mcap` / `$D/inputs/mini_lance`，交付目录换成
     `tos://deliveries/mini_mcap` / `tos://deliveries/mini_lance`，模块同第 2 步）。预检的 `format` 分别是
     `{"kind": "mcap", "version": null, …}` 与 `{"kind": "lance", "version": "v3", …}`。十几秒后两个任务都是 `succeeded`，
-    `summary` 为 `total 8, passed 5, rejected 3, held 0`，和 LeRobot 版本相同；`ls $D/tos/deliveries/mini_mcap/*/export/mcap_curated/`
-    是 `episode_0/1/3/4/6.mcap` 与 `index.json`，`ls $D/tos/deliveries/mini_lance/*/export/lance_episodes/` 是 `episodes_parquet`、`index.json`、`videos`；
-    Lance 任务的日志（`c "$B/tasks/$T/logs?stage=export"`）里有「lance 原格式交付本版本未做」。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
+    `summary` 为 `total 8, passed 5, rejected 3, held 0`，和 LeRobot 版本相同；两个交付目录里都只有报告与结果清单
+    （`ls $D/tos/deliveries/mini_mcap/*/` 有 `_COMPLETE`、`revisions/`，没有 `export/`）。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
     跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 
 12. **CPU 名额池与同时运行的任务数（D54）**：停掉 Daemon，写一个早于 D54 的站点配置，按 4 核重启（池里 2 个名额）：

@@ -396,6 +396,14 @@ CREATE UNIQUE INDEX idx_viz_template_name ON viz_template(owner_id, name);
 CREATE INDEX idx_viz_template_list ON viz_template(owner_id, created_at DESC, id DESC);
 """
 
+# Step 8 (D69): the dataset export is gone, so a task no longer carries the fingerprint of what
+# it delivered or whether that delivery went stale. The subtask kind CHECK keeps 'reexport' as a
+# value nothing writes any more - rebuilding the table for one unused word is not worth it.
+_V8 = """
+ALTER TABLE task DROP COLUMN export_fingerprint;
+ALTER TABLE task DROP COLUMN delivery_stale;
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
@@ -405,6 +413,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (5, _V5),
     (6, _V6),
     (7, _V7),
+    (8, _V8),
 )
 
 #: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for

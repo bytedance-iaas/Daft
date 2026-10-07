@@ -59,8 +59,7 @@ PREFLIGHT_TTL_MS = taskspec.PREFLIGHT_MAX_AGE_MS
 _UNFINISHED_SUB = ("queued", "running", "pausing", "paused", "stopping")
 #: which pre-start checks each subtask kind runs (03 §3: "与它相关的检查")
 SUBTASK_CHECKS = {"retry": ("input", "output", "vlm"), "resume": ("input", "output", "vlm"),
-                  "apply_adjudication": ("input", "output", "vlm"),
-                  "reexport": ("input", "output")}
+                  "apply_adjudication": ("input", "output", "vlm")}
 
 
 def conflict(task_or_state, message: str, **details: Any) -> ApiError:
@@ -479,8 +478,7 @@ class Orchestrator:
         if task.state not in allowed:
             what = {"retry": "只有「错误」状态的任务可以重试",
                     "resume": "只有已停止或失败的任务可以继续运行",
-                    "apply_adjudication": "只有已完成（含错误）的任务可以执行裁决",
-                    "reexport": "只有已完成（含错误）的任务可以导出"}[kind]
+                    "apply_adjudication": "只有已完成（含错误）的任务可以执行裁决"}[kind]
             raise conflict(task, what)
         if not WorkDir(self.work_root, task_id).started():
             raise conflict(task, "这个任务的工作目录不完整，没法接着做：请复制为新任务")
@@ -504,9 +502,6 @@ class Orchestrator:
             if not self.decisions_to_apply(task):
                 raise conflict(task, "没有待执行的裁决：先在裁决页做出判断")
             scope = {"relabel_rerun": scope.get("relabel_rerun") or "v1"}
-        elif kind == "reexport":
-            if int(task.result_rev or 0) < 1:
-                raise conflict(task, "这个任务还没有结果，没什么可导出的")
         self.checks.require(Draft.of_task(self.repo, task), SUBTASK_CHECKS[kind])
         try:
             sub = self.repo.create_subtask(P.Subtask(id="", task_id=task_id, kind=kind,
@@ -654,7 +649,6 @@ class Orchestrator:
                 forget_sync(wd.sync_state)
                 wd.ensure()
                 write_json_atomic(wd.purged_mark, {"at": self.clock(), "path": path})
-                self.repo.set_export_fingerprint(task_id, None, True)
                 log.info("purged %s (%d objects, %d bytes)", path, len(listing), total)
             except Exception:  # noqa: BLE001
                 log.exception("purging %s failed", path)

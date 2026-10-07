@@ -15,15 +15,12 @@ every implementation counts the same things:
 * **adjudication backlog** - tasks whose ``summary.pending_adjudication`` (or,
   until W5 writes that key, ``summary.review``) is a positive integer, and the
   sum of those numbers; soft-deleted tasks do not count;
-* **delivery pending** - finished tasks with a result (``result_rev >= 1``)
-  whose delivered dataset is stale or was never exported (``export_fingerprint``
-  is null); soft-deleted tasks do not count;
 * **finished results** - tasks that ended ``succeeded`` or
   ``completed_with_errors`` at or after ``since``, with the sums of their
   ``summary.total`` and ``summary.passed``; stopped and failed tasks are not
   "finished" here, soft-deleted ones do not count;
-* **unfinished subtasks** - retries, resumes, adjudication runs and re-exports
-  not in a terminal state, with their parent task (newest first); their parents
+* **unfinished subtasks** - retries, resumes and adjudication runs not in a
+  terminal state, with their parent task (newest first); their parents
   are finished, so the task states alone never show this work;
 * **token timeline** - the actual ledger only (never the attributed one, which
   splits the same requests), ``prompt_tokens + completion_tokens`` (reasoning

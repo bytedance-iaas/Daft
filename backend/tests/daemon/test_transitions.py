@@ -48,7 +48,7 @@ def test_subtask_transitions_remember_their_pause_reason(repo):
     t = seed_task(repo)
     change_task_state(repo, hub, t.id, {"queued"}, "running", at=T0)
     change_task_state(repo, hub, t.id, {"running"}, "succeeded", at=T0)
-    sub = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
+    sub = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="apply_adjudication", scope={},
                                         state="queued"))
     assert change_subtask_state(repo, hub, sub.id, {"queued"}, "running", at=T0)
     assert change_subtask_state(repo, hub, sub.id, {"running"}, "pausing", at=T0,

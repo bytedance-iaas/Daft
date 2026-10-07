@@ -166,41 +166,16 @@ def test_source_videos_of_a_v3_dataset_carry_their_windows(world):
     assert ep7["videos"][0]["path"].endswith("/file-001.mp4") and ep7["videos"][0]["from_ts"] == 28.0
 
 
-def test_clip_then_delivery_then_source(world):
+def test_a_clip_wins_over_the_source(world):
+    """A camera is played from the clip cut for the adjudication page when there is one, else
+    from the source dataset. The delivered dataset is gone with the export (D69)."""
     rd = world.run_dir
     clip = rd / "details" / "audit_clips" / "ep000004__wrist.mp4"
     clip.parent.mkdir(parents=True)
     clip.write_bytes(b"\0\0\0\x18ftypmp42")
-    # a v3 delivered dataset: ep 4 became episode 2 of the export
-    lr = rd / "export" / "lerobot_curated"
-    info = json.loads((world.dataset / "meta" / "info.json").read_text(encoding="utf-8"))
-    (lr / "meta" / "episodes" / "chunk-000").mkdir(parents=True)
-    (lr / "meta" / "info.json").write_text(json.dumps(info), encoding="utf-8")
-    cols = {"episode_index": [0, 1, 2]}
-    for cam in CAMERAS:
-        cols[f"videos/{cam}/chunk_index"] = [0, 0, 0]
-        cols[f"videos/{cam}/file_index"] = [0, 0, 0]
-        cols[f"videos/{cam}/from_timestamp"] = [0.0, 14.0, 28.0]
-        cols[f"videos/{cam}/to_timestamp"] = [14.0, 28.0, 42.0]
-    pq.write_table(pa.table(cols), lr / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
-    manifest = {"schema_version": "1.0", "source_format": "lerobot_v3",
-                "fingerprint": "sha256:" + "d" * 64, "meta_files": ["meta/info.json"],
-                "episodes": [{"episode_index": 4, "new_index": 2, "content_key": "sha256:" + "e" * 64,
-                              "task_key": "sha256:" + "f" * 64,
-                              "artifacts": {"parquet": "data/chunk-000/file-000.parquet", "chunk": 0,
-                                            "videos": {cam: f"videos/{cam}/chunk-000/file-000.mp4"
-                                                       for cam in CAMERAS}}}]}
-    (rd / "export" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     videos = _view(world, 4)["videos"]
-    assert videos == [
-        {"camera": "wrist", "scope": "delivery", "origin": "clip",
-         "path": "details/audit_clips/ep000004__wrist.mp4"},
-        {"camera": "exterior_1", "scope": "delivery", "origin": "delivery_dataset",
-         "path": "export/lerobot_curated/videos/observation.images.exterior_1/chunk-000/file-000.mp4",
-         "from_ts": 28.0, "to_ts": 42.0}]
-    # an export changing the dataset in place: the delivered copy is not offered meanwhile
-    (rd / "export" / "_EXPORTING").write_text("{}", encoding="utf-8")
-    videos = _view(world, 4)["videos"]
+    assert videos[0] == {"camera": "wrist", "scope": "delivery", "origin": "clip",
+                         "path": "details/audit_clips/ep000004__wrist.mp4"}
     assert [v["origin"] for v in videos] == ["clip", "source_dataset"]
 
 
@@ -267,7 +242,7 @@ def test_clip_source_muxes_a_local_mcap_episode_in_memory(tmp_path):
     assert clips.parse_stream_path("details/audit_clips/ep000012__cam_a.mp4") is None
 
 
-def test_v2_delivery_and_v2_source(client_for, tmp_path):
+def test_a_v2_source_names_each_camera_file(client_for, tmp_path):
     c = client_for(base_path="/curation")
     rt = c.app.state.runtime
     ds = make_dataset(tmp_path / "v2", version="v2")
@@ -278,19 +253,10 @@ def test_v2_delivery_and_v2_source(client_for, tmp_path):
     w = World(client=c, rt=rt, task_id=task.id, run_dir=run_dir, dataset=ds, clock=None)
     w.revision(1)
     w.switch(1)
-    manifest = {"schema_version": "1.0", "source_format": "lerobot_v2",
-                "fingerprint": "sha256:" + "d" * 64, "meta_files": ["meta/info.json"],
-                "episodes": [{"episode_index": 0, "new_index": 0, "content_key": "sha256:" + "e" * 64,
-                              "task_key": "sha256:" + "f" * 64,
-                              "artifacts": {"parquet": "data/chunk-000/episode_000000.parquet",
-                                            "videos": {CAMERAS[0]: "videos/chunk-000/"
-                                                       f"{CAMERAS[0]}/episode_000000.mp4"}}}]}
-    (run_dir / "export").mkdir()
-    (run_dir / "export" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     videos = _view(w, 0)["videos"]
     assert videos == [
-        {"camera": "wrist", "scope": "delivery", "origin": "delivery_dataset",
-         "path": f"export/lerobot_curated/videos/chunk-000/{CAMERAS[0]}/episode_000000.mp4"},
+        {"camera": "wrist", "scope": "input", "origin": "source_dataset",
+         "path": f"videos/chunk-000/{CAMERAS[0]}/episode_000000.mp4"},
         {"camera": "exterior_1", "scope": "input", "origin": "source_dataset",
          "path": f"videos/chunk-000/{CAMERAS[1]}/episode_000000.mp4"}]
 

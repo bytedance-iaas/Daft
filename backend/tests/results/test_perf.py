@@ -122,7 +122,7 @@ def test_bad_scopes_and_foreign_subtasks(world, with_subtask, tmp_path):
     other = make_task(world.repo, world.dataset, name="another")
     assert world.repo.update_task_state(other.id, {"queued"}, "running", at=T0)
     assert world.repo.update_task_state(other.id, {"running"}, "succeeded", at=T0 + MIN)
-    foreign = world.repo.create_subtask(P.Subtask(id="", task_id=other.id, kind="reexport",
+    foreign = world.repo.create_subtask(P.Subtask(id="", task_id=other.id, kind="apply_adjudication",
                                                   scope={}, state="queued"))
     assert_error(world.get("/perf", scope="subtask", subtask=foreign.id), "not_found")
 

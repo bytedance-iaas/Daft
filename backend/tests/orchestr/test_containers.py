@@ -136,26 +136,12 @@ def test_a_task_on_the_format_runs_and_delivers(daemon, containers, fmt):
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
     assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
-    assert task["delivery_stale"] is False
     batch = d.delivery(task["run_id"])
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
-    with open(os.path.join(batch, "export", "manifest.json"), encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    assert manifest["source_format"] == fmt
-    root = os.path.join(batch, "export", manifest["dataset_dir"])
-    if fmt == "mcap":
-        assert sorted(n for n in os.listdir(root) if n.endswith(".mcap")) == [
-            f"episode_{i}.mcap" for i in (0, 1, 3, 4, 6)]
-    else:
-        assert os.path.isdir(os.path.join(root, "episodes_parquet"))
+    assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "report.json"))
+    assert not os.path.isdir(os.path.join(batch, "export"))      # D69: no dataset is delivered
     ds = d.api("GET", f"/datasets/{task['dataset_id']}").json()
     assert ds["format"] == fmt
-    logs = d.api("GET", f"/tasks/{task['id']}/logs", params={"limit": 200,
-                                                             "stage": "export"}).json()
-    msgs = " ".join(x.get("msg", "") for x in logs.get("items") or [])
-    assert f"export/{manifest['dataset_dir']}" in msgs, msgs[:2000]
-    if fmt == "lance":
-        assert "原格式交付本版本未做" in msgs
     # the run's source cache went with the run
     assert not os.path.exists(os.path.join(d.rt.settings.source_cache_dir, task["id"]))
     with open(os.path.join(d.run_dir(task["id"]), "revisions", "r0001", "report.json"),

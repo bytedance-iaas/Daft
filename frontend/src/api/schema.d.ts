@@ -950,25 +950,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tasks/{id}/reexport": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["PathId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Incremental re-export of the delivered dataset (also the first export when export=false) */
-        post: operations["reexportTask"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/tasks/{id}/subtasks": {
         parameters: {
             query?: never;
@@ -1438,7 +1419,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Execute the recorded decisions as a subtask (D10); never exports (D9)
+         * Execute the recorded decisions as a subtask (D10)
          * @description The body is optional; without one (or with `{}`) relabelled episodes are judged again the
          *     way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
          */
@@ -1941,8 +1922,6 @@ export interface components {
                     tasks: number;
                     episodes: number;
                 };
-                /** @description tasks whose delivered dataset is stale or was never exported */
-                delivery_pending: number;
                 datasets_changed: number;
                 credentials_failed: number;
                 backends_failed: number;
@@ -2112,8 +2091,6 @@ export interface components {
         TaskParams: {
             /** @default true */
             start_now?: boolean;
-            /** @default true */
-            export?: boolean;
             /** @description Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections. */
             batch_size?: number;
             /** @default 3 */
@@ -2197,7 +2174,7 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report, export, verify; subtasks add adjudicate; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
@@ -2298,7 +2275,6 @@ export interface components {
             };
             summary: null | components["schemas"]["Summary"];
             pending_adjudication: number;
-            delivery_stale: boolean;
             active_subtask?: string | null;
             /** @description selected modules, registry order */
             modules: components["schemas"]["ModuleId"][];
@@ -2340,7 +2316,6 @@ export interface components {
             result_rev: number;
             usage: components["schemas"]["UsageTotals"];
             pending_adjudication: number;
-            delivery_stale: boolean;
             active_subtask?: null | components["schemas"]["Subtask"];
             created_at: number;
             updated_at: number;
@@ -2353,7 +2328,7 @@ export interface components {
             id: string;
             task_id: string;
             /** @enum {unknown} */
-            kind: "retry" | "resume" | "apply_adjudication" | "reexport";
+            kind: "retry" | "resume" | "apply_adjudication";
             scope: {
                 modules?: components["schemas"]["ModuleId"][];
                 /** @enum {unknown} */
@@ -2484,7 +2459,7 @@ export interface components {
                 /** @enum {unknown} */
                 scope: "delivery" | "input";
                 /** @enum {unknown} */
-                origin?: "clip" | "delivery_dataset" | "source_dataset";
+                origin?: "clip" | "source_dataset";
                 path: string;
                 from_ts?: number;
                 to_ts?: number;
@@ -5233,7 +5208,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: 10 | 20 | 50 | 100;
-                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
+                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
                 state?: components["schemas"]["TaskState"] | "deleted";
                 /** @description search by name or id */
                 q?: string;
@@ -5591,32 +5566,6 @@ export interface operations {
         };
     };
     continueTask: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                id: components["parameters"]["PathId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description subtask created */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubtaskCreated"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    reexportTask: {
         parameters: {
             query?: never;
             header?: {

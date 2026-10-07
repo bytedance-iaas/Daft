@@ -4,7 +4,7 @@ What each figure counts (soft-deleted tasks never count, except in tokens):
 
 * ``todo.error_tasks`` - tasks in ``completed_with_errors`` (retryable), the same
   set ``GET /tasks?state=completed_with_errors`` lists;
-* ``todo.adjudication`` / ``todo.delivery_pending`` - see :mod:`daemon.repo.extras`;
+* ``todo.adjudication`` - see :mod:`daemon.repo.extras`;
 * ``todo.datasets_changed`` - registrations whose fingerprints differ
   (``check_state=changed``), the ``datasets.changed`` figure too;
 * ``todo.credentials_failed`` - access keys (``kind='tos'``) whose last
@@ -138,7 +138,6 @@ def build(repo, *, owner: str, now: int, tz_offset_minutes: int,
         "todo": {
             "error_tasks": total("completed_with_errors"),
             "adjudication": {"tasks": tasks, "episodes": episodes},
-            "delivery_pending": repo.delivery_pending_count(owner=owner),
             "datasets_changed": changed,
             "credentials_failed": sum(1 for c in repo.list_credentials(owner=owner, kind="tos")
                                       if c.verify_state == "failed"),

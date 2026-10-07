@@ -135,7 +135,7 @@ for i in range(23):
         name=f"droid 抽检 {i:02d}", input_source="tos", input_region="cn-beijing",
         input_uri="tos://bucket/datasets/droid_100", output_uri="tos://bucket/deliveries/droid",
         delivery_key="tos://bucket/deliveries/droid", episode_selector={"mode": "head", "n": 50},
-        params={"export": True}, modules=rows, dataset_id=ds.id))
+        params={"vlm_hedge": False}, modules=rows, dataset_id=ds.id))
     if i == 0:
         repo.update_task_state(t.id, {"queued"}, "running", at=now)
         repo.update_task_state(t.id, {"running"}, "completed_with_errors", at=now)
