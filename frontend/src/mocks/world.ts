@@ -2,6 +2,11 @@
 // validated against the OpenAPI schemas in src/mocks/contract.test.ts. The storyline follows
 // the approved mockups (frontend/mockups/README.md): «droid 前 50 条质检» is the task that the
 // detail, report and adjudication pages tell the whole story of.
+//
+// That task ran before the skill profile was retired (registry 3.0), so its frozen plan, records,
+// report sections and logs still carry skill_profile and the profile_vlm stage: the pages must keep
+// rendering such a task, and here they are exercised on it. Its adjudication cards, by contrast, are
+// read live and follow the current contract - one card, one question per line.
 import modulesJson from '../../../docs/contracts/modules.json';
 import type {
   AdjudicationCard,
@@ -1185,6 +1190,7 @@ export function mainUsage(): { totals: UsageTotals; actual: UsageRow[]; attribut
 // Episodes of the main task: ep 18 fragment, ep 44 duplicate, 5 task_success rejects, 2 errors.
 export const TS_REJECTS = [6, 11, 23, 38, 45];
 export const HELD = [7, 31];
+/** Episodes whose task text the kill guard suspects: asked on their task verdict (LABEL-5). */
 export const LABEL_REVIEW = [29, 4, 36, 13, 22];
 export const VERDICT_REVIEW = [29, 9, 16, 33, 40, 47];
 
@@ -1461,8 +1467,15 @@ export function episodeView(ep: number, revision: number): EpisodeView {
   if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', kind: 'hard_gate', text: `未通过「任务成败判定」:${String((modules.task_success?.details as Record<string, unknown>)?.reason ?? '')}` });
   if (HELD.includes(ep)) reasons.push({ module: 'task_success', kind: 'execution_error', text: '「任务成败判定」执行出错:arbitration timeout 60s(3 次),待补跑' });
   const review: NonNullable<EpisodeView['review']> = [];
-  if (LABEL_REVIEW.includes(ep)) review.push({ module: 'skill_profile', kind: 'label_conflict', text: '标注与画面归入不同技能族', ...(LABEL_CAPTIONS[ep] ? { priority: LABEL_CAPTIONS[ep].priority } : {}) });
-  if (VERDICT_REVIEW.includes(ep)) review.push({ module: 'task_success', kind: 'task_verdict', text: '证据不足，弃权' });
+  if (LABEL_REVIEW.includes(ep) || VERDICT_REVIEW.includes(ep)) {
+    const conflict = LABEL_REVIEW.includes(ep);
+    review.push({
+      module: 'task_success',
+      kind: 'task_verdict',
+      text: conflict ? '标注与画面疑似不符；证据不足，弃权' : '证据不足，弃权',
+      ...(conflict && LABEL_CAPTIONS[ep] ? { priority: LABEL_CAPTIONS[ep].priority } : {}),
+    });
+  }
   const scope: 'delivery' | 'input' = list === 'passed' ? 'delivery' : 'input';
   return {
     episode_index: ep,
@@ -1833,43 +1846,37 @@ function decision(id: number, ep: number, line: Decision['line'], value: Decisio
 
 export function seedDecisions(now: number): Decision[] {
   return [
-    decision(1, 4, 'label', 'adopt_suggestion', now - 40 * MIN),
-    decision(2, 13, 'label', 'keep_label', now - 38 * MIN),
+    // ep 4: the task text rewritten, the verdict left to the model (it is judged again, D39)
+    decision(1, 4, 'task_verdict', 'unsure', now - 40 * MIN, false, LABEL_CAPTIONS[4].suggestion),
+    decision(2, 13, 'task_verdict', 'success', now - 38 * MIN),
     decision(3, 9, 'task_verdict', 'success', now - 35 * MIN),
     decision(4, 16, 'task_verdict', 'unsure', now - 33 * MIN),
   ];
 }
 
-/** The adjudication questions of the main task, before decisions are attached. */
+/**
+ * The adjudication questions of the main task, before decisions are attached: one task verdict per
+ * episode (registry 3.0). Where the kill guard suspects the task text, the question carries the
+ * annotation, the model's description and the suggestion a person may send back as new_label.
+ */
 export function baseQuestions(): Map<number, AdjudicationCard['questions']> {
   const out = new Map<number, AdjudicationCard['questions']>();
-  for (const ep of LABEL_REVIEW) {
-    const c = LABEL_CAPTIONS[ep];
+  for (const ep of [...new Set([...LABEL_REVIEW, ...VERDICT_REVIEW])].sort((a, b) => a - b)) {
+    const c = LABEL_REVIEW.includes(ep) ? LABEL_CAPTIONS[ep] : undefined;
     out.set(ep, [
       {
-        line: 'label',
-        source_module: 'skill_profile',
-        reason: '这条标注和画面对不上：原始标注与画面描述归进了不同的技能族',
+        line: 'task_verdict' as const,
+        source_module: 'task_success',
+        reason: c
+          ? '标注与画面对不上：标注说的和画面描述不是同一件事；证据不足，弃权，转人工'
+          : '证据不足，弃权：画面看不出这条有没有做成，转人工',
         annotation: taskText(ep).text,
-        caption: c.caption,
-        suggestion: c.suggestion,
-        priority: c.priority,
+        caption: c?.caption ?? null,
+        suggestion: c?.suggestion ?? null,
+        priority: c?.priority ?? null,
         latest_decision: null,
       },
     ]);
-  }
-  for (const ep of VERDICT_REVIEW) {
-    const q = {
-      line: 'task_verdict' as const,
-      source_module: 'task_success',
-      reason: '证据不足，弃权：打分层拿不准 → 复核分歧 → 仲裁拿不准 → 转人工',
-      annotation: taskText(ep).text,
-      caption: null,
-      suggestion: null,
-      priority: null,
-      latest_decision: null,
-    };
-    out.set(ep, [...(out.get(ep) ?? []), q]);
   }
   return out;
 }

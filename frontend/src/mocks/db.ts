@@ -238,72 +238,30 @@ export function latest(taskId: string, ep: number, line: Decision['line']): Deci
   return all.length ? all[all.length - 1] : null;
 }
 
-/** Why the Daemon says a card gained its follow-up verdict (results/catalog.py FOLLOW_UP_REASONS). */
-export const FOLLOW_UP_REASON = '改标之后可以一并判成败（选填）：判了就以人的结论为准，不再按新标注重判；不判则按新标注重新判定';
-
 type Question = AdjudicationCard['questions'][number];
 
-/**
- * The follow-up a card's answers opened (registry follow_ups, C4 1.5.1): the line it asks, when
- * the answer in force on a line the card asks itself is one of `after` and the card does not ask it.
- */
-export function openFollowUp(taskId: string, ep: number, own: Question[], line: string, answers: (l: string) => string | undefined = (l) => latest(taskId, ep, l)?.decision) {
-  if (own.some((q) => q.line === line)) return null;
-  for (const q of own) {
-    const f = reviewCatalog().find((l) => l.id === q.line)?.follow_ups?.find((x) => x.line === line);
-    const opening = answers(q.line);
-    if (f && opening && f.after.includes(opening)) return { followUp: f, opener: q };
-  }
-  return null;
-}
-
-/**
- * A follow-up's answer that stands (the Daemon's Queue._stands): one of the follow-up's decisions,
- * given after the answer that opened it. Any newer answer on the opening line makes it lapse.
- */
-function standingAnswer(taskId: string, ep: number, line: string, opened: NonNullable<ReturnType<typeof openFollowUp>>): Decision | null {
-  const answer = latest(taskId, ep, line);
-  const opening = latest(taskId, ep, opened.opener.line);
-  return answer && opening && answer.id > opening.id && opened.followUp.decisions.includes(answer.decision) ? answer : null;
-}
-
-/** The Daemon's card_status: optional follow-ups never block 已裁, but their answers must be applied. */
-function cardStatus(required: (Decision | null)[], extra: Decision[]): AdjudicationCard['status'] {
-  const discard = required.find((d) => d?.decision === 'discard');
+/** The Daemon's card_status (one card, one question per line). */
+function cardStatus(answers: (Decision | null)[]): AdjudicationCard['status'] {
+  const discard = answers.find((d) => d?.decision === 'discard');
   if (discard) return discard.applied ? 'applied' : 'decided'; // rule 1
-  if (required.some((d) => d?.decision === 'unsure')) return 'unsure'; // rule 3
-  if (required.every((d) => d)) return [...required, ...extra].every((d) => d!.applied) ? 'applied' : 'decided';
-  // Rule 4: a relabel not executed yet decides the card; executing re-judges it.
-  if (required.some((d) => d && (d.decision === 'adopt_suggestion' || d.decision === 'custom_label') && !d.applied)) return 'decided';
+  if (answers.some((d) => d?.decision === 'unsure')) return 'unsure'; // rule 3
+  if (answers.every((d) => d)) return answers.every((d) => d!.applied) ? 'applied' : 'decided';
+  // Rule 4: an answer carrying a rewritten task text decides the card; executing judges it again.
+  if (answers.some((d) => d && d.new_label && !d.applied)) return 'decided';
   return 'pending';
 }
 
-/**
- * Cards with their latest decisions and derived status (pending / decided / unsure / applied).
- * Like the Daemon (C4 1.5.2): an open follow-up is listed on the card with `follow_up_of`, the
- * source module of the question that opened it and only an answer that stands; once the opening
- * answer changes, it is left out.
- */
+/** Cards with their latest decisions and derived status (pending / decided / unsure / applied). */
 export function cardsOf(taskId: string, tab: 'review' | 'appeals'): AdjudicationCard[] {
-  const qs = questionsFor(taskId, tab);
   const cards: AdjudicationCard[] = [];
-  const followUpLines = new Set(reviewCatalog().flatMap((l) => (l.follow_ups ?? []).map((f) => f.line)));
-  for (const [ep, own] of qs) {
-    const asked: Question[] = own.map((q) => ({ ...q, follow_up_of: null, latest_decision: latest(taskId, ep, q.line) }));
-    const gained: Question[] = [];
-    for (const line of followUpLines) {
-      const opened = openFollowUp(taskId, ep, own, line);
-      if (!opened) continue;
-      const o = opened.opener;
-      gained.push({ line, source_module: o.source_module, reason: FOLLOW_UP_REASON, annotation: o.annotation, follow_up_of: o.line, latest_decision: standingAnswer(taskId, ep, line, opened) });
-    }
-    const extra = gained.map((q) => q.latest_decision).filter((d): d is Decision => Boolean(d) && d!.decision !== 'unsure');
-    cards.push({ episode_index: ep, status: cardStatus(asked.map((q) => q.latest_decision ?? null), extra), questions: [...asked, ...gained] });
+  for (const [ep, own] of questionsFor(taskId, tab)) {
+    const asked: Question[] = own.map((q) => ({ ...q, latest_decision: latest(taskId, ep, q.line) }));
+    cards.push({ episode_index: ep, status: cardStatus(asked.map((q) => q.latest_decision ?? null)), questions: asked });
   }
   return cards;
 }
 
-/** What 执行裁决 hands to the CLI (the Daemon's Queue.executable): standing answers, lapsed ones left out. */
+/** What 执行裁决 hands to the CLI (the Daemon's Queue.executable): every standing answer. */
 export function executable(taskId: string): Decision[] {
   const cards = [...cardsOf(taskId, 'review'), ...cardsOf(taskId, 'appeals')];
   return cards.flatMap((c) => c.questions.map((q) => q.latest_decision).filter((d): d is Decision => Boolean(d) && !d!.applied));
@@ -318,10 +276,10 @@ export function countsOf(taskId: string): { decided: number; pending: number; un
   const catalog = reviewCatalog();
   const countsAsPending = (line: string) => catalog.find((l) => l.id === line)?.counts_as_pending ?? line !== 'reject_appeal';
   const all = [...cardsOf(taskId, 'review'), ...cardsOf(taskId, 'appeals')];
-  // An optional follow-up never makes a card count as pending.
-  const counted = all.filter((c) => c.questions.some((q) => !q.follow_up_of && countsAsPending(q.line)));
+  const counted = all.filter((c) => c.questions.some((q) => countsAsPending(q.line)));
   const decided = counted.filter((c) => c.status === 'decided' || c.status === 'applied').length;
   const pending = counted.length - decided;
-  const unapplied = all.filter((c) => c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && q.latest_decision.decision !== 'unsure')).length;
+  // A 拿不准 changes nothing (rule 3) unless it rewrote the task text: that is judged again.
+  const unapplied = all.filter((c) => c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && (q.latest_decision.decision !== 'unsure' || q.latest_decision.new_label))).length;
   return { decided, pending, unapplied };
 }

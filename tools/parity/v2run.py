@@ -5,7 +5,7 @@ commands run in this process in the order of the Daemon's two blocks (design doc
 one block after the other -
 
     preflight -> plan -> snapshot -> autolabel -> check (integrity) -> check numeric
-    -> check frame -> check vlm -> check dedup -> check skill_profile
+    -> check frame -> check vlm -> check dedup
     -> aggregate final -> report -> export -> verify
 
 - every stage on the whole selection (no stage filters another, D57), into one v2 run
@@ -24,7 +24,7 @@ With ``--from RUN_DIR --decisions FILE`` it runs the Daemon's adjudication seque
 instead (doc 02 section 3.9) on a copy of a finished run directory -
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> check skill_profile --incremental (the whole selection) -> aggregate final -> report
+    -> aggregate final -> report
 
 on the next result revision; its tape is the one ``dump-v1 -- rejudge`` recorded
 while v1 applied the same decisions, and ``compare`` checks the two (D39).
@@ -48,7 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 BACKEND = os.path.join(REPO, "backend")
 ALL_MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-               "video_action_sync", "task_success", "dedup", "skill_profile")
+               "video_action_sync", "task_success", "dedup")
 #: v2's own first gate (design doc 14); v1 has no such module, so the default chain leaves it out
 #: and ``--modules`` adds it to record a golden with it
 INTEGRITY = "data_integrity"
@@ -102,9 +102,6 @@ class Chain:
         if rerun:
             self.run("check task_success", "check", "--modules", "task_success", *common,
                      "--episodes", ",".join(str(e) for e in rerun), *self.vlm)
-        if "skill_profile" in self.modules:
-            self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                     "--episodes", episodes, "--incremental", *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", revision, "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", revision)
@@ -135,8 +132,6 @@ class Chain:
         self.run("check vlm", "check", "--modules", "task_success", *common,
                  "--episodes", episodes, *self.vlm)
         self.run("check dedup", "check", "--modules", "dedup", *common, "--episodes", episodes)
-        self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                 "--episodes", episodes, *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")

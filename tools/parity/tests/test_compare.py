@@ -125,7 +125,7 @@ def test_a_reject_v1_still_asks_about_is_left_out_of_review_and_listed(tmp_path)
 
 def test_an_adjudication_golden_compares_what_was_judged_again(tmp_path):
     """A v1 rejudge dump: task_success of the re-judged episodes only (a re-judge that
-    failed is left out and listed), the skill assignments, the final lists."""
+    failed is left out and listed) and the final lists."""
     err = [{"step": "probe", "cause": "timeout"}]
 
     def rejudge_dump(root, records, final):
@@ -147,8 +147,7 @@ def test_an_adjudication_golden_compares_what_was_judged_again(tmp_path):
     res = C.run_compare(_args(g, c, all_strict=True))
     ts = res["modules"]["task_success"]
     assert ts["status"] == "pass" and ts["compared"] == 1 and ts["excluded_errors"] == [1]
-    assert set(res["modules"]) == {"task_success", "skill_profile"}
-    assert res["modules"]["skill_profile"]["status"] == "pass"
+    assert set(res["modules"]) == {"task_success"}
     assert res["adjudication"]["relabels"] == {"0": "a", "1": "b"}
     c = rejudge_dump(tmp_path / "c2", [_task(0, False), _task(1, True)], lists)
     assert C.run_compare(_args(g, c))["modules"]["task_success"]["different"] == 1
@@ -168,18 +167,6 @@ def test_dedup_pairs_must_match(tmp_path):
     c = _dump(tmp_path / "c", dedup={"dropped": [{"episode_index": 3, "duplicate_of": 7}],
                                      "action_collisions": [[3, 7]]})
     assert C.run_compare(_args(g, c))["modules"]["dedup"]["status"] == "fail"
-
-
-def test_skill_profile_verdict_ignores_family_names(tmp_path):
-    def sp(fam):
-        return {"ran": True, "assignments": [{"episode_index": 0, "family": fam}],
-                "label_audit_queue": []}
-    g = _dump(tmp_path / "g", skill=sp("grasp-and-transport"))
-    c = _dump(tmp_path / "c", skill=sp("pick-and-place"))
-    res = C.run_compare(_args(g, c))
-    assert res["modules"]["skill_profile"]["status"] == "pass"
-    res = C.run_compare(_args(g, c, all_strict=True))
-    assert res["modules"]["skill_profile"]["status"] == "fail"
 
 
 def test_render_mentions_every_check(tmp_path):

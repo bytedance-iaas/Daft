@@ -33,7 +33,7 @@ describe('presetOf (07 §4.1 preset line, derived from the registry)', () => {
 
   it('anything else is 自选', () => {
     expect(presetOf(without('dedup'), registry)).toBe('custom');
-    expect(presetOf(without('skill_profile'), registry)).toBe('custom');
+    expect(presetOf(without('task_success'), registry)).toBe('custom');
     expect(presetOf(['task_success'], registry)).toBe('custom');
     expect(presetOf(nonVlm.filter((id) => id !== 'dedup'), registry)).toBe('custom');
     expect(presetOf([], registry)).toBe('custom');

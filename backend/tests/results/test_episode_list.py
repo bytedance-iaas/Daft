@@ -135,8 +135,8 @@ def test_the_items_and_levels_of_its_findings(world):
     assert _eps(_page(world, level="blocking")) == [1, 2, 7]
     assert _eps(_page(world, level="review")) == [3, 4, 5]
     assert _eps(_page(world, level="info")) == list(range(9))
-    assert _eps(_page(world, item="TASK-5")) == [2, 3, 5]
-    assert _eps(_page(world, item="TASK-5", level="review")) == [3, 5]
+    assert _eps(_page(world, item="TASK-5")) == [2, 3, 4, 5]
+    assert _eps(_page(world, item="TASK-5", level="review")) == [3, 4, 5]
     assert _eps(_page(world, item="LABEL-5", list="passed", review="true")) == [4, 5]
     body = _page(world, item="ACT-4")
     assert _eps(body) == [] and body["total"] == 0 and body["counts"]["all"] == 9

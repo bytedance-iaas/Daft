@@ -15,7 +15,7 @@ runs with ``--resume``: after a pause or a crash nothing finished is done twice.
   whole on every episode - then dedup / the skill profile when they erred or were asked for, into a new
   revision (design doc 17 §3.4; D35).
 * ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
-  relabelled episodes without a human verdict -> skill_profile ``--incremental`` on the whole selection
+  relabelled episodes without a human verdict
   when it has something to re-file -> aggregate final -> report -> verify. dedup is not run again (its
   groups stand; aggregate picks each group's keeper after the decisions). It never exports (D9); the
   delivery becomes stale.
@@ -425,7 +425,7 @@ class AdjudicationRun(StageRun):
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
         ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) \
-            + (["profile"] if "profile" in stages else []) + ["final", "report", "verify"]
+            + ["final", "report", "verify"]
         self.plan_progress(ids, plan)
         rev = self.allocate_revision()
         selection = self.selection()
@@ -433,18 +433,6 @@ class AdjudicationRun(StageRun):
         rerun = applied.get("rerun", [])
         if "vlm" in stages and "task_success" in stages["vlm"].get("modules", []):
             self.rejudge(stages["vlm"], rerun)
-        self.check_intent()
-        rows = self.module_rows()
-        if "profile" in stages and not self.journal.done("profile"):
-            # the profile files the whole selection (design doc 17 §3.2): a relabel is filed again
-            row = rows.get("skill_profile")
-            if applied.get("resync") or row is None or row.state in ("failed", "stale"):
-                self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
-                full = row is None or row.state == "failed"
-                self.check_stage(stages["profile"], selection, fresh=True, incremental=not full)
-            else:
-                self.stage_done("profile", "skipped")
-                self.progress("profile", note="画像没有需要重新归类的条目", force=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
@@ -462,10 +450,7 @@ class AdjudicationRun(StageRun):
         if entry.get("done"):
             return entry.get("applied") or {}
         self.progress(sid, state="running", done=0, total=1)
-        rows, lapsed = self.orch.decisions_to_apply(self.reload())
-        if lapsed:
-            self.log(sid, "info", f"{len(lapsed)} 条追问的回答已作废（打开它的标注判断后来改了），不执行："
-                     + "、".join(f"ep{a.episode_index:06d}" for a in lapsed[:20]))
+        rows = self.orch.decisions_to_apply(self.reload())
         rerun_how = (self.subtask.scope or {}).get("relabel_rerun") or "v1"
         doc = {"schema_version": "1.0", "relabel_rerun": rerun_how, "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
@@ -479,8 +464,7 @@ class AdjudicationRun(StageRun):
             self.fail_on(outcome, sid)
         self.copy_decisions()
         res = outcome.doc
-        applied = {"ids": [a.id for a in rows], "rerun": list(res.get("rerun_task_success") or []),
-                   "resync": list(res.get("profile_resync") or [])}
+        applied = {"ids": [a.id for a in rows], "rerun": list(res.get("rerun_task_success") or [])}
         self.log(sid, "info", f"执行裁决：应用 {res.get('applied', 0)} 条（{res.get('skipped_already_applied', 0)} "
                               f"条之前已应用）；按新标注重跑任务成败判定 {len(applied['rerun'])} 条")
         self.stage_done(sid, "succeeded", applied=applied)

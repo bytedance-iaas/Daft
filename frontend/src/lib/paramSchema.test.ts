@@ -49,7 +49,7 @@ describe('param_schema → form fields (C1, D38)', () => {
 
   it('modules without parameters produce no fields; the judgement lines count (F12.5)', () => {
     const without = registry.modules.filter((m) => !hasParams(m.param_schema)).map((m) => m.id);
-    expect(without).toEqual(['kinematic_limits', 'camera_defects', 'dedup', 'skill_profile']);
+    expect(without).toEqual(['kinematic_limits', 'camera_defects', 'dedup']);
     const onlyLines = registry.modules.filter((m) => hasParams(m.param_schema) && paramFields(m.param_schema).every((f) => f.advanced)).map((m) => m.id);
     expect(onlyLines).toEqual(['timestamp_check', 'motion_quality', 'visual_quality']);
   });

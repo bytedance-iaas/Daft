@@ -15,8 +15,8 @@ ep    what happens                                            where it ends (r1)
 1     timestamp fragment (a blocking finding)                 reject - final
 2     task_success judges it failed                           reject - appealable
 3     task_success abstains                                   passed + review (verdict)
-4     label conflict (the kill guard)                          passed + review (both)
-5     label conflict, a second one                            passed + review (both)
+4     label conflict (the kill guard)                         passed + review (verdict)
+5     label conflict, a second one                            passed + review (verdict)
 6     task_success execution error                            held
 7     byte-for-byte duplicate of ep 0                         reject - appealable (D42)
 8     motion_quality cannot score it                          passed (no review item, C2 1.4)
@@ -115,7 +115,7 @@ def task_details(ep: int, verdict: str) -> dict:
          "task_desc": TEXT[ep], "task_desc_source": "原始标注", "rules": ["probe"]}
     if verdict == "abstain":
         d["reason"] = "两层证据矛盾，进人工"
-    if ep in (4, 5):                       # the kill guard's label conflict (the profile's old job)
+    if ep in (4, 5):                       # the kill guard's suspected label conflict
         d["verdict"] = "label_conflict_suspect"
         d["label_check"] = {"annotation": TEXT[ep], "caption": CAPTION.get(ep, TEXT[ep])}
     if verdict == "fail":
@@ -254,10 +254,9 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
             if line["line"] == "reject_appeal" and line["decision"] != "unsure":
                 effective[int(line["episode_index"])] = line["decision"]
     rejected = {e["episode_index"] for e in reject["episodes"]}
-    line_of = {"label_conflict": "label"}                       # C2 1.5: items name their line
     by_ep: dict[int, dict] = {}
     for entry in review["episodes"]:
-        items = [{**i, "line": i.get("line") or line_of.get(i["kind"], i["kind"])}
+        items = [{**i, "line": i.get("line") or i["kind"]}                # C2 1.5: items name it
                  for i in entry["review"]
                  if not (i["kind"] == "task_verdict" and (i["source_module"] != "task_success"
                                                           or entry["episode_index"] in rejected))]

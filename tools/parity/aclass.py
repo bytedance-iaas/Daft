@@ -25,7 +25,8 @@ A_CLASS = ("core/", "registry/", "ingest/", "dataset_level/",
            "export/lerobot_writer.py", "export/safe_write.py",
            "pipeline/verdict.py", "episode_select.py", "vlm_call_kinds.py")
 MARKER = "parity-change:"
-#: A-class files adopted with a known difference: {rel: {"blob", "since", "why"}}.
+#: A-class files adopted with a known difference, or whose removal was adopted:
+#: {rel: {"blob", "since", "why"}} - a removal pins ``"removed": true`` instead of a blob.
 DEFAULT_DECLARED = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "a_class_declared.json")
 
@@ -50,11 +51,14 @@ def check(tree: str, manifest_path: str = DEFAULT_MANIFEST,
     def pinned(rel: str, blob: str) -> bool:
         return blob == (adopted.get(rel) or {}).get("blob")
 
+    def pinned_removed(rel: str) -> bool:
+        return bool((adopted.get(rel) or {}).get("removed"))
+
     changed, missing, declared = [], [], []
     for rel, sha in sorted(expected.items()):
         path = os.path.join(tree, rel)
         if not os.path.isfile(path):
-            missing.append(rel)
+            (declared if pinned_removed(rel) else missing).append(rel)
             continue
         blob = git_blob_sha1(path)
         if blob != sha:

@@ -201,7 +201,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 **adjudicate-apply**：`curation adjudicate-apply --run-dir … --decisions decisions.json --json`
 
 - `decisions.json` 只含本任务尚未应用的裁决（D32，`cli/decisions.schema.json`）；按 id 去重，重复应用不改变任何东西。写 `adjudication/applied.jsonl`、`adjudication/labels.json` 和 `human-decisions/*.csv`（v1 的列与用词）。
-- `--json` 的 `rerun_task_success` 是要按新标注重判的条（改了标、且没有人工判定成败的），`profile_resync` 是技能画像要重新归档的条。
+- `--json` 的 `rerun_task_success` 是要按新标注重判的条（改了标、且没有人工判定成败的）。
 - `decisions.json` 顶层的 `relabel_rerun`（`v1` 缺省 / `full`，D39）随每条改标记进 `applied.jsonl` 和 `labels.json`，`--json` 原样带回；之后重试这些条也按记下的口径判。
 - 改标的同时给了成败结论（判成功 / 判失败）的条不重判，以人为准（注册表 1.3 的后续问题，v1 的 `human_concluded`）；给的是「拿不准」照常重判。
 - 这种跟着改标给的结论（task_success 没有弃权的条上的成败结论）只在改标的回答仍是最新、且结论在它之后给出（按裁决 id）时算数；改标的回答一变（维持原标注、拿不准、换一段新标注），它就作废：不起作用，仍在生效的改标照常重判（`rerun_task_success` 列出），与 Daemon 的 `Queue._stands` 是同一条规则。task_success 弃权的条，成败结论是卡片自己的问题，不会这样作废。

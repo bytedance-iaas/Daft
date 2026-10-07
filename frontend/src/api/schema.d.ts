@@ -1808,11 +1808,11 @@ export interface components {
             appealable: boolean;
             review_line?: components["schemas"]["ReviewLineId"];
         };
-        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check */
+        /** @description a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check */
         ReviewLineId: string;
         ReviewLine: {
             id: components["schemas"]["ReviewLineId"];
-            /** @description the kind of its review.json items (C2); label_conflict for label */
+            /** @description the kind of its review.json items (C2) */
             review_kind: string;
             title_zh: string;
             /**
@@ -1825,16 +1825,6 @@ export interface components {
             decisions: {
                 const: string;
                 title: string;
-            }[];
-            /**
-             * @description Questions a card gains once its answer on this line is one of `after` - only on a card that does not ask that line already. v1: after adopting a new label a person may give the task verdict (the machine takes it, no re-judging); left open, the episode is judged again with the new label. An optional follow-up never counts as pending, and its answer lapses (not executed, not counted) once the answer that opened it changes.
-             * @default []
-             */
-            follow_ups?: {
-                after: string[];
-                line: components["schemas"]["ReviewLineId"];
-                decisions: string[];
-                optional: boolean;
             }[];
         };
         BrowsedDataset: {
@@ -2207,7 +2197,7 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report, export, verify; subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
@@ -2643,11 +2633,9 @@ export interface components {
             reason: string;
             /** @description an appeal of a dedup reject: the episode it duplicates */
             duplicate_of?: number | null;
-            /** @description set on a question the card gained as a follow-up of its answer on that line (registry follow_ups), absent or null on the card's own questions; a follow-up whose opening answer changed is left out of the card */
-            follow_up_of?: null | components["schemas"]["ReviewLineId"];
             annotation?: string | null;
             caption?: string | null;
-            /** @description suggested new label */
+            /** @description a task text the model read off the video: what a person may send back as new_label */
             suggestion?: string | null;
             priority?: string | null;
             latest_decision?: null | components["schemas"]["Decision"];
@@ -2671,9 +2659,9 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. One card asks one question. Today: task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
             decision: string;
-            /** @description custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken */
+            /** @description task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it */
             new_label?: string | null;
             note?: string | null;
         };

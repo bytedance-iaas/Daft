@@ -58,7 +58,7 @@ def flow(tmp_path_factory, mini_dataset):
                     {"id": 1, "episode_index": 3, "line": "task_verdict", "decision": "failure",
                      "new_label": None, "note": "the block never reaches the bin",
                      "decided_by": "alice", "decided_at": 1790000000000},
-                    {"id": 2, "episode_index": 4, "line": "label", "decision": "custom_label",
+                    {"id": 2, "episode_index": 4, "line": "task_verdict", "decision": "unsure",
                      "new_label": NEW_LABEL, "note": None, "decided_by": "alice",
                      "decided_at": 1790000000001}]}, fh)
             applied = c.step("apply", "adjudicate-apply", "--run-dir", c.rd,
@@ -79,7 +79,6 @@ def flow(tmp_path_factory, mini_dataset):
 def test_decisions_name_what_runs_next(flow):
     doc = flow.steps["apply"].doc
     assert doc["applied"] == 2 and doc["rerun_task_success"] == [4]
-    assert doc["profile_resync"] == [3, 4]
     assert doc["label_changes"] == [{"episode_index": 4, "new_label": NEW_LABEL}]
     rejudged = flow.steps["rejudge"].doc["modules"]["task_success"]
     assert rejudged["part"] == "0002" and rejudged["episodes"]["total"] == 1
@@ -89,7 +88,7 @@ def test_decisions_name_what_runs_next(flow):
     assert rec["details"]["task_desc_source"] == "人工改标"
 
 
-def test_the_first_dedup_stands_and_the_profile_follows_the_decisions(flow):
+def test_the_first_dedup_stands_after_the_decisions(flow):
     """keep.txt of revision 2 drops the episode a person judged failed; dedup is not
     run again, its group {3, 7} stands and keeps 7 now that 3 is gone (D58); the
     the kept set loses 3."""

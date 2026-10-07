@@ -352,7 +352,6 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型�
 ```jsonc
 {"applied": 14, "skipped_already_applied": 0,
  "rerun_task_success": [17, 29],     // 改了标、且没有人工成败结论的条目，要按新标注重跑
- "profile_resync": [14, 17, 29, 31], // 技能画像里要重新归位或移除的条目
  "relabel_rerun": "v1"}             // 这一批改标的重判口径（D39），照抄 decisions.json
 ```
 

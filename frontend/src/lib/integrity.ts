@@ -126,7 +126,7 @@ export function integrityItems(report: Report, task?: Task): IntegrityItem[] {
   }
   const labels = integ.labels as { with_task?: number; without_task?: number } | null | undefined;
   if (labels && typeof labels.with_task === 'number' && typeof labels.without_task === 'number') {
-    const captioned = labels.without_task > 0 && (modules.has('task_success') || modules.has('skill_profile'));
+    const captioned = labels.without_task > 0 && modules.has('task_success');
     items.push({ key: 'labels', label: L.labels, value: P().labelsValue(labels.with_task, labels.without_task) + (captioned ? P().labelsCaptioned : '') });
   } else if ('labels' in integ) {
     items.push({ key: 'labels', label: L.labels, value: P().notRead });

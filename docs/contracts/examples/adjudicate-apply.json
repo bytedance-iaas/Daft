@@ -9,12 +9,6 @@
     17,
     29
    ],
-   "profile_resync": [
-    14,
-    17,
-    29,
-    31
-   ],
    "label_changes": [
     {
      "episode_index": 29,
@@ -29,12 +23,6 @@
    "rerun_task_success": [
     17,
     29
-   ],
-   "profile_resync": [
-    14,
-    17,
-    29,
-    31
    ],
    "label_changes": [
     {
@@ -53,7 +41,6 @@
     17,
     17
    ],
-   "profile_resync": [],
    "label_changes": [],
    "skipped_already_applied": 0
   }

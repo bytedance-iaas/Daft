@@ -9,7 +9,6 @@ call, no export (D9) - and the command names what runs next:
   task_success`` with the new label, the way
   ``relabel_rerun`` says (D39: ``v1``, the default, is v1's rejudge; ``full`` the
   first run's flow), recorded with each relabel;
-* ``profile_resync``: episodes the skill profile has to re-file or drop
   (``check --modules skill_profile --incremental``).
 
 ``decisions.json`` (``cli/decisions.schema.json``) holds only this task's
@@ -88,6 +87,4 @@ def render(p: dict) -> str:
     if p["rerun_task_success"]:
         lines.append("  re-judge task_success: " + ", ".join(map(str, p["rerun_task_success"]))
                      + f" (relabel_rerun {p['relabel_rerun']})")
-    if p["profile_resync"]:
-        lines.append("  re-sync skill profile: " + ", ".join(map(str, p["profile_resync"])))
     return "\n".join(lines)

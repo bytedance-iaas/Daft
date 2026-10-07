@@ -97,13 +97,13 @@ describe('fixtures match the contract', () => {
       expect(view.findings, `ep ${ep}`).toBeDefined();
       expectValid(S('PipelineEpisode'), findingsPipelineRow(ep));
     }
-    const items = findingsEpisodes(new Map([[29, ['task_success', 'skill_profile']]]));
+    const items = findingsEpisodes(new Map([[29, ['task_success']]]));
     expectValid(S('TaskEpisodePage'), { items, next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 41, reject: 7, held: 2, review: 1 }, revision: 1 });
     expect(items.find((e) => e.episode_index === 18)?.levels).toContain('blocking');
     expect(findingsModuleCounts().every((m) => m.judged + m.error === 50)).toBe(true);
     [...cardsOf(FINDINGS_TASK, 'review'), ...cardsOf(FINDINGS_TASK, 'appeals')].forEach((c) => {
       expectValid(S('AdjudicationCard'), c);
-      expect(c.questions.filter((q) => !q.follow_up_of).every((q) => q.codes?.length)).toBe(true);
+      expect(c.questions.every((q) => q.codes?.length)).toBe(true);
     });
   });
 

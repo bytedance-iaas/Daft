@@ -54,7 +54,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(await within(ts).findByText('VLM 块 · VLM 档')).toBeInTheDocument();
     const stats = within(ts).getByTestId('findings-task_success');
     expect(within(stats).getByTestId('level-count-task_success-blocking')).toHaveTextContent('5');
-    expect(within(stats).getByTestId('level-count-task_success-review')).toHaveTextContent('6');
+    expect(within(stats).getByTestId('level-count-task_success-review')).toHaveTextContent('10');   // 弃权 and the suspected label conflicts
     const items = within(within(stats).getByTestId('chart-items-task_success')).getByTestId('chart');
     expect(items).toHaveAttribute('aria-label', expect.stringMatching(/检出项：.*判废.*5 条/));
     // the module's own view is still there (06 §6.2's keys)
@@ -169,7 +169,7 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
     const row = await screen.findByTestId('module-stat-task_success');
     await within(row).findByTestId('module-assessed-task_success');
     expect(within(row).getByTestId('module-assessed-task_success')).toHaveTextContent('评估 48 / 选中');
-    expect(row).toHaveTextContent('检出 11 条');
+    expect(row).toHaveTextContent('检出 15 条');
     expect(within(row).getByTestId('module-report-task_success')).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/report?section=task_success`);
     await user.click(await within(row).findByRole('button', { name: /展开：任务成败判定/ }));
     expect(await within(row).findByTestId('findings-task_success')).toBeInTheDocument();

@@ -277,7 +277,8 @@ describe('任务详情 (07 §4.2)', () => {
     expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['模块', '请求', '输入', '输出', '思维链', '缓存命中']);
     expect(rows()).toEqual([
       ['任务成败判定', '786', '1.54M', '49.5K', '32.7K', '728K'],
-      ['技能画像', '100', '466K', '18K', '10.2K', '203.8K'],
+      // this task ran before the skill profile was retired: the registry no longer names it
+      ['skill_profile', '100', '466K', '18K', '10.2K', '203.8K'],
     ]);
     const total = () => [...table.querySelectorAll('tfoot td, .arco-table-tfoot td')].map((c) => c.textContent);
     expect(total()).toEqual(['合计', '886', '2.01M', '67.5K', '42.9K', '931.8K']);

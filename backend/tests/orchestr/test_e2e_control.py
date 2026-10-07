@@ -19,7 +19,7 @@ from .conftest import comparable, read_jsonl, results
 pytestmark = pytest.mark.slow
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup", "skill_profile"]
+           "video_action_sync", "task_success", "dedup"]
 
 
 def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:

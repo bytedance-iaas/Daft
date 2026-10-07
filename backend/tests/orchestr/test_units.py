@@ -26,11 +26,11 @@ def test_the_terminal_state_rule():
                                                            errors=2)]
     assert rules.terminal_state(ok, held=0) == "succeeded"          # D35: errors all rejected
     assert rules.terminal_state(ok, held=1) == "completed_with_errors"
-    failed = ok + [_module("skill_profile", "failed")]
+    failed = ok + [_module("dedup", "failed")]
     assert rules.terminal_state(failed, held=0) == "completed_with_errors"
-    unselected = ok + [_module("dedup", "failed", selected=False)]
+    unselected = ok + [_module("visual_quality", "failed", selected=False)]
     assert rules.terminal_state(unselected, held=0) == "succeeded"
-    assert rules.failed_modules(failed) == ["skill_profile"]
+    assert rules.failed_modules(failed) == ["dedup"]
 
 
 def test_episode_selections():

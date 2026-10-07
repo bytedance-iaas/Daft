@@ -118,8 +118,7 @@ class DaemonProcess:
             "output": {"uri": "tos://deliveries/mini", "credential": "out-key"},
             "preflight_id": pf["preflight_id"], "episodes": {"mode": "all"},
             "modules": ["timestamp_check", "kinematic_limits", "motion_quality",
-                        "visual_quality", "video_action_sync", "task_success", "dedup",
-                        "skill_profile"],
+                        "visual_quality", "video_action_sync", "task_success", "dedup"],
             "vlm": {"backend": "fake", "model": "fake-vlm"},
             "params": {"vlm_hedge": False}})
         assert r.status_code == 201, r.text

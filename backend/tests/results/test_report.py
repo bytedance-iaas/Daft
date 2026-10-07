@@ -51,7 +51,7 @@ def test_module_summaries_carry_chart_ready_statistics(world):
     assert sum(sum(c["hist"]) for c in vq["cameras"]) == 17           # 9 x 2; ep3's second camera has no score
     task = s["task_success"]
     assert {x["name"]: x["count"] for x in task["judgements"]} == {
-        "success": 5, "review_conflict": 2, "failure": 1}
+        "success": 4, "review_conflict": 1, "label_conflict_suspect": 2, "failure": 1}
     assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
     assert task["text_sources"] == [{"name": "原始标注", "count": 8}]
     assert s["dedup"]["counts"]["fail"] == 1 and s["dedup"]["group_sizes"] == []   # no groups.json here
@@ -66,8 +66,8 @@ def test_findings_per_module_and_rejects_per_item(world):
     s = {m["id"]: m["summary"] for m in report["modules"]}
     assert (s["timestamp_check"]["assessed_episodes"], s["timestamp_check"]["flagged_episodes"]) == (9, 1)
     assert s["timestamp_check"]["levels"] == {"blocking": 1, "review": 0, "info": 0}
-    assert s["task_success"]["flagged_episodes"] == 3          # ep 2 failure, ep 3 and 5 abstentions
-    assert s["task_success"]["levels"] == {"blocking": 1, "review": 2, "info": 0}
+    assert s["task_success"]["flagged_episodes"] == 4      # ep 2 failure, ep 3, 4, 5 abstentions
+    assert s["task_success"]["levels"] == {"blocking": 1, "review": 3, "info": 0}
     assert s["visual_quality"]["levels"] == {"blocking": 0, "review": 0, "info": 9}
     assert s["kinematic_limits"]["flagged_episodes"] == 0
     assert report["overview"]["reject_items"] == [{"item": "SET-1", "count": 1}, {"item": "STRM-5", "count": 1},

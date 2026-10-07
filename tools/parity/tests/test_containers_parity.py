@@ -78,6 +78,6 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     assert report["conclusion"] == "pass"
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup", "autolabel", "skill_profile"}
+                                      "dedup", "autolabel"}
     assert {m: r["status"] for m, r in report["modules"].items()} == {
         m: "pass" for m in report["modules"]}

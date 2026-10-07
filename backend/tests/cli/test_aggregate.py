@@ -250,19 +250,18 @@ def test_human_decisions_follow_v1s_priorities(tmp_path):
                      (0, "task_verdict", "failure", None),      # a person rejects ...
                      (1, "task_verdict", "success", None),      # ... or passes an abstention
                      (2, "reject_appeal", "restore", None),     # appeal of a task reject
-                     (4, "label", "discard", None),             # discard beats held
+                     (4, "task_verdict", "discard", None),      # discard beats held
                      (5, "task_verdict", "unsure", None),       # changes nothing
-                     (6, "label", "adopt_suggestion", "stack the cups"),
-                     (7, "label", "custom_label", "wipe the table"),
-                     (7, "task_verdict", "success", None))
+                     (6, "task_verdict", "unsure", "stack the cups"),   # rewritten, not judged
+                     (7, "task_verdict", "success", "wipe the table"))  # rewritten and judged
     out = apply(run_dir, path)
-    assert out["applied"] == 8 and out["skipped_already_applied"] == 0
+    assert out["applied"] == 7 and out["skipped_already_applied"] == 0
     assert out["rerun_task_success"] == [6]          # 7 has a human verdict: not re-judged
     assert out["label_changes"] == [{"episode_index": 6, "new_label": "stack the cups"},
                                     {"episode_index": 7, "new_label": "wipe the table"}]
     again = apply(run_dir, path)                          # idempotent
-    assert again["applied"] == 0 and again["skipped_already_applied"] == 8
-    assert len(read_jsonl(os.path.join(run_dir, "adjudication", "applied.jsonl"))) == 8
+    assert again["applied"] == 0 and again["skipped_already_applied"] == 7
+    assert len(read_jsonl(os.path.join(run_dir, "adjudication", "applied.jsonl"))) == 7
 
     after = final(run_dir, "0-7", revision=2)
     assert sorted(after["passed"]) == [1, 2, 5, 7]
@@ -277,7 +276,7 @@ def test_human_decisions_follow_v1s_priorities(tmp_path):
     assert {e: [i["kind"] for i in v["review"]] for e, v in after["review"].items()} == \
         {5: ["task_verdict"]}                              # "unsure": still in the queue
     with open(os.path.join(run_dir, "revisions", "r0002", "adjudications.json")) as fh:
-        assert json.load(fh) == {"applied": list(range(1, 9))}
+        assert json.load(fh) == {"applied": list(range(1, 8))}
 
     # task_success judged 6 again with the new label: it passes
     rd.put("task_success", 6, "pass", part="0002",
@@ -364,20 +363,13 @@ def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
         "appealable": False, "text": "人工裁决判失败（任务未完成）"}]
     assert [r["module"] for r in lists["held"][6]["reasons"]] == ["dedup"]
 
-    state = agg.RunState(run_dir, list(ALL), [0, 3, 5, 6, 7])
-    members, restored = agg.profile_members(state, Decisions.of(run_dir))
-    assert restored == {5}
-    assert members == [0, 3, 5, 6, 7]               # 7 keeps its group; 5 counts as none
-
-    # had 3 stayed, 7 would be its copy: rejected, appealable, left out of the profile
+    # had 3 stayed, 7 would be its copy: rejected, and the reject names the original
     rd2 = RunDir(str(tmp_path / "run2")).good(0, 3, 7)
     rd2.replace("dedup", 7, "fail", details={"duplicate_of": 3})
     run2 = rd2.write()
     lists = final(run2, "0,3,7")
     assert sorted(lists["passed"]) == [0, 3] and sorted(lists["reject"]) == [7]
     assert lists["reject"][7]["reasons"][0]["duplicate_of"] == 3
-    state = agg.RunState(run2, list(ALL), [0, 3, 7])
-    assert agg.profile_members(state, Decisions.of(run2)) == ([0, 3], set())
 
 
 def _kinds(lists) -> dict[int, list[tuple[str, str]]]:
@@ -411,7 +403,7 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
     apply(run_dir, decisions(str(tmp_path / "d.json"),
                              (7, "reject_appeal", "unsure", None),      # still listed
                              (8, "reject_appeal", "keep_rejected", None),
-                             (9, "label", "discard", None)))
+                             (9, "task_verdict", "discard", None)))
     lists = final(run_dir, "0-9")
     assert sorted(lists["reject"]) == [2, 3, 4, 5, 7, 8, 9] and sorted(lists["held"]) == [6]
     assert _kinds(lists) == {0: [("task_verdict", "task_success")],
@@ -432,11 +424,8 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
 
 
 def test_a_restored_dedup_appeal_comes_back_and_its_abstention_is_asked(tmp_path):
-    """D42: restore overturns dedup's finding - keep.txt keeps it, the profile files it
-    as restored, it is passed, and task_success's abstention on it is now a question."""
-    from curation.pipeline import aggregate as agg
-    from curation.pipeline.adjudication import Decisions
-
+    """D42: restore overturns dedup's finding - keep.txt keeps it, it is passed, and
+    task_success's abstention on it is now a question."""
     rd = RunDir(str(tmp_path / "run")).good(0, 3)
     rd.replace("task_success", 3, "abstain")
     rd.replace("dedup", 3, "fail", details={"duplicate_of": 0})
@@ -444,11 +433,9 @@ def test_a_restored_dedup_appeal_comes_back_and_its_abstention_is_asked(tmp_path
     assert sorted(final(run_dir, "0,3")["reject"]) == [3]
     out = apply(run_dir, decisions(str(tmp_path / "d.json"), (3, "reject_appeal", "restore",
                                                               None)))
-    assert out["profile_resync"] == [3]
+    assert out["rerun_task_success"] == []
     _funnel_phase(run_dir, 2, "0,3")
     assert _keep_txt(run_dir, 2) == [0, 3]
-    state = agg.RunState(run_dir, list(ALL), [0, 3])
-    assert agg.profile_members(state, Decisions.of(run_dir)) == ([0, 3], {3})
     after = final(run_dir, "0,3", revision=2)
     assert sorted(after["passed"]) == [0, 3]
     assert _kinds(after) == {3: [("task_verdict", "task_success")]}
@@ -483,7 +470,8 @@ def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
     rd.good(3).replace("motion_quality", 3, "scored", score=0.1)
     rd.replace("visual_quality", 3, "scored", score=0.1)
     run_dir = rd.write()
-    apply(run_dir, decisions(str(tmp_path / "d0.json"), (9, "label", "discard", None)))
+    apply(run_dir, decisions(str(tmp_path / "d0.json"),
+                             (9, "task_verdict", "discard", None)))
     res = run("adjudicate-apply", "--run-dir", run_dir, "--decisions",
               decisions(str(tmp_path / "d1.json"), (2, "reject_appeal", "keep_rejected", None),
                         (episode, "reject_appeal", "restore", None)))
@@ -525,9 +513,9 @@ def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
 
 
 def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
-    """Every item carries its C1 line (label for label_conflict) and the codes it asks about; a
-    dedup appeal names the original; a line is only asked where it applies (label: passed
-    episodes)."""
+    """Every item carries its C1 line and the codes it asks about - a suspected label conflict
+    is part of the task verdict's question (registry 3.0) - a dedup appeal names the original,
+    and a line is only asked where it applies (a task verdict: delivered episodes)."""
     rd = RunDir(str(tmp_path / "run")).good(0, 3)
     rd.replace("task_success", 0, "abstain")
     rd.replace("dedup", 3, "fail", details={"duplicate_of": 0})
@@ -535,8 +523,7 @@ def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
     lists = final(run_dir, "0,3")
     items = {e: v["review"] for e, v in lists["review"].items()}
     assert [(i["kind"], i["line"], i["codes"]) for i in items[0]] == [
-        ("task_verdict", "task_verdict", ["uncertain"]),
-        ("label_conflict", "label", ["label_conflict_suspect"])]
+        ("task_verdict", "task_verdict", ["label_conflict_suspect", "uncertain"])]
     assert items[3] == [{"source_module": "dedup", "kind": "reject_appeal",
                          "line": "reject_appeal", "duplicate_of": 0, "codes": ["duplicate"],
                          "items": ["SET-1"], "reason": "与 ep000000 字节级完全重复"}]
@@ -556,26 +543,20 @@ def _label_questions(rd: RunDir, *eps: int) -> str:
     return rd.write()
 
 
-def test_a_task_verdict_after_a_relabel_is_taken_instead_of_a_re_judge(tmp_path):
-    """C1 1.3's follow-up (v1's relabel card): on an episode asked about its label, a person who
-    adopts a new label may also conclude the task. A success or failure is taken as it is and the
-    episode is not judged again; "unsure" leaves the re-judge.
-
-    Since the skill profile left (registry 3.0) the label question only ever comes from the kill
-    guard, which holds the episode, so the card always carries the task verdict question too."""
+def test_a_task_verdict_with_a_new_label_is_taken_instead_of_a_re_judge(tmp_path):
+    """One card, one question: a person judging an episode may rewrite its task text in the same
+    answer (``new_label``). A success or failure is taken as it is and the episode is not judged
+    again; "unsure" leaves the rewritten text to the model, which judges the episode again (D39)."""
     run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1, 2), 0, 1, 2)
     first = final(run_dir, "0-2")
     assert {e: [i["line"] for i in v["review"]] for e, v in first["review"].items()} == \
-        {0: ["task_verdict", "label"], 1: ["task_verdict", "label"], 2: ["task_verdict", "label"]}
+        {0: ["task_verdict"], 1: ["task_verdict"], 2: ["task_verdict"]}
 
     out = apply(run_dir, decisions(str(tmp_path / "d.json"),
-                                   (0, "label", "adopt_suggestion", "stack the cups"),
-                                   (0, "task_verdict", "success", None),
-                                   (1, "label", "custom_label", "wipe the table"),
-                                   (1, "task_verdict", "unsure", None),
-                                   (2, "label", "adopt_suggestion", "stack the cups"),
-                                   (2, "task_verdict", "failure", None)))
-    assert out["applied"] == 6
+                                   (0, "task_verdict", "success", "stack the cups"),
+                                   (1, "task_verdict", "unsure", "wipe the table"),
+                                   (2, "task_verdict", "failure", "stack the cups")))
+    assert out["applied"] == 3
     assert out["rerun_task_success"] == [1]              # 0 and 2 were concluded by a person
     after = final(run_dir, "0-2", revision=2)
     assert sorted(after["passed"]) == [0] and sorted(after["held"]) == [1]
@@ -607,79 +588,35 @@ def _apply_more(run_dir: str, path: str, first_id: int, *items) -> dict:
     return apply(run_dir, path)
 
 
-@pytest.mark.skip(reason="the follow-up question has no live path since the skill profile left (registry 3.0): the label question now only comes from the kill guard, which also leaves the task verdict open, so a task answer is a primary answer and never lapses")
-def test_a_follow_up_verdict_lapses_when_its_label_answer_changes(tmp_path):
-    """The verdict given with a relabel on a label-only card (task_success passed)
-    answers the registry's follow-up: it counts while the label answer that opened it
-    is still the latest and was given before it. Changed to keep_label, the failure
-    lapses and the machine's pass is back; changed to "unsure", the failure lapses too,
-    the relabel still stands, and it is judged again."""
-    from curation.pipeline.adjudication import Decisions
-
-    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1), 0, 1)
-    out = _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
-                      (0, "label", "custom_label", "stack the cups"),
-                      (0, "task_verdict", "failure", None),
-                      (1, "label", "custom_label", "wipe the table"),
-                      (1, "task_verdict", "failure", None))
-    assert out["rerun_task_success"] == []
-    second = final(run_dir, "0,1", revision=2)
-    assert sorted(second["reject"]) == [0, 1]
-
-    out = _apply_more(run_dir, str(tmp_path / "d2.json"), 5,
-                      (0, "label", "keep_label", None), (1, "label", "unsure", None))
-    assert out["rerun_task_success"] == [1]           # 1's relabel stands, its verdict not
-    decided = Decisions.of(run_dir)
-    assert decided.human_task_verdict(0) is None and decided.human_task_verdict(1) is None
-    third = final(run_dir, "0,1", revision=3)
-    assert sorted(third["passed"]) == [0] and sorted(third["held"]) == [1]
-    assert "task_text" not in third["passed"][0]            # the original annotation again
-    assert third["held"][1]["reasons"][0]["text"] == "改标后尚未按新标注重跑任务成败判定"
-
-
-@pytest.mark.skip(reason="the follow-up question has no live path since the skill profile left (registry 3.0): the label question now only comes from the kill guard, which also leaves the task verdict open, so a task answer is a primary answer and never lapses")
-def test_a_resubmitted_label_needs_its_verdict_again(tmp_path):
-    """A new label answer lapses the verdict given before it: the new relabel is judged
-    again, unless the verdict is given once more after it."""
-    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0), 0)
-    assert _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
-                       (0, "label", "custom_label", "stack the cups"),
-                       (0, "task_verdict", "success", None))["rerun_task_success"] == []
-    out = _apply_more(run_dir, str(tmp_path / "d2.json"), 3,
-                      (0, "label", "custom_label", "wipe the table"))
-    assert out["rerun_task_success"] == [0]
-    assert sorted(final(run_dir, "0", revision=2)["held"]) == [0]
-    out = _apply_more(run_dir, str(tmp_path / "d3.json"), 4,
-                      (0, "task_verdict", "success", None))
-    assert out["rerun_task_success"] == []
-    third = final(run_dir, "0", revision=3)
-    assert sorted(third["passed"]) == [0]
-    assert third["passed"][0]["task_text"] == {"text": "wipe the table", "source": "人工改标"}
-
-
-def test_a_verdict_on_the_cards_own_question_never_lapses(tmp_path):
-    """Where task_success abstained the task verdict is the card's own question: a later
-    change of the label answer leaves it standing."""
+def test_the_latest_answer_on_a_line_is_the_one_in_force(tmp_path):
+    """Answers are append only and the last one on a line wins: a person who judged an episode
+    failed and then answered again carries the episode with the second answer."""
     rd = RunDir(str(tmp_path / "run")).good(0)
     rd.replace("task_success", 0, "abstain")
     run_dir = _label_questions(rd, 0)
     _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
-                (0, "label", "custom_label", "stack the cups"),
-                (0, "task_verdict", "failure", None))
-    _apply_more(run_dir, str(tmp_path / "d2.json"), 3, (0, "label", "keep_label", None))
+                (0, "task_verdict", "failure", "stack the cups"))
     lists = final(run_dir, "0", revision=2)
     assert sorted(lists["reject"]) == [0]
     assert lists["reject"][0]["reasons"][0]["text"] == "人工裁决判失败（任务未完成）"
 
+    _apply_more(run_dir, str(tmp_path / "d2.json"), 2,
+                (0, "task_verdict", "success", "stack the cups"))
+    after = final(run_dir, "0", revision=3)
+    assert sorted(after["passed"]) == [0]
+    assert after["passed"][0]["task_text"] == {"text": "stack the cups", "source": "人工改标"}
+
 
 def test_a_line_adjudicate_apply_has_no_rule_for_is_refused(tmp_path):
-    """decisions.json lines are open strings (C2 1.5); applying one without a rule is
-    refused, naming it - never skipped. The rules cover the registry's lines."""
+    """decisions.json lines are open strings (C2 1.5); applying one without a rule is refused,
+    naming it - never skipped. The rules are exactly the registry's review lines."""
     from curation.contracts import modules as registry
     from curation.pipeline.adjudication import LINE_DECISIONS
 
-    assert {line: set(ds) for line, ds in LINE_DECISIONS.items()} == \
-        {line.id: {c for c, _ in line.decisions} for line in registry.REVIEW_LINES}
+    asked = {line.id: {c for c, _ in line.decisions} for line in registry.REVIEW_LINES}
+    rules = {line: set(ds) for line, ds in LINE_DECISIONS.items()}
+    assert set(rules) == set(asked)
+    assert all(rules[k] == v for k, v in asked.items())
     rd = RunDir(str(tmp_path / "run")).good(0).write()
     res = run("adjudicate-apply", "--run-dir", rd, "--decisions",
               decisions(str(tmp_path / "d.json"), (0, "retrim", "cut_tail", None)))
@@ -688,23 +625,27 @@ def test_a_line_adjudicate_apply_has_no_rule_for_is_refused(tmp_path):
 
 
 def test_decisions_are_copied_in_v1s_csv_words(tmp_path):
+    """The copies are one CSV per line, in v1's words; a rewritten task text is a column of the
+    task verdicts, and the labels file names the decision it came with."""
     rd = RunDir(str(tmp_path / "run")).good(0, 1).replace("task_success", 1, "fail").write()
-    apply(rd, decisions(str(tmp_path / "d.json"), (0, "task_verdict", "failure", None),
-                        (1, "label", "keep_label", None), (1, "reject_appeal", "unsure", None)))
+    apply(rd, decisions(str(tmp_path / "d.json"),
+                        (0, "task_verdict", "failure", None),
+                        (1, "task_verdict", "success", "wipe the table"),
+                        (1, "reject_appeal", "unsure", None)))
     with open(os.path.join(rd, "human-decisions", "task_verdicts.csv"), encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
-    assert [(r["episode_id"], r["verdict"]) for r in rows] == [("ep000000", "判失败")]
-    with open(os.path.join(rd, "human-decisions", "label_decisions.csv"), encoding="utf-8") as fh:
-        assert [r["decision"] for r in csv.DictReader(fh)] == ["维持原标注"]
+    assert [(r["episode_id"], r["verdict"], r["new_label"]) for r in rows] == [
+        ("ep000000", "判失败", ""), ("ep000001", "判成功", "wipe the table")]
+    assert not os.path.exists(os.path.join(rd, "human-decisions", "label_decisions.csv"))
     with open(os.path.join(rd, "human-decisions", "reject_appeals.csv"), encoding="utf-8") as fh:
         assert [r["appeal"] for r in csv.DictReader(fh)] == ["拿不准"]
     with open(os.path.join(rd, "adjudication", "labels.json"), encoding="utf-8") as fh:
-        assert json.load(fh) == {"labels": {}}
+        assert json.load(fh) == {"labels": {"1": {"text": "wipe the table", "decision_id": 2,
+                                                  "relabel_rerun": "v1"}}}
 
 
 @pytest.mark.parametrize("bad, words", [
     ({"line": "task_verdict", "decision": "restore"}, "is not a task_verdict decision"),
-    ({"line": "label", "decision": "adopt_suggestion", "new_label": ""}, "needs new_label"),
     ({"line": "verdict", "decision": "success"}, "has no apply rule"),
 ])
 def test_a_decision_that_breaks_the_contract_is_a_usage_error(tmp_path, bad, words):

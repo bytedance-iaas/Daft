@@ -48,7 +48,9 @@ NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标�
 DEDUP = "dedup"
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
-LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "label", "reject_appeal")
+LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "reject_appeal")
+#: The finding that says a task text and the picture disagree (task_success, LABEL-5).
+LABEL_CONFLICT = "label_conflict_suspect"
 
 
 class LegacyRun(RuntimeError):
@@ -283,8 +285,9 @@ def _audit_entries(audit: dict | None) -> dict[int, list[tuple[str, dict]]]:
 
 def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
                  audit_entries: list[tuple[str, dict]], reasons: list[dict]) -> list[dict]:
-    """What a person is asked about one episode (D42, D43): a kept episode's review findings nobody settled,
-    one item per line and module (the label line from the merged audit); an admissible reject's appeal."""
+    """What a person is asked about one episode (D42, D43): a kept episode's review findings nobody
+    settled, one item per line and module; an admissible reject's appeal. A suspected label conflict
+    is part of the task verdict's own item (registry 3.0), with the audit's reason and priority."""
     items: list[dict] = []
     if d.state == "keep":
         by_line: dict[tuple[str, str], list[Graded]] = {}
@@ -292,27 +295,20 @@ def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
             by_line.setdefault((g.line or "", g.module), []).append(g)
         for (line, module), gs in by_line.items():
             spec = registry.review_line(line)
-            if line == "label":
-                continue                          # from the audit entries below
             if line == "task_verdict" and decisions.human_task_verdict(ep) is not None:
                 continue
+            codes = [g.code for g in gs]
             reason = "；".join(dict.fromkeys(str(g.finding.get("message_zh") or g.code) for g in gs))
-            items.append({"source_module": module, "kind": spec.review_kind, "line": line,
-                          "codes": [g.code for g in gs], "items": [g.item for g in gs if g.item],
-                          "reason": reason or "未注明"})
-        label = [g for g in d.verdict.review if g.line == "label"]
-        if label and not decisions.label_resolved(ep):
-            spec = registry.review_line("label")
-            entries = audit_entries or [("", {})]
-            for tier, entry in entries:
-                src = TASK if entry.get("guard_layer") else next((g.module for g in label), TASK)
-                mine = [g for g in label if g.module == src] or label
-                item = {"source_module": src, "kind": spec.review_kind, "line": "label",
-                        "codes": [g.code for g in mine], "items": [g.item for g in mine if g.item],
-                        "reason": str(entry.get("reason") or tier or mine[0].finding.get("message_zh") or "标注分歧")}
+            item = {"source_module": module, "kind": spec.review_kind, "line": line,
+                    "codes": codes, "items": [g.item for g in gs if g.item],
+                    "reason": reason or "未注明"}
+            if LABEL_CONFLICT in codes and audit_entries:
+                tier, entry = audit_entries[0]
+                item["reason"] = "；".join(dict.fromkeys(
+                    x for x in (str(entry.get("reason") or ""), item["reason"]) if x))
                 if entry.get("priority"):
                     item["priority"] = str(entry["priority"])
-                items.append(item)
+            items.append(item)
     if d.state == "drop" and d.discard is None and d.admissible and decisions.appeal(ep) in (None, "unsure") \
             and not d.restored:
         spec = registry.review_line("reject_appeal")

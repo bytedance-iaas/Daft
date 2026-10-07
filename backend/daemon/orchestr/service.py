@@ -501,7 +501,7 @@ class Orchestrator:
                 raise conflict(task, "没有出错的条目或整体失败的模块，不需要重试")
             scope = {"modules": [m for m in registry.ids() if m in wanted], "episodes": "errors"}
         elif kind == "apply_adjudication":
-            if not self.decisions_to_apply(task)[0]:
+            if not self.decisions_to_apply(task):
                 raise conflict(task, "没有待执行的裁决：先在裁决页做出判断")
             scope = {"relabel_rerun": scope.get("relabel_rerun") or "v1"}
         elif kind == "reexport":
@@ -522,18 +522,12 @@ class Orchestrator:
         self.scheduler.enqueue(task_id, sub.id, owner=task.owner_id)
         return sub
 
-    def decisions_to_apply(self, task: P.Task) -> tuple[list, list]:
-        """``(to execute, lapsed)``: what an adjudication run hands to ``curation
-        adjudicate-apply`` is W5b's ``Queue.executable()`` - the latest unapplied decisions
-        that still stand, oldest first; follow-up answers whose opening answer changed since
-        have lapsed (C4 1.5.1) and are only reported."""
+    def decisions_to_apply(self, task: P.Task) -> list:
+        """What an adjudication run hands to ``curation adjudicate-apply``: W5b's
+        ``Queue.executable()`` - the latest unapplied decisions, oldest first."""
         from ..results import Queue, store_of
 
-        todo = Queue(store_of(self.rt), self.repo, task).executable()
-        ids = {a.id for a in todo}
-        lapsed = [a for a in self.repo.latest_adjudications(task.id, unapplied_only=True)
-                  if a.id not in ids]
-        return todo, lapsed
+        return Queue(store_of(self.rt), self.repo, task).executable()
 
     # ================================================================== D37 again
     def compatibility(self, task: P.Task, preflight: dict) -> list[dict]:

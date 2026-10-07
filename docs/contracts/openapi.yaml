@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.5.1
+  version: 3.0.0
   description: |
     ## Overview
 
@@ -77,6 +77,14 @@ info:
 
     **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
     its changes here.
+
+    **3.0.0** (2026-10-06): the skill profile is gone, and with it the module `skill_profile`, the
+    `profile_vlm` stage and the `profile` plan stage. One adjudication card now asks one question: the
+    `label` review line is gone, and a suspected conflict between a task text and the picture is part
+    of the `task_verdict` question. An answer on that line may carry `new_label`, the task text the
+    person rewrote while judging; it replaces the decisions `adopt_suggestion`, `custom_label` and
+    `keep_label`. Follow-up questions are gone (`follow_ups` on a review line, `follow_up_of` on a
+    question).
   x-description-zh: |
     ## 概览
 
@@ -123,6 +131,11 @@ info:
     ## 变更记录
 
     **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
+
+    **3.0.0**（2026-10-06）：技能画像下线，模块 `skill_profile`、`profile_vlm` 档与 `profile` 阶段一并移除。
+    裁决改成一张卡片只问一个问题：`label` 这条问题线去掉，「标注与画面疑似不符」并入 `task_verdict` 的问题；
+    判成败时可以顺带带上 `new_label`，就是人改写的任务描述，原来的 `adopt_suggestion`、`custom_label`、
+    `keep_label` 三个决定不再需要。追加问题机制去掉（问题线上的 `follow_ups`、问题上的 `follow_up_of`）。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1182,12 +1195,6 @@ paths:
                           input_hint: {field: vlm}
                           notes: []
                         - {id: dedup, availability: available}
-                        - id: skill_profile
-                          availability: needs_input
-                          reason: no VLM backend selected
-                          reason_code: vlm_backend_missing
-                          input_hint: {field: vlm}
-                          notes: []
                       meta_fingerprint: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                       warnings: []
         default: {$ref: "#/components/responses/Error"}
@@ -1447,7 +1454,6 @@ paths:
                             - {id: vlm, state: running, done: 410, total: 631, elapsed_s: 1102, eta_s: 1440}
                             - {id: verdict, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: dedup, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: profile_vlm, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: export, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
@@ -1456,9 +1462,9 @@ paths:
                         pending_adjudication: 0
                         delivery_stale: false
                         active_subtask: null
-                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
-                          skill_profile]
-                        module_counts: {succeeded: 5, running: 1, pending: 2}
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
+                          dedup]
+                        module_counts: {succeeded: 5, running: 1, pending: 1}
                         usage:
                           prompt_tokens: 1700000
                           completion_tokens: 120000
@@ -1494,12 +1500,6 @@ paths:
                               note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
                             - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - {id: dedup, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
-                            - id: profile_vlm
-                              state: succeeded
-                              done: 41
-                              total: 41
-                              elapsed_s: 131
-                              eta_s: null
                             - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - id: export
                               state: skipped
@@ -1514,9 +1514,9 @@ paths:
                         pending_adjudication: 10
                         delivery_stale: true
                         active_subtask: null
-                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
-                          skill_profile]
-                        module_counts: {succeeded: 7, completed_with_errors: 1}
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
+                          dedup]
+                        module_counts: {succeeded: 6, completed_with_errors: 1}
                         usage:
                           prompt_tokens: 2010000
                           completion_tokens: 67500
@@ -1569,7 +1569,6 @@ paths:
                     - visual_quality
                     - task_success
                     - dedup
-                    - skill_profile
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
@@ -1606,7 +1605,6 @@ paths:
                     - visual_quality
                     - task_success
                     - dedup
-                    - skill_profile
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
@@ -2182,7 +2180,7 @@ paths:
                         run:
                           run_dir: 20260920-130514
                           revision: 1
-                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup, skill_profile]
+                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup]
                           adjudications_applied: 0
                         counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
                         pass_rate: 0.82
@@ -2790,20 +2788,9 @@ paths:
                       - episode_index: 29
                         status: pending
                         questions:
-                          - line: label
-                            source_module: skill_profile
-                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
-                            annotation: pour rice into the cup
-                            caption: pour rice into the green bowl
-                            suggestion: pour rice into the green bowl
-                            priority: 重点
-                            latest_decision: null
-                            codes: [label_disagreement]
-                            items: [LABEL-5]
-                            follow_up_of: null
                           - line: task_verdict
                             source_module: task_success
-                            reason: 证据不足，弃权：打分层拿不准 → 复核分歧 → 仲裁拿不准 → 转人工
+                            reason: 证据不足，弃权：画面看不出米有没有倒进杯子里
                             annotation: pour rice into the cup
                             caption: null
                             suggestion: null
@@ -2811,21 +2798,19 @@ paths:
                             latest_decision: null
                             codes: [uncertain]
                             items: [TASK-5]
-                            follow_up_of: null
                       - episode_index: 4
                         status: pending
                         questions:
-                          - line: label
-                            source_module: skill_profile
-                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
+                          - line: task_verdict
+                            source_module: task_success
+                            reason: 这条标注和画面对不上：标注说开柜门，画面是叠衣服
                             annotation: Open the cabinet door
                             caption: fold the cloth and put it on the table
                             suggestion: fold the cloth and put it on the table
                             priority: 高置信
                             latest_decision: null
-                            codes: [label_disagreement]
+                            codes: [label_conflict_suspect]
                             items: [LABEL-5]
-                            follow_up_of: null
                     next_cursor: null
                     has_more: false
                     counts: {decided: 0, pending: 10, unapplied: 0}
@@ -2851,15 +2836,14 @@ paths:
                   items: {$ref: "#/components/schemas/DecisionInput"}
             examples:
               decisions:
-                summary: Adopt a suggested label, judge the task a success, write a label of one's own
-                x-summary-zh: 采纳建议的标注、判定任务成功、自己写一条标注
+                summary: Judge the task a success; rewrite the task text while judging
+                x-summary-zh: 判定任务成功；判定时顺带改写标注
                 value:
                   decisions:
-                    - {episode_index: 29, line: label, decision: adopt_suggestion}
                     - {episode_index: 29, line: task_verdict, decision: success, note: 杯子里确实倒进了米}
                     - episode_index: 4
-                      line: label
-                      decision: custom_label
+                      line: task_verdict
+                      decision: success
                       new_label: fold the cloth on the table
       responses:
         "200":
@@ -3629,14 +3613,14 @@ components:
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
-      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check
+      description: a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check
     ReviewLine:
       type: object
       additionalProperties: false
       required: [id, review_kind, title_zh, applies_to, counts_as_pending, decisions]
       properties:
         id: {$ref: "#/components/schemas/ReviewLineId"}
-        review_kind: {type: string, description: "the kind of its review.json items (C2); label_conflict for label"}
+        review_kind: {type: string, description: "the kind of its review.json items (C2)"}
         title_zh: {type: string}
         applies_to: {enum: [passed, reject], description: "the list its episodes are in when asked"}
         counts_as_pending: {type: boolean, description: "an open item must be decided; false = a person may act (appeals)"}
@@ -3650,25 +3634,6 @@ components:
             properties:
               const: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
               title: {type: string}
-        follow_ups:
-          type: array
-          default: []
-          description: >-
-            Questions a card gains once its answer on this line is one of `after` - only on a
-            card that does not ask that line already. v1: after adopting a new label a person
-            may give the task verdict (the machine takes it, no re-judging); left open, the
-            episode is judged again with the new label. An optional follow-up never counts as
-            pending, and its answer lapses (not executed, not counted) once the answer that
-            opened it changes.
-          items:
-            type: object
-            additionalProperties: false
-            required: [after, line, decisions, optional]
-            properties:
-              after: {type: array, minItems: 1, items: {type: string}}
-              line: {$ref: "#/components/schemas/ReviewLineId"}
-              decisions: {type: array, minItems: 1, items: {type: string}}
-              optional: {type: boolean}
     BrowsedDataset:
       type: object
       additionalProperties: false
@@ -4193,7 +4158,7 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report, export, verify; subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
         full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
@@ -4716,15 +4681,9 @@ components:
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
         duplicate_of: {type: [integer, "null"], minimum: 0, description: "an appeal of a dedup reject: the episode it duplicates"}
-        follow_up_of:
-          oneOf: [{type: "null"}, {$ref: "#/components/schemas/ReviewLineId"}]
-          description: >-
-            set on a question the card gained as a follow-up of its answer on that line
-            (registry follow_ups), absent or null on the card's own questions; a follow-up whose
-            opening answer changed is left out of the card
         annotation: {type: [string, "null"]}
         caption: {type: [string, "null"]}
-        suggestion: {type: [string, "null"], description: "suggested new label"}
+        suggestion: {type: [string, "null"], description: "a task text the model read off the video: what a person may send back as new_label"}
         priority: {type: [string, "null"]}
         latest_decision: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Decision"}]}
         codes:
@@ -4767,12 +4726,11 @@ components:
           type: string
           pattern: "^[a-z][a-z0-9_]*$"
           description: >-
-            one of the line's decisions in the registry, on a question the episode's card has or
-            a follow-up the card's answer on another line opened (registry follow_ups); anything
-            else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
-            keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
+            one of the line's decisions in the registry, on a question the episode's card has;
+            anything else is 400 validation_failed. One card asks one question. Today:
+            task_verdict - success, failure, unsure, discard;
             reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure
-        new_label: {type: [string, "null"], description: "custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken"}
+        new_label: {type: [string, "null"], description: "task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it"}
         note: {type: [string, "null"]}
     AdjudicationApply:
       type: object

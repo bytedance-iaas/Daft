@@ -57,7 +57,7 @@ import {
 import { asLegacyRecord } from '../lib/records';
 import { producesAdjudication } from '../lib/registry';
 import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsView } from './findings';
-import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
 import { vizHandlers } from './viz';
@@ -1276,7 +1276,7 @@ const report = [
     const open = new Map<number, string[]>();
     if (rev === t.result_rev) {
       for (const c of cardsOf(t.id, 'review')) {
-        if (c.status === 'pending' || c.status === 'unsure') open.set(c.episode_index, [...new Set(c.questions.filter((x) => !x.follow_up_of).map((x) => x.source_module))]);
+        if (c.status === 'pending' || c.status === 'unsure') open.set(c.episode_index, [...new Set(c.questions.map((x) => x.source_module))]);
       }
     }
     const s = t.summary;
@@ -1347,7 +1347,8 @@ const report = [
         if (status === 'all') return true;
         if (status === 'pending') return c.status === 'pending' || c.status === 'unsure';
         if (status === 'decided') return c.status === 'decided' || c.status === 'applied';
-        return c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && q.latest_decision.decision !== 'unsure');
+        // 拿不准 is nothing to apply (rule 3) unless it rewrote the task text: that is judged again.
+        return c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && (q.latest_decision.decision !== 'unsure' || q.latest_decision.new_label));
       });
     return HttpResponse.json({ ...cursorPage<AdjudicationCard>(cards, url), counts: countsOf(t.id) });
   }),
@@ -1357,26 +1358,17 @@ const report = [
     const b = await body<{ decisions: DecisionInput[] }>(request, 'submitAdjudication');
     // C4 1.5 (D43): a decision must be one of its line's catalog decisions, on a question the
     // episode's card has; 1.5.1 adds a follow-up the card's answer on another line opened (and
-    // only that follow-up's decisions). Anything else is 400. Appeal cards only exist for
-    // appealable modules (D42). Answers earlier in the same submission count as in force.
+    // Anything else is 400. Appeal cards only exist for appealable modules (D42); only a task
+    // verdict answer may carry a rewritten task text (new_label).
     const catalog = reviewCatalog();
-    const inForce = new Map<string, string>();
     for (const d of b.decisions) {
       const line = catalog.find((l) => l.id === d.line);
       if (!line) return err(400, 'validation_failed', `没有「${d.line}」这种复核`);
       if (!line.decisions.some((x) => x.const === d.decision)) return err(400, 'validation_failed', `「${line.title_zh}」不能选 ${d.decision}`);
       const card = cardsOf(t.id, line.applies_to === 'reject' ? 'appeals' : 'review').find((c) => c.episode_index === d.episode_index);
       if (!card) return err(400, 'validation_failed', `ep ${d.episode_index} 不在这个任务的待裁决队列里`);
-      // The card's own questions; a listed follow-up (C4 1.5.2) is checked against its opening answer.
-      const own = card.questions.filter((q) => !q.follow_up_of);
-      if (!own.some((q) => q.line === d.line)) {
-        const answers = (l: string) => inForce.get(`${d.episode_index}:${l}`) ?? latest(t.id, d.episode_index, l)?.decision;
-        const opened = openFollowUp(t.id, d.episode_index, own, d.line, answers);
-        if (!opened) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问：先采纳新标注或自行改写标注，才能直接判成败`);
-        if (!opened.followUp.decisions.includes(d.decision)) return err(400, 'validation_failed', `这里只能选：${opened.followUp.decisions.join('、')}`);
-      }
-      if (d.decision === 'custom_label' && !d.new_label?.trim()) return err(400, 'validation_failed', '自行改写标注要填新标注');
-      inForce.set(`${d.episode_index}:${d.line}`, d.decision);
+      if (!card.questions.some((q) => q.line === d.line)) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问`);
+      if (d.new_label?.trim() && d.line !== 'task_verdict') return err(400, 'validation_failed', '只有「任务成败」可以带 new_label');
     }
     const list = decisionsOf(t.id);
     for (const d of b.decisions) {
@@ -1393,8 +1385,8 @@ const report = [
       if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务，等它结束后再执行裁决');
       if (countsOf(t.id).unapplied === 0) return err(400, 'validation_failed', '没有尚未应用的裁决');
       const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
-      // The answers in force; a lapsed follow-up answer is not executed (C1 follow_ups).
-      for (const d of executable(t.id)) if (d.decision !== 'unsure') d.applied = true;
+      // The answers in force; a bare 拿不准 changes nothing, one that rewrote the text is applied.
+      for (const d of executable(t.id)) if (d.decision !== 'unsure' || d.new_label) d.applied = true;
       t.delivery_stale = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
     }),

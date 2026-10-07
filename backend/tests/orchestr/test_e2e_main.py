@@ -34,7 +34,7 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert mods["timestamp_check"]["episodes_total"] == 8
     # every module judges every episode (D57): task_success too on the two rejected on their timestamps
     assert mods["task_success"]["episodes_total"] == 8 and mods["task_success"]["episodes_error"] == 0
-    assert mods["dedup"]["episodes_total"] == 8 and mods["skill_profile"]["episodes_total"] == 8
+    assert mods["dedup"]["episodes_total"] == 8
     assert task["usage"]["requests"] > 0 and task["usage"]["prompt_tokens"] > 0
     run_id = task["run_id"]
     batch = d.delivery(run_id)

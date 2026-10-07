@@ -17,12 +17,10 @@ Derived here, and nowhere else:
   and titles only, so v1's decisions carry their meaning as flags (a value the table does
   not know is a plain answer):
 
-  - ``relabel`` - sets a new task text (``new_label``); ``needs_label`` - the person must
-    type it (otherwise the question's suggestion is taken);
   - ``discard`` - drops the whole episode; it wins over every verdict on the card (rule 1);
   - ``unsure`` - recorded, changes nothing, the card stays pending (rule 3);
-  - ``verdict`` - a person's task verdict; next to a discard it is refused, and after a
-    relabel it stands without re-judging (rule 4).
+  - ``verdict`` - a person's task verdict; it may carry a rewritten task text
+    (``new_label``, :data:`RELABEL_LINE`), and then it stands without re-judging (rule 4).
 """
 from __future__ import annotations
 
@@ -32,11 +30,12 @@ from curation.contracts import modules as registry
 
 TABS = ("review", "appeals")
 
+#: The one line whose answer may carry a rewritten task text (``new_label``).
+RELABEL_LINE = "task_verdict"
+
 
 @dataclass(frozen=True)
 class Meaning:
-    relabel: bool = False
-    needs_label: bool = False
     discard: bool = False
     unsure: bool = False
     verdict: bool = False
@@ -44,8 +43,6 @@ class Meaning:
 
 #: What v1's decision values mean (design doc 06 §5.1).
 MEANINGS: dict[str, Meaning] = {
-    "adopt_suggestion": Meaning(relabel=True),
-    "custom_label": Meaning(relabel=True, needs_label=True),
     "discard": Meaning(discard=True),
     "unsure": Meaning(unsure=True),
     "success": Meaning(verdict=True),
@@ -59,14 +56,6 @@ class DecisionSpec:
     id: str
     title_zh: str
     meaning: Meaning = _PLAIN
-
-    @property
-    def relabel(self) -> bool:
-        return self.meaning.relabel
-
-    @property
-    def needs_label(self) -> bool:
-        return self.meaning.needs_label
 
     @property
     def discard(self) -> bool:
@@ -141,14 +130,9 @@ def decision(line_id: str | None, decision_id: str | None) -> DecisionSpec | Non
     return ln.decision(decision_id) if ln is not None and decision_id else None
 
 
-def is_relabel(line_id: str, decision_id: str | None) -> bool:
-    d = decision(line_id, decision_id)
-    return bool(d and d.relabel)
-
-
 def relabel_lines() -> tuple[str, ...]:
-    """Lines whose answers can set a new task text (v1: the label line)."""
-    return tuple(ln.id for ln in LINES if any(d.relabel for d in ln.decisions))
+    """Lines whose answers can carry a rewritten task text (``new_label``)."""
+    return tuple(ln.id for ln in LINES if ln.id == RELABEL_LINE)
 
 
 

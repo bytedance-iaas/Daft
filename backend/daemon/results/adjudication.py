@@ -4,11 +4,11 @@
 **Questions** are the current revision's ``review.json`` items, read as the CLI wrote
 them (C2 1.5 ``final-list``, v1's queues; D42, D43) - the queue never re-derives them.
 An item names its line (``line``; before C2 1.5 the line of its ``kind``), and
-:mod:`.catalog` - the registry's review lines - says which tab shows it: ``label`` (a
-label conflict from skill_profile's audit or task_success's kill guard; the original
-annotation and the model's description come from the revision's ``label_audit.json``,
-and the suggested new label is that description - v1 adopts it) and ``task_verdict``
-on the review tab, ``reject_appeal`` on the appeals tab (rejects of an appealable
+:mod:`.catalog` - the registry's review lines - says which tab shows it: ``task_verdict``
+on the review tab (one question: is this episode usable; its answer may carry a rewritten
+task text, and for a suspected label conflict the original annotation and the model's
+description come from the revision's ``label_audit.json`` as the suggestion),
+``reject_appeal`` on the appeals tab (rejects of an appealable
 module: task_success, and dedup since D42 with ``duplicate_of``; physical and
 structural gates are final - rule 2). A line the catalog does not know is not asked.
 
@@ -25,19 +25,19 @@ of an episode: a catalog line the episode's card asks (then any of the line's ca
 decisions) or a follow-up the card's answers open (then only the follow-up's decisions),
 and the rules below on top.
 
-**Card status** (optional follow-ups left out, except that their answers must be
-executed before a card is ``applied``): a discard on any line decides the card (rule 1:
+**Card status**: a discard on any line decides the card (rule 1:
 it wins over every verdict); else any ``unsure`` keeps it ``unsure`` - still pending,
 still in the queue (rule 3); else every question answered makes it ``decided``
-(``applied`` once every answer was executed); a relabel not executed yet also decides
-it, because executing re-judges the task with the new label; anything else is
-``pending``.
+(``applied`` once every answer was executed); an answer carrying a rewritten task text
+that was not executed yet also decides it, because executing re-judges the task under the
+new text; anything else is ``pending``.
 
 **Counts** (C4 ``AdjudicationCounts``: cards of the whole task, not the filtered page):
 ``pending`` and ``decided`` over the cards with a question on a ``counts_as_pending``
 line - appeal candidates are optional - and ``unapplied`` over both tabs: cards with an
-answer that was not executed yet (``unsure`` is not one). ``pending`` is what
-``summary.pending_adjudication`` holds for the task list and the overview.
+answer that was not executed yet (an ``unsure`` is one only when it rewrote the task
+text). ``pending`` is what ``summary.pending_adjudication`` holds for the task list and
+the overview.
 """
 from __future__ import annotations
 
@@ -73,7 +73,6 @@ class Question:
     priority: str | None = None
     duplicate_of: int | None = None
     revision: int = 0
-    optional: bool = False              # an optional follow-up: never pending, never blocking
     codes: tuple[str, ...] = ()         # C2 2.0: the finding codes the question is about
     items: tuple[str, ...] = ()         # ... and their taxonomy items
 
@@ -166,10 +165,13 @@ class Card:
     status: str
 
     def unapplied(self, standing: dict) -> bool:
-        """Something to execute: a standing answer not applied yet (``unsure`` is not one)."""
+        """Something to execute: a standing answer not applied yet. An ``unsure`` changes nothing
+        (rule 3) unless it carries a rewritten task text - that is judged again (D39)."""
         for q in self.questions:
             d = standing.get((q.episode, q.line))
-            if d is not None and d.applied_in_subtask is None and not _unsure(d):
+            if d is None or d.applied_in_subtask is not None:
+                continue
+            if not _unsure(d) or d.new_label:
                 return True
         return False
 
@@ -188,19 +190,12 @@ class Card:
 
     def counts_as_pending(self) -> bool:
         pending = C.pending_lines()
-        return any(q.line in pending and not q.optional for q in self.questions)
+        return any(q.line in pending for q in self.questions)
 
 
 def card_status(questions: list[Question], standing: dict) -> str:
-    """pending / decided / unsure / applied of one card, from its standing answers.
-
-    An optional follow-up never blocks ``decided`` and never makes a card pending or
-    unsure; an answer on it still has to be executed before the card is ``applied``.
-    """
-    required = [q for q in questions if not q.optional]
-    decs = [standing.get((q.episode, q.line)) for q in required]
-    extra = [d for q in questions if q.optional
-             if (d := standing.get((q.episode, q.line))) is not None and not _unsure(d)]
+    """pending / decided / unsure / applied of one card, from its standing answers."""
+    decs = [standing.get((q.episode, q.line)) for q in questions]
     specs = [_spec(d) for d in decs]
     discard = next((d for d, s in zip(decs, specs) if s is not None and s.discard), None)
     if discard is not None:                             # rule 1
@@ -208,10 +203,9 @@ def card_status(questions: list[Question], standing: dict) -> str:
     if any(s is not None and s.unsure for s in specs):
         return "unsure"                                 # rule 3: stays in the queue
     if all(d is not None for d in decs):
-        done = all(d.applied_in_subtask for d in decs + extra)
+        done = all(d.applied_in_subtask for d in decs)
         return "applied" if done else "decided"
-    if any(s is not None and s.relabel and d.applied_in_subtask is None
-           for d, s in zip(decs, specs)):
+    if any(d is not None and d.new_label and d.applied_in_subtask is None for d in decs):
         return "decided"                                # rule 4: executing re-judges it
     return "pending"
 
@@ -220,8 +214,8 @@ class Queue:
     """The task's questions, decisions and cards at its current revision.
 
     ``asked`` are the questions modules asked (current revision, or an older one for an
-    answered question); ``questions`` add the follow-ups that are open now; ``decisions``
-    are the latest rows per (episode, line); every one of them counts.
+    answered question); ``decisions`` are the latest rows per (episode, line); every one of
+    them counts.
     """
 
     def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task, *,
@@ -264,7 +258,7 @@ class Queue:
                     by_ep.setdefault(ep, []).append(q)
             cards = []
             for ep in sorted(by_ep):
-                qs = sorted(by_ep[ep], key=lambda q: (q.optional, C.order(q.line)))
+                qs = sorted(by_ep[ep], key=lambda q: C.order(q.line))
                 cards.append(Card(ep, qs, card_status(qs, self.standing)))
             self._cards[tab] = cards
         return self._cards[tab]
@@ -312,33 +306,27 @@ class Queue:
 
     # -- submissions ------------------------------------------------------------------
     def check(self, items: list[dict]) -> list[dict]:
-        """Validate a submission against the queue, all or nothing; the rows to append.
-        Items are checked in order, and later ones see the earlier ones' answers."""
+        """Validate a submission against the queue, all or nothing; the rows to append."""
         if self.rev is None:
             raise ApiError("task_state_conflict",
                            "这个任务还没有结果版本，没有可以裁决的条目；任务跑完之后再来",
                            details={"state": self.task.state, "result_rev": 0})
-        latest = {key: d.decision for key, d in self.decisions.items()}
         rows = []
         for i, item in enumerate(items):
             ep, line_id, decision_id = int(item["episode_index"]), item["line"], item["decision"]
             where = f"decisions.{i}"
-            question, spec = self.answerable(ep, line_id, decision_id, latest, where)
+            self.answerable(ep, line_id, decision_id, where)
             rows.append({"episode_index": ep, "line": line_id, "decision": decision_id,
-                         "new_label": _new_label(question, spec, item.get("new_label"), ep, where),
+                         "new_label": _new_label(line_id, item.get("new_label"), ep, where),
                          "note": item.get("note")})
-            latest[(ep, line_id)] = decision_id
         return rows
 
-    def answerable(self, ep: int, line_id: str, decision_id: str, latest: dict,
+    def answerable(self, ep: int, line_id: str, decision_id: str,
                    where: str) -> tuple[Question, C.DecisionSpec]:
         """Whether ``decision_id`` may answer ``line_id`` of episode ``ep`` - the one place
-        that says so. ``latest`` holds the answers in force (decision values), the
-        submission's so far included. The line must be a catalog line; the card must ask
-        it, or a follow-up the card's answers open must answer on it (then only the
-        follow-up's decisions); the decision must be one of the line's; a verdict next to
-        a discard on the card is refused (rule 1). Raises ``validation_failed`` naming the
-        field; returns the question and the decision."""
+        that says so. The line must be a catalog line, the card must ask it, and the
+        decision must be one of the line's. Raises ``validation_failed`` naming the field;
+        returns the question and the decision."""
         name = f"ep{ep:06d}"
         ln = C.line(line_id)
         if ln is None:
@@ -351,44 +339,25 @@ class Queue:
                        f"{where}.decision")
         question = self.asked.get((ep, line_id))
         if question is None:
-            raise self._not_asked(ep, ln, latest, where)
-        if spec.verdict and any(
-                getattr(C.decision(r, latest.get((ep, r))), "discard", False)
-                for r in C.relabel_lines() if r != line_id):
-            raise _bad(f"{name} 已经「整条弃用」，弃用的条目不再判成败；要判成败，先撤销弃用",
-                       f"{where}.decision")
+            raise self._not_asked(ep, ln, where)
         return question, spec
 
-    def _not_asked(self, ep: int, ln: C.LineSpec, latest: dict, where: str) -> ApiError:
+    def _not_asked(self, ep: int, ln: C.LineSpec, where: str) -> ApiError:
         name = f"ep{ep:06d}"
         if ln.tab == "appeals":
             return _bad(f"{name} 不在复议列表里，不能复议：只有可复议模块判的拒绝能复议，"
                         f"物理与结构检查的拒绝是终局", f"{where}.episode_index")
-        if ln.id in C.relabel_lines():
-            return _bad(f"{name} 没有待裁决的标注分歧，不能裁决标注", f"{where}.episode_index")
         return _bad(f"{name} 不在这个任务的待裁决队列里（没有要人判成败的问题）",
                     f"{where}.episode_index")
 
 
-def _relabel_titles(joiner: str) -> str:
-    titles = dict.fromkeys(f"「{d.title_zh}」" for ln in C.LINES for d in ln.decisions if d.relabel)
-    return joiner.join(titles)
-
-
-def _new_label(question: Question, spec: C.DecisionSpec, raw, ep: int, where: str) -> str | None:
-    """``new_label`` only for a relabel; typed when the decision needs it, else the suggestion."""
-    name = f"ep{ep:06d}"
+def _new_label(line_id: str, raw, ep: int, where: str) -> str | None:
+    """The rewritten task text an answer carries, if any - only on the relabel line."""
     value = (raw.strip() or None) if isinstance(raw, str) else None
-    if value is not None and not spec.relabel:
-        raise _bad(f"{name}：只有{_relabel_titles('和')}可以带 new_label", f"{where}.new_label")
-    if spec.relabel and value is None:
-        if spec.needs_label:
-            raise _bad(f"{name}：{spec.title_zh}要填写新标注", f"{where}.new_label")
-        value = question.suggestion
-        if value is None:
-            typed = next((f"「{d.title_zh}」" for ln in C.LINES for d in ln.decisions
-                          if d.needs_label), "自己填写")
-            raise _bad(f"{name} 没有建议的新标注，请用{typed}", f"{where}.new_label")
+    if value is not None and line_id not in C.relabel_lines():
+        ln = C.line(C.RELABEL_LINE)
+        title = f"「{ln.title_zh}」" if ln is not None else C.RELABEL_LINE
+        raise _bad(f"ep{ep:06d}：只有{title}可以带 new_label", f"{where}.new_label")
     return value
 
 

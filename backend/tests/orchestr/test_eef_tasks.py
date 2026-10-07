@@ -211,19 +211,19 @@ def test_the_module_needs_a_model(daemon):
     created = d.create(modules=mods, start_now=False)
     rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
     assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"
-    no_vlm = d.task_body(modules=[m for m in mods if m not in ("task_success", "skill_profile")], start_now=False)
+    no_vlm = d.task_body(modules=[m for m in mods if m != "task_success"], start_now=False)
     no_vlm.pop("vlm", None)
     r = d.api("POST", "/tasks", json=no_vlm)
     assert r.status_code == 400 and "VLM" in r.text, r.text
 
 
-def test_skill_profile_without_dedup_is_accepted(daemon):
-    """Regression (F5.6 read every module id in depends_on as "re-examines"): skill_profile lists
-    dedup only to order the stages, it never needs dedup selected."""
+def test_a_module_that_only_orders_its_stage_after_dedup_is_accepted(daemon):
+    """Regression (F5.6 read every module id in depends_on as "re-examines"): a module may list
+    another in depends_on only to order the stages, and never needs it selected."""
     d = daemon()
     created = d.create(modules=[m for m in ALL_MODULES if m != "dedup"], start_now=False)
     rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
-    assert rows["skill_profile"]["selected"] and not rows["dedup"]["selected"]
+    assert rows["task_success"]["selected"] and not rows["dedup"]["selected"]
 
 
 @pytest.mark.slow

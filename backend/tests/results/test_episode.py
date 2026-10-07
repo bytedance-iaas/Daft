@@ -59,9 +59,10 @@ def test_every_finding_with_the_level_it_has(world):
                  f["appealable"]) for f in view["findings"]]
 
     ep5 = _view(world, 5)
+    # both findings are asked on the task verdict: one card asks one question (registry 3.0)
     assert rows(ep5) == [("visual_quality", "exposure_low", "IMG-2", "info", None, False)] * 2 + [
-        ("task_success", "uncertain", "TASK-5", "review", "task_verdict", False),
-        ("task_success", "label_conflict_suspect", "LABEL-5", "review", "label", False)]
+        ("task_success", "label_conflict_suspect", "LABEL-5", "review", "task_verdict", False),
+        ("task_success", "uncertain", "TASK-5", "review", "task_verdict", False)]
     assert ep5["findings"][2]["finding"] == ep5["modules"]["task_success"]["findings"][0]   # the record's own
     ep7 = _view(world, 7)
     assert rows(ep7)[-1] == ("dedup", "duplicate", "SET-1", "blocking", None, True)
@@ -93,8 +94,8 @@ def test_a_person_s_conclusion_is_a_finding_of_its_own(world):
 def test_review_items_task_text_and_evidence(world):
     ep5 = _view(world, 5)
     assert [(i["module"], i["kind"]) for i in ep5["review"]] == [
-        ("task_success", "task_verdict"), ("task_success", "label_conflict")]
-    assert ep5["review"][1]["priority"] == "重点"
+        ("task_success", "task_verdict")]
+    assert ep5["review"][0]["priority"] == "重点"      # the label audit's, on the one question
     assert ep5["task_text"] == {"text": TEXT[5], "source": "原始标注"}
     assert ep5["evidence"] == [{"module": "task_success", "kind": "frame",
                                 "path": "details/evidence/task_success/ep000005_0.jpg"}]

@@ -127,7 +127,7 @@ def test_the_two_blocks_overlap_and_an_error_in_one_stops_nothing(daemon, faulty
     assert task["state"] == "completed_with_errors", json.dumps(task)[:2000]
     rd = d.run_dir(task["id"])
     assert results(rd, "timestamp_check")[3]["status"] == "error"
-    for module in ("visual_quality", "video_action_sync", "dedup", "task_success", "skill_profile"):
+    for module in ("visual_quality", "video_action_sync", "dedup", "task_success"):
         assert 3 in results(rd, module), module
     with open(os.path.join(rd, "revisions", "r0001", "held.json"), encoding="utf-8") as fh:
         assert [e["episode_index"] for e in json.load(fh)["episodes"]] == [3]

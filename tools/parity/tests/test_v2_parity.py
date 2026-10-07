@@ -28,7 +28,7 @@ pytestmark = pytest.mark.e2e
 
 #: the Daemon's two blocks one after the other, every stage on the whole selection (design doc 17 §3)
 STEPS = ["preflight", "plan", "snapshot", "autolabel", "check numeric", "check frame",
-         "check vlm", "check dedup", "check skill_profile",
+         "check vlm", "check dedup",
          "aggregate final", "report", "export", "verify"]
 
 
@@ -79,7 +79,7 @@ def test_v2_replays_its_own_tape_exactly(v2_golden, mini_dataset, tmp_path_facto
         m: "pass" for m in report["modules"]}
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup", "autolabel", "skill_profile"}
+                                      "dedup", "autolabel"}
     assert report["replay"]["misses"] == 0
 
 
@@ -141,7 +141,7 @@ RELABELS = {1: "stack the cups", 0: "wipe the table"}
 
 def _decisions(path: str, relabel_rerun: str | None = None) -> str:
     doc = {"schema_version": "1.0", "decisions": [
-        {"id": i, "episode_index": ep, "line": "label", "decision": "custom_label",
+        {"id": i, "episode_index": ep, "line": "task_verdict", "decision": "unsure",
          "new_label": label, "note": None, "decided_by": "alice", "decided_at": 1790000000000 + i}
         for i, (ep, label) in enumerate(RELABELS.items(), start=1)]}
     if relabel_rerun is not None:
@@ -178,13 +178,12 @@ def test_adjudication_replays_its_golden_exactly(v2_adj_golden, mini_dataset, tm
                                    os.path.join(golden, "vlm_tape.jsonl.gz"))
     assert proc.returncode == 0, proc.stderr[-4000:]
     assert [s["step"] for s in doc["steps"]] == [
-        "adjudicate-apply", "check task_success", "check skill_profile", "aggregate final", "report"]
+        "adjudicate-apply", "check task_success", "aggregate final", "report"]
     assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
     rc, report = compare(golden, out)
     assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
     ts = report["modules"]["task_success"]
     assert ts["status"] == "pass" and ts["judged_again"] == [0, 1] and ts["compared"] == 2
-    assert report["modules"]["skill_profile"]["status"] == "pass"
     assert report["final"]["status"] == "pass" and report["replay"]["status"] == "pass"
 
 
@@ -207,7 +206,7 @@ def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_d
     """design doc 14: v2's own first gate recorded into a golden of its own (``--modules``) and replayed;
     on the clean fixture it changes no list: passed / reject / held equal the default golden's."""
     modules = "data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality," \
-              "video_action_sync,task_success,dedup,skill_profile"
+              "video_action_sync,task_success,dedup"
     tmp = tmp_path_factory.mktemp("integrity")
     golden, proc, doc = run_v2(tmp, "golden", mini_dataset, "--fake-vlm", "--modules", modules)
     assert proc.returncode == 0, proc.stderr[-4000:]

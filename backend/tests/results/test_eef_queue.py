@@ -1,7 +1,7 @@
 """The EEF module's question on the adjudication page (C1 1.9 ``eef_check``, F5.11).
 
 The main task's story with the EEF gate added in revision 2: ep 0 is an episode the module sent
-to a person (a card of its own), ep 4 carries it next to the label conflict, ep 8 is a reject of
+to a person (a card of its own), ep 4 carries it next to the task verdict, ep 8 is a reject of
 the module alone (an appeal). Answers are checked against the catalog, counted as pending,
 executed by the CLI and change the lists of the next revision.
 """
@@ -40,7 +40,7 @@ def test_what_the_module_could_not_settle_is_a_pending_card(eef_world):
     assert [q["line"] for q in cards[0]["questions"]] == ["eef_check"]
     q = cards[0]["questions"][0]
     assert (q["source_module"], q["reason"], q["latest_decision"]) == (EEF, WHY, None)
-    assert [q["line"] for q in cards[4]["questions"]] == ["label", "eef_check"]
+    assert [q["line"] for q in cards[4]["questions"]] == ["task_verdict", "eef_check"]
     appeals = _cards(w, tab="appeals", status="all")
     assert appeals[8]["questions"][0]["source_module"] == EEF
     assert appeals[8]["questions"][0]["reason"].startswith("「位置」")       # the finding's sentence
@@ -52,17 +52,17 @@ def test_what_the_module_could_not_settle_is_a_pending_card(eef_world):
     assert_error(w.decide((0, "eef_check", "success")), "validation_failed")
     assert_error(w.decide((3, "eef_check", "consistent")), "validation_failed")     # not asked there
     counts = _ok(w.decide((0, "eef_check", "consistent"), (4, "eef_check", "inconsistent"),
-                          (4, "label", "keep_label")))
-    assert counts["pending"] == 2 and counts["unapplied"] == 2
+                          (4, "task_verdict", "success")))
+    assert counts["pending"] == 2 and counts["unapplied"] == 2      # cards, not answers
 
 
 def test_the_answers_are_executed_and_change_the_lists(eef_world):
     w = eef_world
-    _ok(w.decide((0, "eef_check", "consistent"), (4, "eef_check", "inconsistent"), (4, "label", "keep_label"),
+    _ok(w.decide((0, "eef_check", "consistent"), (4, "eef_check", "inconsistent"),
                  (8, "reject_appeal", "restore")))
     sub = w.start_subtask(at=T0 + 10 * MIN)
     out = w.apply(sub)
-    assert out["rerun_task_success"] == [] and out["profile_resync"] == [0, 4, 8]
+    assert out["rerun_task_success"] == []
     w.revision(3, subtask_id=sub.id, modules=WITH)
     w.finish_subtask(sub, at=T0 + 11 * MIN)
     w.switch(3)

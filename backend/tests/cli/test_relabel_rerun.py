@@ -53,7 +53,7 @@ def test_the_choice_is_recorded_with_every_relabel(vlm_stage, tmp_path):
     shutil.copytree(vlm_stage["reference_dir"], rd)
     first = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                 _decisions(str(tmp_path / "d1.json"),
-                           [(1, "label", "custom_label", LABEL),
+                           [(1, "task_verdict", "unsure", LABEL),
                             (3, "task_verdict", "success", None)]))
     assert first.rc == 0 and first.doc["relabel_rerun"] == "v1"      # the default
     lines = {d["id"]: d for d in read_jsonl(os.path.join(rd, "adjudication",
@@ -63,13 +63,13 @@ def test_the_choice_is_recorded_with_every_relabel(vlm_stage, tmp_path):
     # a later application with the other choice leaves the earlier relabel as it was
     second = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                  _decisions(str(tmp_path / "d2.json"),
-                            [(4, "label", "adopt_suggestion", "wipe the table")],
+                            [(4, "task_verdict", "unsure", "wipe the table")],
                             relabel_rerun="full", first_id=3))
     assert second.rc == 0 and second.doc["relabel_rerun"] == "full"
     assert second.doc["rerun_task_success"] == [4]
     assert {k: v["relabel_rerun"] for k, v in _labels(rd).items()} == {"1": "v1", "4": "full"}
     bad = run("adjudicate-apply", "--run-dir", rd, "--decisions",
-              _decisions(str(tmp_path / "d3.json"), [(6, "label", "custom_label", "x")],
+              _decisions(str(tmp_path / "d3.json"), [(6, "task_verdict", "unsure", "x")],
                          relabel_rerun="all", first_id=4))
     assert bad.rc == 2 and "relabel_rerun" in bad.doc["error"]["message"]
 
@@ -90,7 +90,7 @@ def _relabel_and_check(vlm_stage, tmp_path, name: str, episode: int, label: str,
     shutil.copytree(vlm_stage["reference_dir"], rd)
     applied = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                   _decisions(str(tmp_path / f"{name}.json"),
-                             [(episode, "label", "custom_label", label)],
+                             [(episode, "task_verdict", "unsure", label)],
                              relabel_rerun=relabel_rerun))
     assert applied.rc == 0 and applied.doc["rerun_task_success"] == [episode]
     with FakeVlmServer() as vlm:
