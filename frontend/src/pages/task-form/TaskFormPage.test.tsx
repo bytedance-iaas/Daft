@@ -659,8 +659,7 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
   });
 
   it('a registered dataset (TOS or cache bucket) gets no such dialog', async () => {
-    // a dialog of the test before may still be closing (Modal.destroyAll animates): none may be left once it is gone
-    await waitFor(() => expect(screen.queryByTestId('unregistered-notice')).toBeNull(), { timeout: 5000 });
+    // (a dialog of the test before has left the page: src/test/setup.ts waits for it)
     renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid_100&region=cn-beijing');
     expect(await screen.findByText(/LeRobot v3 · 100 条 episode/)).toBeInTheDocument();
     expect(screen.queryByTestId('unregistered-notice')).toBeNull();
