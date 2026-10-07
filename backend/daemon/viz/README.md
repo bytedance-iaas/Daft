@@ -218,6 +218,8 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `to_ts − from_ts = 2.4`；`curl -s -o /tmp/s.mp4 "$B/datasets/$D/episodes/1/cameras/top.mp4?segment=1"` 后用 PyAV 解出约 25 帧，`from_ts` 处那帧白竖线在 x = 26；
     `python3 -c "import struct;d=open('/tmp/s.mp4','rb').read(64);print(d[4:8], d[struct.unpack('>I',d[:4])[0]+4:][:4])"` 打出 `b'ftyp' b'moov'`（索引在前）。
     `viz_v2` 的 `front`（PyAV 写的 mp4，`moov` 在尾）也是 `remux`、`from_ts` 为空，取回的文件 `moov` 在前、帧数不变。缓存目录里多了 `segment/`。不设开关时这两路照旧 `local`，`?segment=1` 回 404 `segment_disabled`。
+    切一条要读多少：`../.venv/bin/python scripts/viz_slice_reads.py $L/inputs/viz_v3`（或 `tos://桶/前缀`，TOS 密钥照命令行的输入角色放在环境变量里）按 Daemon 的读法切头、中、尾三条，
+    逐条列出文件大小、读的字节与 GET 数、切片大小与耗时——读的字节应只比切片多一两 MB（两头各一块与文件头），而不是整个文件。
 
 23. **深度图（设计 21 §5，F15.4）**：`../.venv/bin/python -c "from tests.viz.fixtures import make_v3_depth; make_v3_depth('$L/inputs/viz_depth')"` 后登记。
     `curl -s $B/datasets/$D/viz | jq '.streams[] | select(.kind=="depth") | {key, name, depth}'` 有两路：`observation_images_front_depth`（配对 `front`）与

@@ -53,7 +53,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`、可视化的格式解析 `viz/`；内核单测在包内 `tests/` |
 | `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）、`viz/`（数据可视化：数据源、读取器、缓存与转码池，说明见 `viz/README.md`）；`python -m daemon` 或 `curator-daemon` |
 | `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`export`、`eef`、`optimizations`、`deploy`、`viz` |
-| `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装；可视化的样例数据（`make_cams_dataset.py` 多路相机、`make_lance_dataset.py` Lance 三种布局）与样本集实测（`viz_sample_check.py`） |
+| `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装；可视化的样例数据（`make_cams_dataset.py` 多路相机、`make_lance_dataset.py` Lance 三种布局）与样本集实测（`viz_sample_check.py`）、v3 切片的读量（`viz_slice_reads.py`） |
 | `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`）；播放器在 `src/features/visualizer/`（完整版与迷你版共用），「可视化」页在 `src/pages/visualize/` |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考；可视化的三页由 `viz-src/` 生成：改 `viz-src/`，再在该目录跑 `python3 viz-src/build.py .`） |

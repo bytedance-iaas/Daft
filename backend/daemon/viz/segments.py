@@ -22,7 +22,7 @@ import threading
 from typing import Callable, ContextManager
 
 from curation.streams.rangefile import RangeFile
-from curation.viz.segment import cut, keyframe_before, moov_at_end
+from curation.viz.segment import CUT_BLOCK, PLACE_BLOCK, cut, keyframe_before, moov_at_end
 
 from ..results.files import LRU
 from .media import digest
@@ -63,7 +63,7 @@ class Segments:
 
                         raise ApiError("not_found", f"数据集里没有 {rel}")
                     size = info.size
-                kw = {"readahead": SMALL_READAHEAD} if small else {}
+                kw = {"block": PLACE_BLOCK, "readahead": SMALL_READAHEAD} if small else {"block": CUT_BLOCK}
                 yield RangeFile(lambda s, n: st.read_range(rel, s, n), int(size), name=rel, **kw)
 
         return open_
@@ -74,7 +74,7 @@ class Segments:
 
         @contextlib.contextmanager
         def open_(small: bool = False):
-            kw = {"readahead": SMALL_READAHEAD} if small else {}
+            kw = {"block": PLACE_BLOCK, "readahead": SMALL_READAHEAD} if small else {"block": CUT_BLOCK}
             yield RangeFile(blob.read_range, int(blob.size()), name=name, **kw)
 
         return open_

@@ -34,6 +34,16 @@ from typing import Callable
 EPS = 1e-6
 
 
+#: The block size of a ranged view (``RangeFile``) a cut reads: libav asks for 32 KiB at a time in file
+#: order, and RangeFile's own 16 KiB blocks (sized for mcap's chunk headers) then fetch each piece with
+#: the 10 KiB before it again - a third more bytes, and a GET per 32 KiB. With 1 MiB blocks a cut reads
+#: at most a block more at either end of the episode and one for the file's head, a GET per MiB
+#: (design doc 21 §4.6).
+CUT_BLOCK = 1 << 20
+#: Placing a cut (the ``moov`` and one packet, :func:`keyframe_before`) reads little: smaller blocks.
+PLACE_BLOCK = 1 << 18
+
+
 @dataclass
 class Segment:
     start_s: float               # the source time of the slice's 0 (its first packet's decode time)

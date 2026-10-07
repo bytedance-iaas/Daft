@@ -99,6 +99,22 @@ def test_a_slice_reads_the_moov_and_its_episode_only(tmp_path):
     assert rf.stats.bytes < 0.5 * size, (rf.stats.bytes, size)     # about a third of the file, not all of it
 
 
+def test_a_slice_is_read_in_large_blocks(tmp_path):
+    # libav reads 32 KiB at a time in order: the Daemon's ranged view fetches a MiB at a time, so a cut
+    # costs its episode's bytes plus at most a block at either end and the file's head (and the moov,
+    # which PyAV leaves in the tail), a GET per MiB (design doc 21 §4.6)
+    from curation.viz.segment import CUT_BLOCK
+
+    path, lengths = _big_shared(tmp_path)
+    read, size = _reader(path)
+    frm, to = lengths[0] / FPS, (lengths[0] + lengths[1]) / FPS
+    small, big = RangeFile(read, size), RangeFile(read, size, block=CUT_BLOCK)
+    seg = cut(small, str(tmp_path / "a.mp4"), frm, to)
+    assert cut(big, str(tmp_path / "b.mp4"), frm, to) == seg
+    assert big.stats.bytes <= seg.bytes + 3 * CUT_BLOCK + (1 << 16), (big.stats.bytes, seg.bytes)
+    assert big.stats.gets <= seg.bytes // CUT_BLOCK + 4 < small.stats.gets / 5, (big.stats.gets, small.stats.gets)
+
+
 # ---------------------------------------------------------------- transcodes from a slice
 
 def test_a_tos_transcode_cuts_the_episode_instead_of_downloading_the_file(client_for, data_root, tmp_path, monkeypatch):

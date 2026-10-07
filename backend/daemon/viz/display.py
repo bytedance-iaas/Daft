@@ -6,7 +6,7 @@ groups instead of the automatic ones (LeRobot and Lance - an mcap dataset's curv
 field mapping), the subtitle track, speed and looping.
 
 It is kept in the registration's ``display_config`` column as ``{"version", "updated_at",
-"config"}``; a bare configuration (written before there was an envelope) counts as version 0. The
+"config"}``; anything else there (no interface wrote the column before) is no configuration. The
 models apply it on every request on top of the cached reader metadata, so no cache keys on it: the
 LeRobot / Lance readers draw the configured curve groups (:func:`override_groups`), the service
 reorders, renames and hides cameras and makes the track's source primary (:func:`apply_model`,
@@ -29,12 +29,12 @@ def envelope(raw: Any) -> tuple[dict | None, int, int | None]:
     """``(config, version, updated_at)`` of a registration's ``display_config`` column."""
     if not isinstance(raw, dict):
         return None, 0, None
-    if "version" in raw and "config" in raw:
-        cfg, version, at = raw.get("config"), raw.get("version"), raw.get("updated_at")
-        return (cfg if isinstance(cfg, dict) else None,
-                version if isinstance(version, int) and version >= 0 else 0,
-                at if isinstance(at, int) else None)
-    return raw, 0, None
+    if "version" not in raw or "config" not in raw:
+        return None, 0, None
+    cfg, version, at = raw.get("config"), raw.get("version"), raw.get("updated_at")
+    return (cfg if isinstance(cfg, dict) else None,
+            version if isinstance(version, int) and version >= 0 else 0,
+            at if isinstance(at, int) else None)
 
 
 def for_task(cfg: dict | None) -> dict | None:

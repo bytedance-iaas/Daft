@@ -181,3 +181,17 @@ def test_v3_takes_a_configuration_the_same_way(app, version):
     s = app.get(f"{API}/datasets/{ds}/episodes/1/series", params={"stream": "one"}).json()
     assert_schema("VizSeries", s)
     assert [x["name"] for x in s["lines"]] == ["only"] and s["total_points"] > 0
+
+
+def test_a_column_this_module_did_not_write_is_no_configuration(app):
+    rt = app.app.state.runtime
+    ds = app.ids["v2"]
+    owner = rt.repo.get_dataset(ds, owner=None).owner_id
+    rt.repo.update_dataset(ds, owner=owner, display_config={"track": "flags", "cameras": ["wrist", "front"]})
+    model = app.get(f"{API}/datasets/{ds}/viz").json()
+    assert_schema("VizDataset", model)
+    assert model["display"] is None and [c["key"] for c in model["cameras"]] == ["front", "wrist"]
+    doc = app.get(f"{API}/datasets/{ds}/viz/display").json()
+    assert (doc["config"], doc["version"]) == (None, 0)
+    # saving over it starts the versions at 1
+    assert _put(app, ds, {"track": "flags"}).json()["version"] == 1

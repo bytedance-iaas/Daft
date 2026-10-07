@@ -107,6 +107,11 @@
   夹具的 v3 视频 GOP 为 10 帧，第 1 条（30–53 帧）的切片从第 29 帧的关键帧起，`from_ts = 0.1`。
 - 开关开着时，episode 记录为每路相机读一次 `moov` 与一个包定出切片起点（按文件与 `from_ts` 缓存），`moov` 在尾的判断只读顶层盒子头（按文件缓存）；
   切片在第一次请求 `.mp4?segment=1` 时切（同一路同一条只切一次，加锁）。
+- 读法（F15.8 实测时补）：libav 按文件顺序每次要 32 KiB，`RangeFile` 原本的 16 KiB 块（为 mcap 的块头调的）会把每次请求前面的 10 KiB 再取一遍——
+  多读三成、每 32 KiB 一个 GET。切片改用 1 MiB 的块（`curation/viz/segment.py` 的 `CUT_BLOCK`；定起点只读 `moov` 与一个包，用 256 KiB）：
+  多读至多这一条两头各一块与文件头一块，每 MiB 一个 GET。本机 dual_ur5e_rgbd 第 1 条（21.3 MB 的切片）从 685 个 GET、28.1 MB 降到 24 个 GET、23.1 MB。
+- TOS 实测（h200-14，`scripts/viz_slice_reads.py`，读样本桶 `anchor/v1/lerobot_v30/…`）：so101_depth 的 front 相机文件 145.8 MB，切三条各读 8–10 MB
+  （文件的 5.5%–6.9%，8–10 个 GET，跨区链路上每条 4–5 s；原来要把整个文件下到本地）；dual_ur5e_rgbd 的分块只装这两条，切出的就占文件的 40% 与 66%。
 
 ## 5. 深度图（F15.4 LeRobot / Lance，F15.5 mcap）
 
@@ -187,6 +192,8 @@
 - 悬停的读数显示在右下角色标处（替换范围文字），不另开浮层：小格子里顶部已经有相机名与格子工具。
 - 设置面板挂在网格外层、按格子位置定位（同「更换」菜单）：格子是 `overflow: hidden`，小格子会把面板裁掉；Esc 与点外面关闭。
 - 「数据集信息」的属性名改成原文后变长（`info.video.is_depth_map`）：属性名一列按内容宽、最多占 45%，等宽字体；窗口窄于 1180 px 时树在上、详情在下。
+- dual_ur5e_rgbd（F15.8，h200-14 拷来，2 条、四路相机与四路 `observation.depths.*` 的 uint16 240×424）：四路深度都配上同名相机（`observation.depths.camera_front`
+  ↔ `camera_front`）；第 0 条 1291 帧的 front 深度第一次请求到帧包做好 2.1 s，47.3 MB、每帧约 36 KB，范围 303–1923 mm；第 100 帧整张与 parquet 逐像素相同。
 
 ### 5.6 不做
 
@@ -233,7 +240,7 @@
 
 ### 6.5a 落地时的细化（F15.6，2026-10-07）
 
-- **存法**：登记的 `display_config` 列存 `{version, updated_at, config}`（没有外壳的旧写法算第 0 版）；保存与恢复默认都让版本加一，恢复默认存 `config: null`。
+- **存法**：登记的 `display_config` 列存 `{version, updated_at, config}`（不是这个外壳的不算配置：此前没有接口写过这一列）；保存与恢复默认都让版本加一，恢复默认存 `config: null`。
   审计事件 `dataset.update`，`detail.fields: ["display_config"]`。
 - **生效**：每次请求叠在缓存的读取器元数据上，缓存不认配置、也就不用把版本号加进缓存键（§6.3 原写「模型缓存的键加上配置的版本号」，这样做更省事）：
   相机的顺序、显示名、`hidden` 与字幕轨的主轨由 `daemon/viz/display.py` 做；LeRobot / Lance 的曲线分组由读取器换成配置里的组——模型的 `streams`、字段树里
