@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { VizCamera, VizStream } from '../api/types';
 import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
 
-function cam(key: string): VizCamera {
-  return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null };
+function cam(key: string, hidden = false): VizCamera {
+  return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null, hidden };
 }
 
 function stream(key: string, smart = true, kind: VizStream['kind'] = 'series', available = true): VizStream {
@@ -146,5 +146,15 @@ describe('vizLayout', () => {
     expect(armStream({ arm: 'LEFT' }, [stream('a'), stream('left_arm')])).toBe('left_arm');
     expect(armStream(null, [stream('x', false), stream('y')])).toBe('y');
     expect(armStream(null, [stream('d', false, 'depth', false)])).toBeNull();
+  });
+
+  it('leaves the cameras a display configuration hides out of the templates (design doc 21 §6)', () => {
+    const model = { cameras: [cam('front'), cam('wrist', true), cam('top')], streams: [stream('arm')] };
+    const keys = (cells: { kind: string; key?: string }[] | undefined) => (cells ?? []).filter((c) => c.kind === 'video').map((c) => c.key);
+    expect(keys(templateLayout('smart', model, 1200)?.cells)).toEqual(['front', 'top']);
+    expect(keys(templateLayout('video', model, 1200)?.cells)).toEqual(['front', 'top']);
+    // the mini player still shows the hidden camera a finding is about; its other pick is not hidden
+    expect(keys(miniLayout('visual_quality', { camera: 'wrist' }, model).cells)).toEqual(['wrist', 'front']);
+    expect(keys(miniLayout(null, null, model).cells)).toEqual(['front', 'top']);
   });
 });

@@ -1,10 +1,12 @@
-import { Button, Select } from '@arco-design/web-react';
-import { IconClose, IconExpand, IconInfoCircle, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
+import { Button, Dropdown, Menu, Message, Modal, Select } from '@arco-design/web-react';
+import { IconClose, IconExpand, IconInfoCircle, IconLayout, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VizCamera, VizDataset, VizEpisode, VizEpisodeCamera, VizStream } from '../../api/types';
 import { CAMERA_PALETTE } from '../../lib/vizCurves';
+import { errorMessage } from '../../api/errors';
 import { DEFAULT_DEPTH_VIEW, overlayFits } from '../../lib/vizDepth';
+import { hasLayout, startOf, withLayout, withoutLayout } from '../../lib/vizDisplay';
 import {
   cellHeight,
   cellValid,
@@ -31,7 +33,7 @@ import { FramesCell } from './cells/FramesCell';
 import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
-import { prefetchVizEpisode, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
+import { fetchVizDisplay, prefetchVizEpisode, saveVizDisplay, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
 import { SidePanel } from './SidePanel';
 import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
@@ -112,7 +114,8 @@ export function Player(props: PlayerProps) {
       </div>
     );
   }
-  return <PlayerView {...props} model={model.data} ep={episode.data} loadingNext={episode.data.index !== props.index} />;
+  // one view per dataset: another episode of it keeps the layout, the hidden lines, the track and playback
+  return <PlayerView key={`${props.source.scope}:${props.source.id}`} {...props} model={model.data} ep={episode.data} loadingNext={episode.data.index !== props.index} />;
 }
 
 /** The sizes offered, with the grid's own when a template made one that is not among them (2 × 3, 3 × 4). */
@@ -154,9 +157,26 @@ function PlayerView({
   useEffect(() => {
     if (!loadingNext && prefetch !== null && prefetch !== ep.index) void prefetchVizEpisode(qc, source, prefetch);
   }, [qc, source, prefetch, loadingNext, ep.index]);
+  // where the dataset's display configuration starts the full player (design doc 21 §6.4), taken once
+  const [start] = useState(() => startOf(full && !arrangement ? model.display : null, model));
+  // speed and looping carry over to the next episode's clock
+  const playback = useRef<{ speed: number; loop: boolean }>({ speed: start.speed, loop: start.loop });
   // one clock per episode; the cleanup only stops it (StrictMode runs it and then the effect again on
   // the same clock - a one-way dispose there would leave the cells on a dead clock)
-  const clock = useMemo(() => new PlayerClock(ep.duration_s), [ep]);
+  const clock = useMemo(() => {
+    const c = new PlayerClock(ep.duration_s);
+    c.setSpeed(playback.current.speed);
+    c.setLoop(playback.current.loop);
+    return c;
+  }, [ep]);
+  useEffect(
+    () =>
+      clock.subscribe(() => {
+        const s = clock.getSnapshot();
+        playback.current = { speed: s.speed, loop: s.loop };
+      }),
+    [clock],
+  );
   useEffect(() => {
     onClock?.(clock);
     return () => {
@@ -183,8 +203,8 @@ function PlayerView({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const [template, setTemplate] = useState<LayoutTemplate>(arrangement ? 'custom' : 'smart');
-  const [layout, setLayout] = useState<Layout | null>(arrangement);
+  const [template, setTemplate] = useState<LayoutTemplate>(arrangement ? 'custom' : start.template);
+  const [layout, setLayout] = useState<Layout | null>(arrangement ?? start.layout);
   useEffect(() => {
     if (!arrangement) return;
     setTemplate('custom');
@@ -264,7 +284,7 @@ function PlayerView({
   const playBlocked = busy.size ? zh.viz.playBlocked : null;
 
   // -- curves shown, per group
-  const [hidden, setHidden] = useState<Record<string, string[]>>({});
+  const [hidden, setHidden] = useState<Record<string, string[]>>(start.hidden);
   const hiddenOf = useCallback((key: string) => new Set(hidden[key] ?? []), [hidden]);
   const toggle = (key: string, name: string) =>
     setHidden((h) => {
@@ -276,7 +296,7 @@ function PlayerView({
 
   // -- annotations: the subtitle's track
   const tracks = ep.annotations.tracks;
-  const [trackKey, setTrackKey] = useState<string | null>(null);
+  const [trackKey, setTrackKey] = useState<string | null>(start.track);
   const track = tracks.find((t) => t.key === trackKey) ?? tracks.find((t) => t.primary) ?? tracks[0] ?? null;
   const otherTracks = tracks.filter((t) => t !== track);
 
@@ -333,6 +353,51 @@ function PlayerView({
   const focusedCell = focus !== null && focus < cells.length ? cells[focus] : null;
   const focusedStream = focusedCell?.kind === 'curve' ? focusedCell.key : null;
 
+  // -- the dataset's default layout (design doc 21 §6.4): saved for everyone, or taken away
+  const canSave = full && source.scope === 'dataset';
+  const saveLayout = () =>
+    Modal.confirm({
+      title: zh.viz.display.saveTitle,
+      content: zh.viz.display.saveContent,
+      okText: zh.viz.display.save,
+      cancelText: zh.common.cancel,
+      onOk: async () => {
+        try {
+          const doc = await fetchVizDisplay(qc, source.id);
+          const s = clock.getSnapshot();
+          await saveVizDisplay(qc, source.id, withLayout(doc.config, { template, shape, cells, hidden, track: trackKey, speed: s.speed, loop: s.loop }));
+          Message.success(zh.viz.display.saved);
+        } catch (e) {
+          Message.error(errorMessage(e));
+          throw e;
+        }
+      },
+    });
+  const restoreLayout = () =>
+    Modal.confirm({
+      title: zh.viz.display.restoreTitle,
+      content: zh.viz.display.restoreContent,
+      okText: zh.viz.display.restore,
+      cancelText: zh.common.cancel,
+      onOk: async () => {
+        try {
+          const doc = await fetchVizDisplay(qc, source.id);
+          await saveVizDisplay(qc, source.id, withoutLayout(doc.config));
+        } catch (e) {
+          Message.error(errorMessage(e));
+          throw e;
+        }
+        setMax(null);
+        setLayout(null);
+        setTemplate('smart');
+        setHidden({});
+        setTrackKey(null);
+        clock.setSpeed(1);
+        clock.setLoop(false);
+        Message.success(zh.viz.display.restored);
+      },
+    });
+
   const openMenu = (i: number, el: HTMLElement) => {
     const w = wrap.current?.getBoundingClientRect();
     const r = el.getBoundingClientRect();
@@ -377,6 +442,24 @@ function PlayerView({
               ))}
             </Select>
           </>
+        ) : null}
+        {canSave ? (
+          <Dropdown
+            trigger="click"
+            position="br"
+            droplist={
+              <Menu onClickMenuItem={(k) => (k === 'save' ? saveLayout() : restoreLayout())}>
+                <Menu.Item key="save">{zh.viz.display.save}</Menu.Item>
+                <Menu.Item key="restore" disabled={!hasLayout(model.display)}>
+                  {zh.viz.display.restore}
+                </Menu.Item>
+              </Menu>
+            }
+          >
+            <Button size="small" title={zh.viz.display.menuTitle} icon={<IconLayout />} data-testid="vz-layout-menu">
+              {zh.viz.display.menu}
+            </Button>
+          </Dropdown>
         ) : null}
         <Button size="small" className={sideOpen ? 'on' : ''} title={zh.viz.infoTitle} icon={<IconInfoCircle />} onClick={() => setSideOpen((v) => !v)}>
           {zh.viz.info}

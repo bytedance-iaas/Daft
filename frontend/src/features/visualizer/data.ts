@@ -2,9 +2,9 @@
 // group, a frame pack's index and the transcode state of a camera - for a registered dataset
 // (the full page) or a task's frozen input (the mini player). Everything is fetched from the Daemon.
 import { useQuery, type QueryClient } from '@tanstack/react-query';
-import { api, unwrap } from '../../api/client';
+import { api, idempotencyKey, unwrap } from '../../api/client';
 import { ApiError } from '../../api/errors';
-import type { VizDataset, VizEpisode, VizFrameIndex, VizMediaPending, VizSeries } from '../../api/types';
+import type { VizDataset, VizDisplay, VizDisplayConfig, VizEpisode, VizFrameIndex, VizMediaPending, VizSeries } from '../../api/types';
 
 /** Which reader input the player shows: a dataset's registration or a task's frozen input. */
 export interface VizRef {
@@ -18,6 +18,7 @@ export const vizKeys = {
   episode: (r: VizRef, index: number) => ['viz', r.scope, r.id, 'episode', index] as const,
   series: (r: VizRef, index: number, stream: string, points: number) => ['viz', r.scope, r.id, 'series', index, stream, points] as const,
   frames: (url: string) => ['viz', 'frames', url] as const,
+  display: (id: string) => ['viz', 'display', id] as const,
 };
 
 export async function fetchVizModel(r: VizRef): Promise<VizDataset> {
@@ -52,6 +53,34 @@ export function useVizModel(r: VizRef | null) {
   });
 }
 
+/** A registration's display configuration with the defaults an editor starts from (design doc 21 §6). */
+export function useVizDisplay(id: string | null) {
+  return useQuery({
+    queryKey: vizKeys.display(id ?? ''),
+    queryFn: () => unwrap(api().GET('/datasets/{id}/viz/display', { params: { path: { id: id as string } } })),
+    enabled: !!id,
+  });
+}
+
+export function fetchVizDisplay(qc: QueryClient, id: string): Promise<VizDisplay> {
+  return qc.fetchQuery({ queryKey: vizKeys.display(id), queryFn: () => unwrap(api().GET('/datasets/{id}/viz/display', { params: { path: { id } } })), staleTime: 0 });
+}
+
+/**
+ * Saves a registration's display configuration (null: restores the defaults). The dataset's model,
+ * episodes and curves are asked for again: cameras, curve groups and the track come from it.
+ */
+export async function saveVizDisplay(qc: QueryClient, id: string, config: VizDisplayConfig | null): Promise<VizDisplay> {
+  const params = { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } };
+  const doc = config === null
+    ? await unwrap(api().DELETE('/datasets/{id}/viz/display', { params }))
+    : await unwrap(api().PUT('/datasets/{id}/viz/display', { params, body: { config } }));
+  qc.setQueryData(vizKeys.display(id), doc);
+  // the model and the curves (an episode keeps its clock: the track picked stays the player's)
+  void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'viz' && q.queryKey[1] === 'dataset' && q.queryKey[2] === id && q.queryKey[3] !== 'episode' });
+  return doc;
+}
+
 /**
  * One episode. Presigned camera URLs expire (`expires_at`): the answer is fetched again two minutes
  * before the first one does, and the cells swap to the new URL where they are (design doc 18 §5.8).
@@ -70,6 +99,9 @@ export function useVizEpisode(r: VizRef | null, index: number | null) {
     queryFn: () => fetchVizEpisode(r as VizRef, index as number),
     enabled: !!r && index !== null,
     staleTime: Infinity,
+    // the episode on screen stays while another one of the same dataset loads: the player keeps its
+    // layout, hidden lines, track and playback (design doc 21 §6.4)
+    placeholderData: (prev) => (prev && r && prev.scope === r.scope && prev.id === r.id ? prev : undefined),
     refetchInterval: (q) => {
       const ep = q.state.data;
       const exp = ep?.cameras.map((c) => c.expires_at).filter((v): v is number => typeof v === 'number') ?? [];

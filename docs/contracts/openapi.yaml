@@ -95,7 +95,11 @@ info:
     lists its packs in `streams`, read from `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames`
     and `.json` (and the task's) - every frame a 16-bit greyscale PNG, the index with the depth's unit and
     value range. An mcap dataset's depth topics (a 16-bit PNG, a ROS compressedDepth picture, a 16UC1 / mono16 /
-    32FC1 raw image) are listed under the mapping's `depths` (field mapping 1.1) and drawn the same way.
+    32FC1 raw image) are listed under the mapping's `depths` (field mapping 1.1) and drawn the same way. A registered
+    dataset has a display configuration everyone who opens it shares (`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`):
+    the visualizer's default layout, the cameras' order and names and which ones the layout templates leave
+    out (`VizCamera.hidden`), LeRobot and Lance curve groups instead of the automatic ones, the subtitle
+    track, the default speed and looping; the presentation model carries the one in effect (`VizDataset.display`).
   x-description-zh: |
     ## 概览
 
@@ -153,6 +157,8 @@ info:
     深度：LeRobot 或 Lance 的深度列是播放器能画的 `depth` 流（`VizStream.depth`），episode 在 `streams` 里列出各自的深度帧包，从
     `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames` 与 `.json`（任务级同样一对）读取——每帧一张 16 位灰度 PNG，索引里带深度的单位与取值范围。
     mcap 数据集的深度 topic（16 位 PNG、ROS compressedDepth、16UC1 / mono16 / 32FC1 原始图）列在字段映射的 `depths` 里（字段映射 1.1），同样能画。
+    登记的数据集有一份所有人共用的展示配置（`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`）：可视化的缺省布局、相机的顺序与显示名以及哪几路不进布局模版
+    （`VizCamera.hidden`）、LeRobot 与 Lance 取代自动分组的曲线分组、字幕轨、缺省倍速与循环；展示模型带着生效的那一份（`VizDataset.display`）。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -955,6 +961,63 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/VizMetaFile"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/viz/display:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetVizDisplay
+      summary: The dataset's display configuration - default layout, cameras, curve groups, subtitle track, playback - and the defaults an editor starts from (2.7.0, design doc 21 §6)
+      description: |
+        One configuration per registration, shared by everyone who opens the dataset; `config` is
+        null until one is saved. `defaults` are what the visualizer does without one: the cameras in
+        their own order, the automatic curve groups and the dimensions they are made of (LeRobot and
+        Lance; an mcap dataset's curves come from its field mapping), the annotation sources a
+        subtitle track can come from.
+      responses:
+        "200":
+          description: the configuration
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      tags: [viz]
+      operationId: putDatasetVizDisplay
+      summary: Replace the display configuration, checked against the dataset's current model (2.7.0)
+      description: |
+        The whole configuration is replaced and its version goes up by one. What it names must be in
+        the dataset's current model - cameras, curve dimensions (a feature and its dimension), the
+        annotation source of the track, the layout's cells - or it fails with `validation_failed` and
+        `details.errors` per item; an mcap dataset takes no curve groups. A configuration saved before
+        the dataset changed is not refused when read: what no longer matches is left out.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VizDisplayPut"}
+      responses:
+        "200":
+          description: saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [viz]
+      operationId: deleteDatasetVizDisplay
+      summary: Restore the defaults - the whole configuration is removed; its version still goes up (2.7.0)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: restored
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
         default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/episodes/{index}/viz:
     parameters:
@@ -5091,10 +5154,10 @@ components:
     VizCamera:
       type: object
       additionalProperties: false
-      required: [key, name, source, kind, access, codec, codec_string, width, height, fps, transcoded, reason]
+      required: [key, name, source, kind, access, codec, codec_string, width, height, fps, transcoded, reason, hidden]
       properties:
         key: {$ref: "#/components/schemas/VizCameraKey"}
-        name: {type: string}
+        name: {type: string, description: "the display configuration's name for it, else its own"}
         source: {type: string, description: "the LeRobot feature key or the mcap topic"}
         kind: {enum: [video, frames], description: "video: an mp4 for <video>; frames: a JPEG frame pack"}
         access: {$ref: "#/components/schemas/VizAccess"}
@@ -5106,6 +5169,7 @@ components:
         pix_fmt: {type: [string, "null"]}
         transcoded: {type: boolean, description: "the Daemon re-encodes it (access transcode)"}
         reason: {type: [string, "null"], description: "why transcode or unsupported, in Chinese"}
+        hidden: {type: boolean, description: "the display configuration leaves it out of the layout templates; it is still offered in the + / 更换 menus (2.7.0)"}
     VizLine:
       type: object
       additionalProperties: false
@@ -5223,7 +5287,7 @@ components:
       type: object
       additionalProperties: false
       required: [scope, id, dataset_id, name, format, fps, episode_count, episode_indices, total_frames,
-                 robot_type, cameras, streams, annotation_sources, field_tree, mapping, transcode, warnings, fingerprint]
+                 robot_type, cameras, streams, annotation_sources, field_tree, mapping, transcode, warnings, fingerprint, display]
       properties:
         scope: {enum: [dataset, task]}
         id: {type: string, description: "the dataset id, or the task id for scope task"}
@@ -5249,6 +5313,156 @@ components:
             enabled: {type: boolean, description: "CURATOR_VIZ_TRANSCODE"}
         warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
         fingerprint: {type: string, description: "the metadata fingerprint the model and its caches belong to"}
+        display:
+          description: >-
+            the display configuration in effect (2.7.0): cameras, curve groups and the track are already
+            applied to this model; the layout, hidden lines and playback are the player's. For scope task
+            the registration's cameras, curve groups and track only
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayConfig"
+    VizDepthView:
+      type: object
+      additionalProperties: false
+      required: [cmap, lo, hi, overlay, opacity]
+      description: how a depth cell draws (2.7.0, design doc 21 §5.5)
+      properties:
+        cmap: {enum: [turbo, gray]}
+        lo: {type: [number, "null"], minimum: 0, description: "the colour scale's near end in millimetres; null: the episode's 2 %"}
+        hi: {type: [number, "null"], minimum: 0, description: "the far end; null: the episode's 98 %"}
+        overlay: {type: boolean, description: "drawn over the camera it is paired with"}
+        opacity: {type: number, minimum: 0.05, maximum: 1}
+    VizDisplayCell:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {enum: [video, curve, depth, empty]}
+        key: {type: string, minLength: 1, maxLength: 256, description: "a camera's key (video), a curve group's (curve) or a depth stream's (depth); absent for empty"}
+        view: {$ref: "#/components/schemas/VizDepthView"}
+    VizDisplayLayout:
+      type: object
+      additionalProperties: false
+      required: [template]
+      properties:
+        template: {enum: [smart, video, curve, custom], description: "custom: the cells as saved; the others are laid out anew for the window"}
+        cols: {type: integer, minimum: 1, maximum: 4, description: "custom only"}
+        rows: {type: integer, minimum: 1, maximum: 4, description: "custom only"}
+        cells: {type: array, maxItems: 16, items: {$ref: "#/components/schemas/VizDisplayCell"}, description: "custom only: cols × rows cells, row by row"}
+    VizDisplayCamera:
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key: {$ref: "#/components/schemas/VizCameraKey"}
+        name: {type: [string, "null"], minLength: 1, maxLength: 64, description: "shown instead of the camera's own name; null: its own"}
+        hidden: {type: boolean, description: "left out of the layout templates; still offered in the + / 更换 menus"}
+    VizDisplayLine:
+      type: object
+      additionalProperties: false
+      required: [source, dim, name, role]
+      properties:
+        source: {type: string, minLength: 1, maxLength: 256, description: "the feature key"}
+        dim: {type: integer, minimum: 0, description: "the dimension within the feature"}
+        name: {type: string, minLength: 1, maxLength: 128}
+        role: {enum: [state, action, other], description: "state solid, action dashed"}
+    VizDisplayGroup:
+      type: object
+      additionalProperties: false
+      required: [key, name, smart, lines]
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_.-]{1,96}$", description: "the stream key the group is drawn and asked for by"}
+        name: {type: string, minLength: 1, maxLength: 128}
+        unit: {type: [string, "null"], maxLength: 32}
+        smart: {type: boolean, description: "shown by the smart layout"}
+        lines: {type: array, minItems: 1, maxItems: 64, items: {$ref: "#/components/schemas/VizDisplayLine"}}
+    VizDisplayConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        How a registered dataset is shown by default (2.7.0, design doc 21 §6); every part may be
+        absent or null - the platform's default
+      properties:
+        layout:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayLayout"
+        cameras:
+          type: [array, "null"]
+          maxItems: 64
+          items: {$ref: "#/components/schemas/VizDisplayCamera"}
+          description: in display order; cameras not named follow in their own order
+        curves:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            groups:
+              type: [array, "null"]
+              maxItems: 64
+              items: {$ref: "#/components/schemas/VizDisplayGroup"}
+              description: LeRobot and Lance - the curve groups instead of the automatic ones; null - automatic
+            hidden:
+              type: object
+              description: per curve group key, the names of the lines not drawn
+              additionalProperties:
+                type: array
+                maxItems: 64
+                items: {type: string, minLength: 1, maxLength: 128}
+        track: {type: [string, "null"], maxLength: 96, description: "the annotation source (a key of annotation_sources) shown as the subtitle track"}
+        playback:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            speed: {enum: [1, 1.5, 2]}
+            loop: {type: boolean}
+    VizDisplay:
+      type: object
+      additionalProperties: false
+      required: [dataset_id, config, version, updated_at, defaults]
+      properties:
+        dataset_id: {type: string}
+        config:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayConfig"
+        version: {type: integer, minimum: 0, description: "goes up by one with every save and every restore; 0 - never saved"}
+        updated_at: {type: [integer, "null"]}
+        defaults:
+          type: object
+          additionalProperties: false
+          required: [cameras, groups, dimensions, tracks, groups_editable]
+          description: what the visualizer does without a configuration
+          properties:
+            cameras:
+              type: array
+              description: in the dataset's own order
+              items:
+                type: object
+                additionalProperties: false
+                required: [key, name, source]
+                properties:
+                  key: {$ref: "#/components/schemas/VizCameraKey"}
+                  name: {type: string}
+                  source: {type: string}
+            groups: {type: array, items: {$ref: "#/components/schemas/VizDisplayGroup"}, description: "the automatic curve groups (empty for mcap)"}
+            dimensions: {type: array, items: {$ref: "#/components/schemas/VizDisplayLine"}, description: "every dimension a group may draw, with its automatic name and role"}
+            tracks:
+              type: array
+              description: the annotation sources a subtitle track can come from
+              items:
+                type: object
+                additionalProperties: false
+                required: [key, name]
+                properties:
+                  key: {type: string}
+                  name: {type: string}
+            groups_editable: {type: boolean, description: "false for mcap: its curves come from the field mapping"}
+    VizDisplayPut:
+      type: object
+      additionalProperties: false
+      required: [config]
+      properties:
+        config: {$ref: "#/components/schemas/VizDisplayConfig"}
     VizEpisodeItem:
       type: object
       additionalProperties: false

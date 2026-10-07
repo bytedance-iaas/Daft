@@ -2,7 +2,7 @@
 // page), the task scope (the mini player), mcap mappings, templates, and the cameras the Daemon
 // serves (mp4 / JPEG frame pack, Range, 202 while a transcode runs).
 import { HttpResponse, http } from 'msw';
-import type { DatasetDetail, McapProbeRequest, Task, VizMapping, VizTemplate } from '../api/types';
+import type { DatasetDetail, McapProbeRequest, Task, VizDisplayConfig, VizMapping, VizTemplate } from '../api/types';
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
 import { eefOverlay } from './eef';
@@ -10,9 +10,12 @@ import { API, body, cursorPage, err, idempotent } from './plumbing';
 import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
 import {
   annotationsInfo,
+  baseModel,
   BUILTIN_TEMPLATES,
+  checkDisplay,
   checkMappingOf,
   depthPack,
+  displayDefaults,
   episodeItems,
   fakeVideo,
   frameIndex,
@@ -64,7 +67,16 @@ function taskSource(id: string): Source | Response {
 }
 
 function modelOf(s: Source) {
-  return vizDataset(s.scope, s.id, s.dataset, s.mapping, s.mappingVersion);
+  const display = s.dataset.id ? (db.vizDisplays.get(s.dataset.id)?.config ?? null) : null;
+  return vizDataset(s.scope, s.id, s.dataset, s.mapping, s.mappingVersion, display);
+}
+
+/** ``VizDisplay`` of a registration (design doc 21 §6). */
+function displayDoc(d: DatasetDetail) {
+  const stored = db.vizDisplays.get(d.id);
+  const mapping = db.vizMappings.get(d.id);
+  const base = baseModel('dataset', d.id, d, mapping?.mapping ?? null, mapping?.version ?? null);
+  return { dataset_id: d.id, config: stored?.config ?? null, version: stored?.version ?? 0, updated_at: stored?.updatedAt ?? null, defaults: displayDefaults(base) };
 }
 
 function profileOf(d: DatasetDetail) {
@@ -186,7 +198,12 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
       if (index instanceof Response) return index;
       const blocked = needsMapping(s);
       if (blocked) return blocked;
-      return HttpResponse.json(vizEpisode(s.scope, s.id, modelOf(s), index, s.dataset, urlsFor(s, index), clock()));
+      const model = modelOf(s);
+      const ep = vizEpisode(s.scope, s.id, model, index, s.dataset, urlsFor(s, index), clock());
+      // the configured track is the primary one (the Daemon's apply_episode)
+      const track = model.display?.track;
+      if (track && ep.annotations.tracks.some((t) => t.key === track)) ep.annotations.tracks = ep.annotations.tracks.map((t) => ({ ...t, primary: t.key === track }));
+      return HttpResponse.json(ep);
     })),
     http.get(`${API}/${prefix}/:id/episodes/:index/series`, withSource(make, (s, request, params) => {
       const index = episodeOf(s, params.index);
@@ -282,6 +299,31 @@ export const vizHandlers = [
       d.viz = vizStatusOf('mcap', true);
       d.viz_mapping = mappingInfoOf('mcap', next);
       return HttpResponse.json({ dataset_id: d.id, state: 'confirmed', mapping: next.mapping, version: next.version, updated_at: now, check_mapping: checkMappingOf(next.mapping), warnings: [] });
+    }),
+  ),
+  http.get(`${API}/datasets/:id/viz/display`, ({ params }) => {
+    const d = db.datasets.find((x) => x.id === params.id);
+    if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    return HttpResponse.json(displayDoc(d));
+  }),
+  http.put(`${API}/datasets/:id/viz/display`, async ({ request, params }) =>
+    idempotent(request, async () => {
+      const d = db.datasets.find((x) => x.id === params.id);
+      if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+      const b = await body<{ config: VizDisplayConfig }>(request, 'putDatasetVizDisplay');
+      const mapping = db.vizMappings.get(d.id);
+      const problems = checkDisplay(b.config, baseModel('dataset', d.id, d, mapping?.mapping ?? null, mapping?.version ?? null));
+      if (problems.length) return err(400, 'validation_failed', `展示配置有 ${problems.length} 处对不上这个数据集`, { errors: problems });
+      db.vizDisplays.set(d.id, { config: b.config, version: (db.vizDisplays.get(d.id)?.version ?? 0) + 1, updatedAt: clock() });
+      return HttpResponse.json(displayDoc(d));
+    }),
+  ),
+  http.delete(`${API}/datasets/:id/viz/display`, async ({ request, params }) =>
+    idempotent(request, () => {
+      const d = db.datasets.find((x) => x.id === params.id);
+      if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+      db.vizDisplays.set(d.id, { config: null, version: (db.vizDisplays.get(d.id)?.version ?? 0) + 1, updatedAt: clock() });
+      return HttpResponse.json(displayDoc(d));
     }),
   ),
   http.put(`${API}/datasets/:id/annotations`, async ({ request, params }) =>

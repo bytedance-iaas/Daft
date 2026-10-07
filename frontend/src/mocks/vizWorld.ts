@@ -10,6 +10,9 @@ import type {
   VizAnnotationSource,
   VizCamera,
   VizDataset,
+  VizDisplay,
+  VizDisplayConfig,
+  VizDisplayGroup,
   VizEpisode,
   VizEpisodeCamera,
   VizEpisodeItem,
@@ -123,19 +126,21 @@ function camera(key: string, p: DatasetProfile, over: Partial<VizCamera> = {}): 
     pix_fmt: 'yuv420p',
     transcoded: false,
     reason: null,
+    hidden: false,
     ...over,
   };
 }
 
-function seriesGroup(key: string, name: string, dims: string[], over: Partial<VizStream> = {}): VizStream {
+/** A state / action group of the dimensions `dims`, the first of them at `first` in the two features. */
+function seriesGroup(key: string, name: string, dims: string[], over: Partial<VizStream> = {}, first = 0): VizStream {
   return {
     key,
     kind: 'series',
     name,
     unit: null,
     lines: dims.flatMap((d, i) => [
-      { name: d, role: 'state' as const, source: 'observation.state', dim: i, unit: null },
-      { name: d, role: 'action' as const, source: 'action', dim: i, unit: null },
+      { name: d, role: 'state' as const, source: 'observation.state', dim: first + i, unit: null },
+      { name: d, role: 'action' as const, source: 'action', dim: first + i, unit: null },
     ]),
     smart: true,
     available: true,
@@ -165,11 +170,12 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
         pix_fmt: null,
         transcoded: false,
         reason: null,
+        hidden: false,
       };
     });
     // the dataset's own names (2026-10-04: nothing translated)
     const arm = seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad', sources: ['/observation.state', '/action'], rate_hz: 30 });
-    const gripper = seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 });
+    const gripper = seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 }, 7);
     const imu: VizStream = {
       key: 'imu', kind: 'series', name: 'IMU', unit: 'm/s²', smart: false, available: true, reason: null, sources: ['/imu'], rate_hz: 200,
       lines: ['x', 'y', 'z'].map((n, i) => ({ name: n, role: 'other' as const, source: '/imu', dim: i, unit: 'm/s²' })),
@@ -186,13 +192,13 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
   if (p.name.startsWith('umi')) {
     const pose = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'];
     streams.push(seriesGroup('left', 'observation.state / action · left', pose.map((n) => `left_${n}`)));
-    streams.push(seriesGroup('right', 'observation.state / action · right', pose.map((n) => `right_${n}`)));
-    streams.push(seriesGroup('gripper', 'observation.state / action · gripper', ['left_gripper', 'right_gripper']));
+    streams.push(seriesGroup('right', 'observation.state / action · right', pose.map((n) => `right_${n}`), {}, 6));
+    streams.push(seriesGroup('gripper', 'observation.state / action · gripper', ['left_gripper', 'right_gripper'], {}, 12));
   } else if (p.name === 'pusht') {
     streams.push(seriesGroup('observation_state', 'observation.state / action', ['x', 'y']));
   } else {
     streams.push(seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad' }));
-    streams.push(seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper']));
+    streams.push(seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], {}, 7));
   }
   if (p.name === 'droid_100') {
     streams.push({
@@ -290,7 +296,19 @@ function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
   ];
 }
 
-export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDetail, mapping: VizMapping | null, mappingVersion: number | null): VizDataset {
+export function vizDataset(
+  scope: 'dataset' | 'task',
+  id: string,
+  d: DatasetDetail,
+  mapping: VizMapping | null,
+  mappingVersion: number | null,
+  display: VizDisplayConfig | null = null,
+): VizDataset {
+  return applyDisplay(baseModel(scope, id, d, mapping, mappingVersion), scope === 'task' ? displayForTask(display) : display);
+}
+
+/** The model without a display configuration (the defaults an editor starts from). */
+export function baseModel(scope: 'dataset' | 'task', id: string, d: DatasetDetail, mapping: VizMapping | null, mappingVersion: number | null): VizDataset {
   const p = DATASET_PROFILES.find((x) => x.uri === d.uri) ?? DATASET_PROFILES[1];
   const fmt = vizFormatOf(d);
   const reader = READERS[fmt] ?? null;
@@ -321,7 +339,119 @@ export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDeta
     transcode: { enabled: true },
     warnings,
     fingerprint: d.meta_fingerprint,
+    display: null,
   };
+}
+
+// ------------------------------------------------------------------ display configurations (design doc 21 §6)
+
+/** What a task's mini player takes of the registration's configuration (the Daemon's ``for_task``). */
+function displayForTask(cfg: VizDisplayConfig | null): VizDisplayConfig | null {
+  if (!cfg) return null;
+  const groups = cfg.curves?.groups ?? null;
+  const out: VizDisplayConfig = { cameras: cfg.cameras ?? null, curves: groups?.length ? { groups } : null, track: cfg.track ?? null };
+  return out.cameras || out.curves || out.track ? out : null;
+}
+
+const dimKey = (source: string, dim: number) => `${source}#${dim}`;
+
+/** The model with a configuration applied, as the Daemon does: cameras, curve groups (not mcap), the track. */
+export function applyDisplay(model: VizDataset, cfg: VizDisplayConfig | null): VizDataset {
+  const byKey = new Map(model.cameras.map((c) => [c.key, c]));
+  const seen = new Set<string>();
+  const cameras: VizCamera[] = [];
+  for (const e of cfg?.cameras ?? []) {
+    const c = byKey.get(e.key);
+    if (!c || seen.has(c.key)) continue;
+    seen.add(c.key);
+    cameras.push({ ...c, name: e.name || c.name, hidden: Boolean(e.hidden) });
+  }
+  for (const c of model.cameras) if (!seen.has(c.key)) cameras.push({ ...c, hidden: false });
+  let streams = model.streams;
+  const groups = model.format.reader !== 'mcap' ? (cfg?.curves?.groups ?? []) : [];
+  if (groups.length) {
+    const dims = new Set(model.streams.filter((x) => x.kind === 'series').flatMap((x) => x.lines.map((l) => dimKey(l.source ?? '', l.dim ?? -1))));
+    const drawn = groups
+      .map((g) => ({ ...g, lines: g.lines.filter((l) => dims.has(dimKey(l.source, l.dim))) }))
+      .filter((g) => g.lines.length)
+      .map(
+        (g): VizStream => ({
+          key: g.key,
+          kind: 'series',
+          name: g.name,
+          unit: g.unit ?? null,
+          lines: g.lines.map((l) => ({ name: l.name, role: l.role, source: l.source, dim: l.dim, unit: null })),
+          smart: g.smart,
+          available: true,
+          reason: null,
+          sources: [...new Set(g.lines.map((l) => l.source))],
+          rate_hz: null,
+        }),
+      );
+    if (drawn.length) streams = [...drawn, ...model.streams.filter((x) => x.kind !== 'series')];
+  }
+  const track = cfg?.track ?? null;
+  const sources =
+    track && model.annotation_sources.some((x) => x.key === track && x.kind === 'segments')
+      ? model.annotation_sources.map((x) => (x.kind === 'segments' ? { ...x, primary: x.key === track } : x))
+      : model.annotation_sources;
+  return { ...model, cameras, streams, annotation_sources: sources, display: cfg };
+}
+
+/** ``VizDisplay.defaults`` of a model made without a configuration. */
+export function displayDefaults(model: VizDataset): VizDisplay['defaults'] {
+  const editable = model.format.reader !== null && model.format.reader !== 'mcap';
+  const series = model.streams.filter((x) => x.kind === 'series' && x.available);
+  const groups: VizDisplayGroup[] = editable
+    ? series.map((x) => ({
+        key: x.key,
+        name: x.name,
+        unit: x.unit,
+        smart: x.smart,
+        lines: x.lines.map((l) => ({ source: l.source ?? '', dim: l.dim ?? 0, name: l.name, role: l.role })),
+      }))
+    : [];
+  return {
+    cameras: model.cameras.map((c) => ({ key: c.key, name: c.name, source: c.source })),
+    groups,
+    dimensions: groups.flatMap((g) => g.lines),
+    tracks: model.annotation_sources.filter((x) => x.kind === 'segments' && x.supported).map((x) => ({ key: x.key, name: x.name })),
+    groups_editable: editable,
+  };
+}
+
+/** Where a configuration does not fit the model (the Daemon's ``check``, the main rules). */
+export function checkDisplay(cfg: VizDisplayConfig, model: VizDataset): { field: string; problem: string }[] {
+  const out: { field: string; problem: string }[] = [];
+  const cams = new Set(model.cameras.map((c) => c.key));
+  (cfg.cameras ?? []).forEach((c, i) => {
+    if (!cams.has(c.key)) out.push({ field: `cameras.${i}.key`, problem: `数据集里没有相机 ${c.key}` });
+  });
+  const groups = cfg.curves?.groups ?? [];
+  const editable = model.format.reader !== 'mcap';
+  if (groups.length && !editable) out.push({ field: 'curves.groups', problem: 'mcap 数据集的曲线分组由字段映射决定，在「mcap 配置」里改' });
+  const dims = new Set(displayDefaults(model).dimensions.map((l) => dimKey(l.source, l.dim)));
+  if (editable) {
+    groups.forEach((g, i) =>
+      g.lines.forEach((l, j) => {
+        if (!dims.has(dimKey(l.source, l.dim))) out.push({ field: `curves.groups.${i}.lines.${j}`, problem: `数据集里没有 ${l.source} 的第 ${l.dim} 维` });
+      }),
+    );
+  }
+  const drawn = new Set(groups.length && editable ? groups.map((g) => g.key) : model.streams.filter((x) => x.kind === 'series').map((x) => x.key));
+  for (const key of Object.keys(cfg.curves?.hidden ?? {})) if (!drawn.has(key)) out.push({ field: `curves.hidden.${key}`, problem: `没有曲线组 ${key}` });
+  if (cfg.track && !model.annotation_sources.some((x) => x.key === cfg.track && x.kind === 'segments')) out.push({ field: 'track', problem: `没有能作字幕轨的标注来源 ${cfg.track}` });
+  const layout = cfg.layout;
+  if (layout?.template === 'custom') {
+    if (!layout.cols || !layout.rows || !layout.cells) out.push({ field: 'layout', problem: '自定义布局要写 cols、rows 与 cells' });
+    else if (layout.cells.length !== layout.cols * layout.rows) out.push({ field: 'layout.cells', problem: `应有 ${layout.cols * layout.rows} 格，写了 ${layout.cells.length} 格` });
+    else
+      layout.cells.forEach((c, i) => {
+        if (c.kind === 'video' && !cams.has(c.key ?? '')) out.push({ field: `layout.cells.${i}.key`, problem: `数据集里没有相机 ${c.key}` });
+        if (c.kind === 'curve' && !drawn.has(c.key ?? '')) out.push({ field: `layout.cells.${i}.key`, problem: `没有曲线组 ${c.key}` });
+      });
+  }
+  return out;
 }
 
 function episodeFrameSum(p: DatasetProfile): number {

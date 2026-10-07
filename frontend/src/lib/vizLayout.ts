@@ -66,8 +66,9 @@ export function fitCells(cells: readonly CellContent[], shape: GridShape): CellC
   return out;
 }
 
+/** The cameras a template lays out: not the ones the display configuration hides (design doc 21 §6). */
 function cameraCells(model: Pick<VizDataset, 'cameras'>): CellContent[] {
-  return model.cameras.map((c) => ({ kind: 'video', key: c.key }));
+  return model.cameras.filter((c) => !c.hidden).map((c) => ({ kind: 'video', key: c.key }));
 }
 
 function curveCells(model: Pick<VizDataset, 'streams'>, smartOnly: boolean): CellContent[] {
@@ -199,7 +200,8 @@ export function armStream(scope: FindingScope | null | undefined, streams: Pick<
  * (and no finding) every camera, at most three in a row.
  */
 export function miniLayout(module: string | null, scope: FindingScope | null | undefined, model: Pick<VizDataset, 'cameras' | 'streams'>): { cells: CellContent[]; shape: GridShape } {
-  const keys = model.cameras.map((c) => c.key);
+  // the cameras the display configuration hides are not picked, unless a finding is about one
+  const keys = model.cameras.filter((c) => !c.hidden).map((c) => c.key);
   const scoped = cameraOfScope(scope, model.cameras) ?? keys[0] ?? null;
   let cells: CellContent[];
   if (module && PICTURE_MODULES.has(module) && scoped) {

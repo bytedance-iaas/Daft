@@ -110,6 +110,10 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getDatasetStreamFrameIndex": ("GET", "/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.json"),
     "getTaskStreamFrames": ("GET", "/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.frames"),
     "getTaskStreamFrameIndex": ("GET", "/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.json"),
+    # F15.6 display configuration (design doc 21 §6)
+    "getDatasetVizDisplay": ("GET", "/api/v1/datasets/{id}/viz/display"),
+    "putDatasetVizDisplay": ("PUT", "/api/v1/datasets/{id}/viz/display"),
+    "deleteDatasetVizDisplay": ("DELETE", "/api/v1/datasets/{id}/viz/display"),
 }
 
 #: operationId -> (owner, what it still needs); empty since the visualizer's mcap reader landed (F13.3)

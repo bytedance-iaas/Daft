@@ -82,6 +82,7 @@
 | GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.json`、`/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.json` | 深度帧包索引：每帧的时刻、偏移、长度，深度的单位与本条 2% / 98% 范围；生成中同样 202 |
 | GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2） |
 | PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
+| GET / PUT / DELETE | `/api/v1/datasets/{id}/viz/display` | 展示配置（2.7.0，设计 21 §6）：读（连同不带配置时的相机次序、自动分组与它们的维度、能作字幕轨的标注来源）/ 整份替换（按数据集当前的模型逐项校验，`details.errors`）/ 恢复默认；一个登记一份，所有人共用，每次保存与恢复版本加一 |
 | POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |
 | GET / POST | `/api/v1/viz/templates` | 映射模版库：内置在前、站点的在后 / 另存为模版 |
 | DELETE | `/api/v1/viz/templates/{template_id}` | 删除站点模版（内置的不能删） |

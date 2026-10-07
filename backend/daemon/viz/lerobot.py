@@ -25,12 +25,13 @@ from curation.streams.rangefile import RangeFile
 from curation.viz import annotations as A
 from curation.viz import depth as D
 from curation.viz import lerobot_info as L
-from curation.viz.groups import Group, curve_groups
+from curation.viz.groups import Group, Line, curve_groups
 from curation.viz.series import (clock_problem, episode_times, iter_episode_column, json_values, read_episode_columns,
                                  thin, window)
 
 from ..errors import ApiError
 from . import depth as DEPTH
+from . import display as DISPLAY
 from .source import Access, VizSource
 
 #: the widest per-frame numeric column read for curves (a flattened picture is not a curve)
@@ -282,10 +283,20 @@ class LeRobotReader:
         return A.lookup_from_records(A.parse_jsonl(data))
 
     # ------------------------------------------------------------ the dataset model
+    def groups(self, src: VizSource, m: LeRobotMeta) -> list[Group]:
+        """The curve groups drawn: the display configuration's (design doc 21 §6), else the automatic ones."""
+        dims = {(ln.source, ln.dim) for g in m.groups for ln in g.lines}
+        over = DISPLAY.override_groups(src.display, dims, set(m.depth))
+        if over is None:
+            return m.groups
+        return [Group(key=g["key"], name=g["name"], smart=bool(g.get("smart")), unit=g.get("unit"),
+                      lines=[Line(name=ln["name"], role=ln["role"], source=ln["source"], dim=ln["dim"]) for ln in g["lines"]],
+                      sources=list(dict.fromkeys(ln["source"] for ln in g["lines"]))) for g in over]
+
     def dataset_model(self, src: VizSource) -> dict:
         m = self.meta(src)
         info = m.info
-        streams = [g.as_stream() for g in m.groups]
+        streams = [g.as_stream() for g in self.groups(src, m)]
         feats = info.get("features") or {}
         for key, d in m.depth.items():
             streams.append(DEPTH.stream_doc(key, d, feats.get(d) or {}, m.fps, m.camera_features))
@@ -320,13 +331,15 @@ class LeRobotReader:
         cam_nodes = [{**node(c["source"], "camera", camera=c["key"]), "id": f"camera:{c['key']}"} for c in m.cameras]
         depth = [d for d in m.depth.values() if d not in cameras]
         depth_nodes = [node(d, "depth", stream=key) for key, d in m.depth.items() if d not in cameras]
+        # the numeric features, each pointing at the group drawing it (a display configuration may leave one out)
+        numeric = {source for g in m.groups for source in g.sources}
         group_of: dict[str, str] = {}
-        for g in m.groups:
+        for g in self.groups(src, m):
             for source in g.sources:
                 group_of.setdefault(source, g.key)
-        series_nodes = [node(k, "series", stream=group_of[k]) for k in feats if k in group_of]
+        series_nodes = [node(k, "series", stream=group_of.get(k)) for k in feats if k in numeric]
         # an annotation column is listed with its source under 任务与标注, not again under 其他字段
-        listed = cameras | set(depth) | set(group_of) | {c for s in m.sources for c in s.columns}
+        listed = cameras | set(depth) | numeric | {c for s in m.sources for c in s.columns}
         other = [node(k, "other") for k, f in feats.items() if isinstance(f, dict) and k not in listed]
         ann_nodes = []
         tasks_file = next((f for f in ("meta/tasks.jsonl", "meta/tasks.parquet") if f in m.meta_files), None)
@@ -465,7 +478,7 @@ class LeRobotReader:
         times = [float(x) for x in data["__t__"]]
         cols = {c: (v.tolist() if isinstance(v, np.ndarray) else v) for c, v in data.items()
                 if c in m.annotation_columns}
-        primary = (src.display_config or {}).get("track") if isinstance(src.display_config, dict) else None
+        primary = (src.display or {}).get("track")
         ann = A.episode_annotations([s for s in m.sources if s.format != "argus"], cols, times,
                                     lookups=m.lookups, episode_row=row.fields, tasks=m.tasks, primary=primary)
         if src.annotations_upload:
@@ -482,7 +495,7 @@ class LeRobotReader:
     def series(self, src: VizSource, index: int, stream: str, start: float | None, end: float | None,
                points: int) -> dict:
         m, _ = self.row(src, index)
-        group = next((g for g in m.groups if g.key == stream), None)
+        group = next((g for g in self.groups(src, m) if g.key == stream), None)
         if group is None:
             raise ApiError("not_found", f"没有曲线组 {stream}", details={"reason": "unknown_stream"})
         data = self.frames(src, index)
@@ -498,7 +511,7 @@ class LeRobotReader:
             else:
                 lines.append(np.full(len(t[sl]), np.nan))
         tt, ys, thinned = thin(t[sl], lines, points)
-        return {"stream": stream, "unit": None,
+        return {"stream": stream, "unit": group.unit,
                 "from_s": round(float(t[sl][0]), 4) if len(t[sl]) else float(start or 0.0),
                 "to_s": round(float(t[sl][-1]), 4) if len(t[sl]) else float(end or 0.0),
                 "t": json_values(tt, 4),

@@ -443,6 +443,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/viz/display": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The dataset's display configuration - default layout, cameras, curve groups, subtitle track, playback - and the defaults an editor starts from (2.7.0, design doc 21 §6)
+         * @description One configuration per registration, shared by everyone who opens the dataset; `config` is
+         *     null until one is saved. `defaults` are what the visualizer does without one: the cameras in
+         *     their own order, the automatic curve groups and the dimensions they are made of (LeRobot and
+         *     Lance; an mcap dataset's curves come from its field mapping), the annotation sources a
+         *     subtitle track can come from.
+         */
+        get: operations["getDatasetVizDisplay"];
+        /**
+         * Replace the display configuration, checked against the dataset's current model (2.7.0)
+         * @description The whole configuration is replaced and its version goes up by one. What it names must be in
+         *     the dataset's current model - cameras, curve dimensions (a feature and its dimension), the
+         *     annotation source of the track, the layout's cells - or it fails with `validation_failed` and
+         *     `details.errors` per item; an mcap dataset takes no curve groups. A configuration saved before
+         *     the dataset changed is not refused when read: what no longer matches is left out.
+         */
+        put: operations["putDatasetVizDisplay"];
+        post?: never;
+        /** Restore the defaults - the whole configuration is removed; its version still goes up (2.7.0) */
+        delete: operations["deleteDatasetVizDisplay"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/datasets/{id}/episodes/{index}/viz": {
         parameters: {
             query?: never;
@@ -2931,6 +2966,7 @@ export interface components {
         VizCameraKey: string;
         VizCamera: {
             key: components["schemas"]["VizCameraKey"];
+            /** @description the display configuration's name for it, else its own */
             name: string;
             /** @description the LeRobot feature key or the mcap topic */
             source: string;
@@ -2952,6 +2988,8 @@ export interface components {
             transcoded: boolean;
             /** @description why transcode or unsupported, in Chinese */
             reason: string | null;
+            /** @description the display configuration leaves it out of the layout templates; it is still offered in the + / 更换 menus (2.7.0) */
+            hidden: boolean;
         };
         VizLine: {
             name: string;
@@ -3084,6 +3122,119 @@ export interface components {
             warnings: components["schemas"]["VizWarning"][];
             /** @description the metadata fingerprint the model and its caches belong to */
             fingerprint: string;
+            /** @description the display configuration in effect (2.7.0): cameras, curve groups and the track are already applied to this model; the layout, hidden lines and playback are the player's. For scope task the registration's cameras, curve groups and track only */
+            display: null | components["schemas"]["VizDisplayConfig"];
+        };
+        /** @description how a depth cell draws (2.7.0, design doc 21 §5.5) */
+        VizDepthView: {
+            /** @enum {unknown} */
+            cmap: "turbo" | "gray";
+            /** @description the colour scale's near end in millimetres; null: the episode's 2 % */
+            lo: number | null;
+            /** @description the far end; null: the episode's 98 % */
+            hi: number | null;
+            /** @description drawn over the camera it is paired with */
+            overlay: boolean;
+            opacity: number;
+        };
+        VizDisplayCell: {
+            /** @enum {unknown} */
+            kind: "video" | "curve" | "depth" | "empty";
+            /** @description a camera's key (video), a curve group's (curve) or a depth stream's (depth); absent for empty */
+            key?: string;
+            view?: components["schemas"]["VizDepthView"];
+        };
+        VizDisplayLayout: {
+            /**
+             * @description custom: the cells as saved; the others are laid out anew for the window
+             * @enum {unknown}
+             */
+            template: "smart" | "video" | "curve" | "custom";
+            /** @description custom only */
+            cols?: number;
+            /** @description custom only */
+            rows?: number;
+            /** @description custom only: cols × rows cells, row by row */
+            cells?: components["schemas"]["VizDisplayCell"][];
+        };
+        VizDisplayCamera: {
+            key: components["schemas"]["VizCameraKey"];
+            /** @description shown instead of the camera's own name; null: its own */
+            name?: string | null;
+            /** @description left out of the layout templates; still offered in the + / 更换 menus */
+            hidden?: boolean;
+        };
+        VizDisplayLine: {
+            /** @description the feature key */
+            source: string;
+            /** @description the dimension within the feature */
+            dim: number;
+            name: string;
+            /**
+             * @description state solid, action dashed
+             * @enum {unknown}
+             */
+            role: "state" | "action" | "other";
+        };
+        VizDisplayGroup: {
+            /** @description the stream key the group is drawn and asked for by */
+            key: string;
+            name: string;
+            unit?: string | null;
+            /** @description shown by the smart layout */
+            smart: boolean;
+            lines: components["schemas"]["VizDisplayLine"][];
+        };
+        /** @description How a registered dataset is shown by default (2.7.0, design doc 21 §6); every part may be absent or null - the platform's default */
+        VizDisplayConfig: {
+            layout?: null | components["schemas"]["VizDisplayLayout"];
+            /** @description in display order; cameras not named follow in their own order */
+            cameras?: components["schemas"]["VizDisplayCamera"][] | null;
+            curves?: {
+                /** @description LeRobot and Lance - the curve groups instead of the automatic ones; null - automatic */
+                groups?: components["schemas"]["VizDisplayGroup"][] | null;
+                /** @description per curve group key, the names of the lines not drawn */
+                hidden?: {
+                    [key: string]: string[];
+                };
+            } | null;
+            /** @description the annotation source (a key of annotation_sources) shown as the subtitle track */
+            track?: string | null;
+            playback?: {
+                /** @enum {unknown} */
+                speed?: 1 | 1.5 | 2;
+                loop?: boolean;
+            } | null;
+        };
+        VizDisplay: {
+            dataset_id: string;
+            config: null | components["schemas"]["VizDisplayConfig"];
+            /** @description goes up by one with every save and every restore; 0 - never saved */
+            version: number;
+            updated_at: number | null;
+            /** @description what the visualizer does without a configuration */
+            defaults: {
+                /** @description in the dataset's own order */
+                cameras: {
+                    key: components["schemas"]["VizCameraKey"];
+                    name: string;
+                    source: string;
+                }[];
+                /** @description the automatic curve groups (empty for mcap) */
+                groups: components["schemas"]["VizDisplayGroup"][];
+                /** @description every dimension a group may draw, with its automatic name and role */
+                dimensions: components["schemas"]["VizDisplayLine"][];
+                /** @description the annotation sources a subtitle track can come from */
+                tracks: {
+                    key: string;
+                    name: string;
+                }[];
+                /** @description false for mcap: its curves come from the field mapping */
+                groups_editable: boolean;
+            };
+        };
+        VizDisplayPut: {
+            config: components["schemas"]["VizDisplayConfig"];
         };
         VizEpisodeItem: {
             index: number;
@@ -5005,6 +5156,85 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VizMetaFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VizDisplayPut"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description restored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
                 };
             };
             default: components["responses"]["Error"];

@@ -232,6 +232,13 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     真 Daemon：按 `backend/daemon/viz/README.md` 第 23 步造 `viz_depth`，同样能看，且画面与 parquet 里的值一致（悬停读数与第 23 步的 Python 打印对得上）。
     mcap 的深度（设计 21 §5.4，F15.5）按同一份 README 第 24 步：合成的 `viz_rgbd` 四种写法都能看；RoboMIND 真数据在「mcap 配置」确认后，`top-depth` 叠在 `top-camera` 上。
 
+20. **展示配置（设计 21 §6，F15.6）**：可视化页选 droid-200，模版改「仅视频」、倍速改 2x，顶栏「布局 → 保存为缺省布局」，确认后提示「已保存，所有人打开这个数据集都是这个布局」；
+    刷新页面仍是仅视频、2x。点左栏别的 episode：格子、隐藏的线（在曲线图例里点掉一条）、倍速都不变，上一条留在屏幕上直到下一条读好。「布局 → 恢复默认布局」确认后回到智能布局、1x。
+    页头「展示配置」打开抽屉：把 wrist 上移两次、显示名填「腕部」、exterior_2 勾「不进布局」、缺省倍速 1.5x，保存后智能布局只放两路相机、第一路叫「腕部」，exterior_2 在「+」里仍可选；
+    数据集详情的「可视化配置」里「展示配置」一行写「已保存第 N 版」。抽屉的「曲线分组」：「新建分组」后把两条 gripper 线的「所属分组」改成它、把 `action` 第 0 维改「不画」，
+    保存后曲线组跟着变；「恢复自动分组」再保存回到自动分组；「恢复默认」确认后整份清空。warehouse_mcap 的抽屉里曲线分组只写「由字段映射决定」。
+    接真 Daemon：`backend/daemon/viz/README.md` 第 25 步。
+
 ## 手动验证：接口文档（真 Daemon）
 
 1. `npm run build`：`dist/` 下有 `api-docs.html`、`openapi.json`、`llms.txt`、`llms-zh.txt`。

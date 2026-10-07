@@ -109,6 +109,24 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(await within(info).findByTestId('vz-meta')).toBeInTheDocument();
   });
 
+  it('opens the dataset’s 展示配置 from the header; a camera hidden there leaves the smart layout (design doc 21 §6)', async () => {
+    const { user } = renderApp('/visualize?dataset=ds_droid200');
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(3));
+    await user.click(screen.getByRole('button', { name: zh.displayCfg.entry }));
+    const drawer = await waitFor(() => {
+      const d = [...document.querySelectorAll('.arco-drawer')].find((x) => x.textContent?.includes(zh.displayCfg.title('droid-200')));
+      if (!(d instanceof HTMLElement)) throw new Error('no drawer');
+      return d;
+    });
+    await user.click(await within(drawer).findByRole('checkbox', { name: zh.displayCfg.hiddenAria('exterior_2') }));
+    await user.click(within(drawer).getByRole('button', { name: zh.displayCfg.save }));
+    expect(await screen.findByText(zh.displayCfg.saved)).toBeInTheDocument();
+    // the model is asked for again: two cameras in the smart layout, the third still in 「+」
+    await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(2));
+    expect(db.vizDisplays.get('ds_droid200')?.config?.cameras).toEqual([{ key: 'exterior_1' }, { key: 'exterior_2', hidden: true }, { key: 'wrist' }]);
+  });
+
   it('says an mcap dataset needs its mapping confirmed first', async () => {
     db.vizMappings.delete('ds_mcap');
     renderApp('/visualize?dataset=ds_mcap');

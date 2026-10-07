@@ -59,6 +59,15 @@ class VizSource:
                 self.annotations_upload or "")
 
     @property
+    def display(self) -> dict | None:
+        """The display configuration in effect (design doc 21 §6): the registration's; a task's mini
+        player takes only its cameras, curve groups and track."""
+        from .display import envelope, for_task
+
+        cfg, _, _ = envelope(self.display_config)
+        return for_task(cfg) if self.scope == "task" else cfg
+
+    @property
     def is_local(self) -> bool:
         return self.source == "local"
 

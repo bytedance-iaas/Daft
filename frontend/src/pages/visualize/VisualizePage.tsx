@@ -2,6 +2,7 @@ import { Button, Space } from '@arco-design/web-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/PageHeader';
+import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer';
 import { useVizModel, type VizRef } from '../../features/visualizer/data';
 import { Player, type PlayerControl } from '../../features/visualizer/Player';
 import { readPrefs, writePrefs } from '../../lib/prefs';
@@ -43,6 +44,7 @@ export function VisualizePage() {
   }, []);
   const unfold = collapsed ? <RailButton fold={false} onClick={() => fold(false)} /> : null;
   const control = useRef<PlayerControl | null>(null);
+  const [display, setDisplay] = useState(false);
 
   useEffect(() => {
     if (datasetId) writePrefs({ lastVizDataset: datasetId });
@@ -76,6 +78,9 @@ export function VisualizePage() {
           <Space>
             <Button disabled={!datasetId || item?.format === 'unsupported'} onClick={() => navigate(`/tasks/new?dataset_id=${encodeURIComponent(datasetId ?? '')}`)}>
               {zh.vizPage.newTask}
+            </Button>
+            <Button disabled={!datasetId || !model.data || pending} onClick={() => setDisplay(true)}>
+              {zh.displayCfg.entry}
             </Button>
             <Button disabled={!datasetId} onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId ?? '')}`)}>
               {zh.vizPage.detail}
@@ -138,6 +143,7 @@ export function VisualizePage() {
           {datasetId && model.data && !pending ? <DatasetInfo key={datasetId} datasetId={datasetId} model={model.data} player={control} /> : null}
         </section>
       </div>
+      <DisplayConfigDrawer dataset={display && datasetId ? { id: datasetId, name: item?.name ?? model.data?.name ?? datasetId } : null} onClose={() => setDisplay(false)} />
     </div>
   );
 }

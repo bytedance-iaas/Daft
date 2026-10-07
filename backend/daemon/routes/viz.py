@@ -20,6 +20,7 @@ from ..errors import ApiError
 from ..orchestr.service import orchestrator_of
 from ..pagination import keyset_page
 from ..repo.extras import dataset_format
+from ..viz import display as DISPLAY
 from ..viz import service as S
 from ..viz.service import viz_of
 from . import datasets as _datasets  # noqa: F401 - registers the ds_id path convertor
@@ -97,6 +98,39 @@ async def get_dataset_viz_meta(request: Request, dataset_id: str, path: str = Qu
     rt, owner = runtime(request), principal(request).owner_id
     svc = viz_of(rt)
     return await in_thread(lambda: svc.meta_file(svc.dataset_source(dataset_id, owner), path))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/viz/display")
+async def get_dataset_viz_display(request: Request, dataset_id: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    return await in_thread(lambda: DISPLAY.doc(svc, rt.repo.get_dataset(dataset_id, owner=owner), owner))
+
+
+@router.put("/datasets/{dataset_id:ds_id}/viz/display")
+async def put_dataset_viz_display(request: Request, dataset_id: str):
+    body = await read_json_body(request, required=True)
+    validate("VizDisplayPut", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        return JSONResponse(DISPLAY.save(svc, dataset_id, who, body["config"]))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="putDatasetVizDisplay",
+                           owner=who.owner_id, method="PUT", path=request.url.path, body=body, handler=handler)
+
+
+@router.delete("/datasets/{dataset_id:ds_id}/viz/display")
+async def delete_dataset_viz_display(request: Request, dataset_id: str):
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        return JSONResponse(DISPLAY.save(svc, dataset_id, who, None))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="deleteDatasetVizDisplay",
+                           owner=who.owner_id, method="DELETE", path=request.url.path, body=None, handler=handler)
 
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/viz")

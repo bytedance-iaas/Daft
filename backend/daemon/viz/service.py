@@ -14,6 +14,7 @@ from typing import Any
 
 from ..errors import ApiError
 from ..results.files import LRU
+from . import display as DISPLAY
 from .media import Builder, DiskCache, Transcoder, digest, file_response, pending_body, ranged_response
 from .source import URL_TTL_S, Access, VizSource, dataset_source, task_source
 
@@ -238,7 +239,7 @@ class VizService:
             "robot_type": None, "bytes": sum(o.size for o in listing.values()) if listing else None,
             "cameras": [], "streams": [], "annotation_sources": [], "field_tree": [],
             "mapping": self._mapping_state(src, kind), "transcode": {"enabled": self.transcode_enabled},
-            "warnings": [], "fingerprint": src.fingerprint}
+            "warnings": [], "fingerprint": src.fingerprint, "display": src.display}
         if reader is None:
             out["warnings"].append({"code": "unsupported", "message": "这份 Lance 数据没有 LeRobot 的元数据（不是 lerobot-lancedb 转出来的），可视化读不了"
                                     if kind == "lancedb" else f"这个数据集的格式（{kind}）没有可视化读取器"})
@@ -250,7 +251,7 @@ class VizService:
             out["episode_count"] = int(ds.get("episode_count") or 0)
             return out
         out.update(self._reader(src).dataset_model(src))
-        return out
+        return DISPLAY.apply_model(out, src.display)
 
     @staticmethod
     def _mapping_state(src: VizSource, kind: str) -> dict:
@@ -266,7 +267,7 @@ class VizService:
 
     def episode(self, src: VizSource, index: int) -> dict:
         body = self._reader(src).episode_model(src, index, self.urls)
-        return {"scope": src.scope, "id": src.id, "index": int(index), **body}
+        return DISPLAY.apply_episode({"scope": src.scope, "id": src.id, "index": int(index), **body}, src.display)
 
     def series(self, src: VizSource, index: int, stream: str, start, end, points: int) -> dict:
         return self._reader(src).series(src, index, stream, start, end, points)
