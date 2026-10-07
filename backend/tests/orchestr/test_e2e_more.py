@@ -33,11 +33,10 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     r = d.api("POST", f"/tasks/{task_id}/adjudication", json={"decisions": [   # W5b records
         {"episode_index": 3, "line": "task_verdict", "decision": "failure"}]})
     assert r.status_code == 200, r.text
-    # the fixture raises no label conflict to answer on the page; a relabel recorded all the
-    # same keeps the re-judging path covered (the CLI executes it as v1 does)
+    # a rewritten task text with the verdict left to the model keeps the re-judging path covered
     d.rt.repo.append_adjudication([
-        P.AdjudicationCreate(task_id=task_id, episode_index=4, line="label",
-                             decision="custom_label", new_label="wipe the table",
+        P.AdjudicationCreate(task_id=task_id, episode_index=4, line="task_verdict",
+                             decision="unsure", new_label="wipe the table",
                              decided_by="tester")], at=d.rt.clock())
     r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={"relabel_rerun": "nope"})
     assert r.status_code == 400
@@ -57,10 +56,9 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     for where in (rd, d.delivery(done["run_id"])):          # every decision, and delivered
         with open(os.path.join(where, "human-decisions", "task_verdicts.csv"),
                   encoding="utf-8") as fh:
-            assert "ep000003" in fh.read()
-        with open(os.path.join(where, "human-decisions", "label_decisions.csv"),
-                  encoding="utf-8") as fh:
-            assert "wipe the table" in fh.read()
+            text = fh.read()
+        assert "ep000003" in text
+        assert "wipe the table" in text          # the rewritten text is a column of this copy
     sub_id = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"][0]["id"]
     with open(os.path.join(rd, ".orchestr", sub_id, "decisions.json"), encoding="utf-8") as fh:
         decisions = json.load(fh)

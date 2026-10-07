@@ -24,10 +24,10 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]
     assert [s["id"] for s in stages] == [
-        "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final", "report", "export", "verify"]
+        "numeric", "frame", "dedup", "autolabel", "vlm", "final", "report", "export", "verify"]
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
-        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm", "profile": "vlm"}
-    assert [s["id"] for s in stages if s.get("full_set")] == ["dedup", "profile"]
+        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm"}
+    assert [s["id"] for s in stages if s.get("full_set")] == ["dedup"]
     assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}
     assert mods["timestamp_check"]["state"] == "succeeded"
