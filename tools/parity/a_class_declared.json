@@ -26,6 +26,11 @@
       "since": "jinxin_drop_skill_profile (2026-10-06)",
       "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
     },
+    "export/lerobot_writer.py": {
+      "removed": true,
+      "since": "jinxin_drop_skill_profile (2026-10-07)",
+      "why": "D69: the platform only produces the report, it no longer writes a delivery dataset - the LeRobot writer has no caller left (the mcap / rrd writers, the incremental re-export and the export command went with it; v1's own export raises through export/retired.py)"
+    },
     "ingest/mcap_reader.py": {
       "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
       "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",

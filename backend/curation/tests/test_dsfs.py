@@ -89,7 +89,7 @@ def bucket(tmp_path, monkeypatch):
 
 
 def _v2(root, n=3):
-    from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+    from curation.tests.lerobot_v2_fixture import _write_v2_dataset
     return _write_v2_dataset(str(root / "datasets" / "arm"), n_episodes=n,
                              episodes_stats=True)
 
@@ -196,23 +196,6 @@ def test_stats_prior_and_rrd_sniff_accept_tos(bucket):
     _v2(root)
     assert is_rrd_dataset("tos://bkt/datasets/arm") is False
     assert isinstance(stats_prior_warnings("tos://bkt/datasets/arm"), list)
-
-
-def test_export_v2_from_tos_source_copies_video_bytes(bucket, tmp_path):
-    from curation.export.lerobot_writer import export_lerobot_v2
-    root, client = bucket
-    d = _v2(root)
-    out = tmp_path / "out"
-    stats = export_lerobot_v2("tos://bkt/datasets/arm", [0, 2], str(out))
-    assert stats["episodes"] == 2 and stats["videos"] > 0
-    src_mp4 = sorted(p for p in dsfs.glob(os.path.join(d, "videos", "chunk-*", "*", "episode_*.mp4"))
-                     if p.endswith("episode_000000.mp4"))[0]
-    dst_mp4 = sorted(p for p in dsfs.glob(str(out / "videos" / "chunk-*" / "*" / "episode_*.mp4"))
-                     if p.endswith("episode_000000.mp4"))[0]
-    assert open(src_mp4, "rb").read() == open(dst_mp4, "rb").read()
-    assert (out / "meta" / "stats.json").exists() or (out / "meta" / "episodes_stats.jsonl").exists()
-
-
 def test_dedup_fingerprint_uses_etag_for_remote(bucket):
     from curation.dataset_level.dedup import episode_fingerprint
     from curation.ingest.lerobot_reader import read_lerobot_rows

@@ -88,8 +88,8 @@ def test_they_are_in_no_list_and_not_in_the_total(flow):
     with open(flow.path("revisions", "r0001", "report.md"), encoding="utf-8") as fh:
         md = fh.read()
     assert "缺源文件未质检:2 条" in md and "ep000004:缺 " + VIDEO_4 in md
-    exported = _json(flow.rd, "export", "manifest.json")["episodes"]
-    assert [e["episode_index"] for e in exported] == [0, 3, 6]
+    delivered = _json(flow.rd, "revisions", "r0001", "passed.json")["episodes"]
+    assert [e["episode_index"] for e in delivered] == [0, 3, 6]
 
 
 def test_without_a_manifest_check_finds_them_when_it_reads(dataset, tmp_path):
@@ -117,7 +117,7 @@ def test_lerobot_v3_episodes_are_not_left_out(tmp_path):
     """v1 never drops a v3 episode for a missing file (its row validation rejects the
     row instead): the episodes are errors of the modules that read them - held, not
     skipped."""
-    from tests.export.v3_fixture import make_mini_lerobot_v3
+    from tests.cli.v3_fixture import make_mini_lerobot_v3
 
     dataset = make_mini_lerobot_v3(str(tmp_path / "v3"))
     video = f"videos/{WRIST}/chunk-000/file-001.mp4"

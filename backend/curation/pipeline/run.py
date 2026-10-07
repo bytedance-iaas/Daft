@@ -375,9 +375,11 @@ def _run_pipeline(
     _validate_config(_apply_overrides(_load_config(config_path), set_overrides or []))
     import time as _time0
     _run_t0 = _time0.time()
-    from ..export.lerobot_writer import export_lerobot_v2, export_lerobot_v3
     from ..export.report import build_report, save_report
-    from ..export.writers import write_episodes_parquet
+    # v1 的导出已退役（D69）：调到就报错，判定与报告这一半照旧
+    from ..export.retired import retired as export_lerobot_v2
+    from ..export.retired import retired as export_lerobot_v3
+    from ..export.retired import retired as write_episodes_parquet
     from ..ingest.daft_source import read_lerobot_lazy
     from ..ingest.lerobot_reader import _load_info, read_lerobot_meta, read_lerobot_rows
     from ..pipeline.config import enabled, load_config
@@ -1370,7 +1372,7 @@ def _run_pipeline(
             # 客户的数据栈本来就吃 rrd,转格式既贵又会丢掉我们没读懂的组件。
             # 一条 episode 一个自包含 .rrd ⇒ 通过的原样拷、改标的只重写 /task、
             # 剔除的不拷,文件名保留源编号便于回源对账。
-            from ..export.rrd_writer import export_rrd_curated
+            from ..export.retired import retired as export_rrd_curated
 
             _rrd_eps = {r["episode_id"]: {
                 "verdict": "通过",
@@ -1397,7 +1399,7 @@ def _run_pipeline(
             _fmt_relabels = {e: desc_of[e] for e in keep_ids
                              if desc_src_of.get(e) == "自产caption"
                              and desc_of.get(e, "").strip()}
-            from ..export.mcap_writer import export_mcap_curated
+            from ..export.retired import retired as export_mcap_curated
             deliver["mcap_dataset"] = export_mcap_curated(
                 output_dir, input_dir, list(keep_ids),
                 relabels=_fmt_relabels, episodes=_fmt_eps,
@@ -1470,7 +1472,7 @@ def _run_pipeline(
     if deliver.get("episodes_parquet"):
         # 直连交付(2026-08-22 实见回归):发布器把 parquet 传完即删,本地目录是空的,按"目录非空"
         # 回验会干等 300s 超时。发布器说传上去了 = 就绪,本地不再回验这一项。
-        from ..export import publish as _publish
+        from ..export import retired as _publish
         _pub = _publish.active()
         _n_up = _pub.uploaded_under(deliver["episodes_parquet"]) if _pub else 0
         if _n_up:
@@ -1483,11 +1485,11 @@ def _run_pipeline(
                             os.path.join(deliver["lerobot_dataset"], "meta", "info.json"),
                             "json"))
     if deliver.get("rrd_dataset"):
-        from ..export.rrd_writer import INDEX_NAME as _RRD_INDEX
+        from ..export.retired import INDEX_NAME as _RRD_INDEX
         _checks_vis.append(("rrd_curated/index.json",
                             os.path.join(deliver["rrd_dataset"], _RRD_INDEX), "json"))
     if deliver.get("mcap_dataset"):
-        from ..export.mcap_writer import INDEX_NAME as _MCAP_INDEX
+        from ..export.retired import INDEX_NAME as _MCAP_INDEX
         _checks_vis.append(("mcap_curated/index.json",
                             os.path.join(deliver["mcap_dataset"], _MCAP_INDEX),
                             "json"))

@@ -25,7 +25,7 @@ REPO = os.path.dirname(BACKEND)
 SCHEMA_OF = {"preflight": "cli/preflight.schema.json", "plan": "cli/plan.schema.json",
              "snapshot": "cli/source-manifest.schema.json",
              "autolabel": "cli/autolabel.schema.json", "check": "cli/check.schema.json",
-             "aggregate": "cli/aggregate.schema.json", "export": "cli/export.schema.json",
+             "aggregate": "cli/aggregate.schema.json",
              "report": "cli/report-output.schema.json",
              "adjudicate-apply": "cli/adjudicate-apply.schema.json",
              "verify": "cli/verify.schema.json"}
@@ -180,14 +180,9 @@ class Chain:
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)
 
     def deliver(self, delivery: str, *extra) -> None:
+        """What the Daemon delivers (D69: the reports, no dataset): the run directory, then verify."""
         import shutil
 
-        self.step("export", "export", "--run-dir", self.rd, "--input", self.ds,
-                  "--output", delivery, *extra)
-        skip = {os.path.join(self.rd, "export", name)            # export uploads them itself
-                for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
-        shutil.copytree(self.rd, delivery, dirs_exist_ok=True,
-                        ignore=lambda d, names: [n for n in names
-                                                 if os.path.join(d, n) in skip])
+        shutil.copytree(self.rd, delivery, dirs_exist_ok=True)
         self.step("verify", "verify", "--run-dir", self.rd, "--output", delivery,
                   "--visibility-timeout", "0")

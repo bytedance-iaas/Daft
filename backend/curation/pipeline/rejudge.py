@@ -1025,10 +1025,10 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 # + 非原始标注的任务覆写);新包在同级临时目录写好再原子换位。
                 curated = os.path.join(delivery, "lerobot_curated")
                 if os.path.isdir(curated):
-                    from ..export import lerobot_writer as _lw
+                    from ..export import retired as _lw        # D69：导出已退役
                     from ..ingest.lerobot_reader import _load_info
                     is_v3 = str(_load_info(input_dir).get("codebase_version", "")).startswith("v3")
-                    exporter = _lw.export_lerobot_v3 if is_v3 else _lw.export_lerobot_v2
+                    exporter = _lw.retired                 # D69：v1 的重导出已退役
                     keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
                     ov = {int(r["episode_id"][2:]): r["instruction"]
                           for r in out_rows
@@ -1061,7 +1061,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                 # 几个文件,与数据集大小无关。sync_back 对
                                 # lerobot_curated/ 前缀视而不见,远端的新旧对账
                                 # 在下面 _finalize_remote_curated 里按产物清单做
-                                from ..export import publish as _publish
+                                from ..export import retired as _publish
                                 _pub = _publish.Publisher(_staging,
                                                           curated_publish[0],
                                                           curated_publish[1])
@@ -1089,7 +1089,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 #  "采纳改标 → 用新标注重跑成败判定"与 LeRobot 走同一条路。)
                 rrd_curated = os.path.join(delivery, "rrd_curated")
                 if os.path.isdir(rrd_curated):
-                    from ..export.rrd_writer import export_rrd_curated
+                    from ..export.retired import retired as export_rrd_curated
                     keep_eids = [r["episode_id"] for r in out_rows]
                     rrd_ov = {r["episode_id"]: r["instruction"] for r in out_rows
                               if r.get("instruction_source") not in (None, "", "原始标注")
@@ -1124,7 +1124,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                         "instruction_source": r.get("instruction_source") or "",
                     } for r in out_rows}
                     _gen = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    from ..export.mcap_writer import export_mcap_curated
+                    from ..export.retired import retired as export_mcap_curated
                     _staging_name = "mcap_curated.staging"
                     _sh.rmtree(os.path.join(delivery, _staging_name),
                                ignore_errors=True)

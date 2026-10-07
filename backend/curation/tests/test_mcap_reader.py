@@ -212,32 +212,6 @@ def test_ros2_compound_format_reads(tmp_path):
     r = read_mcap_rows(str(d))[0]
     with av.open(r["video"]["observation.images.cam0"]["path"]) as c:
         assert sum(1 for _ in c.decode(c.streams.video[0])) == N
-
-
-def test_export_stable_ids_for_noncanonical_names(tmp_path):
-    """P2 回归(2026-09-21 审查):源文件名不合 episode_N 约定时,交付按编号重命名
-    (episode_<N>.mcap)—— 否则筛选后重读位置变了,编号与 index.json 对不上。"""
-    from curation.export.mcap_writer import export_mcap_curated
-
-    d = tmp_path / "odd"
-    d.mkdir()
-    for name in ("a.mcap", "b.mcap", "c.mcap"):          # 位置编号:a=0 b=1 c=2
-        _write_mcap(str(d / name))
-    delivery = str(tmp_path / "delivery")
-    os.makedirs(delivery)
-    stats = export_mcap_curated(delivery, str(d), ["ep000002"],
-                                generated_at="2026-09-21 00:00:00")
-    out_dir = stats["out_dir"]
-    assert sorted(os.listdir(out_dir)) == ["episode_2.mcap", "index.json"]
-    with open(os.path.join(out_dir, "index.json"), encoding="utf-8") as f:
-        index = json.load(f)
-    assert index["episodes"][0]["file"] == "episode_2.mcap"
-    assert index["episodes"][0]["source_file"] == "c.mcap"
-    # 交付集重读:编号与清单一致(这是修的本体)
-    rows = read_mcap_rows(out_dir)
-    assert [r["episode_id"] for r in rows] == ["ep000002"]
-
-
 def test_review_page_uses_mcap_mapping(tmp_path, monkeypatch):
     """P2 回归(2026-09-21 审查):run 用 mcap_mapping 能读的数据,review-page 带
     同一份 --config 也要能读;不带配置则如实报输入错误(退出码 2)。"""
@@ -450,33 +424,6 @@ def test_video_materialization_idempotent(mcap_dir):
     assert p1 == p2
     assert (st1.st_mtime_ns, st1.st_size) == (st2.st_mtime_ns, st2.st_size)
     assert not os.path.exists(p1 + ".part")
-
-
-def test_export_mcap_curated(mcap_dir, tmp_path):
-    """交付导出:通过的逐字节一致,剔除的不拷,改标只落 index.json。"""
-    from curation.export.mcap_writer import export_mcap_curated
-
-    d, _ = mcap_dir
-    delivery = str(tmp_path / "delivery")
-    os.makedirs(delivery)
-    stats = export_mcap_curated(
-        delivery, d, ["ep000001"], relabels={"ep000001": "stack the cups"},
-        episodes={"ep000001": {"verdict": "通过", "instruction": "stack the cups",
-                               "instruction_source": "人工裁决改标"}},
-        generated_at="2026-09-18 00:00:00")
-    assert stats["episodes"] == 1 and stats["relabeled"] == 1 and stats["removed"] == 1
-    out_dir = stats["out_dir"]
-    assert sorted(os.listdir(out_dir)) == ["episode_1.mcap", "index.json"]
-    with open(os.path.join(d, "episode_1.mcap"), "rb") as f:
-        src = f.read()
-    with open(os.path.join(out_dir, "episode_1.mcap"), "rb") as f:
-        assert f.read() == src                      # 逐字节一致
-    with open(os.path.join(out_dir, "index.json"), encoding="utf-8") as f:
-        index = json.load(f)
-    assert index["episodes"][0]["instruction"] == "stack the cups"
-    assert index["episodes"][0]["relabeled"] is True
-
-
 def test_tied_log_times_no_raw_crash(tmp_path):
     """P1 回归(2026-09-21 审查):录制端毫秒级打点会产生并列 log_time —— 此前
     sorted() 落到 ndarray 比较直接 ValueError 裸崩;现在相机并列帧 pts 强制递增

@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+from curation.tests.lerobot_v2_fixture import _write_v2_dataset
 
 
 def _dataset(tmp_path, robot_type):

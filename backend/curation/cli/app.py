@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-from . import (adjudicate, aggregate, autolabel, check, export_cmd, plan, preflight,
+from . import (adjudicate, aggregate, autolabel, check, plan, preflight,
                report_cmd, snapshot, task_client, verify)
 from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
@@ -80,7 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
     autolabel.add_parser(sub, atomic)
     check.add_parser(sub, atomic)
     aggregate.add_parser(sub, atomic)
-    export_cmd.add_parser(sub, atomic)
     report_cmd.add_parser(sub, atomic)
     adjudicate.add_parser(sub, atomic)
     verify.add_parser(sub, atomic)

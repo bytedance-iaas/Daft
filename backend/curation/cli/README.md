@@ -13,7 +13,6 @@
 | `curation aggregate` | `funnel`：每条 keep / drop / held 与 `keep.txt`；`final`：passed / reject / held 三个清单和 review 视图 | `cli/aggregate.schema.json` |
 | `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型、不导出），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
 | `curation report` | 一个结果版本的 `report.md` / `report.json` / `perf.json` / 明细表，最后写 `commit.json` | `cli/report-output.schema.json` |
-| `curation export` | 把一个结果版本的 passed 导出成交付数据集（LeRobot 可增量；mcap / Lance 照 v1 交付，见「mcap 与 Lance 数据集」），并把变化同步到交付目录 | `cli/export.schema.json` |
 | `curation verify` | 从交付目录逐个回读关键文件，全部通过才最后写 `_COMPLETE` | `cli/verify.schema.json` |
 | `curation task …` | Daemon REST API 的薄客户端，给 Agent 和脚本用，输出带 `links` | `openapi.yaml` 里对应接口的响应，原样打印 |
 
@@ -33,7 +32,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `lerobot_meta.py` | 不读样本数据的 LeRobot 元数据读取：格式识别、episode 表、每条的文件键 |
 | `containers.py` / `preflight_containers.py` | mcap 与 Lance（D44）：识别、按 v1 的规则给 mcap 文件编号、按范围读 mcap 的摘要区、读 Lance 的 `meta/`、TOS 数据的本地副本（`SourceCache`）、`source_info.json`；这两种格式的预检 |
 | `runctx.py` | 流水线命令共用的部分：运行目录、`--input` / `--source-manifest`、VLM 参数与三个行为开关、闸门、配置、`VlmSession`（探活、传输策略、用量记账） |
-| `preflight.py` / `plan.py` / `snapshot.py` / `autolabel.py` / `check.py` / `aggregate.py` / `adjudicate.py` / `report_cmd.py` / `export_cmd.py` / `verify.py` / `task_client.py` | 各条命令 |
+| `preflight.py` / `plan.py` / `snapshot.py` / `autolabel.py` / `check.py` / `aggregate.py` / `adjudicate.py` / `report_cmd.py` / `verify.py` / `task_client.py` | 各条命令 |
 | `source_manifest.py` | `source_manifest.json` 的生成与校验（`--source-manifest`，对不上退出码 6） |
 | `episodes.py` / `inputs.py` | `--episodes` 语法（含 `@文件`）、`--input` / `--source` |
 
@@ -53,7 +52,9 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `funnel.py` / `run.py` | v1 的编排（B 类），只把闭包里的构建函数提到模块级；`curation run` 仍走它们 |
 | `rejudge.py` | v1 的 rejudge（B 类）；改标重判的函数体提成 `rerun_task_success`，`check` 按 v1 口径重判时调的就是它（D39） |
 
-交付（`curation/export/`）：LeRobot 的全量与增量导出见 [INCREMENTAL.md](../export/INCREMENTAL.md)；mcap / Lance 的交付在 `export/containers.py`（D44）。
+报告（`curation/export/`）：报告正文 `report.py`、证据帧 `evidence.py`、同步曲线 `sync_plots.py`、明细 `detail_labels.py` /
+`task_trace.py` / `timeline.py` / `episode_stats.py`、复核页 `review_page.py`，交付目录的安全写入 `safe_write.py`。
+数据集写出器随 D69 下线（包名沿用，里面只剩出报告的那一半）。
 
 ## 全局约定
 
@@ -127,7 +128,6 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   details/vlm_latency.csv  details/evidence/   每次模型请求的时延、取证图
   usage.jsonl                                  token 用量（C3 usage 行的落盘副本）
   source_info.json                             mcap / Lance（D44）：读取器给出的数据集信息与用到的机器人规格，report 据此写「数据包」一节
-  export/{manifest.json, manifest.detail.json, lerobot_curated/}   mcap 源是 mcap_curated/，Lance 源是 lance_episodes/
   logs/
 ```
 
@@ -215,16 +215,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 各模块的 `adjudication`：`pending` 只数注册表里计入待裁的问题（成败弃权、标注分歧），`appealable` 是这个模块拒掉、还能复议的条数（只有拒绝可复议的模块才有）；去重的是 `{"pending": 0, "appealable": N}`（D43）。
 - 报告里的 token 用量来自 `usage.jsonl`（两本账：实际与分摊，`requests_unknown_usage` 是响应里没有用量的请求数，不估算）；时延来自 `details/vlm_latency.csv`。
 
-**export**：`curation export --run-dir … --input … [--source-manifest …] [--revision N] [--output <交付目录>] [--incremental] [--concurrency N] --json`
-
-- 导出版本（默认最新提交的那个）的 passed 到 `export/lerobot_curated/`：待人工确认的条照 v1 的保守口径一起交付，待补跑的（held）不交付。任务描述按来源写（原始标注、自产 caption、人工改标），`export/manifest.json` 的每条带 `task`，并列出全部文件及大小（`files`）。
-- `--incremental` 在上一次导出的基础上只动变化的部分（W7）：`diff` 给出 keep / relabel / renumber / add / drop 的条数；信不过上一次导出时退回全量，原因写在 `full_reason`。
-- `--output` 时同步到交付目录：先删 `_COMPLETE`，上传新增和变化的文件、删掉不再交付的文件，最后写 `export/manifest.detail.json` 和 `export/manifest.json`；之后由 `curation verify` 回读并写 `_COMPLETE`。
-- 源数据和 `source_manifest.json`（不给 `--source-manifest` 时默认用运行目录里的）对不上时退出码 6。
-
 **verify**：`curation verify --run-dir <本地运行目录> --output <交付目录下的 run_id 目录> [--visibility-timeout 60] --json`
 
-- 关键文件 = 运行目录里的全部文件（排除 `logs/`、`inflight.json`、隐藏文件和临时文件）加上 `export/manifest.json` 的 `files` 里列出的数据集文件（`export/lerobot_curated/` 下，按清单里的大小核对）。
+- 关键文件 = 运行目录里的全部文件（排除 `logs/`、`inflight.json`、隐藏文件和临时文件）：结果版本的清单、报告与明细。
 - 逐个检查：存在（`missing`）、大小一致（`size_mismatch`）、开头不是全零（`zero_filled`）、能解析（`unparseable`：JSON / JSONL 整体解析，parquet 看首尾魔数并解析 footer，mp4 找 `moov`，JPEG / PNG 看魔数）。列举里有但读不到的文件在 `--visibility-timeout` 秒内反复重试，仍读不到记 `not_visible_in_time`。交付目录本身读不了是退出码 3（`output_unreachable`）。
 - mp4 和 parquet 只按范围读头尾，不下载整个文件。全部通过才最后写 `_COMPLETE`；没通过时如果交付目录里有旧的 `_COMPLETE`，会把它删掉。
 
@@ -273,15 +266,14 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 ### mcap 与 Lance 数据集（D44，F6.5）
 
-v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_reader.py`、`ingest/lance_reader.py` 与交付用的 `export/mcap_writer.py` 是 A 类代码，原样搬来（冻结点随之前移到 `dev@eb637ba40`）；v2 的命令在外面包了一层 `cli/containers.py`，判决仍全部出自 v1 的读取器与算法（合成数据上 v1 对 v2 逐位对账，`tools/parity/tests/test_containers_parity.py`）。
+v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_reader.py`、`ingest/lance_reader.py` 是 A 类代码，原样搬来（冻结点随之前移到 `dev@eb637ba40`；交付用的写出器随 D69 删掉了）；v2 的命令在外面包了一层 `cli/containers.py`，判决仍全部出自 v1 的读取器与算法（合成数据上 v1 对 v2 逐位对账，`tools/parity/tests/test_containers_parity.py`）。
 
 | | mcap | Lance |
 |---|---|---|
 | 认什么 | 数据集根目录下的 `*.mcap`，一个文件一条 episode（子目录里的不算）。编号照 v1：文件名是 `episode_<N>.mcap` 的按 N（混进来的其他 `.mcap` 不读，预检给警告），一个都不是就按文件名排序从 0 编 | lerobot-lance-convert（0.3.0 起）的布局：`frames.lance`、`videos.lance`、`meta.lance` 三张表加 `meta/`，`meta/info.json` 带 `storage_format: "lance"`（LeRobot v3.0 元数据）。三表齐但没有这个标记的是旧插件布局，预检报元数据无效（v1 的原话）；只有别的 Lance 表的是 `lancedb`，不支持 |
 | 预检读什么 | 每个文件只读摘要区（通道、消息数、元数据记录），TOS 上是几次按范围读，不读消息。动作、状态、相机、任务文本、机器人型号按 v1 的 topic 规则认（站点的 `ingest.mcap_mapping` 优先，UMI 的 `/robotN/vio/eef_pose` 自动认）。时间轴取动作 topic 的 `log_time`，没有要配的帧率，`fps` 为 null。任务文本只在 `/task` topic 里的，预检数它有标注但读不到文字（真正的文字质检时读） | `meta/`，读法同 LeRobot v3（含 v1 的 `validate_info`）；缺了 `meta/` 就读 `meta.lance` 里的镜像并给一条警告 |
 | 快照记什么 | 全部 `*.mcap`（v1 按目录里有哪些文件来编号，每个文件又是一条 episode 的数据）；`meta_fingerprint` 覆盖全部 mcap 文件 | `meta/` 与三张表的全部对象（读的时候整表读）；`meta_fingerprint` 覆盖 `meta/`，没有 `meta/` 时覆盖 `meta.lance/` |
-| 交付 | `export/mcap_curated/`：v1 的 `export_mcap_curated` 原样。passed 各条的 `.mcap` 逐字节拷贝（源文件不是 `episode_<N>.mcap` 命名的改成这个名字），`index.json` 列每条的任务文本与来源；自产描述与人工改标只写进 `index.json`，文件本体不动 | `export/lance_episodes/`：Lance 原格式交付本版本未做，交的是 v1 的 `episodes_parquet/`（passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`）和 `videos/`（视频指针改写到交付位置）。`index.json`、导出结果的 `note`、报告的「数据包」一节都写明这一点 |
-| 增量导出 | 没有：`--incremental` 退回全量，`full_reason` 写明原因；内容没变的文件不重新上传 | 同左（daft 每次给 parquet 分片起新名字，这一个文件每次都换） |
+| 交付 | 不再写交付数据集（D69）：平台只交付质检报告与结果清单，两种格式都一样 | 同左 |
 | EEF–视频一致性 | 可用（F5.13）：trajectory.json 的相机写 `media.uri=episode_<N>.mcap` 与 `media.topic`（图像 topic），模块把该 topic 的 JPEG / H.264 帧转成本地视频读，TOS 上按区间流式读（`streams.objects`） | 不支持：`unsupported`，原因码 `format_unsupported_by_module` |
 
 - **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
@@ -299,7 +291,7 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 preflight → plan → snapshot
 CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（全量步骤：块内前面的段对全集跑完才启动）
 VLM 块：autolabel（只补无标注条目）→ check task_success（及 EEF）
-两块都结束 → aggregate --phase final --revision N → report --revision N → export --revision N --output … → （同步运行目录）→ verify
+两块都结束 → aggregate --phase final --revision N → report --revision N → （同步运行目录到交付目录）→ verify
 ```
 
 块内的逐条段由 Daemon 的流水线逐条交接（`check --pipeline-state … --pipeline-next …`，常驻 worker）：一条在本段有了记录（判完或出错）
@@ -310,7 +302,7 @@ VLM 块：autolabel（只补无标注条目）→ check task_success（及 EEF�
 ```
 adjudicate-apply → check task_success --episodes <rerun_task_success>（写新分片）
 → aggregate --phase final --revision N+1
-→ report --revision N+1 → export --revision N+1 --incremental --output … → verify
+→ report --revision N+1 → （同步运行目录）→ verify
 ```
 
 裁决之后**不再跑 dedup**：它报的重复组不变，`final` 在人工决定之后选每组留哪条（原件被人判失败时副本顶上），由人带回的条不做去重。
@@ -378,15 +370,14 @@ with FakeVlmServer(port=8766) as s:
    `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 5」、判决策略、按细码的拒绝原因，每个模块一行「评估 N 条;检出:…」；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
    没给 `--concurrency`，所以整个过程中任何时刻只有一个模型请求在飞（`tests/cli/test_pipeline_chain.py` 在假模型那边量过）。
 
-4. 导出与交付核验（本地目录充当交付目录）：
+4. 交付与核验（本地目录充当交付目录）：
 
    ```bash
-   $C export --run-dir "$R" --input "$D/mini" --output "$D/delivery"
-   rsync -a --exclude export/lerobot_curated --exclude inflight.json "$R/" "$D/delivery/"   # Daemon 的同步
+   rsync -a --exclude inflight.json "$R/" "$D/delivery/"      # Daemon 的同步：报告与清单
    $C verify --run-dir "$R" --output "$D/delivery" --visibility-timeout 0 --json
    ```
 
-   应看到：导出 5 条（`incremental: false`，`add 5`），`verify` 输出 `"failed": []`、`"complete_marker": true`，`$D/delivery/_COMPLETE` 出现。
+   应看到：`verify` 输出 `"failed": []`、`"complete_marker": true`，`$D/delivery/_COMPLETE` 出现。
 
 5. 中断后续跑。先把假模型换成慢速版（在另一个终端 Ctrl-C，把启动命令里的 `FakeVlmServer(port=8766)` 改成 `FakeVlmServer(port=8766, delay_s=0.3)` 再启动），然后：
 
@@ -431,10 +422,9 @@ with FakeVlmServer(port=8766) as s:
    $C aggregate --run-dir "$R" --phase funnel --revision 2 --episodes 0-7
    $C aggregate --run-dir "$R" --phase final --revision 2 --episodes 0-7 --input "$D/mini"
    $C report --run-dir "$R" --revision 2
-   $C export --run-dir "$R" --input "$D/mini" --output "$D/delivery" --revision 2 --incremental
    ```
 
-   应看到：第二版的漏斗行末尾是 `keep.txt after the human decisions: 0 in, 1 out`（3 被人工判失败，移出 `keep.txt`）；没有再跑 dedup（`ls "$R/checks/dedup/parts"` 仍只有 `0001.jsonl`），它报的重复组 {3, 7} 不变，3 被人判失败后由副本 7 顶上（设计 17 §4.5）；第二版 `passed 5, reject 3, review 3`（0 仍待判成败；4 按 v1 的两层重判后弃权，重新问成败；7 进了交付，问成败）；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；导出是增量的：`diff` 为 `keep 2, renumber 2, add 1, drop 1`，只复制了 7 的视频；`revisions/r0001/` 原样未动。
+   应看到：第二版的漏斗行末尾是 `keep.txt after the human decisions: 0 in, 1 out`（3 被人工判失败，移出 `keep.txt`）；没有再跑 dedup（`ls "$R/checks/dedup/parts"` 仍只有 `0001.jsonl`），它报的重复组 {3, 7} 不变，3 被人判失败后由副本 7 顶上（设计 17 §4.5）；第二版 `passed 5, reject 3, review 3`（0 仍待判成败；4 按 v1 的两层重判后弃权，重新问成败；7 进了交付，问成败）；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；`revisions/r0001/` 原样未动。
 
 8. `curation task …`（用测试里的桩服务代替 Daemon）。另开一个终端，在 `backend/` 下启动桩：
 
@@ -477,26 +467,24 @@ with FakeVlmServer(port=8766) as s:
       $C check --modules dedup $S --episodes "@$R/revisions/r0001/keep.txt" --survivors-out "$R/stages/dedup.txt"
       $C aggregate --run-dir "$R" --phase final --revision 1 --episodes 0-7 --input "$IN" --selection 0-7
       $C report --run-dir "$R" --revision 1
-      $C export --run-dir "$R" --input "$IN" --output "$D/delivery_$F"
-      rsync -a --exclude export/mcap_curated --exclude export/lance_episodes --exclude inflight.json "$R/" "$D/delivery_$F/"
+      rsync -a --exclude inflight.json "$R/" "$D/delivery_$F/"
       $C verify --run-dir "$R" --output "$D/delivery_$F" --visibility-timeout 0 --json | grep -E '"failed"|complete_marker'
     done
     ```
 
     应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 模块在 mcap 上是 `needs_input: trajectory_missing`（给了 trajectory.json 就能用，F5.13），在 Lance 上是 `unsupported`（`format_unsupported_by_module`），其余可用。
     判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 3 pass 3 abstain，dedup 剔除 7，final 为 `passed 5, reject 3, held 0; 3 to review`。
-    `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：mcap 写着交付 `mcap_curated/`（5 个 .mcap，原格式逐字节）和型号、时间轴、任务文本三项体检；Lance 写着「lance 原格式交付本版本未做」。
-    导出：mcap 是 `export/mcap_curated/` 下 `episode_0/1/3/4/6.mcap` 与 `index.json`（`cmp "$D/mini_mcap/episode_0.mcap" "$D/delivery_mcap/export/mcap_curated/episode_0.mcap"` 无输出），日志写「改标 2 条记入 index.json,文件本体不动」（4、6 是自产描述）；
-    Lance 是 `export/lance_episodes/` 下 `episodes_parquet/`、`videos/` 与 `index.json`，导出结果带 `note`。两边 `verify` 都是 `"failed": []`、`"complete_marker": true`。`ls $TMPDIR` 里不留读取器转出的视频。
+    `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：型号、时间轴、任务文本三项体检（D69 起没有交付数据集这一项）。
+    两边 `verify` 都是 `"failed": []`、`"complete_marker": true`。`ls $TMPDIR` 里不留读取器转出的视频。
     TOS 上的读法（本地副本、按范围读摘要、源对象变化退出码 6、只读源桶）由 `tests/cli/test_containers.py` 在假 TOS 上核对；有自己的桶时，把两个目录传上去，
     设好 `CURATION_INPUT_TOS_ACCESS_KEY` / `CURATION_INPUT_TOS_SECRET_KEY` 与 `CURATION_SOURCE_CACHE=$D/cache`，把上面的 `IN` 换成 `tos://…` 再跑一遍，判决应不变，`$D/cache` 里是 mcap 读过的那几条文件和 Lance 的整表。
 
 11. 自动化测试（约 4 分钟）：
 
    ```bash
-   $PY -m pytest -q tests/cli tests/contracts tests/planner tests/export
+   $PY -m pytest -q tests/cli tests/contracts tests/planner
    $PY -m curation.contracts check
-   $PY -m pytest -q curation/tests --ignore=curation/tests/test_environment.py   # v1 单测，1407 passed
+   $PY -m pytest -q curation/tests --ignore=curation/tests/test_environment.py   # v1 单测，1373 passed
    (cd .. && PYTHONPATH=tools $PY -m pytest -q tools/parity/tests)               # 对账工具，含 v1 对 v2 的逐位对账
    ```
 

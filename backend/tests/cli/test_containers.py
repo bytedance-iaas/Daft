@@ -220,66 +220,8 @@ def test_chain_semantics_come_from_the_selection(chain):
     rec = results(chain.rd, "motion_quality")[0]
     assert verdict_of(rec) in ("pass", "fail", "scored", "abstain")
     assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 8   # every one (D57)
-
-
-def test_chain_delivers_the_format(chain, mini_mcap):
-    exp = chain.steps["export"].doc
-    assert exp["format"] == chain.fmt and exp["incremental"] is False
-    assert exp["dataset_dir"] == f"export/{DATASET_DIR[chain.fmt]}"
-    root = os.path.join(chain.delivery, "export", DATASET_DIR[chain.fmt])
-    with open(os.path.join(root, "index.json")) as fh:
-        index = json.load(fh)
-    with open(os.path.join(chain.delivery, "export", "manifest.json")) as fh:
-        manifest = json.load(fh)
-    assert not schemas.errors("cli/export-manifest.schema.json", manifest)
-    assert manifest["dataset_dir"] == DATASET_DIR[chain.fmt]
-    assert [e["episode_index"] for e in manifest["episodes"]] == PASSED
-    if chain.fmt == "mcap":
-        assert sorted(os.listdir(root)) == sorted([f"episode_{i}.mcap" for i in PASSED]
-                                                  + ["index.json"])
-        for i in PASSED:                          # byte for byte the source's
-            with open(os.path.join(root, f"episode_{i}.mcap"), "rb") as a, \
-                    open(os.path.join(mini_mcap, f"episode_{i}.mcap"), "rb") as b:
-                assert a.read() == b.read()
-        by = {r["episode_id"]: r for r in index["episodes"]}
-        assert by["ep000004"]["instruction_source"] == "自产caption"
-        assert by["ep000004"]["relabeled"] is True and by["ep000000"]["relabeled"] is False
-    else:
-        import pandas as pd
-
-        assert "原格式交付本版本未做" in index["说明"] and "note" in exp
-        df = pd.read_parquet(os.path.join(root, "episodes_parquet"))
-        assert sorted(df["episode_id"]) == [f"ep{i:06d}" for i in PASSED]
-        src = dict(zip(df["episode_id"], df["instruction_source"]))
-        assert src["ep000004"] == "自产caption" and src["ep000000"] == "原始标注"
-        for video in df["video"]:                 # pointers into the delivery
-            for v in video.values():
-                assert v["path"].startswith(chain.delivery) and os.path.isfile(v["path"])
-    verify = chain.steps["verify"].doc
-    assert verify["failed"] == [] and verify["complete_marker"] is True
-
-
 def test_chain_leaves_no_temporary_videos(chain):
     assert os.listdir(chain.tmp) == []
-
-
-def test_a_second_export_writes_nothing_new(chain, tmp_path):
-    """Always a full export for these formats; unchanged bytes are not uploaded again and
-    --incremental says why it did not build on the previous export."""
-    res = run("export", "--run-dir", chain.rd, "--input", chain.ds, "--output", chain.delivery,
-              "--incremental")
-    assert res.rc == 0 and res.doc["incremental"] is False
-    assert "LeRobot" in res.doc["full_reason"]
-    assert res.doc["diff"] == {"keep": 5, "relabel": 0, "renumber": 0, "add": 0, "drop": 0}
-    import re
-
-    logs = " ".join(e.get("msg", "") for e in res.events)
-    up, gone = map(int, re.search(r"(\d+) file\(s\) uploaded, (\d+) deleted", logs).groups())
-    # mcap: at most index.json (its generated_at, when the second ticked), never a .mcap;
-    # lance: daft names its parquet part anew each time (one in, one out), no video again
-    assert (up, gone) in ([(0, 0), (1, 0)] if chain.fmt == "mcap" else [(1, 1)])
-
-
 def test_chain_report_notes_the_container(chain):
     with open(os.path.join(chain.rd, "revisions", "r0001", "report.json")) as fh:
         report = json.load(fh)
@@ -431,29 +373,6 @@ def test_tos_changed_object_exits_6(cli, tos, mini_mcap, tmp_path):
               "--run-dir", str(tmp_path / "run"), "--source-manifest", sm, "--episodes", "1")
     assert res.rc == 6                            # a new episode file: the dataset changed
     assert res.doc["error"]["details"]["change"] == "added"
-
-
-def test_tos_export_mcap(cli, tos, mini_mcap, tmp_path, monkeypatch):
-    """Export of a remote mcap dataset: the kept files come through the cache, byte for byte."""
-    from .pipeline import Chain
-
-    tos.upload_dir(mini_mcap, "src", "ds/mcap")
-    monkeypatch.setenv("CURATION_SOURCE_CACHE", str(tmp_path / "cache"))
-    with FakeVlmServer() as vlm:
-        c = Chain("tos://src/ds/mcap", str(tmp_path / "run"), vlm.url,
-                  extra_source=["--selection", EPISODES])
-        c.front()
-        c.funnel()
-        c.post()
-        c.deliver(str(tmp_path / "delivery"))
-    assert _list(c.rd, "passed") == PASSED
-    root = tmp_path / "delivery" / "export" / "mcap_curated"
-    for i in PASSED:
-        assert (root / f"episode_{i}.mcap").read_bytes() == \
-            tos.buckets["src"][f"ds/mcap/episode_{i}.mcap"]
-    assert c.steps["verify"].doc["complete_marker"] is True
-
-
 # ---------------------------------------------------------------- the helpers
 
 

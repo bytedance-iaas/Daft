@@ -730,38 +730,6 @@ def test_sync_health_without_any_trusted_reading():
 
 
 # ---------- 交付层:旁挂 meta/curation_camera_health.json ----------
-
-def test_camera_health_sidecar_written_with_renumbering(tmp_path):
-    """v2/v3 导出旁挂相机健康度:重编号后仍能对回源 episode,且**不碰 info.json**。"""
-    import json as _json
-
-    from curation.export.lerobot_writer import _write_camera_health
-
-    eps = {"ep000004": sync_verdict({"ext": _mis(0.9), "wrist": _ali(0.0)}, 2),
-           "ep000009": sync_verdict({"ext": _ali(0.0), "wrist": _ali(0.0)}, 2)}
-    health = {"dataset": sync_health(eps), "episodes": eps}
-    out = tmp_path / "curated"
-    (out / "meta").mkdir(parents=True)
-    (out / "meta" / "info.json").write_text('{"codebase_version": "v2.1"}')
-    _write_camera_health(str(out), health, [4, 9])
-
-    got = _json.loads((out / "meta" / "curation_camera_health.json").read_text())
-    assert [r["episode_index"] for r in got["episodes"]] == [0, 1]
-    assert [r["source_episode_id"] for r in got["episodes"]] == ["ep000004", "ep000009"]
-    assert got["episodes"][0]["flagged_cameras"] == ["ext"]
-    assert got["episodes"][0]["per_camera"]["ext"]["lag_s"] == 0.9
-    assert "advice" in got["dataset"]
-    # 标准 schema 一个字节都不许改
-    assert (out / "meta" / "info.json").read_text() == '{"codebase_version": "v2.1"}'
-
-
-def test_camera_health_sidecar_absent_when_no_data(tmp_path):
-    from curation.export.lerobot_writer import _write_camera_health
-
-    _write_camera_health(str(tmp_path), None, [0, 1])
-    assert not (tmp_path / "meta" / "curation_camera_health.json").exists()
-
-
 # ---------- 报告层:相机流健康度一节 ----------
 
 def test_report_renders_camera_health_section():

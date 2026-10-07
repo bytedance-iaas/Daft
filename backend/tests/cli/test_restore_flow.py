@@ -6,7 +6,7 @@ them; dedup judged them all the same, as every episode (design doc
 17 §3, D57). A person restores both; the Daemon's adjudication sequence then runs
 without dedup:
 
-    -> aggregate final -> report -> export --incremental -> verify
+    -> aggregate final -> report -> verify
 
 Both come back to passed with no model call (the profile filed them the first time),
 and are delivered again.
@@ -64,7 +64,6 @@ def flow(tmp_path_factory, mini_dataset):
             _reject_by_task_success(c.rd, {0, 6})
             c.post()
             c.deliver(delivery)
-            c.first_export = c.steps["export"].doc
             path = str(tmp / "decisions.json")
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"schema_version": "1.0", "decisions": [
@@ -76,7 +75,7 @@ def flow(tmp_path_factory, mini_dataset):
             c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
-            c.deliver(delivery, "--revision", "2", "--incremental")
+            c.deliver(delivery)
     c.delivery = delivery
     return c
 
@@ -86,7 +85,6 @@ def test_the_first_revision_rejects_them_and_every_module_saw_them(flow):
     assert _eps(flow.rd, 1, "reject") == [0, 2, 5, 6, 7]
     assert _eps(flow.rd, 1, "held") == []
     assert sorted(records.latest_results(flow.rd, "dedup")) == list(range(8))           # the whole selection
-    assert flow.first_export["episodes"] == 3
 
 
 def test_restored_appeals_come_back_without_dedup_and_without_a_model_call(flow):
@@ -99,8 +97,5 @@ def test_the_second_revision_delivers_them_again(flow):
     assert _eps(flow.rd, 2, "passed") == [0, 1, 3, 4, 6]
     assert _eps(flow.rd, 2, "reject") == [2, 5, 7]
     assert _eps(flow.rd, 2, "held") == []
-    second = flow.steps["export"].doc
-    assert second["incremental"] is True and second["episodes"] == 5
-    assert second["diff"]["add"] == 2 and second["diff"]["drop"] == 0
     assert flow.steps["verify"].doc["failed"] == []
     assert flow.steps["verify"].doc["complete_marker"] is True

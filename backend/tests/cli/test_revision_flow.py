@@ -5,7 +5,7 @@ after a complete first run:
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
     -> aggregate funnel
-    -> aggregate final -> report -> export --incremental -> verify
+    -> aggregate final -> report -> verify
 
 all on revision 2, with revision 1 left as it was. Dedup is not run again: its
 groups stand, and aggregate picks each group's keeper after the human decisions (design
@@ -50,8 +50,6 @@ def flow(tmp_path_factory, mini_dataset):
             c.funnel()
             c.post()
             c.deliver(delivery)
-            first = {"export": c.steps["export"],
-                     "manifest": _json(c.rd, "export", "manifest.json")}
             decisions = str(tmp / "decisions.json")
             with open(decisions, "w", encoding="utf-8") as fh:
                 json.dump({"schema_version": "1.0", "decisions": [
@@ -71,8 +69,8 @@ def flow(tmp_path_factory, mini_dataset):
             c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
-            c.deliver(delivery, "--revision", "2", "--incremental")
-    c.first, c.delivery = first, delivery
+            c.deliver(delivery)
+    c.delivery = delivery
     return c
 
 
@@ -122,78 +120,3 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     report = _json(r2, "report.json")
     assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
                                             "held": 0, "review": 3, "skipped": 0}
-
-
-def test_the_second_export_is_incremental(flow):
-    first, second = flow.first["export"].doc, flow.steps["export"].doc
-    assert first["incremental"] is False and first["episodes"] == 5
-    assert second["incremental"] is True and second["full_reason"] is None
-    assert second["episodes"] == 5
-    # 3 leaves; 4 (relabelled) and 6 move up one slot: renumbered, videos renamed; 7 joins
-    assert second["diff"] == {"keep": 2, "relabel": 0, "renumber": 2, "add": 1, "drop": 1}
-    assert second["videos_copied"] == 2 and second["videos_renamed"] == 4
-    man = _json(flow.rd, "export", "manifest.json")
-    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 4, 6, 7]
-    by_ep = {e["episode_index"]: e for e in man["episodes"]}
-    assert by_ep[4]["task"] == {"text": NEW_LABEL, "source": "人工改标"}
-    tasks = read_jsonl(flow.path("export", "lerobot_curated", "meta", "episodes.jsonl"))
-    assert tasks[by_ep[4]["new_index"]]["tasks"] == [NEW_LABEL]
-    assert flow.steps["verify"].doc["failed"] == []
-    assert flow.steps["verify"].doc["complete_marker"] is True
-    assert _json(flow.delivery, "export", "manifest.json")["fingerprint"] == man["fingerprint"]
-
-
-def test_export_syncs_to_tos_and_verify_completes_it(flow, tmp_path, cloud, monkeypatch):
-    """--output tos://: _COMPLETE goes first, stale files go, the two manifests come last,
-    and only the output key set is used; verify then reads it back and completes it."""
-    rd = str(tmp_path / "run")
-    shutil.copytree(flow.rd, rd)
-    prefix = "deliveries/droid-50/run1"
-    bucket = cloud.bucket("dst-bucket", readers={"out-ak"})
-    bucket[f"{prefix}/_COMPLETE"] = b""                                  # a verified old state
-    stale = f"{prefix}/export/lerobot_curated/data/chunk-000/episode_000009.parquet"
-    bucket[stale] = b"old"
-    monkeypatch.setenv("CURATION_OUTPUT_TOS_ACCESS_KEY", "out-ak")
-    monkeypatch.setenv("CURATION_OUTPUT_TOS_SECRET_KEY", "out-sk")
-    url = f"tos://dst-bucket/{prefix}"
-    res = run("export", "--run-dir", rd, "--input", flow.ds, "--revision", "2", "--output", url)
-    assert res.rc == 0, res.doc
-    assert f"{prefix}/_COMPLETE" not in bucket and stale not in bucket
-    man = _json(rd, "export", "manifest.json")
-    for rel, info in man["files"].items():
-        assert len(bucket[f"{prefix}/export/lerobot_curated/{rel}"]) == info["size"], rel
-    puts = [c[2] for c in cloud.calls if c[0] == "put"]
-    assert puts[-2:] == [f"{prefix}/export/manifest.detail.json",
-                         f"{prefix}/export/manifest.json"]
-    assert {c["access_key"] for c in cloud.clients} == {"out-ak"}
-
-    # what the Daemon uploads as the run goes, then the read-back
-    for dirpath, dirs, files in os.walk(rd):
-        rel_dir = os.path.relpath(dirpath, rd).replace(os.sep, "/")
-        if rel_dir == "export/lerobot_curated" or rel_dir.startswith("export/lerobot_curated/"):
-            continue
-        for name in files:
-            if name == "inflight.json":
-                continue
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            with open(os.path.join(dirpath, name), "rb") as fh:
-                bucket[f"{prefix}/{rel}"] = fh.read()
-    res = run("verify", "--run-dir", rd, "--output", url, "--visibility-timeout", "0")
-    assert res.rc == 0 and res.doc["failed"] == [] and res.doc["complete_marker"] is True
-    assert f"{prefix}/_COMPLETE" in bucket
-
-
-def test_export_stops_when_the_source_changed(flow, tmp_path):
-    rd = str(tmp_path / "run")
-    shutil.copytree(flow.rd, rd)
-    parquet = os.path.join(flow.ds, "data", "chunk-000", "episode_000001.parquet")
-    with open(parquet, "rb") as fh:
-        original = fh.read()
-    try:
-        with open(parquet, "ab") as fh:
-            fh.write(b"\0")
-        res = run("export", "--run-dir", rd, "--input", flow.ds, "--revision", "2")
-        assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
-    finally:
-        with open(parquet, "wb") as fh:
-            fh.write(original)

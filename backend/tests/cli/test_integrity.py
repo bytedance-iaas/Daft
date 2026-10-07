@@ -2,7 +2,7 @@
 
 Every sample is a copy of a clean fixture with one kind of damage per episode, so each
 episode's expected finding is known: LeRobot v2 (``parity.fixtures``), LeRobot v3 with
-shared files (``tests/export/v3_fixture``) and mcap. The clean fixtures pass, except the
+shared files (``tests/cli/v3_fixture``) and mcap. The clean fixtures pass, except the
 two byte-equal episodes the dedup fixture carries on purpose (3 and 7), which are
 suspects.
 """
@@ -188,7 +188,7 @@ def test_the_decode_test_finds_what_the_structure_cannot(cli, dataset, tmp_path)
 
 @pytest.fixture
 def v3(tmp_path) -> str:
-    from tests.export.v3_fixture import make_mini_lerobot_v3
+    from tests.cli.v3_fixture import make_mini_lerobot_v3
 
     return make_mini_lerobot_v3(str(tmp_path / "v3"))
 

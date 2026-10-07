@@ -1081,7 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
             # 就能把 /tmp 撑满。幂等,清两次不出错。
             # 直连输出(2026-08-21 方案 1):激活发布器,导出的文件封口即传、传完即删;
             # 收尾 finish() 等传完,失败在这儿就炸(远端还没有任何完整性标志)。
-            from ..export import publish as _publish
+            from ..export import retired as _publish    # D69：导出已退役
             _pub = (_publish.Publisher(outp, args.output, args.output_region)
                     if tos_out else None)
             try:

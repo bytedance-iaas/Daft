@@ -42,8 +42,7 @@ def chain(tmp_path_factory, mini_dataset):
 
 def test_every_step_ran_and_fits_its_contract(chain):
     assert list(chain.steps) == ["preflight", "plan", "snapshot", "autolabel", "numeric",
-                                 "frame", "vlm", "dedup", "final",
-                                 "report", "export", "verify"]
+                                 "frame", "vlm", "dedup", "final", "report", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
 
 
@@ -86,8 +85,6 @@ def test_files_fit_their_contracts(chain):
                       ("report.json", "cli/report.schema.json")):
         doc = json.load(open(os.path.join(rev, name), encoding="utf-8"))
         assert schemas.errors(ref, doc) == [], name
-    man = json.load(open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8"))
-    assert schemas.errors("cli/export-manifest.schema.json", man) == []
     plan = json.load(open(os.path.join(rd, "plan.json"), encoding="utf-8"))
     assert schemas.errors("cli/plan.schema.json", plan) == []
 
@@ -112,16 +109,15 @@ def test_final_lists_are_v1s_verdicts(chain):
                        6: "自产caption"}
 
 
-def test_export_delivers_passed_and_verify_writes_complete(chain):
-    exp = chain.steps["export"].doc
-    assert exp["episodes"] == 5 and exp["incremental"] is False
+def test_the_delivery_holds_the_results_and_verify_writes_complete(chain):
+    """D69: the delivery is the run directory - the result revisions and the report, no dataset."""
     assert chain.steps["verify"].doc["failed"] == []
     assert chain.steps["verify"].doc["complete_marker"] is True
     assert os.path.isfile(os.path.join(chain.delivery, "_COMPLETE"))
-    assert os.path.isfile(os.path.join(chain.delivery, "export", "manifest.json"))
-    man = json.load(open(os.path.join(chain.rd, "export", "manifest.json"), encoding="utf-8"))
-    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 3, 4, 6]
-    assert {e["episode_index"]: e["task"]["source"] for e in man["episodes"]}[4] == "自产caption"
+    rev = os.path.join(chain.delivery, "revisions", "r0001")
+    assert os.path.isfile(os.path.join(rev, "report.json"))
+    assert os.path.isfile(os.path.join(rev, "passed.json"))
+    assert not os.path.isdir(os.path.join(chain.delivery, "export"))
 
 
 def test_usage_is_booked_per_module_on_both_ledgers(chain):

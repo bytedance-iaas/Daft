@@ -197,7 +197,7 @@ def damage_mcap(root: str) -> dict[int, str]:
 
 def main(argv: list[str] | None = None) -> int:
     from parity.fixtures import make_mini_lerobot, make_mini_mcap
-    from tests.export.v3_fixture import make_mini_lerobot_v3
+    from tests.cli.v3_fixture import make_mini_lerobot_v3
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out", required=True)

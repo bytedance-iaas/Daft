@@ -12,10 +12,9 @@ import pytest
 from curation.cli import verify as verify_mod
 from curation.contracts import schemas
 
-VIDEO = "export/lerobot_curated/videos/chunk-000/observation.images.wrist/episode_000000.mp4"
-DATA = "export/lerobot_curated/data/chunk-000/episode_000000.parquet"
-REMOTE_ONLY = ("export/lerobot_curated/videos/chunk-000/observation.images.exterior/"
-               "episode_000000.mp4")
+#: the delivery holds the results and the report (D69: no dataset is written any more)
+VIDEO = "details/clips/ep000000_wrist.mp4"
+DATA = "checks/motion_quality/table.parquet"
 
 
 def _valid(doc: dict) -> dict:
@@ -53,45 +52,27 @@ def make_run(root: str, mini: str) -> str:
         os.path.join(root, "checks", "timestamp_check", "table.parquet"))
     _write(root, "details/evidence/ep000000/probe_f0010.jpg", _image(".jpg"))
     _write(root, "details/plots/sync_ep000000.png", _image(".png"))
-    with open(wrist, "rb") as fh:
+    with open(wrist, "rb") as fh:             # an evidence clip of the report
         _write(root, VIDEO, fh.read())
     with open(os.path.join(mini, "data/chunk-000/episode_000000.parquet"), "rb") as fh:
         _write(root, DATA, fh.read())
-    _write(root, "export/lerobot_curated/meta/info.json", json.dumps({"codebase_version": "v2.1"}))
-    manifest = {"schema_version": "1.0", "source_format": "lerobot_v2",
-                "fingerprint": "sha256:" + "0" * 64,
-                "episodes": [{"episode_index": 0, "new_index": 0,
-                              "content_key": "sha256:" + "1" * 64,
-                              "task_key": "sha256:" + "2" * 64,
-                              "artifacts": {"parquet": DATA.split("lerobot_curated/")[1],
-                                            "videos": {
-                                                "wrist": VIDEO.split("lerobot_curated/")[1],
-                                                "exterior": REMOTE_ONLY.split(
-                                                    "lerobot_curated/")[1]}}}],
-                "meta_files": ["meta/info.json"]}
-    assert schemas.errors("cli/export-manifest.schema.json", manifest) == []
-    _write(root, "export/manifest.json", json.dumps(manifest))
     # work in progress, not part of the delivery
     _write(root, "logs/verify.jsonl", '{"ts": 1, "kind": "log"}\n')
     _write(root, "checks/timestamp_check/inflight.json", "{}")
     _write(root, ".curation-out-123.tmp", "x")
-    root_out = root + "-remote-only"
-    with open(exterior, "rb") as fh:          # uploaded by the exporter, no local copy
-        _write(root_out, REMOTE_ONLY, fh.read())
     return root
 
 
 DELIVERED = ["run.json", "passed.json", "reject.json", "report.md",
              "checks/timestamp_check/results.jsonl", "checks/timestamp_check/table.parquet",
              "details/evidence/ep000000/probe_f0010.jpg", "details/plots/sync_ep000000.png",
-             VIDEO, DATA, "export/lerobot_curated/meta/info.json", "export/manifest.json",
-             REMOTE_ONLY]
+             VIDEO, DATA]
 
 
 def publish(run: str, out: str) -> str:
     """Copy what the Daemon would upload (the delivered files) to a local delivery."""
     for rel in DELIVERED:
-        src = os.path.join(run + "-remote-only" if rel == REMOTE_ONLY else run, rel)
+        src = os.path.join(run, rel)
         dst = os.path.join(out, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
@@ -155,7 +136,6 @@ def _corrupt(path: str, how: str) -> None:
     ("details/plots/sync_ep000000.png", "magic", True, "unparseable"),
     (VIDEO, "cut", True, "unparseable"),              # the moov box sits at the end
     (VIDEO, "zero", True, "zero_filled"),
-    (REMOTE_ONLY, "zero", False, "zero_filled"),
 ])
 def test_bad_files_are_named_and_block_complete(cli, run_and_out, rel, how, both, reason):
     run, out = run_and_out
@@ -174,23 +154,10 @@ def test_bad_files_are_named_and_block_complete(cli, run_and_out, rel, how, both
 def test_missing_files(cli, run_and_out):
     run, out = run_and_out
     os.remove(os.path.join(out, "report.md"))
-    os.remove(os.path.join(out, REMOTE_ONLY))            # listed in export/manifest.json only
+    os.remove(os.path.join(out, DATA))
     doc = _valid(_verify(cli, run, out).doc)
-    assert doc["failed"] == [{"path": REMOTE_ONLY, "reason": "missing"},
+    assert doc["failed"] == [{"path": DATA, "reason": "missing"},
                              {"path": "report.md", "reason": "missing"}]
-
-
-def test_export_manifest_is_read_from_the_delivery_when_not_kept(cli, run_and_out):
-    """The exporter may upload the dataset and its manifest and keep no local copy."""
-    run, out = run_and_out
-    for rel in ("export/manifest.json", VIDEO, DATA):
-        os.remove(os.path.join(run, rel))
-    os.remove(os.path.join(out, REMOTE_ONLY))
-    doc = _valid(_verify(cli, run, out).doc)
-    assert doc["checked"] == len(DELIVERED) - 1          # everything but the manifest itself
-    assert doc["failed"] == [{"path": REMOTE_ONLY, "reason": "missing"}]
-
-
 def test_run_dir_errors(cli, tmp_path, run_and_out):
     run, out = run_and_out
     res = cli("verify", "--run-dir", str(tmp_path / "nope"), "--output", out)

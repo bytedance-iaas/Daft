@@ -11,8 +11,6 @@
   "docs/contracts/cli/common.schema.json": "sha256:d9840af8e40d65bfc8650c8dd855e410fa10309e163a4b27f9a735e187973eed",
   "docs/contracts/cli/decisions.schema.json": "sha256:881b86db8a0c32e68a81f5a26643aa912010ae350cdb06caac0b11650f7290eb",
   "docs/contracts/cli/error.schema.json": "sha256:cb71f457007cd7335040325bdc617c11765cd2b371d2378a33976451e62f51d2",
-  "docs/contracts/cli/export-manifest.schema.json": "sha256:d45c6ef528e5c30b2d480d10da91e5084c9e73f7ef0935e59f252e7dc039d5f6",
-  "docs/contracts/cli/export.schema.json": "sha256:326f12699d8e042ad5e774905a68acbe9e35c09f7a4a390e54a21745f68104a5",
   "docs/contracts/cli/final-list.schema.json": "sha256:4e52da05867b43b54de40a7b568cffd5c908a720de8e7fcc379e085f120e7acf",
   "docs/contracts/cli/plan.schema.json": "sha256:d3937014217e67f4335599108fc8a76f442d43534dbf326eae5744c2877a559d",
   "docs/contracts/cli/preflight.schema.json": "sha256:83fede5dafe5d2811c946fb0213d43a3e60856e9a0686a4c42050c14e791536e",
