@@ -78,7 +78,8 @@
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.mp4` | Daemon 出的视频（本地数据集、Lance 表 blob 里的 mp4、fMP4 转封装、`?transcode=1` 的 H.264 转码——以这条 episode 的起点为 0；`?segment=1` 是共用 mp4 里切出的这一条或 `moov` 移到头的版本，开关 `CURATOR_VIZ_SEGMENT` 开着时才有，2.7.0，设计 21 §4），带 Range，准备中 202 |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.frames` | 帧包（各帧原字节首尾相接，Range 读）：mcap 与 Lance 逐帧图片的 JPEG / PNG；mcap H.264 / H.265 相机给浏览器自己解码的样本包（每条消息一个 Annex-B 访问单元，2.5.0） |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度；样本包另有每帧是否关键帧、按码流参数集算的 `codec_string` |
-| GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.frames`、`.json`；任务级同样一对 | 深度帧包与索引（2.7.0，设计 21 §5）：每帧一张 16 位灰度 PNG（毫米，0 为空洞），索引另有单位与本条 2% / 98% 范围；LeRobot / Lance 第一次请求时生成、回 202 带进度，mcap 随 episode 扫描生成 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.frames`、`/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.frames` | 深度帧包（2.7.0，设计 21 §5）：每帧一张 16 位灰度 PNG（毫米，0 为空洞），Range 读；LeRobot / Lance 第一次请求时生成、回 202 带进度，mcap 随 episode 扫描生成 |
+| GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.json`、`/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.json` | 深度帧包索引：每帧的时刻、偏移、长度，深度的单位与本条 2% / 98% 范围；生成中同样 202 |
 | GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2） |
 | PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
 | POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |
