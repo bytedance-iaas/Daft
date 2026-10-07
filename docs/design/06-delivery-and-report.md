@@ -14,7 +14,6 @@ deliveries/<delivery-name>/
 │   ├── checks/                    ★ 模块级结果，子任务按模块覆盖
 │   │   ├── timestamp_check/{parts/*.jsonl, results.jsonl}
 │   │   ├── task_success/{parts/*.jsonl, results.jsonl}
-│   │   ├── skill_profile/{captions.jsonl, taxonomy.json, assignments.jsonl, label_audit.json}
 │   │   └── ...
 │   ├── revisions/r0001/           ★ 一个结果版本 = 一套判决清单 + 一份报告，不可变，旧版本保留
 │   │   ├── verdicts.jsonl  keep.txt                           漏斗判决（aggregate --phase funnel）
@@ -82,8 +81,7 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 }}
 ```
 
-`module_impl` 是该模块实现文件的哈希，`prompt` 是提示词全文哈希（v1 已有这个做法，
-`skill_profile.taxonomy_guideline` 换 sha256 存档）。子任务重跑时把新指纹并排记下，
+`module_impl` 是该模块实现文件的哈希，`prompt` 是提示词全文哈希（v1 已有这个做法）。子任务重跑时把新指纹并排记下，
 报告里明确标注「本模块结果来自子任务，代码/提示词版本为 X」。
 
 ## 3. 判决聚合
@@ -131,9 +129,9 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
   补跑成功后它回到正常的判决流程，该通过通过、该拒绝拒绝。
   口径取宽（D33）：只要有一次调用重试用尽或一路机位解码失败就算，哪怕 v1 的降级逻辑还能给出结论。
   补跑仍失败的（例如视频文件本身损坏）继续留在 `held`，报告里写明是哪一路、什么原因。
-  规则对所有已勾选的模块一视同仁：哪怕只是技能画像给它打标失败了，这一条也先不交付 ——
-  交付出去的每一条，报告里每个模块对它都有结论。技能画像整个模块失败（例如归纳技能的文本调用最终失败）时也一样：
-  全部条目待补跑、一条都不交付，等「重试」成功（D41；v1 从不因画像挡交付）。开始前的 VLM 检查（D30）会拦住
+  规则对所有已勾选的模块一视同仁：哪怕只是一个不判废的模块对它出错，这一条也先不交付 ——
+  交付出去的每一条，报告里每个模块对它都有结论。某个模块整体失败（例如模型调用最终失败）时也一样：
+  全部条目待补跑、一条都不交付，等「重试」成功。开始前的 VLM 检查（D30）会拦住
   大部分模型不可用的情况，跑到一半失败的点「重试」即可。
 - 例外（D35）：拒绝理由来自正常判完的模块时，直接拒绝，不进 `held`。「正常判完」指某个硬门确定失败，
   或者所有已勾选的软分模块都给了分、加权分低于阈值。出错的模块照样记在这一条上，报告里写「另有某模块执行出错，
@@ -245,33 +243,33 @@ W7 实现时定下的几条（2026-09-21）：
 
 ## 5. 人工裁决
 
-### 5.1 三条线（原样搬运 v1 语义）
+### 5.1 问题线（一张卡片一个问题，D68）
 
 | 线 | 来源模块 | 人可以做的判断 | 执行后果 |
 |---|---|---|---|
-| 标注分歧 | 技能画像 ③ | 采纳建议改标（可自行改写）/ 维持原标注 / 拿不准 / 整条弃用 | 改标的按新标注**重跑任务成败判定**（例外见纪律 4，口径见纪律 5）；弃用直接进 reject |
-| 任务成败弃权 | 任务成败判定 | 判成功 / 判失败 / 拿不准 | **不跑 VLM**，人说了算 |
+| 任务成败 | 任务成败判定（弃权，以及判废护栏拦下的「标注与画面疑似不符」） | 判成功 / 判失败 / 拿不准 / 整条弃用；答案可带 `new_label`（改写后的任务描述） | 给了成败结论就**不跑 VLM**，人说了算；只改描述、成败答「拿不准」的按新描述**重跑任务成败判定**（口径见纪律 5）；弃用直接进 reject |
 | 被拒复议 | 只归因于任务成败判定的 reject；去重的 reject（D42） | 恢复为可用 / 维持拒绝 / 拿不准 | 恢复为可用则推翻那个模块的结论、回到 passed |
 
-一条 episode 可能同时有标注分歧和成败弃权，裁决页把它们放在同一张卡片里，视频只看一次。
+v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_check`）。一条 episode 的每条线只问一次、
+只有一个答案；改写标注不是独立的一问，而是成败答案上的一个可选字段。
 
-四条纪律不能丢：
+六条纪律不能丢：
 
-1. **「整条弃用」压过成败裁决**：点了弃用就是弃用，不管另一块点了什么。
-   v1 在入口处先把被弃用的条目从成败裁决里滤掉，否则「判成功」会把它重新写回 passed。
+1. **「整条弃用」压过别的答案**：点了弃用就是弃用。它是成败那一问的一个答案（D68），
+   所以同一条线上后来的答案才能撤销它；别的线上的答案不改变弃用。
 2. **复议只受理归因于可复议模块的拒绝**（v1 只认任务成败判定；v2 加上去重，D42）：时间戳、残段、运动学、同步这些物理/结构硬门和软分拒绝是终局，
    界面不给入口，后端再校验一次（裁决记录是可被手改的数据，不能只靠界面把门）。
 3. **「拿不准」是合法答案**：只记一笔，条目保留在队列里，仍计为待裁，执行时不动它。
-4. **改标通常要重跑模型，但人已经给了成败结论的不重跑**：同一条既改了标、又被人判了成功/失败，
-   就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。
+4. **改写描述通常要重跑模型，但人已经给了成败结论的不重跑**：同一个答案既带了新描述、又判了成功/失败，
+   就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。只带新描述、成败答「拿不准」的按新描述重跑。
 5. **改标重判默认用 v1 的两层**（D39）：v1 的 `rejudge` 只跑多视角打分和逐机位复核，不跑任务类型判定、
    机位提示、判废护栏和取证仲裁（它的注释写「全协议」，但首轮加了护栏和仲裁之后这里没跟着更新）。
    v2 默认照它，结论和调用与 v1 一致、能逐位对账；「执行裁决」对话框写明这一点，并提供「按首轮的完整流程重判」的选项
-   （判得更全，但同样的裁决可能得出和 v1 不同的结论）。选了什么记在子任务的 `scope.relabel_rerun` 和每条改标上，
+   （判得更全，但同样的裁决可能得出和 v1 不同的结论）。选了什么记在子任务的 `scope.relabel_rerun` 和每条改写上，
    之后重试这几条沿用同一口径。
 6. **已被拒绝的条目不再问成败**（D42）：被去重或任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
    去重拒掉的可以在「被拒复议」里恢复：卡片写明与哪条重复，恢复为可用就推翻去重的结论、回到 passed；
-   它若有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
+   它若还有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
    这是和 v1 的一处差异：v1 的重复项仍进成败裁决队列，人判成功就交付。
 
 ### 5.2 与任务状态机的关系（D10）
@@ -285,8 +283,6 @@ W7 实现时定下的几条（2026-09-21）：
          ├─ curation adjudicate-apply          把裁决落到判决上，幂等：已应用的自动跳过
          ├─ check --modules task_success        只跑「改了标且没有人工成败结论」的那几条，按选定的口径
          ├─ aggregate                           重算三份清单
-         ├─ check --modules skill_profile --incremental
-         │                                      被裁决的条目按新标注重新归位，被剔除的从画像里移除
          ├─ report                              生成新版本报告，追加「人工裁决」小节
          └─ 判决或任务文本变了 → 置 delivery_stale=1
                └─ UI 提示「判决已更新，交付数据集待重新导出」+「重新导出」按钮
@@ -317,7 +313,7 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 > 项、未覆盖的项、评估不了的项与原因计数）、`findings_by_item`（每项的条数与按级别的拆分），`reject_reasons` 按细码与检测项计；
 > 模块小节去掉 `gate`，`summary` 多通用统计 `assessed_episodes`、`items`（每个细码的条数、占比、可选按相机）、`unassessable`、
 > `score_hist`（2.0 改为「读数 → 十格」：运动质量的综合分与各子项分、视觉质量的综合分）、`dataset_findings`，1.0 的汇总键照留；
-> 技能画像多 `delivered_family_distribution`（交付集的分布，按 `passed` 算）。前端按 `schema_version` 分流（D59）。
+> 前端按 `schema_version` 分流（D59）。
 > F12.5 再加三项（可选，C2 报告 2.0 的增补）：`overview.reject_items`（被拒条目按检测项计，一条每项只记一次；人工整条弃用没有项，记 null）、
 > 每个小节的 `summary.flagged_episodes`（评估过的条目里有发现的条数）与 `summary.levels`（有 blocking / review / info 级发现的条数）。
 > 下面是 1.0 的结构。
@@ -343,8 +339,8 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
     {"id": "task_success", "state": "succeeded", "gate": "hard",
      "summary": {...},
      "adjudication": {"pending": 32, "url": "/tasks/<id>/adjudication?source=task_success"}},
-    {"id": "skill_profile", "state": "failed",
-     "error": "VLM endpoint unreachable", "retry": {"modules": ["skill_profile"]}}
+    {"id": "dedup", "state": "failed",
+     "error": "worker crashed", "retry": {"modules": ["dedup"]}}
   ],
   "skipped_modules": [{"id": "kinematic_limits",
                        "reason": "机器人型号 umi_dual_handheld_gripper 不在规格库"}],
@@ -405,7 +401,6 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
 | 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
 | 精确去重 | `group_sizes`（按组大小数重复组） |
-| 技能画像 | `family_distribution`；`delivered_family_distribution`（报告 2.0：交付集的分布）；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
 CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。

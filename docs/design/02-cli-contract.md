@@ -180,7 +180,7 @@ v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有�
 ```
 
 下游三处用它：`task_success` 拿它当任务文本（**有原始标注就用标注，没有才用它**）；
-`skill_profile` 直接复用，不再重打；`export` 把它写进交付数据集的任务文本，并标明来源。
+`export` 把它写进交付数据集的任务文本，并标明来源。
 抽帧与提示词原样搬运 `dataset_level/caption.py`。
 
 ### 3.5 `curation check` — 跑检查
@@ -204,8 +204,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 - `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑、重试补跑都靠它。
 - 进程每开始处理一条 episode，就把它记进 `<run-dir>/checks/<module>/inflight.json`，处理完抹掉。
   进程被杀或自己崩了，Daemon 从这个文件知道「出事时手上是哪几条」（04 篇 §7）。
-- 数据集级模块（`dedup`、`skill_profile`）不分批，一次调用吃整个 keep 集合；
-  `skill_profile --incremental` 在已有技能体系上只处理变动的条目（搬 v1 的 `reassign` / `reprofile`）。
+- 数据集级模块（`dedup`）不分批，一次调用吃整个 keep 集合。
 
 > **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
 > `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、
@@ -297,7 +296,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 | 阶段 | 读 | 写 |
 |---|---|---|
 | `funnel` | 六项漏斗检查的结果 | `verdicts.jsonl`（每条 keep / drop、硬门失败项、软分、弃权项）和 `keep.txt` |
-| `final` | 上一步 + `dedup`、`skill_profile` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
+| `final` | 上一步 + `dedup` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
 
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
@@ -359,7 +358,7 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型�
 随本次应用的每条改标记在批次目录里；`check --modules task_success` 重判 `rerun_task_success` 时照它选流程（§3.5）。
 
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
-`aggregate` → `check --modules skill_profile --incremental` → `report`。
+`aggregate` → `report`。
 
 ### 3.10 `curation verify` — 交付核验
 

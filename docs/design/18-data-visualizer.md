@@ -214,7 +214,7 @@ flowchart LR
 |---|---|
 | visual_quality、camera_defects、data_integrity（视频类） | 范围里的相机 + 另一路相机（1 × 2） |
 | video_action_sync、eef_video_consistency、motion_quality、kinematic_limits、timestamp_check | 范围里的相机 + 该臂的关节曲线（1 × 2）；有任务产出的同步曲线时可加第三格（第二期） |
-| task_success、skill_profile、dedup、标注类 | 全部相机（1 × N，N ≤ 3；更多的收进「更换」） |
+| task_success、dedup、标注类 | 全部相机（1 × N，N ≤ 3；更多的收进「更换」） |
 
 ### 4.7 与现有部件的关系
 

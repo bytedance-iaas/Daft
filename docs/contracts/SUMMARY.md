@@ -7,7 +7,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 3.0（D68）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -145,7 +145,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 | 1 | C4 执行裁决，C2 `decisions.json`、`adjudicate-apply` | 可选请求体 `{relabel_rerun: v1 \| full}`，缺省 `v1`：改了标、又没有人工成败结论的条目，照 v1 的 `rejudge` 只跑多视角打分和逐机位复核两层，结论和调用与 v1 一致；`full` 走首轮的完整判定（多了任务类型、机位提示、判废护栏、取证仲裁），同样的裁决可能判得和 v1 不同。选择记在子任务的 `scope.relabel_rerun` 和每条改标上，之后重试这几条沿用同一口径；裁决页的执行对话框要说明两者的差别 | D39 |
 | 2 | C2 `source-manifest`、`check`、`report`、`final-list`，C4 `Summary` | 源文件缺失（parquet 或某路视频不在）的 episode 照 v1 剔除：不质检、不进四份清单、不计入 total。`snapshot` 从列表里就能认出来，记进清单的 `skipped_episodes`（缺哪些键），带清单的命令都不读它们；没带清单时读到才发现的，`check` 不写结果行、列在输出的 `skipped_missing_source` 里。报告 `integrity.skipped_episodes` 列出全部，`overview.counts.skipped` 与任务汇总的 `skipped` 给出条数。四份清单共用 `common.schema.json` 里的 `skipped_episodes` 定义 | D40 |
 | 3 | 设计 04、06（契约不变） | 技能画像整个模块失败时维持 P10 + P11：全部待补跑，一条都不交付，等「重试」成功；和 v1 不同（v1 从不因画像挡交付），记进 10 篇 §3.0 | D41 |
-| 4 | C2 `final-list`（原待修订第 3 条） | review 的种类：`task_verdict` 只收任务成败判定的弃权，别的模块判不了的留在判决行和报告里；`label_conflict` 来自技能画像；`reject_appeal` 收所有只归因于任务成败判定（没有别的硬门失败、不是软分拒绝）、没有生效复议、没被弃用的拒绝，复议选了「拿不准」的仍留在队列 | W3 核对 v1 |
+| 4 | C2 `final-list`（原待修订第 3 条） | review 的种类：`task_verdict` 收任务成败判定的弃权与判废护栏的标注疑似不符（注册表 3.0 起并进同一问，D68）；`reject_appeal` 收所有只归因于任务成败判定（没有别的硬门失败、不是软分拒绝）、没有生效复议、没被弃用的拒绝，复议选了「拿不准」的仍留在队列 | W3 核对 v1 |
 | 5 | 设计 02（原待修订第 1 条） | `check`、`autolabel` 的 `--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，不给什么都不发，对账口径不变；档位是否有效由 Daemon 建任务时按模型校验 | W3 |
 
 ## 九、1.5 修订（2026-09-21，已完成）

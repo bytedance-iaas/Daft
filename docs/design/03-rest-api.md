@@ -151,7 +151,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
               {"id": "video_action_sync", "params": {"sync_plots": "all"}},
-              "visual_quality", "task_success", "dedup", "skill_profile"],
+              "visual_quality", "task_success", "dedup"],
   "embodiment_id": "franka",
   "vlm": {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
           "reasoning_effort": null},              // null = 用模型上的配置；都为空则请求里不带该字段
@@ -217,7 +217,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   出错但已被别的模块确定拒绝的条目不在其中，它们聚合时就直接拒绝了（D35）。
   出错的条目当初没有进后面的档，所以补跑是从它出错的那一档接着往后跑，把该跑的都跑完。
   模块整体失败（从未产出结果）时，该模块全量跑。
-- 补跑完成后，下游的去重和技能画像如果输入变了，会在同一个子任务里增量同步，不用再点一次。
+- 补跑完成后，下游的去重如果输入变了，会在同一个子任务里增量同步，不用再点一次。
 - **新结果完整生成、上传并核验之后才替换旧的**：判决清单和报告作为一个结果版本整体存放，
   切换的只是库里的 `result_rev`（CAS）。补跑失败或被停止，用户看到的仍是上一版，不会出现清单是新的、报告是旧的。
 - **补跑后任务的终态按当前结果重算**：出错的条目都救回来了，列表和报告上就从「错误」变为「已完成」；

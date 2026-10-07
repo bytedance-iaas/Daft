@@ -25,8 +25,8 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
 ## 2. 分档执行模型
 
 > **两块并行（2026-10-01，设计 17 §3，D57；2026-10-01 F12.4 已实现）**：漏斗的执行短路取消，改成 CPU 块
-> （integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm → profile）并行、互不过滤；块内的段只为共享解码与各自的并发宽度，
-> 段之间传全部条目；去重与技能画像是各自块的全量步骤，等本块前面的段跑完全集才启动。计划 2.0 的段带 `block`、`after`、`full_set`，
+> （integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm）并行、互不过滤；块内的段只为共享解码与各自的并发宽度，
+> 段之间传全部条目；去重是 CPU 块的全量步骤，等本块前面的段跑完全集才启动（VLM 块原来的 `profile` 段随技能画像下线，D68）。计划 2.0 的段带 `block`、`after`、`full_set`，
 > 没有 `hard_gates` 和幸存者集合。CPU 名额池（D54）与 VLM 闸门（§2.2）不变；Daemon 一块一个线程（`orchestr/blocks.py`），
 > 落地细节见设计 17 §7「F12.4 落地时的细化」。下文是漏斗的写法，只对旧任务的计划成立。
 
@@ -43,7 +43,7 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
       │
   判决        六项检查合成 keep / drop
       │
-  判决之后    dedup → skill_profile                                       只对 keep 集合，数据集级
+  判决之后    dedup                                                      只对 keep 集合，数据集级
 ```
 
 **档内并发，档间串行**。一档是一个 CLI 进程，吃完上一档的全部幸存者才轮到下一档 —— v1 就是这样。
@@ -96,9 +96,11 @@ v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门�
 | endstate | 逐机位复核 | episode 并发 × 2 | 64 | N |
 | arbitration | 取证仲裁链（四个工厂共用一把） | = episode 并发 | 32 | N/2 |
 | 护栏 caption | 判废护栏里的 caption | = episode 并发 | 32 | N/2 |
-| caption | 技能画像与 autolabel 的打标 | `skill_profile.caption_concurrency` | 32 | N/2 |
-| llm | 技能归纳的纯文本调用 | `skill_profile.llm_concurrency` | 16 | N/4 |
-| audit | 标注分歧的配对判断 | `skill_profile.audit_concurrency` | 16 | N/4 |
+| caption | autolabel 与判废护栏的打标 | `skill_profile.caption_concurrency` | 32 | N/2 |
+| llm | 纯文本调用（v1 的技能归纳；v2 没有模块用，闸门保留为参数位）| `skill_profile.llm_concurrency` | 16 | N/4 |
+| audit | 配对判断（同上）| `skill_profile.audit_concurrency` | 16 | N/4 |
+
+> 技能画像下线后（D68）这三个配置键仍叫原名：v1 的流水线（`curation run`、对账用的 dump）还在读它们，改名会动 A 类之外的兼容面。
 
 产品上只让用户配**一个数**：模型（或后端）的并行度 N，默认 64。planner 按上表推导八把闸门，
 N=64 时与 v1 的出厂默认逐项相等。站点配置仍可以逐把覆盖（调优任务会用到）。
@@ -177,8 +179,6 @@ planner 的输出，也是 `curation plan --json` 的 schema：
      "merge": {"strategy": "none", "groups": []}},
     {"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"},
     {"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1, "modules": ["dedup"], "episodes": "keep"},
-    {"id": "profile", "kind": "vlm", "command": "check", "modules": ["skill_profile"],
-     "episodes": "keep-minus-duplicates", "gates": {"caption": 32, "llm": 16, "audit": 16}},
     {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
   ],
   "estimates": {"vlm_requests": 735, "wall_clock_s": 1100, "notes": ["..."]}
@@ -372,7 +372,7 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
   后面的模块照常跑、照常出自己的报告小节（需求原话：一个模块失败，重试时只跑失败的模块）；
   但所有条目都缺这个模块的结论，所以全部待补跑、暂不交付。模块重试成功后，它判拒的条目在聚合时剔除。
   直接依赖它产出的下游模块除外（autolabel 失败时，task_success 对无标注条目不跑）。
-  适用于所有已勾选的模块，包括不判废的去重和技能画像，以及 autolabel：
+  适用于所有已勾选的模块，包括不判废的去重，以及 autolabel：
   补不出任务描述的无标注条目同样待补跑，而不是拿一句空话去判成败。
 - **反复搞崩进程的那一条，点名跳过**。解码库的原生崩溃 try/except 接不住，会带走整个 CLI 进程。
   Daemon 看 `inflight.json` 知道出事时手上是哪几条，带 `--resume` 重新拉起；同一条 episode 连续两次出现在

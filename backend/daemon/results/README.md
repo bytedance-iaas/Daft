@@ -63,23 +63,22 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   并去掉该版本提交之后才发出的请求。延迟分桶沿用 v1（次数 = 发起次数，失败 = 补发、重试后仍没拿到结果的调用，
   分位数只算成功的请求，墙钟 = 忙碌区间的并集）。stage 墙钟取自库里的分档进度，合并请求数取自实际调用账；
   外层重试次数没有落盘，`retries` 不给；`container` 是本容器的 cgroup 配额（CLI 与 Daemon 同一个容器）。
-- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.5、D42、D43）；条目带 `line` 就用它，没有就按 `kind` 查目录：`label_conflict` → 标注分歧，
+- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.5、D42、D43）；条目带 `line` 就用它，没有就按 `kind` 查目录：
   `task_verdict` → 判成败，`eef_consistency` → EEF 与画面核对（C1 1.9，EEF 模块转人工的条），`reject_appeal` → 复议页签（任务成败判定的拒绝，D42 起还有去重剔除的重复项，C1 1.9 起还有只被 EEF 模块判废的条）；目录里没有的种类不问。裁决表的 `line` 不限定取值（第 5 步迁移），按目录校验。原始标注、画面描述来自该版本的 `label_audit.json`，
-  建议的新标注就是画面描述（v1 采纳的就是它）。答过的问题在后来的版本里不再出现时，从最近一个问过它的版本取回，
+  建议的新标注就是画面描述（判废护栏怀疑这条标注时，卡片用它预填改写框）。答过的问题在后来的版本里不再出现时，从最近一个问过它的版本取回，
   所以「已裁 / 已应用」的卡片一直在，还能改。一条 episode 一张卡片，按 episode 下标排，游标同样带结果版本。
   - 状态：任一问题「整条弃用」→ 已裁（执行后为已应用），压过一切成败结论（规则 1）；否则有「拿不准」→ `unsure`，
-    仍算待裁、仍在队列里（规则 3）；否则全部答了 → 已裁 / 已应用；只改了标、还没执行 → 已裁（执行时按新标注重判，规则 4）；其余待裁。
+    仍算待裁、仍在队列里（规则 3）；否则全部答了 → 已裁 / 已应用；答案带了新描述、还没执行 → 已裁（执行时按新描述重判，规则 4）；其余待裁。
   - 计数：待裁、已裁只数有 `counts_as_pending` 线上问题的卡片（复议候选不是必做的事），尚未应用数两个页签都算；这就是 `summary.pending_adjudication`。
-  - 追问（C1 1.3 的 `follow_ups`，C4 1.5.1）：只有标注问题的卡片，标注最新的回答是「采纳新标注」或「自行改写标注」时，
-    卡片多出一个选填的成败问题（`follow_up_of: "label"`，卡片自己的问题为 null；只收判成功、判失败、拿不准；来源模块同标注问题）。答了机器直接采信、不再重判，
-    留空则按新标注重判；它不算待裁，也不妨碍卡片算「已裁」。打开它的那个回答一变（例如改成「维持原标注」，或重新改标），
-    之前的回答就作废：不显示、不计数、不交给 CLI 执行。
+  - 改写标注（D68）：一条问题线只有一个答案，改标不是单独的一问 —— 判成败的答案可以带 `new_label`。
+    带着成败结论给的改写直接采信、不再重判；成败答「拿不准」、只给改写的按新描述重判，这一笔照样要执行
+    （「拿不准」平时不算要执行的事，带了新描述就算）。
   - 去重剔除的复议问题带 `duplicate_of`（与哪一条重复）。
 - **提交裁决**：只记录（追加一行，后写者胜），全部合法才写入。C4 1.5 的 `line`、`decision` 是开放字符串，
   由 `Queue.answerable` 一处校验：线必须在目录里、且这条 episode 的卡片上有这条线的问题（v1 的可选成败例外），结论必须是这条线在目录里的结论；
-  `new_label` 只给「采纳建议改标」「自行改写标注」，自行改写必须填，采纳时不填就用建议的新标注；
+  `new_label` 只能跟在判成败的答案上（`catalog.RELABEL_LINE`），不填就是不改；
   复议只收当前（或曾经）在复议页签里的条目 —— 也就是只归因于一个可复议模块的拒绝（任务成败判定、D42 起的去重；规则 2）；
-  标注上已经「整条弃用」的不再收成败结论；只有标注问题的卡片，改了标之后才收成败结论（追问，只收追问的几种结论）。
+  「整条弃用」是判成败的一个结论，所以同一条线上后来的答案才能撤销它。
   裁决只属于路径上的这个任务（D32）。之后重写运行目录里的 `human-decisions/*.csv`（v1 的列与用词，用 CLI 同一个写法），
   并按当前版本重算任务汇总（含 `pending_adjudication`、1.4 的 `skipped`）。支持 `Idempotency-Key`。
   列队列时发现库里的待裁数过时了，也顺手改对。
@@ -143,7 +142,7 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 ```
 
 1. **报告**：`c $B/report | python3 -m json.tool | head -40` —— `revision` 1，`counts` 为 total 9、passed 5、rejected 3、held 1、review 5；
-   `links` 里有任务、报告，以及 `?source=task_success`、`?source=skill_profile` 两条裁决页链接。
+   `links` 里有任务、报告，以及 `?source=task_success` 这条裁决页链接。
    `c "$B/report?rev=2"` 是 404「没有结果版本 r2……」；`c "$B/report?rev=0"` 是 400。
    报告是 2.0：`overview.reject_items` 是 SET-1、STRM-5、TASK-5 各 1 条；时间戳检查一节 `summary` 的 `assessed_episodes` 9、
    `flagged_episodes` 1、`levels` 为 blocking 1、review 0、info 0。
@@ -164,9 +163,10 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
    有曲线的条目返回逐相机的 `t` / `flow` / `speed`、`lags` / `xcorr` 和 `peak`。
 4. **性能剖析**：`c $B/perf` —— probe 4 次（1 次对冲补发）、P50 3 秒、墙钟 62 秒，arbitration 1 次失败；
    stage 占比 numeric 0.1、frame 0.3、vlm 0.6。`c "$B/perf?scope=subtask"` 是 400（要给 `subtask`）。
-5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片：ep3（判成败）、ep4（标注分歧）、ep5（两个问题），
+5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片 ep3、ep4、ep5，每张一个「判成败」的问题，
    计数 `{"decided": 0, "pending": 3, "unapplied": 0}`；ep8（运动质量打不出分）不在里面。每个问题带它问的细码与项：
-   ep3 的判成败是 `codes: ["uncertain"]`、`items: ["TASK-5"]`，ep4 的标注分歧是 `label_disagreement` / LABEL-5。
+   ep3 是 `codes: ["uncertain"]`、`items: ["TASK-5"]`；ep4、ep5 被判废护栏怀疑过标注，所以多一个
+   `label_conflict_suspect` / LABEL-5，卡片上有原始标注、画面描述与改写框。
    `c "$B/adjudication?tab=appeals&status=all"` 是 ep2（任务成败判定判失败）和 ep7（与 ep0 重复，D42 起可以复议）；时间戳残段 ep1 不能复议。
 6. **提交裁决**：
 
