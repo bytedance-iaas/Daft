@@ -177,6 +177,7 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     格子右上角的「更换」「放大」「×」只在鼠标停在格子上时出现，曲线格与视频格一样大小；在一个格子上点「×」清空，布局变「自定义」，点「+ 选择要看的内容」选 `observation.state / action · gripper` 放进去。「详细信息」打开右侧栏（每行很紧凑，上下各 3px），点相机格显示键名、分辨率、编码（wrist 写「mpeg4 → 播放用 h264（平台转码）」）、
     读取方式；点曲线格列出每条序列的勾选框与当前值。帧号从 1 数：刚打开时帧号框是「1 / 帧数」；点播放器后按 → 帧号加一，Shift + → 跳一秒；帧号框输入 42 回车跳到第 42 帧；格子左下角的时间帧号跟着变。
     下半页「数据集信息」：左边是相机 / 状态与动作 / 任务与标注 / 元数据的树，点 info.json 右边显示文件内容；选一路相机点「加入播放器」，提示「已加到空格子」（没有空格子就换掉最后一个）。
+    节点名与属性都是数据集原文（设计 21 §3）：相机节点名是 `observation.images.…` 全键，右边是 `dtype`、`shape`、`names`、`info.video.codec`… 逐键，没有「分辨率」「读取方式」这类中文属性名。
     接真 Daemon（`VITE_API_TARGET=http://127.0.0.1:8080 CURATOR_BASE=/curation npm run dev`，数据见 `backend/daemon/viz/README.md` 的手动验证）：画面、曲线、字幕栏同一条进度条推进；
     开发构建的控制台里 `__vizClock.drift()` 给出每路视频与时钟的偏差（秒），播放中应远小于一帧。
 14. **mcap 配置（设计 18 §6.4，F13.7）**：「添加数据集」填 `tos://pai-kit-datasets/raw/genrobot_drawer`、选访问密钥：预检识别为 mcap 后抽屉加宽，
@@ -205,7 +206,7 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
 16. **Lance（设计 19 §4，F14.3，要真 Daemon）**：按 `backend/daemon/viz/README.md` 第 18 步造三份 Lance 数据集并登记。可视化页的数据集下拉里三份都能选：
     顶栏与左栏摘要的格式分别写「Lance（lerobot-lancedb 0.3 三表）」「Lance（lerobot-lancedb 0.2 视频表）」「Lance（lerobot-lancedb 0.2 逐帧图片）」；
     前两份的相机格是视频，「详细信息」侧栏的读取方式写「Daemon 出 Lance 表里的视频字节」，「打开原始视频」能下载到这一路的 mp4；第三份的相机格是逐帧画布（读取方式「帧包」）。
-    三份播放、跳帧、曲线与同一份 LeRobot 原始数据一致；下半页「数据集信息」最后一组「Lance 表」列出各表的行数与列。模拟世界里 pusht_lance 不在数据集列表里（测试里临时加），逻辑见 `Player.test.tsx`。
+    三份播放、跳帧、曲线与同一份 LeRobot 原始数据一致；下半页「数据集信息」最后一组「Lance 表」列出各表的 `num_rows` 与 `columns`。模拟世界里 pusht_lance 不在数据集列表里（测试里临时加），逻辑见 `Player.test.tsx`。
     再登记一份数据文件是 Git LFS 指针的副本（做法见 `backend/daemon/viz/README.md` 第 18 步末尾）：详情页「预检结果」写「这些文件是 Git LFS 指针（一百多字节的占位），不是数据：…用 git lfs pull 或 hf download 拿到真文件后重新上传」；
     可视化页选它，主区写「可视化读不出来：…是 Git LFS 指针文件…」，开发者工具里 `/viz` 只请求一次、之后不再请求（2026-10-05 以前会反复请求、主区空白；`VisualizePage.test.tsx` 覆盖）。
 17. **浏览器内解码（设计 19 §3，F14.2，要真 Daemon）**：可视化页选一份 mcap 数据集（H.264 / H.265 相机，如 `backend/daemon/viz/README.md` 第 14 步的 `viz_abc`）：

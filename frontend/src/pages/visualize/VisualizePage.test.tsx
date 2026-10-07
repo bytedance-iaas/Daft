@@ -97,6 +97,11 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(within(info).getByText('相机')).toBeInTheDocument();
     // the first leaf is shown: a camera, with its attributes and 加入播放器
     await user.click(within(info).getAllByRole('button', { name: /wrist_image_left/ })[0]);
+    // the feature's info.json entry as the dataset writes it, nothing translated (design doc 21 §3)
+    expect(within(info).getByRole('heading', { name: 'observation.images.wrist_image_left' })).toBeInTheDocument();
+    expect(within(info).getByText('info.video.codec')).toBeInTheDocument();
+    expect(within(info).queryByText('分辨率')).toBeNull();
+    expect(within(info).queryByText('读取方式')).toBeNull();
     await user.click(within(info).getByRole('button', { name: zh.vizPage.addToPlayer }));
     expect(await screen.findByText(/已加到空格子|替换了最后一个格子/)).toBeInTheDocument();
     // a metadata file previews its text

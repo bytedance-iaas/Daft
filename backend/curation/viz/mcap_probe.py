@@ -32,6 +32,7 @@ class TopicProbe:
     first_ns: int | None = None
     kind: str = "unknown"                     # camera | series | text | other | unknown
     codec: str | None = None
+    format: str | None = None                 # the first picture message's own format string
     width: int | None = None
     height: int | None = None
     fields: list[dict] | None = None          # [{path, size}] of the first message
@@ -146,6 +147,7 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
         if frame is not None:
             fmt, data = frame
             tp.kind = "camera"
+            tp.format = fmt or None
             tp.codec = M.frame_codec(fmt, data)
             if tp.codec in ("jpeg", "png"):
                 tp.width, tp.height = M.picture_size(tp.codec, data)

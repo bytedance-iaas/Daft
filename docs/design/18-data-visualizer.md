@@ -277,6 +277,7 @@ flowchart LR
 
 - 左树右详情。树：相机（每路：分辨率 · 编码，转码的带标签）、状态与动作（数值流与 shape）、任务与标注（任务文本、分段标注的各条轨与来源、episodes 表）、元数据（`info.json`、`stats.json`、`README.md`）、文件（`data/`、`videos/`，来自登记时的指纹清单，不再逐个访问 TOS）；mcap 换成 topic / schema / metadata / attachments。详情：属性表、JSON 预览、「加入播放器」。
 - 树就是统一展示模型里的 `FieldTree`，和格式无关。
+- 2026-10-06 起（需求方，D71，设计 21 §3）：节点名与属性一律是数据集元数据的原文（特征在 `info.json` 里的条目逐键列出，mcap 列 channel / schema / 统计字段），不再是「分辨率 · 编码」这类我们起的中文属性；每个特征只出现一次，「状态与动作」列数值特征、深度另成一组。
 
 ### 5.8 错误与空态
 

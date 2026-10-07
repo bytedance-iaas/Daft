@@ -192,7 +192,7 @@ class LanceReader(LeRobotReader):
         if tables:
             tree.append({"id": "lance", "name": "Lance 表", "kind": "group", "children": [
                 {"id": f"table:{t['name']}", "name": t["name"], "kind": "table",
-                 "detail": {"行数": t["rows"], "列": "、".join(t["columns"][:24]) + ("…" if len(t["columns"]) > 24 else "")}}
+                 "detail": {"num_rows": t["rows"], "columns": json.dumps(t["columns"], ensure_ascii=False)}}
                 for t in tables]})
         return tree
 

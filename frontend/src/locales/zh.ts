@@ -2296,7 +2296,6 @@ export const zh = {
     preview: '内容预览',
     previewTruncated: (kb: number) => `（只显示前 ${kb} KB）`,
     previewFailed: '读不出这个文件',
-    attrs: { dtype: 'dtype', shape: 'shape', names: 'names', file: '文件' } as Record<string, string>,
   },
 
   /** The mcap field mapping (design doc 18 §6, F13.7): the add drawer's section and the dataset's drawer. */

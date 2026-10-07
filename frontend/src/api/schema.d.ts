@@ -2914,7 +2914,7 @@ export interface components {
             dtype?: string | null;
             shape?: number[] | null;
             names?: string[] | null;
-            /** @description attributes shown in the detail pane */
+            /** @description the node's attributes as the dataset's own metadata writes them (2.7.0, design doc 21 §3, D71): a LeRobot / Lance feature's info.json entry key by key, a file's size, an mcap topic's channel, schema and statistics fields, a Lance table's num_rows and columns; nested objects have their keys joined with dots (info.video.codec), lists are JSON text */
             detail?: {
                 [key: string]: string | number | boolean | null;
             };

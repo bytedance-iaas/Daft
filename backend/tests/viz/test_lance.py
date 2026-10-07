@@ -76,7 +76,7 @@ def test_a_lance_dataset_reads_like_its_lerobot_original(app, data_root, name, l
     assert [s["key"] for s in body["annotation_sources"]] == [s["key"] for s in ref["annotation_sources"]]
     tables = next(n for n in body["field_tree"] if n["id"] == "lance")["children"]
     frames_table = "frames.lance" if layout == "lance-0.3" else "lift_cup.lance"
-    assert any(t["name"] == frames_table and t["detail"]["行数"] == sum(LENGTHS) for t in tables)
+    assert any(t["name"] == frames_table and t["detail"]["num_rows"] == sum(LENGTHS) for t in tables)
     # an episode: same clock, curves, annotations and video window as the parquet / mp4 original
     ep_ref = app.get(f"{API}/datasets/{app.ids['v3']}/episodes/1/viz").json()
     ep = app.get(f"{API}/datasets/{app.ids[name]}/episodes/1/viz").json()

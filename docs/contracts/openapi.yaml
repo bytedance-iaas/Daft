@@ -86,7 +86,9 @@ info:
     **2.7.0** (2026-10-06): in an episode's camera list, `from_ts` / `to_ts` are times in the media `url`
     serves: a transcoded camera of a file holding several episodes now starts at 0, and `transcode_url`
     always starts at the episode's start (it used to be placed at the shared file's time, so such a camera
-    showed the wrong moment).
+    showed the wrong moment). The visualizer's field tree (`field_tree` of `GET /datasets/{id}/viz`) names
+    every node and attribute in the dataset's own metadata: a feature's `info.json` entry key by key, an
+    mcap topic's channel, schema and statistics fields.
   x-description-zh: |
     ## 概览
 
@@ -138,7 +140,8 @@ info:
     供叠加在该 episode 的原始相机视频上显示。模型意见的记录不再附带标记视频和证据图片，各片段仍给出证据帧号。
 
     **2.7.0**（2026-10-06）：episode 的相机列表里，`from_ts` / `to_ts` 指 `url` 所给媒体里的时间：一个文件装多条 episode 时，经平台转码的相机从 0 开始，
-    `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。
+    `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。可视化的字段树（`GET /datasets/{id}/viz` 的 `field_tree`）
+    的节点名与属性一律是数据集元数据的原文：特征在 `info.json` 里的条目逐键列出，mcap 的 topic 列出 channel、schema 与统计的字段。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -5051,7 +5054,11 @@ components:
         names: {type: [array, "null"], items: {type: string}}
         detail:
           type: object
-          description: attributes shown in the detail pane
+          description: >-
+            the node's attributes as the dataset's own metadata writes them (2.7.0, design doc 21 §3, D71):
+            a LeRobot / Lance feature's info.json entry key by key, a file's size, an mcap topic's channel,
+            schema and statistics fields, a Lance table's num_rows and columns; nested objects have their
+            keys joined with dots (info.video.codec), lists are JSON text
           additionalProperties: {type: [string, number, boolean, "null"]}
         camera: {$ref: "#/components/schemas/VizCameraKey"}
         stream: {type: string, description: "the VizStream it is drawn as"}

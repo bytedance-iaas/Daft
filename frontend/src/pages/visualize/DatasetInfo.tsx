@@ -84,13 +84,11 @@ export function DatasetInfo({ datasetId, model, player }: { datasetId: string; m
     if (how) Message.success(how === 'empty' ? zh.vizPage.added : zh.vizPage.replaced);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  // the dataset's own keys and values, nothing translated (design doc 21 §3, D71)
   const attrs: [string, string][] = [];
   if (node) {
-    if (node.dtype) attrs.push([zh.vizPage.attrs.dtype, node.dtype]);
-    if (node.shape) attrs.push([zh.vizPage.attrs.shape, `[${node.shape.join(', ')}]`]);
-    if (node.names?.length) attrs.push([zh.vizPage.attrs.names, node.names.join('、')]);
-    if (node.file) attrs.push([zh.vizPage.attrs.file, node.file]);
-    for (const [k, v] of Object.entries(node.detail ?? {})) if (v !== null && v !== '') attrs.push([k, String(v)]);
+    if (node.file) attrs.push(['path', node.file]);
+    for (const [k, v] of Object.entries(node.detail ?? {})) attrs.push([k, v === null ? 'null' : String(v)]);
   }
   const stream = node?.stream ? model.streams.find((s) => s.key === node.stream) : undefined;
   return (

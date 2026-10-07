@@ -215,26 +215,71 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
   return { cameras: cams, streams, sources, fps: p.fps };
 }
 
+/** The dataset info tree in the dataset's own words (design doc 21 §3, D71): info.json entries and mcap fields. */
 function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
   if (p.format.kind === 'mcap') {
     return [
       { id: 'topics', name: 'Topic', kind: 'group', children: [
-        ...shape.cameras.map((c) => ({ id: `topic:${c.source}`, name: c.source, kind: 'topic' as const, camera: c.key, detail: { schema: c.access === 'frames' ? 'foxglove.CompressedImage' : 'foxglove.CompressedVideo', 编码: c.codec, 尺寸: `${c.width}×${c.height}` } })),
-        ...shape.streams.map((s) => ({ id: `topic:${s.sources[0]}`, name: s.sources[0] ?? s.key, kind: 'topic' as const, stream: s.key, detail: { 频率: s.rate_hz ? `${s.rate_hz} Hz` : null } })),
+        ...shape.cameras.map((c) => ({
+          id: `topic:${c.source}`,
+          name: c.source,
+          kind: 'topic' as const,
+          camera: c.key,
+          detail: {
+            'schema.name': c.access === 'frames' ? 'foxglove.CompressedImage' : 'foxglove.CompressedVideo',
+            'schema.encoding': 'protobuf',
+            message_encoding: 'protobuf',
+            message_count: 600,
+            format: c.codec,
+            width: c.width,
+            height: c.height,
+          },
+        })),
+        ...shape.streams.map((s) => ({
+          id: `topic:${s.sources[0]}`,
+          name: s.sources[0] ?? s.key,
+          kind: 'topic' as const,
+          stream: s.key,
+          detail: { 'schema.name': 'RobotState', 'schema.encoding': 'protobuf', message_encoding: 'protobuf', message_count: 1200, fields: JSON.stringify({ q: s.lines.length }) },
+        })),
       ] },
       { id: 'metadata', name: 'Metadata', kind: 'group', children: [{ id: 'metadata:episode', name: 'episode', kind: 'metadata', detail: { task: 'pick the box' } }] },
     ];
   }
+  const feature = (key: string, kind: 'camera' | 'series' | 'depth' | 'other', entry: Record<string, unknown>, more: Partial<VizFieldNode> = {}): VizFieldNode => {
+    const detail: Record<string, string | number | boolean | null> = {};
+    const put = (prefix: string, obj: Record<string, unknown>) => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === 'object' && !Array.isArray(v)) put(`${prefix}${k}.`, v as Record<string, unknown>);
+        else detail[`${prefix}${k}`] = Array.isArray(v) ? JSON.stringify(v) : (v as string | number | boolean | null);
+      }
+    };
+    put('', entry);
+    return { id: `${kind === 'series' ? 'feature' : kind}:${key}`, name: key, kind, dtype: String(entry.dtype), shape: entry.shape as number[], detail, ...more };
+  };
+  const smart = shape.streams.find((s) => s.kind === 'series' && s.smart);
+  const sources = [...new Set(shape.streams.filter((s) => s.kind === 'series').flatMap((s) => s.sources))];
+  const depth = shape.streams.filter((s) => s.kind === 'depth');
   return [
-    { id: 'cameras', name: '相机', kind: 'group', children: shape.cameras.map((c) => ({ id: `camera:${c.key}`, name: c.key, kind: 'camera' as const, camera: c.key, dtype: 'video', shape: [c.height ?? 0, c.width ?? 0, 3], detail: { 分辨率: `${c.width}×${c.height}`, 编码: c.codec, 帧率: c.fps, 读取方式: c.access } })) },
-    { id: 'state_action', name: '状态与动作', kind: 'group', children: shape.streams.map((s) => ({ id: `stream:${s.key}`, name: s.name, kind: s.kind === 'depth' ? ('depth' as const) : ('series' as const), stream: s.key, dtype: s.kind === 'depth' ? 'uint16' : 'float32', shape: [Math.max(1, s.lines.filter((l) => l.role !== 'action').length)], names: s.lines.filter((l) => l.role !== 'action').map((l) => l.name), detail: { 来源: s.sources.join('、') } })) },
+    { id: 'cameras', name: '相机', kind: 'group', children: shape.cameras.map((c) => ({
+      ...feature(`observation.images.${c.key}`, 'camera', { dtype: 'video', shape: [c.height ?? 0, c.width ?? 0, 3], names: ['height', 'width', 'channels'],
+        info: { 'video.height': c.height, 'video.width': c.width, 'video.codec': c.codec, 'video.pix_fmt': c.pix_fmt, 'video.fps': c.fps } }),
+      id: `camera:${c.key}`,
+      camera: c.key,
+    })) },
+    ...(depth.length ? [{ id: 'depth', name: '深度图', kind: 'group' as const, children: depth.map((s) => feature(s.sources[0] ?? s.key, 'depth', { dtype: 'uint16', shape: [180, 320], names: ['height', 'width'] }, { stream: s.key })) }] : []),
+    { id: 'streams', name: '状态与动作', kind: 'group', children: sources.map((src) => {
+      const g = shape.streams.find((s) => s.kind === 'series' && s.sources.includes(src)) ?? smart;
+      const dims = g ? g.lines.filter((l) => l.source === src).length : 1;
+      return feature(src, 'series', { dtype: 'float32', shape: [Math.max(1, dims)], names: g ? g.lines.filter((l) => l.source === src).map((l) => l.name) : null }, { stream: g?.key });
+    }) },
     { id: 'annotations', name: '任务与标注', kind: 'group', children: [
-      { id: 'tasks', name: p.format.version === 'v3' ? 'meta/tasks.parquet' : 'meta/tasks.jsonl', kind: 'table', file: p.format.version === 'v3' ? undefined : 'meta/tasks.jsonl', detail: { 有任务描述: p.withTask, 无任务描述: p.episodes - p.withTask } },
-      ...shape.sources.map((a) => ({ id: `annotation:${a.key}`, name: a.name, kind: 'table' as const, detail: { 来源: a.source, 支持: a.supported, 原因: a.reason } })),
+      { id: 'tasks', name: p.format.version === 'v3' ? 'tasks.parquet' : 'tasks.jsonl', kind: 'table', file: p.format.version === 'v3' ? undefined : 'meta/tasks.jsonl', detail: { size: 2048 } },
+      ...shape.sources.map((a) => ({ id: `annotation:${a.key}`, name: a.key, kind: 'table' as const, detail: { dtype: a.kind === 'labels' ? 'bool' : 'int64', shape: '[1]', names: null } })),
     ] },
     { id: 'meta', name: '元数据', kind: 'group', children: [
-      { id: 'meta:info', name: 'info.json', kind: 'file', file: 'meta/info.json', detail: { fps: p.fps, robot_type: p.robotType } },
-      { id: 'meta:stats', name: p.format.version === 'v3' ? 'stats.json' : 'episodes_stats.jsonl', kind: 'file', file: p.format.version === 'v3' ? 'meta/stats.json' : 'meta/episodes_stats.jsonl' },
+      { id: 'meta:info', name: 'info.json', kind: 'file', file: 'meta/info.json', detail: { size: 4096 } },
+      { id: 'meta:stats', name: p.format.version === 'v3' ? 'stats.json' : 'episodes_stats.jsonl', kind: 'file', file: p.format.version === 'v3' ? 'meta/stats.json' : 'meta/episodes_stats.jsonl', detail: { size: 65536 } },
     ] },
   ];
 }

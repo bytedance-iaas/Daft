@@ -244,22 +244,21 @@ class McapReader:
         return [x for x in out if x["smart"]] + [x for x in out if not x["smart"]]
 
     def _field_tree(self, mapping: dict, probe: MP.FileProbe, keys: dict[str, str]) -> list[dict]:
-        from curation.viz.mcap_mapping import topic_uses
-
-        uses = topic_uses(mapping, probe)
-        names = {"camera": "相机", "series": "曲线", "task": "任务描述", "segments": "分段标注", "ignore": "忽略",
-                 "unmapped": "未映射"}
-        streams = {t: _slug(s["topic"]) for s in mapping.get("series") or [] for t in (s["topic"],)}
+        """Topics, metadata records and attachments as the file's summary and first messages say (design
+        doc 21 §3, D71): the channel's, schema's and statistics' own fields; a picture topic adds the first
+        message's format and size, a numeric one its fields."""
+        streams = {s["topic"]: _slug(s["topic"]) for s in mapping.get("series") or []}
         topic_nodes = []
         for t in sorted(probe.topics):
             tp = probe.topics[t]
-            use = uses.get(t, ("unmapped", None, ""))[0]
-            node: dict[str, Any] = {"id": f"topic:{t}", "name": t, "kind": "topic",
-                                    "detail": {"schema": tp.schema, "编码": tp.message_encoding, "消息数": tp.count,
-                                               "频率": f"{tp.rate_hz(probe.end_ns)} Hz" if tp.rate_hz(probe.end_ns) else None,
-                                               "用途": names.get(use, use),
-                                               "画面": f"{tp.codec} {tp.width}×{tp.height}" if tp.kind == "camera" else None,
-                                               "字段": "、".join(f"{f['path']}[{f['size']}]" for f in tp.fields or [])[:300] or None}}
+            detail: dict[str, Any] = {"schema.name": tp.schema, "schema.encoding": tp.schema_encoding,
+                                      "message_encoding": tp.message_encoding, "message_count": tp.count}
+            if tp.kind in ("camera", "depth"):
+                detail.update({"format": tp.format or (tp.image or {}).get("encoding"), "width": tp.width,
+                               "height": tp.height})
+            if tp.fields:
+                detail["fields"] = json.dumps({f["path"]: f["size"] for f in tp.fields}, ensure_ascii=False)
+            node: dict[str, Any] = {"id": f"topic:{t}", "name": t, "kind": "topic", "detail": detail}
             if t in keys:
                 node["camera"] = keys[t]
             if t in streams:
@@ -268,7 +267,7 @@ class McapReader:
         meta_nodes = [{"id": f"metadata:{name}", "name": name, "kind": "metadata", "detail": dict(list(rec.items())[:40])}
                       for name, rec in probe.metadata.items()]
         att_nodes = [{"id": f"attachment:{a['name']}", "name": a["name"], "kind": "attachment",
-                      "detail": {"类型": a["media_type"], "字节": a["size"]}} for a in probe.attachments]
+                      "detail": {"media_type": a["media_type"], "data_size": a["size"]}} for a in probe.attachments]
         return [{"id": "topics", "name": "Topic", "kind": "group", "children": topic_nodes},
                 {"id": "metadata", "name": "Metadata", "kind": "group", "children": meta_nodes},
                 {"id": "attachments", "name": "Attachments", "kind": "group", "children": att_nodes}]

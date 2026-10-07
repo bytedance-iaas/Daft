@@ -420,7 +420,7 @@ API 返回的 `links` 数组（见 `03-rest-api.md` §1）指向的就是上面�
 
 - **页面**（`pages/visualize/`）：左栏 `EpisodeRail.tsx` 是数据集下拉（`GET /datasets?viz=true`，mcap 映射待确认的带橙色标签）、摘要一行、
   筛选与排序、episode 列表（`GET /datasets/{id}/viz/episodes`，一次 100 条，「加载更多」）；点一条改地址 `?dataset=&ep=`，
-  「上一条 / 下一条」按列表的顺序走。主区是播放器和 `DatasetInfo.tsx`（模型的字段树、元数据文件预览 `GET /datasets/{id}/viz/meta`、
+  「上一条 / 下一条」按列表的顺序走。主区是播放器和 `DatasetInfo.tsx`（模型的字段树——节点名与属性是数据集元数据原文，设计 21 §3——、元数据文件预览 `GET /datasets/{id}/viz/meta`、
   相机与曲线组「加入播放器」——放进第一个空格子，没有空格子就换掉最后一个）。地址没带数据集时打开上次看的（浏览器偏好
   `lastVizDataset`），左栏收起也记在偏好里。mcap 映射没确认：主区提示原因，给「去确认映射」（到数据集详情并打开「mcap 配置」，`?mcap=1`）。
   数据集读不出来（模型请求报错）：主区直接写「可视化读不出来：<Daemon 的原因>」，只请求一次（2026-10-05：原先交给播放器显示，播放器自己的请求
