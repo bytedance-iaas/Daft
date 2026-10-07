@@ -12,8 +12,11 @@ PROTOCOL = "video-task/1"
 #: independent second signature the two-pass protocol had - what guards a rejection instead is the
 #: evidence it must cite, the label guard, and sending everything else to a person.
 PROTOCOL_SINGLE = "video-task/2"
-#: the per-camera picture-defect report riding on every endstate review (camera_defects module)
-CAMERA_CHECK_PROTOCOL = "camera-check/1"
+#: the per-camera picture-defect report riding on every endstate review (camera_defects module).
+#: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
+#: stale, so ``check --resume`` judges them again (1.1: glitch vs shake told apart, up to four
+#: intervals, "intermittent" for recurring bursts).
+CAMERA_CHECK_PROTOCOL = "camera-check/1.1"
 #: the same three items answered inside the single-pass per-camera block
 CAMERA_CHECK_PROTOCOL_SINGLE = "camera-check/2"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")

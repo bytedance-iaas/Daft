@@ -87,13 +87,15 @@ caption 缓存使用；重新执行 autolabel 时也会重做这些条目。`che
 - **整段就说整段**：覆盖窗口 95% 以上的时间区间折成 `whole` 标记、清空 `times`，控制台显示「全程」。
   5fps 下模型的定位精度只有 0.2 秒且会四舍五入，一个 0–57 秒的区间是「一直都有」而不是定位，不该写成
   看起来精确的数字。每项最多两个区间，取最严重的两段，本质是线索而非穷举。
-- 记录的 `details`：`protocol="camera-check/1"`、`source="task_success.video_reviews"`、`items` 是三项各一个
+- 记录的 `details`：`protocol="camera-check/1.1"`、`source="task_success.video_reviews"`、`items` 是三项各一个
   跨机位最坏档（`none` / `minor` / `severe` / `unknown`），逐机位的档位、时间段与污染种类只存一份在
   `per_camera` 里（同一件事不说两遍），`clean_ratio` 是「已答项里判为 none 的比例」，`reason` 说明为什么是
   unknown（成败判定没结果 / 没跑复核 / 模型没答）。报告小节按三项各一张计数图，episode 明细页一行给三项
   最坏档、再只列报了问题的机位。
-- `--resume` 口径：`details.protocol` 不是 `camera-check/1` 的旧记录视为待补跑，会连同 `task_success`
-  一起重判；主判协议 `video-task/1` 不动。
+- `--resume` 口径：`details.protocol` 不是当前协议号的旧记录视为待补跑，会连同 `task_success`
+  一起重判；主判协议 `video-task/1` 不动。**改了这一段的措辞就要把协议号升一版**（`camera-check/1`
+  → `1.1`，2026-10-07：区分花屏与抖动、最多四段、能写 intermittent）—— 不升的话旧 prompt 判出来的
+  记录和新的长得一样，重试不会重判，一个任务里会掺着两套措辞的答案而看不出来。
 - 模型在 5fps / ≤720p 上可能漏掉单帧花屏、把腕部相机的正常运动当抖动、把静止遮挡物当污染——所以它只
   作建议项，与 CPU 侧 `visual_quality`（清晰度、曝光、冻结的逐帧统计量）互补。
 

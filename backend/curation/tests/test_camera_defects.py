@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from curation.adapters.video_vlm import CAMERA_CHECK_PROTOCOL
 from curation.extensions import camera_defects as CD
 
 
@@ -30,7 +31,7 @@ def test_all_cameras_clean():
     s = CD.struct_from_task(_task({"a": _review(_check()), "b": _review(_check())}))
     assert s["passed"] is None and s["score"] is None
     d = json.loads(s["detail"])
-    assert d["protocol"] == "camera-check/1" and d["reason"] == "" and d["clean_ratio"] == 1.0
+    assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["reason"] == "" and d["clean_ratio"] == 1.0
     assert d["items"] == {"glitch": "none", "shake": "none", "contamination": "none"}
     assert d["per_camera"]["a"]["answered"] is True
 
