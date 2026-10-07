@@ -178,11 +178,12 @@ class Transcoder:
             return Job(key, out, state="done", progress=1.0)
         return None
 
-    def ensure(self, key: str, out: pathlib.Path, prepare: Callable[[], pathlib.Path],
+    def ensure(self, key: str, out: pathlib.Path, prepare: Callable[[], object],
                start: float | None = None, end: float | None = None,
                keep: tuple[pathlib.Path, ...] = ()) -> Job:
         """The job for ``key``: done, running, or started now. ``prepare`` returns the local input
-        file (it may fetch it), on the pool's thread."""
+        file (it may fetch it), on the pool's thread - or ``(file, start, end)`` when the window moved
+        with it (an episode's slice, design doc 21 §4.3)."""
         job = self.status(key, out)
         if job is not None:
             return job
@@ -195,9 +196,11 @@ class Transcoder:
         job.future = self._pool.submit(self._run, job, prepare, start, end, keep)
         return job
 
-    def _run(self, job: Job, prepare: Callable[[], pathlib.Path], start, end, keep) -> None:
+    def _run(self, job: Job, prepare: Callable[[], object], start, end, keep) -> None:
         try:
             src = prepare()
+            if isinstance(src, tuple):
+                src, start, end = src
             argv = [self.python, "-m", "curation.viz.transcode", "--in", str(src), "--out", str(job.out)]
             if start is not None:
                 argv += ["--from", f"{float(start):.6f}"]

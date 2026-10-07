@@ -121,13 +121,13 @@ async def get_dataset_episode_series(request: Request, dataset_id: str, index: i
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.mp4")
 async def get_dataset_camera_video(request: Request, dataset_id: str, index: int, camera: str,
-                                   transcode: bool = False):
+                                   transcode: bool = False, segment: bool = False):
     rt, owner = runtime(request), principal(request).owner_id
     svc = viz_of(rt)
     _index(index)
     _camera(camera)
     return await in_thread(lambda: svc.camera_video(svc.dataset_source(dataset_id, owner), index, camera,
-                                                    transcode, request.headers))
+                                                    transcode, request.headers, segment=segment))
 
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.frames")

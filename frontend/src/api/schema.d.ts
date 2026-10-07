@@ -503,7 +503,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range */
+        /** A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux, an episode's slice (2.7.0) or an H.264 transcode - with Range */
         get: operations["getDatasetCameraVideo"];
         put?: never;
         post?: never;
@@ -2827,7 +2827,8 @@ export interface components {
         /**
          * @description How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
          *     public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
-         *     Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+         *     Daemon rewraps the stream into mp4 without re-encoding (an mcap camera, or with CURATOR_VIZ_SEGMENT
+         *     a LeRobot v3 / Lance episode's slice and a moov-at-end file put in front, 2.7.0); frames: a JPEG frame pack
          *     drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
          *     player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
          *     blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.
@@ -4037,6 +4038,8 @@ export interface components {
         PathCamera: components["schemas"]["VizCameraKey"];
         /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
         RangeHeader: string;
+        /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+        VizSegment: boolean;
         /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
         VizTranscode: boolean;
         /** @description the curve group's `key` (VizStream.key) */
@@ -4920,6 +4923,8 @@ export interface operations {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                segment?: components["parameters"]["VizSegment"];
             };
             header?: {
                 /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
@@ -6184,6 +6189,8 @@ export interface operations {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                segment?: components["parameters"]["VizSegment"];
             };
             header?: {
                 /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */

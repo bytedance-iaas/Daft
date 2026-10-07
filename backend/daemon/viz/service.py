@@ -55,6 +55,16 @@ class EpisodeUrls:
             # from_ts / to_ts are times in what `url` serves (design doc 21 §4.5): a transcode's 0 is
             # the episode's start (curation.viz.transcode --from), not the shared file's from_ts
             out["from_ts"], out["to_ts"] = 0.0, (round(float(to) - float(frm), 6) if to is not None else None)
+        if access in ("direct", "local", "blob") and self.svc.segments.enabled:
+            # CURATOR_VIZ_SEGMENT (design doc 21 §4.3-§4.4): the Daemon serves the episode's slice of a
+            # shared file, or a copy of a moov-at-end file with it in front
+            place = self.svc.segment_place(src, index, cam["key"], frm)
+            if place is not None:
+                out["access"], out["expires_at"] = "remux", None
+                out["url"] = self.daemon(src, index, cam["key"], "mp4") + "?segment=1"
+                if not place["whole"] and frm is not None:
+                    out["from_ts"] = round(float(frm) - place["start_s"], 6)
+                    out["to_ts"] = round(float(to) - place["start_s"], 6) if to is not None else None
         if access == "transcode":                       # the copy starts now, before the player asks
             with contextlib.suppress(Exception):
                 if self.svc.reader_of(src) == "lance":
@@ -84,6 +94,9 @@ class VizService:
                               int(float(getattr(s, "viz_cache_gb", 20.0)) * (1 << 30)))
         self.transcoder = Transcoder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
         self.urls = EpisodeUrls(self)
+        from .segments import Segments
+
+        self.segments = Segments(self)
         self._copy_locks: dict[str, threading.Lock] = {}
         self._copy_lock = threading.Lock()
         from .lance import LanceReader
@@ -272,6 +285,42 @@ class VizService:
         doc = docs.get(int(index))
         return argus_annotations(doc) if doc is not None else None
 
+    # ------------------------------------------------------------ slices (design doc 21 §4)
+    def camera_source(self, src: VizSource, index: int, camera: str):
+        """(VizCamera, the source file's identity, how to open it, from_ts, to_ts) of a LeRobot or Lance
+        camera of an episode - what a slice is cut from."""
+        if self.reader_of(src) == "lance":
+            cam, blob, frm, to = self.lance.blob(src, index, camera)
+            m, row = self.lance.row(src, index)
+            feature = m.camera_features[camera]
+            chunk, file = row.video_files[feature]
+            ident = f"lance:{feature}:{chunk}:{file}"
+            return cam, ident, self.segments.blob_opener(blob, ident), frm, to
+        cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
+        return cam, rel, self.segments.opener(src, rel), frm, to
+
+    def segment_place(self, src: VizSource, index: int, camera: str, frm) -> dict | None:
+        """Where the episode sits in the slice the Daemon serves for a camera, or None (the browser reads
+        the file itself; also when the file cannot be looked at now - it says why when it is played)."""
+        try:
+            _, ident, open_, frm, _ = self.camera_source(src, index, camera)
+            return self.segments.place(src, ident, open_, frm)
+        except Exception:  # noqa: BLE001 - not sliced: the direct file plays as before
+            return None
+
+    def segment_file(self, src: VizSource, index: int, camera: str):
+        if not self.segments.enabled:
+            raise ApiError("not_found", "切片播放没有打开（CURATOR_VIZ_SEGMENT=0）", details={"reason": "segment_disabled"})
+        cam, ident, open_, frm, to = self.camera_source(src, index, camera)
+        if self.segments.place(src, ident, open_, frm) is None:
+            raise ApiError("not_found", f"相机 {camera} 不需要切片（直接读原文件）", details={"reason": "not_segmented"})
+        try:
+            return self.segments.file(src, index, camera, open_, frm, to)[0]
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the <video> says it cannot play, with why
+            raise ApiError("internal", f"切片失败：{str(exc)[:200]}", details={"reason": "segment_failed"}) from None
+
     # ------------------------------------------------------------ camera bytes (LeRobot)
     def lerobot_transcode(self, src: VizSource, index: int, camera: str):
         """The transcode job of one camera of an episode (started if it is not running)."""
@@ -285,9 +334,13 @@ class VizService:
         access = Access(self.rt, src)
         source_copy = self.disk.path("source", fp, *rel.split("/"))
 
-        def prepare() -> pathlib.Path:
+        def prepare():
             if src.is_local:
                 return access.local_file(rel)
+            if frm is not None:
+                # an episode of a shared file: its slice, read by range - not the whole file (design doc 21 §4.3)
+                path, seg = self.segments.file(src, index, camera, self.segments.opener(src, rel), frm, to)
+                return path, float(frm) - seg["start_s"], (float(to) - seg["start_s"]) if to is not None else None
             with self.copy_lock(source_copy):
                 if self.disk.get(source_copy) is None:
                     tmp = source_copy.with_name(source_copy.name + ".part")
@@ -334,7 +387,12 @@ class VizService:
         out = self.disk.path("transcode", fp, f"ep{int(index):06d}", f"{camera}.mp4")
         source_copy = self.disk.path("source", fp, "lance", f"{feature}-c{chunk}-f{file}.mp4")
 
-        def prepare() -> pathlib.Path:
+        def prepare():
+            if frm is not None:
+                # the episode's slice of the shared mp4 in the blob, read by range (design doc 21 §4.3)
+                opener = self.segments.blob_opener(blob, f"lance:{feature}:{chunk}:{file}")
+                path, seg = self.segments.file(src, index, camera, opener, frm, to)
+                return path, float(frm) - seg["start_s"], (float(to) - seg["start_s"]) if to is not None else None
             with self.copy_lock(source_copy):
                 if self.disk.get(source_copy) is None:
                     tmp = source_copy.with_name(source_copy.name + ".part")
@@ -388,9 +446,16 @@ class VizService:
             raise ApiError("not_found", "只有 mcap 与 Lance 逐帧图片的相机有帧包", details={"reason": "not_frames"})
         return self.mcap.frame_index(src, index, camera)
 
-    def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers):
+    def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers,
+                     segment: bool = False):
         """The ``.mp4`` route: a local LeRobot file, a remuxed mcap camera, a transcode (202 while
-        it runs); a JPEG mcap camera without ``transcode`` is muxed as MJPEG (the check reader's mp4)."""
+        it runs); a JPEG mcap camera without ``transcode`` is muxed as MJPEG (the check reader's mp4);
+        with ``segment`` the episode's slice of a LeRobot / Lance camera (design doc 21 §4.3)."""
+        if segment and not transcode and self.reader_of(src) in ("lerobot", "lance"):
+            self._reader(src)
+            etag, immutable = self._cam_cache(src, index, camera, "mp4:segment")
+            return file_response(self.segment_file(src, index, camera), "video/mp4", request_headers,
+                                 etag=etag, immutable=immutable)
         if self.reader_of(src) == "mcap":
             self._reader(src)
             if transcode:

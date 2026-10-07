@@ -13,6 +13,7 @@
 | `lerobot.py` | LeRobot v2 / v3 读取器：`meta/` 的 episode 表、相机、曲线组、标注来源、字段树；一条 episode 的逐帧列只读一次（v3 只读它的行组）进缓存，episode 记录与曲线请求共用 |
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
 | `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
+| `segments.py` | 切片（设计 21 §4）：按 GOP 从共用 mp4 里切出单条 episode（内核 `curation/viz/segment.py`，PyAV 流拷贝，只按区间读 `moov` 与这一条的字节），落在 `segment/<摘要>/ep<N>/`；转码的输入、开关下的切片播放与 `moov` 在头的版本都用它 |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
 | `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
@@ -39,6 +40,7 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
 | `CURATOR_VIZ_CACHE_GB` | 20 | 缓存上限，超了按最近最少使用淘汰 |
 | `CURATOR_VIZ_TRANSCODE_WORKERS` | 2 | 同时转码的路数 |
 | `CURATOR_VIZ_CLIENT_DECODE` | `1` | mcap 的 H.264 / H.265 相机另出样本包，浏览器用 WebCodecs 自己解码，转封装改为按需（设计 19 §3）；`0` 回到扫描时就转封装 |
+| `CURATOR_VIZ_SEGMENT` | `0` | `1`：LeRobot v3 / Lance 的相机由 Daemon 出这条 episode 的切片（`access: remux`，`.mp4?segment=1`），`moov` 在尾的单条 mp4 出 `moov` 在头的版本（设计 21 §4.3–§4.4）；`0` 照旧由浏览器直接读。转码不管开关如何都以切片为输入（TOS 上不再整块下载分块文件） |
 | `CURATOR_VIZ_LANCE_S3_ENDPOINT` | 空 | 读 TOS 上 Lance 表走的 S3 兼容端点；空 = 按地区用 `tos-s3-<地区>`（内网部署用 ivolces），测试或代理时改。TOS 的端点按虚拟主机风格用，桶名由 Daemon 补进主机名（`<桶>.tos-s3-<地区>…`），这里不用写桶 |
 
 ## 手动验证步骤
@@ -208,6 +210,12 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, from_ts, to_ts}'` 是 `transcode`、`0`、`2.4`（这条 24 帧）；等 `.mp4` 转好（202 期间带进度）后
     解出 24 帧，第一帧白竖线在 x = 26（共用文件里第 30 帧的位置），即这条 episode 的第一帧。原样的 `viz_v3` 第 2 条的 `transcode_url` 同理从这条的第一帧开始。
     删掉 `viz_v3_mpeg4` 的登记后，缓存目录 `transcode/` 下它的产物目录随之消失。
+
+22. **切片（设计 21 §4，F15.3）**：用 `CURATOR_VIZ_SEGMENT=1` 重启 Daemon。`viz_v3` 第 1 条：
+    `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, url, from_ts, to_ts}'` 是 `remux`、`…/top.mp4?segment=1`、`from_ts` 为这条在切片里的起点（0.1 左右，切片从它前面最近的关键帧起）、
+    `to_ts − from_ts = 2.4`；`curl -s -o /tmp/s.mp4 "$B/datasets/$D/episodes/1/cameras/top.mp4?segment=1"` 后用 PyAV 解出约 25 帧，`from_ts` 处那帧白竖线在 x = 26；
+    `python3 -c "import struct;d=open('/tmp/s.mp4','rb').read(64);print(d[4:8], d[struct.unpack('>I',d[:4])[0]+4:][:4])"` 打出 `b'ftyp' b'moov'`（索引在前）。
+    `viz_v2` 的 `front`（PyAV 写的 mp4，`moov` 在尾）也是 `remux`、`from_ts` 为空，取回的文件 `moov` 在前、帧数不变。缓存目录里多了 `segment/`。不设开关时这两路照旧 `local`，`?segment=1` 回 404 `segment_disabled`。
 
 ## 自动化测试
 

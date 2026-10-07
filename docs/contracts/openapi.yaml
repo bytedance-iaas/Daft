@@ -88,7 +88,9 @@ info:
     always starts at the episode's start (it used to be placed at the shared file's time, so such a camera
     showed the wrong moment). The visualizer's field tree (`field_tree` of `GET /datasets/{id}/viz`) names
     every node and attribute in the dataset's own metadata: a feature's `info.json` entry key by key, an
-    mcap topic's channel, schema and statistics fields.
+    mcap topic's channel, schema and statistics fields. The camera route takes `segment=true`: a LeRobot v3
+    or Lance episode's own slice of the file it shares with other episodes, or a copy of a single-episode
+    mp4 with its index in front; the episode answer asks for it when the deployment turns it on.
   x-description-zh: |
     ## 概览
 
@@ -141,7 +143,8 @@ info:
 
     **2.7.0**（2026-10-06）：episode 的相机列表里，`from_ts` / `to_ts` 指 `url` 所给媒体里的时间：一个文件装多条 episode 时，经平台转码的相机从 0 开始，
     `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。可视化的字段树（`GET /datasets/{id}/viz` 的 `field_tree`）
-    的节点名与属性一律是数据集元数据的原文：特征在 `info.json` 里的条目逐键列出，mcap 的 topic 列出 channel、schema 与统计的字段。
+    的节点名与属性一律是数据集元数据的原文：特征在 `info.json` 里的条目逐键列出，mcap 的 topic 列出 channel、schema 与统计的字段。相机接口新增 `segment=true`：
+    LeRobot v3 或 Lance 的一条 episode 从它与别的 episode 共用的文件里切出的那一段，或把索引挪到文件开头的单条 mp4；部署打开这项时，episode 记录里的地址就带着它。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -992,9 +995,10 @@ paths:
     get:
       tags: [viz]
       operationId: getDatasetCameraVideo
-      summary: A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range
+      summary: A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux, an episode's slice (2.7.0) or an H.264 transcode - with Range
       parameters:
         - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/VizSegment"
         - $ref: "#/components/parameters/RangeHeader"
       responses:
         "200":
@@ -2711,6 +2715,7 @@ paths:
         memory as before 2.4.0.
       parameters:
         - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/VizSegment"
         - $ref: "#/components/parameters/RangeHeader"
       responses:
         "200":
@@ -3138,6 +3143,16 @@ components:
       in: header
       description: one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`)
       schema: {type: string}
+    VizSegment:
+      name: segment
+      in: query
+      description: >-
+        true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding;
+        its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a
+        single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's
+        url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason
+        segment_disabled when it is off, not_segmented when the camera is read as it is
+      schema: {type: boolean, default: false}
     VizTranscode:
       name: transcode
       in: query
@@ -4972,7 +4987,8 @@ components:
       description: |
         How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
         public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
-        Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+        Daemon rewraps the stream into mp4 without re-encoding (an mcap camera, or with CURATOR_VIZ_SEGMENT
+        a LeRobot v3 / Lance episode's slice and a moov-at-end file put in front, 2.7.0); frames: a JPEG frame pack
         drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
         player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
         blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.

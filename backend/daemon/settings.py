@@ -22,6 +22,7 @@
 | ``CURATOR_VIZ_CACHE_GB`` | 20 | its size; the least recently used products go first |
 | ``CURATOR_VIZ_TRANSCODE_WORKERS`` | 2 | transcodes at once (outside the checks' CPU pool) |
 | ``CURATOR_VIZ_CLIENT_DECODE`` | ``1`` | mcap H.264 / H.265 cameras also as sample packs the browser decodes itself (WebCodecs), remuxed only when asked (design doc 19 §3); ``0`` remuxes every one up front as before |
+| ``CURATOR_VIZ_SEGMENT`` | ``0`` | ``1``: LeRobot v3 / Lance cameras (an mp4 holding several episodes) are served by the Daemon as each episode's slice, and a single-episode mp4 whose ``moov`` sits at its end as a copy with it in front (design doc 21 §4.3-§4.4); ``0`` leaves them to the browser as before |
 | ``CURATOR_VIZ_LANCE_S3_ENDPOINT`` | empty | the S3-compatible endpoint the visualizer reads Lance tables on TOS through; empty = TOS's own ``tos-s3-<region>`` for the region (design doc 19 §4.3) |
 """
 from __future__ import annotations
@@ -120,6 +121,7 @@ class Settings:
     viz_cache_gb: float = 20.0
     viz_transcode_workers: int = 2
     viz_client_decode: bool = True
+    viz_segment: bool = False
     viz_lance_s3_endpoint: str | None = None
 
     def __post_init__(self) -> None:
@@ -178,6 +180,9 @@ class Settings:
         client_decode = get("CURATOR_VIZ_CLIENT_DECODE", "1").lower()
         if client_decode not in ("1", "0", "true", "false", "yes", "no", "on", "off"):
             raise ConfigError("CURATOR_VIZ_CLIENT_DECODE 只能是 1 或 0")
+        segment = get("CURATOR_VIZ_SEGMENT", "0").lower()
+        if segment not in ("1", "0", "true", "false", "yes", "no", "on", "off"):
+            raise ConfigError("CURATOR_VIZ_SEGMENT 只能是 1 或 0")
         lance_s3 = get("CURATOR_VIZ_LANCE_S3_ENDPOINT").strip().rstrip("/") or None
         if lance_s3 is not None and not re.match(r"^https?://[^/\s@]+$", lance_s3):
             raise ConfigError("CURATOR_VIZ_LANCE_S3_ENDPOINT 只写协议和域名（端口可带），形如 https://tos-s3-cn-beijing.ivolces.com")
@@ -207,5 +212,6 @@ class Settings:
             viz_cache_gb=viz_cache_gb,
             viz_transcode_workers=viz_workers,
             viz_client_decode=client_decode in ("1", "true", "yes", "on"),
+            viz_segment=segment in ("1", "true", "yes", "on"),
             viz_lance_s3_endpoint=lance_s3,
         )
