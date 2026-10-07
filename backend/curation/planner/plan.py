@@ -15,7 +15,6 @@ takes the whole selection, a stage without modules is left out:
                 dedup      exact duplicates (full set)          cpu, concurrency always 1
     vlm block   autolabel  captions for episodes without a task text
                 vlm        the VLM checks                       vlm gates, merge proposal
-                profile    the skill profile (full set)         vlm gates
     final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
 A full-set stage (``full_set``) needs the whole selection at once and starts when the

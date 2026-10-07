@@ -12,9 +12,9 @@ episode, so an episode needs a judgement of every selected module (:func:`expect
 
 **Funnel phase** - the machine's verdicts of the per-episode modules (``verdicts.jsonl``, 2.0 lines) and
 ``keep.txt``, the episodes kept after the applied human decisions (a funnel run's input of dedup and
-skill_profile; the Daemon's two-block runs go straight to the final phase).
+dedup; the Daemon's two-block runs go straight to the final phase).
 
-**Final phase** - adds dedup, skill_profile and the applied human decisions (:mod:`.adjudication`):
+**Final phase** - adds dedup and the applied human decisions (:mod:`.adjudication`):
 a discard wins over everything; a person's answer is the conclusion of the findings it answers; an appeal
 lifts the blocking of appealable findings when every blocking finding of the episode is one (D42 by
 finding); a relabel not judged again yet holds the episode. Dedup reports its groups; here, after the human
@@ -42,7 +42,7 @@ from .verdicts import Graded, Verdict, also_failed, judge, name_of
 
 #: the stages whose modules judge one episode at a time (the full-set stages, dedup and profile, judge them all)
 EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: the full-set modules (dedup, skill_profile): one run over the whole selection (a funnel run's: over its kept episodes)
+#: the full-set modules (dedup): one run over the whole selection (a funnel run's: over its kept episodes)
 FULL_SET = tuple(m.id for m in registry.MODULES if m.stage in registry.FULL_SET_STAGES)
 NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
 DEDUP = "dedup"
@@ -427,7 +427,7 @@ def write_final(rev_dir: str, result: dict) -> dict:
 
 
 def profile_members(state: RunState, decisions: Decisions) -> tuple[list[int], set[int]]:
-    """(the episodes of ``state`` skill_profile files, the ones a person restored): dedup's duplicates
+    """(the episodes a person restored): dedup's duplicates
     (the members a group does not keep) are left out, except one a person brought into the delivery."""
     decided = decide_all(state, decisions)
     restored = {e for e, d in decided.items() if d.restored}

@@ -183,13 +183,6 @@ def _summary(rev: Revision, m: str) -> dict:
         groups = _read(os.path.join(module_dir(rev.run_dir, "dedup"), "groups.json"), {}) or {}
         out["collision_groups"] = len(groups.get("action_collisions") or [])
         out["removed"] = len(groups.get("dropped") or [])
-    if m == "skill_profile":
-        prof = _read(os.path.join(module_dir(rev.run_dir, "skill_profile"), "profile.json"),
-                     {}) or {}
-        fams = prof.get("families") or {}
-        out["families"] = len([f for f in fams if f != "未归类"])
-        out["subskills"] = sum(len((f.get("subskills") or {})) for f in fams.values())
-        out["undersampled"] = list(prof.get("undersampled") or [])[:20]
     if m == "data_integrity":                               # design doc 14 §5.1
         from ..extensions.integrity import report as integrity_report
 
@@ -275,8 +268,7 @@ def finding_stats(rev: Revision, m: str) -> dict:
     base = module_dir(rev.run_dir, m)
     found, readings = F.dataset_level(
         m, res, rev.module_params(m),
-        integrity=_read(os.path.join(base, "dataset.json"), None) if m == "data_integrity" else None,
-        profile=_read(os.path.join(base, "profile.json"), None) if m == "skill_profile" else None)
+        integrity=_read(os.path.join(base, "dataset.json"), None) if m == "data_integrity" else None)
     out = {"assessed_episodes": n,
            "flagged_episodes": len(set().union(*levels.values())),
            "levels": {lv: len(eps) for lv, eps in levels.items()}, "items": items,
@@ -418,12 +410,6 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
         elif table == "dedup_groups":
             if legacy_verdict(r) == "fail":
                 out.append({**base, "duplicate_of": d.get("duplicate_of")})
-        elif table == "skill_assignment":
-            out.append({**base, "family": str(d.get("family") or ""),
-                        "subskill": str(d.get("subskill") or ""),
-                        "caption": str(d.get("caption") or ""),
-                        "grouping_text": str(d.get("grouping_text") or ""),
-                        "grouping_text_source": str(d.get("grouping_text_source") or "")})
     return out
 
 
@@ -733,12 +719,6 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
         if sec["id"] == "dedup":
             lines.append(f"- 重复组 {sec['summary']['collision_groups']} 组,"
                          f"剔除 {sec['summary']['removed']} 条")
-        if sec["id"] == "skill_profile":
-            lines.append(f"- 技能族 {sec['summary']['families']} 个,"
-                         f"子技能 {sec['summary']['subskills']} 个")
-            dist = sec["summary"].get("delivered_family_distribution")
-            if dist:
-                lines.append("- 交付集的技能族分布:" + "、".join(f"{x['name']} {x['count']}" for x in dist))
         if sec["id"] == "task_success":
             arb = sec["summary"].get("arbitration") or {}
             if arb.get("triggered"):

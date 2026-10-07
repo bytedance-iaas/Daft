@@ -637,11 +637,11 @@ def _quartiles(values: list[float]) -> tuple[float, float]:
 
 
 def dataset_level(module: str, records: dict[int, dict], params: dict | None = None, *,
-                  integrity: dict | None = None, profile: dict | None = None) -> tuple[list[dict], dict]:
+                  integrity: dict | None = None) -> tuple[list[dict], dict]:
     """(dataset-level findings, dataset-level readings) of ``module`` over a task's records (design doc 17
     §1.2: counted once per dataset): the integrity module's own (``integrity``: its ``dataset.json``), the
-    timestamps' duration outliers, the action semantics nobody could settle, the families the skill profile
-    found undersampled (``profile``: its ``profile.json``). Every finding carries ``unit: dataset``."""
+    timestamps' duration outliers, the action semantics nobody could settle. Every finding carries
+    ``unit: dataset``."""
     p = params_of(module, params)
     ok = {e: r for e, r in records.items() if isinstance(r, dict) and r.get("status") == "ok"}
     found: list[dict] = []

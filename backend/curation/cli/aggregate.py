@@ -4,10 +4,10 @@ Pure computation in seconds, recomputed in full every time. The modules' finding
 task's policy (``run.json``'s ``policy``, frozen at start; the default policy when there is none):
 
 * ``--phase funnel``: the funnel modules -> ``verdicts.jsonl`` (the machine's keep / drop / held per
-  episode, 2.0 lines) and ``keep.txt`` (the input of dedup and skill_profile), into
+  episode, 2.0 lines) and ``keep.txt`` (the input of dedup), into
   ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``. ``keep.txt`` follows the
   applied human decisions (``decided_in`` / ``decided_out`` count them);
-* ``--phase final --revision N``: adds dedup, skill_profile and the applied human decisions and writes
+* ``--phase final --revision N``: adds dedup and the applied human decisions and writes
   ``passed`` / ``reject`` / ``held`` (disjoint and complete) and the ``review`` view (C2 2.0) and the
   policy it used (``policy.json``) into ``revisions/r<NNNN>/``. A revision that already has
   ``commit.json`` is never written again.

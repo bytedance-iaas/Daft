@@ -85,14 +85,6 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
             seconds += AGGREGATE_S
         elif sid == "dedup":
             seconds += selected * DEDUP_S_PER_EPISODE
-        elif sid == "profile":
-            for module in stage["modules"]:
-                if module == "skill_profile":
-                    n = max(0, selected - autolabelled) * CAPTIONS_PER_EPISODE
-                    requests += n
-                    seconds += _vlm_seconds(n, gates.get("caption", 1))
-                elif stage["kind"] == "vlm":
-                    uncounted.append(module)
         block = stage.get("block") or "final"
         per_block[block] = per_block.get(block, 0.0) + seconds
     blocks = [t for b, t in per_block.items() if b != "final"]
@@ -103,9 +95,6 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
     if any(s["id"] == "vlm" and "task_success" in s.get("modules", ()) for s in stages):
         notes.append("task_success arbitration and label-guard calls depend on the data "
                      "and are not counted")
-    if any(s["id"] == "profile" and "skill_profile" in s.get("modules", ()) for s in stages):
-        notes.append("skill_profile text calls (taxonomy, label audit) are per dataset "
-                     "and not counted")
     if any(s["id"] == "integrity" for s in stages):
         notes.append("data_integrity: its decode test (decode_test), when on, is not counted - "
                      "about one more decode of every frame")
