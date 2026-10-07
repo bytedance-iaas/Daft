@@ -26,6 +26,7 @@ import io
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from .errors import UsageError
@@ -38,6 +39,8 @@ COMPLETE = "_COMPLETE"
 _HEAD_BYTES = 4096
 _MCAP_MAGIC = b"\x89MCAP0\r\n"
 _POLL_S = 2.0
+#: files read back at the same time: they are small, the round trips are what costs
+_READERS = 8
 _TEXT_EXT = {"md", "txt", "csv", "tsv", "yaml", "yml", "html", "log"}
 
 
@@ -214,10 +217,16 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     total = len(expected)
     ctx.log("info", f"verifying {total} files under {output.uri}")
     results: dict[str, str | None] = {}
-    for n, key in enumerate(sorted(expected), 1):
-        ctx.check_stop("while reading the delivery back")
-        results[key] = check_file(output, listing, expected[key])
-        ctx.progress(STAGE, n, total)
+    pool = ThreadPoolExecutor(max_workers=_READERS, thread_name_prefix="verify")
+    try:
+        futures = {pool.submit(check_file, output, listing, expected[key]): key
+                   for key in sorted(expected)}
+        for n, fut in enumerate(as_completed(futures), 1):
+            ctx.check_stop("while reading the delivery back")
+            results[futures[fut]] = fut.result()
+            ctx.progress(STAGE, n, total)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
     deadline = time.monotonic() + float(args.visibility_timeout)
     waiting = [k for k, r in results.items() if r in ("missing", "not_visible")]

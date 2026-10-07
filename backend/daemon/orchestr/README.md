@@ -72,7 +72,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   终态按 01 篇 §2.5 约束 3 与 D35：没有 `failed` 的模块、`held` 为空才是 `succeeded`。
 - **结果版本**：一次运行写一个新版本 `revisions/rNNNN/`，`commit.json` 最后写；同步并核验通过之后才 CAS 切换 `result_rev`
   并记审计事件（D25），然后按 W5b 的 `refresh_summary` 刷新任务汇总（含 `pending_adjudication`、1.4 的 `skipped`），
-  同一交付目录的同步、核验、`latest` 串行（每个目录一把锁）；`latest` 只在任务成功、核验通过时移动。
+  同一交付目录的同步、核验、`latest` 串行（每个目录一把锁），一次同步里的文件 8 路并行上传；`latest` 只在任务成功、核验通过时移动。
 - **暂停 / 恢复 / 停止**：暂停发 SIGTERM，在途的 episode 做完后退出，任务 `paused`；恢复重新入队，从日志本接着做。
   停止发 SIGINT，10 秒不退就 SIGKILL，整个进程组都不留。有子任务在跑时，这三个动作作用在子任务上。非法迁移一律 409
   `task_state_conflict`，`details.state` 是当前状态。

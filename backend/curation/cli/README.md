@@ -13,7 +13,7 @@
 | `curation aggregate` | `funnel`：每条 keep / drop / held 与 `keep.txt`；`final`：passed / reject / held 三个清单和 review 视图 | `cli/aggregate.schema.json` |
 | `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
 | `curation report` | 一个结果版本的 `report.md` / `report.json` / `perf.json` / 明细表，最后写 `commit.json` | `cli/report-output.schema.json` |
-| `curation verify` | 从交付目录逐个回读关键文件，全部通过才最后写 `_COMPLETE` | `cli/verify.schema.json` |
+| `curation verify` | 从交付目录并行回读每个关键文件，全部通过才最后写 `_COMPLETE` | `cli/verify.schema.json` |
 | `curation task …` | Daemon REST API 的薄客户端，给 Agent 和脚本用，输出带 `links` | `openapi.yaml` 里对应接口的响应，原样打印 |
 
 v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`、`backends`、`public` 和隐藏的 `reprofile`）原样转交给 `legacy.py`（即原来的 `curation/cli.py`，只改了 import 路径），用法和输出都不变。
@@ -221,7 +221,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 **verify**：`curation verify --run-dir <本地运行目录> --output <交付目录下的 run_id 目录> [--visibility-timeout 60] --json`
 
 - 关键文件 = 运行目录里的全部文件（排除 `logs/`、`inflight.json`、隐藏文件和临时文件）：结果版本的清单、报告与明细。
-- 逐个检查：存在（`missing`）、大小一致（`size_mismatch`）、开头不是全零（`zero_filled`）、能解析（`unparseable`：JSON / JSONL 整体解析，parquet 看首尾魔数并解析 footer，mp4 找 `moov`，JPEG / PNG 看魔数）。列举里有但读不到的文件在 `--visibility-timeout` 秒内反复重试，仍读不到记 `not_visible_in_time`。交付目录本身读不了是退出码 3（`output_unreachable`）。
+- 逐个检查（8 路并行回读，文件小、省的是往返）：存在（`missing`）、大小一致（`size_mismatch`）、开头不是全零（`zero_filled`）、能解析（`unparseable`：JSON / JSONL 整体解析，parquet 看首尾魔数并解析 footer，mp4 找 `moov`，JPEG / PNG 看魔数）。列举里有但读不到的文件在 `--visibility-timeout` 秒内反复重试，仍读不到记 `not_visible_in_time`。交付目录本身读不了是退出码 3（`output_unreachable`）。
 - mp4 和 parquet 只按范围读头尾，不下载整个文件。全部通过才最后写 `_COMPLETE`；没通过时如果交付目录里有旧的 `_COMPLETE`，会把它删掉。
 
 **task**：`curation task create --file task.json [--wait]`、`list`、`get`、`wait`、`start|pause|resume|stop`、`retry [--modules a,b]`、`continue`、`report [--rev N]`、`adjudication`
