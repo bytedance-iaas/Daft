@@ -49,6 +49,8 @@ History: 1.x described modules by their funnel gate (``gate``: hard veto, soft s
 or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
 whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel: the task's
 policy grades a module's findings (design doc 17 §4) and the two blocks hand every episode on (§3).
+2.2 binds taxonomy 1.3: the time-length outlier and the undersampled skill family are the platform's own
+dataset-level readings (no item; SET-3 is gone) and motion_quality no longer covers SET-3.
 """
 from __future__ import annotations
 
@@ -56,9 +58,9 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "2.1"
+REGISTRY_VERSION = "2.2"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
-TAXONOMY_VERSION = "1.2"
+TAXONOMY_VERSION = "1.3"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
@@ -360,7 +362,7 @@ def _timestamp_params() -> dict:
         "properties": {
             "duration_outlier_iqr": _line(
                 "时长离群判定线（四分位距倍数）", "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，"
-                "在报告里报「时长离群」（SET-3，数据集级）", 3.0, 1.0, 10.0),
+                "在报告里报「时长离群」（数据集级的读数）", 3.0, 1.0, 10.0),
         }}
 
 
@@ -493,7 +495,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("out_of_order", "STRM-4", "时间戳倒序或重复"),
                _blocking("fragment", "STRM-5", "残段：短于最短时长"),
                _blocking("single_stamp", "STRM-5", "只有一个时间戳"),
-               _info("duration_outlier", "SET-3", "时长离群", scope_kind="dataset")),
+               _info("duration_outlier", None, "时长离群", scope_kind="dataset")),
         param_schema=_timestamp_params(),
         tables=(TableSpec("timestamp_check", "时间戳异常",
                           ("episode_index", "duration_s", "max_dt")),)),
@@ -529,7 +531,6 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("idle_closing", "TASK-1", "结尾空转"),
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
                      scope_kind="dataset")),
-        also_covers=("SET-3",),          # the mean active share, a dataset-level reading (P20)
         param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(
@@ -619,7 +620,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         depends_on=("autolabel",),
         codes=(_review("label_disagreement", "LABEL-5", "标注与画面不符", "label"),
                _info("descriptions_conflict", "LABEL-2", "多份描述彼此不一致", "medium"),
-               _info("undersampled_family", "SET-3", "样本偏少的技能族", scope_kind="dataset")),
+               _info("undersampled_family", None, "样本偏少的技能族", scope_kind="dataset")),
         param_schema=_no_params(),
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),
 )

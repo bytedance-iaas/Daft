@@ -316,7 +316,7 @@ def test_dataset_level_findings():
     recs[10] = _record("timestamp_check", True, None, {**TS_PASS, "duration_s": 95.0})
     found, readings = F.dataset_level("timestamp_check", recs)
     assert [f["code"] for f in found] == ["duration_outlier"] and found[0]["readings"]["episodes"] == [10]
-    assert found[0]["unit"] == "dataset" and found[0]["item"] == "SET-3"
+    assert found[0]["unit"] == "dataset" and found[0]["item"] is None     # the platform's own reading (taxonomy 1.3)
     sem = {"source": "preflight_unknown", "action_space": "unknown", "control_mode": "unknown", "undetermined": True}
     recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
     found, readings = F.dataset_level("motion_quality", recs)
@@ -341,12 +341,12 @@ def test_dataset_level_findings():
 
 
 def test_p20_items_have_fixtures():
-    """P20: the eight items that needed only a mapping (LABEL-2 can only be declared unassessable: datasets
-    keep one description per episode)."""
+    """P20: the items that needed only a mapping (LABEL-2 can only be declared unassessable: datasets
+    keep one description per episode; SET-3, the eighth, went with taxonomy 1.3)."""
     items = set()
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
         items |= {u["item"] for u in rec["unassessable"] if u["item"] == "LABEL-2"}
-    items |= {"SET-3", "ACT-6"}                       # dataset level, test_dataset_level_findings
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "SET-3", "ACT-6"} <= items
+    items |= {"ACT-6"}                                # dataset level, test_dataset_level_findings
+    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "ACT-6"} <= items

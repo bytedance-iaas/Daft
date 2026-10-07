@@ -29,8 +29,6 @@ def test_the_rules():
     assert items["MV-5"]["platform_status"] == "部分"
     assert items["MV-5"]["platform_conditions"] == ["要上传 trajectory.json"]
     assert items["ACT-4"]["platform_conditions"] == ["数据集要有状态量", "机器人型号要在规格库里"]
-    # a reading without a code still covers the item
-    assert items["SET-3"]["platform_status"] == "有读数"
     # nothing covers it: a gap
     assert (items["MV-1"]["platform_status"], items["MV-1"]["platform_codes"]) == ("没有", [])
     # controls are handled, never named by a code; the preflight judges the input format

@@ -1,6 +1,6 @@
 {
  "schema_version": "1.0",
- "source": "docs/design/16-regression-samples.md §3 (2026-09-30); ids are frozen: never reused or renumbered, new items get new ids",
+ "source": "docs/design/16-regression-samples.md §3 (2026-09-30); while sample set v1 is a draft a version may drop items; an id is never reused for another item",
  "dimensions": [
   {
    "id": "FILE",
@@ -781,7 +781,7 @@
    "platform": "没有：平台不读深度流",
    "platform_status": "没有",
    "platform_codes": [],
-   "kind": "reference",
+   "kind": "defect",
    "level": "episode",
    "description": "Depth 空洞、噪声",
    "aliases": {
@@ -791,7 +791,7 @@
     ],
     "pantheon": []
    },
-   "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。本版只记读数（空洞占比），不判对错。",
+   "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。样本集里目前只记了读数（空洞占比），该报的线还没定。",
    "origin_codes": [
     "requirement"
    ]
@@ -1574,55 +1574,6 @@
    ]
   },
   {
-   "id": "TASK-9",
-   "dimension": "TASK",
-   "dimension_name": "任务与步骤",
-   "name": "对照：长时任务",
-   "origin": "—",
-   "samples": "真实：A3（要申请）",
-   "platform": "未测",
-   "platform_status": "能处理",
-   "platform_codes": [],
-   "kind": "control",
-   "level": "episode",
-   "description": "对照：长时任务",
-   "aliases": {
-    "astra6_v1": [],
-    "pantheon": []
-   },
-   "explain_zh": "对照项：本来就很长的任务（几分钟），长本身不是问题，不应该被当成异常。",
-   "origin_codes": [
-    "control"
-   ],
-   "guards": [
-    "TASK-8"
-   ]
-  },
-  {
-   "id": "LABEL-1",
-   "dimension": "LABEL",
-   "dimension_name": "标注与描述",
-   "name": "任务描述的形态",
-   "origin": "文",
-   "samples": "真实：已入库的有 7 种",
-   "platform": "未测",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "phenomenon",
-   "level": "dataset",
-   "description": "任务描述的形态",
-   "aliases": {
-    "astra6_v1": [
-     "—"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "任务描述写成了什么形式：一句话指令、分步说明，还是只有一个类别名。要能识别，本身不一定是问题。",
-   "origin_codes": [
-    "article"
-   ]
-  },
-  {
    "id": "LABEL-2",
    "dimension": "LABEL",
    "dimension_name": "标注与描述",
@@ -1765,58 +1716,6 @@
     "pantheon": []
    },
    "explain_zh": "同一个数据集里有两条其实是同一段录像（字节完全相同，或者只是重新编码过），被重复计入了。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "SET-2",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "对照：跨数据集的同源版本",
-   "origin": "—",
-   "samples": "真实（第二批）",
-   "platform": "未测",
-   "platform_status": "能处理",
-   "platform_codes": [],
-   "kind": "control",
-   "level": "dataset",
-   "description": "对照：跨数据集的同源版本",
-   "aliases": {
-    "astra6_v1": [],
-    "pantheon": []
-   },
-   "explain_zh": "对照项：同一段录像在不同数据集里各有一个版本（发布版和修正版、不同格式或编码的转换），这是合法的，单个数据集内不该报成重复。",
-   "origin_codes": [
-    "control"
-   ],
-   "guards": [
-    "SET-1"
-   ]
-  },
-  {
-   "id": "SET-3",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "任务与技能分布、空转占比、长度离群",
-   "origin": "具",
-   "samples": "真实",
-   "platform": "部分：技能分布（要模型）；活动占比有读数",
-   "platform_status": "有读数",
-   "platform_codes": [
-    "timestamp_check.duration_outlier",
-    "skill_profile.undersampled_family"
-   ],
-   "kind": "reference",
-   "level": "dataset",
-   "description": "任务与技能分布、空转占比、长度离群",
-   "aliases": {
-    "astra6_v1": [
-     "D04"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "整个数据集层面的统计：各任务占比是否失衡、空转时间占多少、有没有长得或短得离谱的条目。",
    "origin_codes": [
     "tools"
    ]
@@ -2154,37 +2053,12 @@
     "subtype": "失误的种类，取 subtypes 里的名字；一条里有几处失误就写几个区间，每个区间一个 subtype",
     "recovered": "这次失误之后操作者是否恢复、接着把这一步做成：true / false / null（看不出）；恢复的时刻写 recovered_at_s"
    }
-  },
-  {
-   "id": "SET-6",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "同源派生（同一原始条目的多个版本）",
-   "origin": "具",
-   "samples": "真实：S4 的标反 / 修正成对；合成注入的派生条目",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "phenomenon",
-   "level": "dataset",
-   "description": "同一原始条目的不同版本（修正、裁剪、注入）同时在集合里；算指标时按 lineage 去重，也是去重模块的正样本",
-   "aliases": {
-    "astra6_v1": [
-     "D02"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "同一段原始录像的多个版本（修正版、裁剪版、注入了故障的版本）同时在集合里；算指标时要按来源去重，别重复计数。",
-   "origin_codes": [
-    "tools"
-   ]
   }
  ],
  "legend": {
   "kind": {
    "defect": "问题：出现就要报",
    "phenomenon": "现象：要检出、要报告，但本身不算问题",
-   "reference": "读数：只记数值或评分，不判对错",
    "control": "对照：合法情形，不该被报"
   },
   "level": {
@@ -2204,9 +2078,9 @@
   "subtypes": "某一项下的细分种类（目前只有 TASK-12）：期望值里写在 value 或区间的 subtype 上，打分仍按检测项计",
   "attributes": "期望值可以带的属性（TASK-12 的 subtype / recovered，LABEL-5 的 relation）：说明是哪一种，不改变该报不该报"
  },
- "taxonomy_version": "1.2",
+ "taxonomy_version": "1.3",
  "rules": [
-  "编号只增不改，不复用；改名不改号",
+  "v1 迭代期间可以删项（删掉的编号不复用）；改名不改号；每版在 changelog 里写明改了什么",
   "同一现象用最具体的一项；有独立证据的不同问题可以多标",
   "「出现」不等于「拒收」：严重度与是否放行分开定义，失败演示可以是有价值的样本",
   "没有依据的正例不进期望值；量出来的规则只写结论明确的那一侧",
@@ -2224,6 +2098,15 @@
   "viewed": "我们看了截帧判的（看了哪几帧写在 readings 里；拿不准的交给人工）"
  },
  "changelog": [
+  {
+   "version": "1.3",
+   "date": "2026-10-07",
+   "why": "需求方：去掉读数这一类，删掉单数据集质检里用不上或不算问题的几项",
+   "changes": [
+    "去掉 kind「reference」（读数）：IMG-9 Depth 空洞、噪声改为 defect（样本仍只有读数，该报的线未定）",
+    "删掉 SET-2（对照：跨数据集的同源版本）、SET-3（任务与技能分布、空转占比、长度离群）、SET-6（同源派生（同一原始条目的多个版本））、LABEL-1（任务描述的形态）、TASK-9（对照：长时任务），共 68 项；删掉的编号不复用"
+   ]
+  },
   {
    "version": "1.2",
    "date": "2026-10-02",

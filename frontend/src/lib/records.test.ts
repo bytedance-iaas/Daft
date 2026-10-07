@@ -33,7 +33,7 @@ describe('records of either format read as 1.0 (design doc 17 §1: what the modu
     expect(recordVerdict(v2('motion_quality', { readings: { score: 0.1 } }), reg)).toBe('scored');   // P18: never a reject
     expect(recordVerdict(v2('visual_quality', { assessed: [] }), reg)).toBe('abstain');
     // only the dataset-level items: nothing of its own per episode was assessed
-    expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-6', 'SET-3'] }), reg)).toBe('abstain');
+    expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-6'] }), reg)).toBe('abstain');
     expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-1', 'ACT-6'] }), reg)).toBe('pass');
     // an item the module rejects on that it could not assess: an abstention, as 1.0's passed=None
     expect(recordVerdict(v2('kinematic_limits', { assessed: ['ACT-3'], unassessable: [{ item: 'ACT-4', reason: 'not_applicable', message_zh: '算不出来' }] }), reg)).toBe('abstain');

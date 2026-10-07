@@ -136,9 +136,12 @@ def test_the_default_policy_reproduces_todays_gates():
 
 
 def test_p20_items_have_codes():
-    """P20: the eight items that needed only a mapping are covered from the first stage on."""
+    """P20: the items that needed only a mapping are covered from the first stage on (SET-3 was the eighth;
+    taxonomy 1.3 dropped it and its readings stay as the platform's own dataset-level findings)."""
     covered = {item for m in M.MODULES for item in m.covers}
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "SET-3", "ACT-6"} <= covered
+    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "ACT-6"} <= covered
+    assert {M.get("timestamp_check").code("duration_outlier").item,
+            M.get("skill_profile").code("undersampled_family").item} == {None}
 
 
 def test_the_eef_module_takes_part_in_the_verdict():

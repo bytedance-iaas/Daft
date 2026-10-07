@@ -1905,7 +1905,7 @@ export interface components {
                      * @description control: a legal case that must not be reported
                      * @enum {unknown}
                      */
-                    kind: "defect" | "phenomenon" | "reference" | "control";
+                    kind: "defect" | "phenomenon" | "control";
                     /** @enum {unknown} */
                     level: "episode" | "dataset";
                 }[];

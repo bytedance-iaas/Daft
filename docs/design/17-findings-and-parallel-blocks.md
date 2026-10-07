@@ -49,7 +49,7 @@
 |---|---|---|
 | P18 | 默认策略 | 今天的硬门判废 → blocking；今天的可疑、弃权、转人工、标注分歧 → review（各自的裁决线）；其余 → info，包括原来软分模块的各子项。这是默认策略与今天唯一不同的一处：软分拒绝消失。看过报告再决定要不要把哪些子项提到 blocking，或者再做加权 |
 | P19 | 区间输出 | 发现的 `frames` / `time_s` 可选；第一阶段只填现成的：完整性的坏位置、时间戳的跳变帧、视觉质量的冻结段、画面缺陷的时间段、任务成败的证据时间段、运动质量的空闲段与卡死段。不另写定位算法 |
-| P20 | 只补映射就有的项 | 第一阶段一并补上：LABEL-3（任务文本来源是自产描述）、IMG-3（信息死亡帧比例）、TASK-1（开头 / 结尾空闲段）、AV-3（同步测不准）、MV-3（各相机滞后不一致）、LABEL-2（多份描述不一致）、SET-3（族分布、活动占比、时长离群）、ACT-6（动作语义预检结论） |
+| P20 | 只补映射就有的项 | 第一阶段一并补上：LABEL-3（任务文本来源是自产描述）、IMG-3（信息死亡帧比例）、TASK-1（开头 / 结尾空闲段）、AV-3（同步测不准）、MV-3（各相机滞后不一致）、LABEL-2（多份描述不一致）、SET-3（族分布、活动占比、时长离群；分类表 1.3 删了 SET-3，这几样照样报，改为不挂检测项的数据集级读数）、ACT-6（动作语义预检结论） |
 
 ### 0.3 现状与改动对照
 
@@ -239,7 +239,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `jitter` | STRM-3 | medium | blocking | `jitter_ratio` |
 | `out_of_order` | STRM-4 | high | blocking | `ts` / `frame` |
 | `fragment`、`single_stamp` | STRM-5 | high | blocking | 短于 `min_duration_s`、只有一个时间戳 |
-| `duration_outlier`（数据集级） | SET-3 | low | info | 时长离群（P20） |
+| `duration_outlier`（数据集级） | —（分类表 1.3 起不挂项） | low | info | 时长离群（P20） |
 
 **运动学极限**
 
@@ -261,7 +261,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `fluency_low` | TASK-8 | low | info | `fluency` |
 | `idle_opening`、`idle_closing` | TASK-1 | low | info | 开头 / 结尾空闲秒数，区间（P20） |
 | `action_semantics_undetermined`（数据集级） | ACT-6 | medium | info | 运行期动作语义预检「无法判断」（P20）；命中 profile 或推断成功只记读数 |
-| `active_ratio`（数据集级读数） | SET-3 | — | 读数 | 活动占比均值（P20） |
+| `active_ratio`（数据集级读数） | —（分类表 1.3 起不挂项） | — | 读数 | 活动占比均值（P20） |
 | 没有状态量 | — | — | unassessable `no_state_columns` | 原「不适用」 |
 
 **视觉质量**（阈值进参数：冻结 0.95、曝光 0.6、清晰度 0.6、信息死亡 0.6）
@@ -326,10 +326,10 @@ A 类算法不动，壳里读 `details` 生成。
 | `label_disagreement` | LABEL-5 | medium（高置信）/ low（复核档） | review（label） | 标注分歧；「看法不稳」降级为 info |
 | `descriptions_conflict` | LABEL-2 | medium | info | 数据集自带多份描述归到不同族（P20）；只有一份时 unassessable `single_description` |
 | `task_text_missing` | LABEL-3 | low | info | 同任务成败（并集） |
-| `undersampled_family`（数据集级） | SET-3 | low | info | 样本偏少的族（P20） |
-| 族分布（数据集级读数） | SET-3 | — | 读数 | `family_tree` |
+| `undersampled_family`（数据集级） | —（分类表 1.3 起不挂项） | low | info | 样本偏少的族（P20） |
+| 族分布（数据集级读数） | —（分类表 1.3 起不挂项） | — | 读数 | `family_tree` |
 
-对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9、TASK-9、SET-2 不是任何细码的 `item`，评估按它们守的项看误报。
+对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9 不是任何细码的 `item`，评估按它们守的项看误报（TASK-9、SET-2 在分类表 1.3 删了）。
 分类表其余没有细码的项是检测缺口，清单在设计 16 §3.10，归 F11.7。
 
 ### 2.3 覆盖声明
@@ -488,7 +488,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.2 报告页
 
-- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 73 项（分类表 1.2），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
+- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 68 项（分类表 1.3），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
 - 模块小节与勾选模块一一对应（需求硬要求，不变）。每个小节：关键数字（评估条数、检出条数、按级别计数）+ 通用图「检出项 → 条数与占比」
   （按级别分色，相机范围的项再按相机分组）+ 有读数的子项分数分布 + 数据集级发现。已有专用视图的模块保留专用图，通用图放在前面。
 - 质检总览的「判废原因分布」改按检测项。

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.7.0
+  version: 2.8.0
   description: |
     ## Overview
 
@@ -100,6 +100,11 @@ info:
     the visualizer's default layout, the cameras' order and names and which ones the layout templates leave
     out (`VizCamera.hidden`), LeRobot and Lance curve groups instead of the automatic ones, the subtitle
     track, the default speed and looping; the presentation model carries the one in effect (`VizDataset.display`).
+
+    **2.8.0** (2026-10-07): the check-item taxonomy is version 1.3. An item's `kind` is one of `defect`,
+    `phenomenon` and `control` (the depth holes and noise item is now a `defect`), and five items are gone:
+    SET-2, SET-3, SET-6, LABEL-1 and TASK-9. The time-length outlier and the undersampled skill family are
+    still reported as dataset-level findings, now without an item.
   x-description-zh: |
     ## 概览
 
@@ -159,6 +164,9 @@ info:
     mcap 数据集的深度 topic（16 位 PNG、ROS compressedDepth、16UC1 / mono16 / 32FC1 原始图）列在字段映射的 `depths` 里（字段映射 1.1），同样能画。
     登记的数据集有一份所有人共用的展示配置（`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`）：可视化的缺省布局、相机的顺序与显示名以及哪几路不进布局模版
     （`VizCamera.hidden`）、LeRobot 与 Lance 取代自动分组的曲线分组、字幕轨、缺省倍速与循环；展示模型带着生效的那一份（`VizDataset.display`）。
+
+    **2.8.0**（2026-10-07）：检测项分类表升到 1.3。检测项的 `kind` 只有 `defect`、`phenomenon`、`control` 三种（深度空洞、噪声一项改为 `defect`），
+    删掉了 SET-2、SET-3、SET-6、LABEL-1、TASK-9 五项。时长离群、样本偏少的技能族仍作为数据集级的发现报出，不再挂检测项。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -2337,12 +2345,12 @@ paths:
                           - {item: STRM-5, count: 1}
                         policy: {preset: default, version: '1'}
                         coverage:
-                          taxonomy_version: '1.2'
+                          taxonomy_version: '1.3'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
-                            ACT-8, AV-1, AV-3, TASK-1, TASK-5, TASK-8, LABEL-2, LABEL-3, LABEL-5, SET-1, SET-3, TASK-12]
+                            ACT-8, AV-1, AV-3, TASK-1, TASK-5, TASK-8, LABEL-2, LABEL-3, LABEL-5, SET-1, TASK-12]
                           not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
                             IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-5, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-6,
-                            TASK-7, LABEL-1, LABEL-4, SET-4, SET-5, STRM-9, IMG-12, IMG-13, IMG-14, TASK-10, TASK-11, SET-6]
+                            TASK-7, LABEL-4, SET-4, SET-5, STRM-9, IMG-12, IMG-13, IMG-14, TASK-10, TASK-11]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:
@@ -2389,7 +2397,7 @@ paths:
                             unassessable: []
                             dataset_findings:
                               - code: duration_outlier
-                                item: SET-3
+                                item: null
                                 severity: low
                                 message_zh: 3 条时长远离全库四分位（ep 6、ep 23、ep 45）
                                 unit: dataset
@@ -3762,7 +3770,7 @@ components:
                   dimension: {type: string}
                   name_zh: {type: string}
                   explain_zh: {type: string}
-                  kind: {enum: [defect, phenomenon, reference, control], description: "control: a legal case that must not be reported"}
+                  kind: {enum: [defect, phenomenon, control], description: "control: a legal case that must not be reported"}
                   level: {enum: [episode, dataset]}
         modules:
           type: array

@@ -1,7 +1,7 @@
 {
  "schema_version": "1.0",
- "version": "1.3",
- "taxonomy_version": "1.2",
+ "version": "1.4",
+ "taxonomy_version": "1.3",
  "platform": "curation v2, module registry (C1) 1.14",
  "about": "How a platform result becomes a check item (taxonomy.json). A rule reads one module's per-episode record (checks/<module>/results.jsonl) and yields the items it reports, with the camera when the record names one. An item a rule can yield is 'mapped'; the modules whose rules yield it decide whether an episode was assessed for it. Thresholds are the platform's own where it has one (visual_quality freezes at 95%, the report calls a camera reading below 0.6 low, the funnel's soft threshold is 0.5).",
  "rules": [
@@ -54,9 +54,7 @@
    "STRM-8": {"not_items": ["STRM-3", "AV-1"], "not_drop": false},
    "IMG-10": {"not_items": ["IMG-1", "IMG-2"], "not_drop": true},
    "IMG-11": {"not_items": ["IMG-2", "IMG-4"], "not_drop": true},
-   "ACT-9": {"not_items": ["ACT-4"], "not_drop": false},
-   "TASK-9": {"not_items": ["TASK-8"], "not_drop": false},
-   "SET-2": {"not_items": ["SET-1"], "not_drop": false}
+   "ACT-9": {"not_items": ["ACT-4"], "not_drop": false}
   }
  },
  "ingestion": {"about": "SET-4 marks an input format the platform should read; a subset counts as handled when its preflight reports the format as supported.", "items": ["SET-4"]}

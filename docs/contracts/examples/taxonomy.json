@@ -7,7 +7,6 @@
    "kinds": {
     "defect": "问题",
     "phenomenon": "现象",
-    "reference": "读数",
     "control": "对照"
    },
    "levels": {
@@ -54,7 +53,6 @@
    "kinds": {
     "defect": "问题",
     "phenomenon": "现象",
-    "reference": "读数",
     "control": "对照"
    },
    "levels": {
@@ -96,7 +94,6 @@
    "kinds": {
     "defect": "问题",
     "phenomenon": "现象",
-    "reference": "读数",
     "control": "对照"
    },
    "levels": {
@@ -144,7 +141,6 @@
    "kinds": {
     "defect": "问题",
     "phenomenon": "现象",
-    "reference": "读数",
     "control": "对照"
    },
    "levels": {
@@ -189,7 +185,6 @@
    "kinds": {
     "defect": "问题",
     "phenomenon": "现象",
-    "reference": "读数",
     "control": "对照"
    },
    "levels": {
@@ -213,6 +208,50 @@
      "name_zh": "文件缺失、0 字节、过小",
      "explain_zh": "该有的文件没有，或者是空的。",
      "kind": "bug",
+     "level": "episode"
+    },
+    {
+     "id": "ACT-9",
+     "dimension": "ACT",
+     "name_zh": "对照：本体不在规格库",
+     "explain_zh": "规格库里没有这个机器人。",
+     "kind": "control",
+     "level": "dataset",
+     "guards": [
+      "ACT-4"
+     ]
+    }
+   ]
+  },
+  {
+   "taxonomy_version": "1.1",
+   "description": "excerpt",
+   "kinds": {
+    "defect": "问题",
+    "phenomenon": "现象",
+    "control": "对照"
+   },
+   "levels": {
+    "episode": "逐条判",
+    "dataset": "对整个子集判"
+   },
+   "dimensions": [
+    {
+     "id": "FILE",
+     "name_zh": "文件与结构"
+    },
+    {
+     "id": "ACT",
+     "name_zh": "动作与本体信号"
+    }
+   ],
+   "items": [
+    {
+     "id": "FILE-1",
+     "dimension": "FILE",
+     "name_zh": "文件缺失、0 字节、过小",
+     "explain_zh": "该有的文件没有，或者是空的。",
+     "kind": "reference",
      "level": "episode"
     },
     {

@@ -1,10 +1,9 @@
 {
- "taxonomy_version": "1.2",
- "description": "C6, the taxonomy of check items (design doc 16 §3, design doc 17 §1.3, D56). Ids are frozen: never reused or renumbered; a new version only adds ids. Findings name the item they belong to (`item`); the module registry (C1) binds one taxonomy_version and declares, per module, the items its finding codes map to and the items it covers. The regression sample set (tools/regression_samples/taxonomy.json) carries the same items plus sample-side notes.",
+ "taxonomy_version": "1.3",
+ "description": "C6, the taxonomy of check items (design doc 16 §3, design doc 17 §1.3, D56). While sample set v1 is a draft a version may drop items (1.3 dropped five and the kind reference); an id is never reused for another item, and every version says in the sample set's changelog what changed. Findings name the item they belong to (`item`); the module registry (C1) binds one taxonomy_version and declares, per module, the items its finding codes map to and the items it covers. The regression sample set (tools/regression_samples/taxonomy.json) carries the same items plus sample-side notes.",
  "kinds": {
   "defect": "问题：出现就要报",
   "phenomenon": "现象：要检出、要报告，但本身不算问题",
-  "reference": "读数：只记数值或评分，不判对错",
   "control": "对照：合法情形，不该被报"
  },
  "levels": {
@@ -270,8 +269,8 @@
    "id": "IMG-9",
    "dimension": "IMG",
    "name_zh": "Depth 空洞、噪声",
-   "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。本版只记读数（空洞占比），不判对错。",
-   "kind": "reference",
+   "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。样本集里目前只记了读数（空洞占比），该报的线还没定。",
+   "kind": "defect",
    "level": "episode"
   },
   {
@@ -502,25 +501,6 @@
    "level": "episode"
   },
   {
-   "id": "TASK-9",
-   "dimension": "TASK",
-   "name_zh": "对照：长时任务",
-   "explain_zh": "对照项：本来就很长的任务（几分钟），长本身不是问题，不应该被当成异常。",
-   "kind": "control",
-   "level": "episode",
-   "guards": [
-    "TASK-8"
-   ]
-  },
-  {
-   "id": "LABEL-1",
-   "dimension": "LABEL",
-   "name_zh": "任务描述的形态",
-   "explain_zh": "任务描述写成了什么形式：一句话指令、分步说明，还是只有一个类别名。要能识别，本身不一定是问题。",
-   "kind": "phenomenon",
-   "level": "dataset"
-  },
-  {
    "id": "LABEL-2",
    "dimension": "LABEL",
    "name_zh": "一条有多份描述，彼此不一致",
@@ -558,25 +538,6 @@
    "name_zh": "同一数据集内的重复条目",
    "explain_zh": "同一个数据集里有两条其实是同一段录像（字节完全相同，或者只是重新编码过），被重复计入了。",
    "kind": "defect",
-   "level": "dataset"
-  },
-  {
-   "id": "SET-2",
-   "dimension": "SET",
-   "name_zh": "对照：跨数据集的同源版本",
-   "explain_zh": "对照项：同一段录像在不同数据集里各有一个版本（发布版和修正版、不同格式或编码的转换），这是合法的，单个数据集内不该报成重复。",
-   "kind": "control",
-   "level": "dataset",
-   "guards": [
-    "SET-1"
-   ]
-  },
-  {
-   "id": "SET-3",
-   "dimension": "SET",
-   "name_zh": "任务与技能分布、空转占比、长度离群",
-   "explain_zh": "整个数据集层面的统计：各任务占比是否失衡、空转时间占多少、有没有长得或短得离谱的条目。",
-   "kind": "reference",
    "level": "dataset"
   },
   {
@@ -650,14 +611,6 @@
    "explain_zh": "抓空、掉东西、碰倒、放偏、反复尝试等操作失误。它本身不算数据坏了（失败示范也有用），是要检出并标出位置的现象。例：G1 数据集逐帧标出的碰撞、滑落、抓空、放偏、朝向不对。",
    "kind": "phenomenon",
    "level": "episode"
-  },
-  {
-   "id": "SET-6",
-   "dimension": "SET",
-   "name_zh": "同源派生（同一原始条目的多个版本）",
-   "explain_zh": "同一段原始录像的多个版本（修正版、裁剪版、注入了故障的版本）同时在集合里；算指标时要按来源去重，别重复计数。",
-   "kind": "phenomenon",
-   "level": "dataset"
   }
  ]
 }

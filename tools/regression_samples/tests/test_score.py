@@ -464,10 +464,10 @@ def test_several_modules_on_one_item_count_as_their_union_and_each_on_its_own(tm
 
 
 def test_a_dataset_level_finding_of_the_report_counts_once_per_subset(tmp_path):
-    exp = expectation(*[episode(i, problems=["SET-3"]) for i in range(3)])
-    recs = [record2(i, "timestamp_check") for i in range(3)]
-    row = score2(tmp_path, exp, recs, dataset_findings={"timestamp_check": [
-        {"code": "duration_outlier", "item": "SET-3", "severity": "low", "message_zh": "时长离群", "unit": "dataset"}]})["items"]["SET-3"]
+    exp = expectation(*[episode(i, problems=["FILE-8"]) for i in range(3)])
+    recs = [record2(i, "data_integrity") for i in range(3)]
+    row = score2(tmp_path, exp, recs, dataset_findings={"data_integrity": [
+        {"code": "metadata_invalid", "item": "FILE-8", "severity": "high", "message_zh": "帧率与时间戳不符", "unit": "dataset"}]})["items"]["FILE-8"]
     assert (row["present"], row["tp"], row["fn"]) == (1, 1, 0) and row["unit"] == "subset"
 
 
