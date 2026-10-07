@@ -169,6 +169,17 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
     }
 
 
+def single_pass(cfg: dict | None) -> bool:
+    """``checks.task_success.vlm.single_pass`` (default off): one request judges the episode and
+    every camera, instead of one request plus one per camera plus a conditional arbitration.
+
+    A switch rather than a replacement because the two protocols must be able to run over the same
+    episodes to be compared: what the second and third requests are worth has never been measured.
+    """
+    vlm = ((cfg or {}).get("checks") or {}).get("task_success") or {}
+    return bool((vlm.get("vlm") or {}).get("single_pass", False))
+
+
 def build_endstate_voter(cfg: dict, gates: dict | None = None):
     """The per-camera review voter of the VLM stage (hedging gate = structural concurrency).
 
@@ -708,7 +719,8 @@ def task_check_episode(cfg: dict, registry, deps: TaskDeps, video, task_desc, ta
 
         return result_to_struct(judge_video_episode(
             cfg, video, task_desc, deps.vlm_completion, deps.cam_voter, deps.arb_deps,
-            task_src=str(task_src), hints=str(semantics_extras or "")))
+            task_src=str(task_src), hints=str(semantics_extras or ""),
+            single_pass=single_pass(cfg)))
 
     pcfg = cfg.get("pipeline", {})
     interval = pcfg.get("frame_sample_interval_s", 0.5)
@@ -993,8 +1005,9 @@ def _run_funnel_legacy(df, cfg, registry, vlm_completion, cache_key=None):
     # ---------- 第三段:VLM 任务成败(只跑幸存者) ----------
     if enabled(cfg, "task_success") and vlm_completion is not None:
         _pk_vlm = _progress_init("vlm", stats["survivors_for_vlm"], "VLM 任务成败判定")
+        one_pass = single_pass(cfg)      # 单次判决:不建复核器,也不建仲裁链
         try:
-            cam_voter = build_endstate_voter(cfg)
+            cam_voter = None if one_pass else build_endstate_voter(cfg)
         except Exception as _e:  # noqa: BLE001
             cam_voter = None
             # 不静默:构造失败=配置问题(它不做网络IO,只拼URL/闭包)。若无此提示,
@@ -1002,7 +1015,7 @@ def _run_funnel_legacy(df, cfg, registry, vlm_completion, cache_key=None):
             print(f"[curation] ⚠️ 复核投票器不可用({type(_e).__name__}:{_e}),"
                   "task_success 将仅凭打分层单判据判定(失败候选降弃权)", flush=True)
         try:
-            arb_deps = build_arbitration_deps(cfg)
+            arb_deps = None if one_pass else build_arbitration_deps(cfg)
         except Exception as _e:  # noqa: BLE001
             arb_deps = None
             # 同复核投票器:构造失败要出声,否则弃权条目静默维持人工,看不出仲裁没启动

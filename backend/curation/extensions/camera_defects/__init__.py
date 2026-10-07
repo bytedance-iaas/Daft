@@ -29,14 +29,20 @@ LEVEL_ZH = {"none": "无", "minor": "轻微", "severe": "严重", UNKNOWN: "未�
 def struct_from_task(task_struct: dict | None) -> dict:
     """v1-shaped ``{passed, score, detail}`` for one episode, from task_success's struct."""
     detail = _parse_detail(task_struct)
+    # Two protocols put the per-camera answers in two places: the two-pass one under
+    # ``video_reviews`` (one review request per camera), the single-pass one under ``cameras``
+    # (the one request answered for every camera). Both hand this module the same
+    # ``camera_check`` shape, so only where to look differs.
     reviews = detail.get("video_reviews") if isinstance(detail.get("video_reviews"), dict) else None
+    if reviews is None and isinstance(detail.get("cameras"), dict):
+        reviews = detail["cameras"]
     cams = list(detail.get("cams") or (sorted(reviews) if reviews else []))
     per_camera: dict[str, dict] = {}
     for cam in cams:
         review = (reviews or {}).get(cam)
         entry: dict = {"answered": False, "error": None, "problems": []}
         if not isinstance(review, dict):
-            entry["error"] = "这路相机没有复核结果"
+            entry["error"] = "这路相机没有画面缺陷结果"
         elif review.get("error"):
             entry["error"] = str(review["error"])[:300]
         check = review.get("camera_check") if isinstance(review, dict) else None
