@@ -1,8 +1,14 @@
 // The player's grid (design doc 18 §5.1–§5.3, design doc 19 §2): layout templates, the smart rule
 // and cell sizes. Pure functions over the presentation model; the player keeps the cells in its state.
 import type { VizDataset } from '../api/types';
+import type { DepthView } from './vizDepth';
 
-export type CellContent = { kind: 'video'; key: string } | { kind: 'curve'; key: string } | { kind: 'empty' };
+/** What a cell shows: a camera, a curve group, a depth stream with how it is drawn (design doc 21 §5.5), or nothing. */
+export type CellContent =
+  | { kind: 'video'; key: string }
+  | { kind: 'curve'; key: string }
+  | { kind: 'depth'; key: string; view?: DepthView }
+  | { kind: 'empty' };
 
 export type LayoutTemplate = 'smart' | 'video' | 'curve' | 'custom';
 
@@ -145,7 +151,8 @@ export function resizeCells(cells: readonly CellContent[], shape: GridShape): Ce
 /** Whether a cell still names something the model has (after the model changed). */
 export function cellValid(cell: CellContent, model: Pick<VizDataset, 'cameras' | 'streams'>): boolean {
   if (cell.kind === 'video') return model.cameras.some((c) => c.key === cell.key);
-  if (cell.kind === 'curve') return model.streams.some((s) => s.key === cell.key);
+  if (cell.kind === 'curve') return model.streams.some((s) => s.key === cell.key && s.kind === 'series');
+  if (cell.kind === 'depth') return model.streams.some((s) => s.key === cell.key && s.kind === 'depth' && s.available);
   return true;
 }
 

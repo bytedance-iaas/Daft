@@ -149,6 +149,25 @@ async def get_dataset_camera_frame_index(request: Request, dataset_id: str, inde
     return await in_thread(lambda: svc.camera_frame_index(svc.dataset_source(dataset_id, owner), index, camera))
 
 
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/streams/{stream}.frames")
+async def get_dataset_stream_frames(request: Request, dataset_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frames(svc.dataset_source(dataset_id, owner), index, stream,
+                                                     request.headers))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/streams/{stream}.json")
+async def get_dataset_stream_frame_index(request: Request, dataset_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frame_index(svc.dataset_source(dataset_id, owner), index, stream))
+
+
 @router.get("/datasets/{dataset_id:ds_id}/mapping")
 async def get_dataset_mapping(request: Request, dataset_id: str):
     rt, owner = runtime(request), principal(request).owner_id
@@ -298,6 +317,24 @@ async def get_task_camera_frame_index(request: Request, task_id: str, index: int
     _index(index)
     _camera(camera)
     return await in_thread(lambda: svc.camera_frame_index(svc.task_source(task_id, owner), index, camera))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/streams/{stream}.frames")
+async def get_task_stream_frames(request: Request, task_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frames(svc.task_source(task_id, owner), index, stream, request.headers))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/streams/{stream}.json")
+async def get_task_stream_frame_index(request: Request, task_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frame_index(svc.task_source(task_id, owner), index, stream))
 
 
 @router.get("/tasks/{task_id}/episodes/{index}/series")

@@ -386,7 +386,7 @@ class McapReader:
         return {"duration_s": round(float(doc["duration_s"]), 3), "frames": len(doc["frame_times"]), "fps": None,
                 "task": task, "timeline": {"kind": "timestamp", "fps": None, "frame_reference": doc.get("frame_reference"),
                                            "frame_times": doc["frame_times"]},
-                "cameras": cameras, "annotations": ann, "warnings": doc.get("warnings") or [],
+                "cameras": cameras, "streams": [], "annotations": ann, "warnings": doc.get("warnings") or [],
                 "check_clock": doc["check_clock"] if src.scope == "task" else None}
 
     # ------------------------------------------------------------ curves

@@ -1,9 +1,10 @@
 import { Button, Select } from '@arco-design/web-react';
-import { IconClose, IconExpand, IconInfoCircle, IconPlus, IconShrink, IconSwap } from '@arco-design/web-react/icon';
+import { IconClose, IconExpand, IconInfoCircle, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VizDataset, VizEpisode } from '../../api/types';
+import type { VizCamera, VizDataset, VizEpisode, VizEpisodeCamera, VizStream } from '../../api/types';
 import { CAMERA_PALETTE } from '../../lib/vizCurves';
+import { DEFAULT_DEPTH_VIEW, overlayFits } from '../../lib/vizDepth';
 import {
   cellHeight,
   cellValid,
@@ -25,6 +26,7 @@ import { fmtClock, frameAt, frameCount, segmentAt, stepFrom } from '../../lib/vi
 import { zh } from '../../locales/zh';
 import { CellMenu } from './CellMenu';
 import { CurveCell, type Band } from './cells/CurveCell';
+import { DepthCell, DepthSettings } from './cells/DepthCell';
 import { FramesCell } from './cells/FramesCell';
 import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
@@ -193,6 +195,8 @@ function PlayerView({
   const [focus, setFocus] = useState<number | null>(null);
   const [sideOpen, setSideOpen] = useState(sidebar);
   const [menu, setMenu] = useState<{ i: number; left: number; top: number } | null>(null);
+  // the depth cell whose settings are open, and where (design doc 21 §5.5): beside the grid, not in the cell
+  const [settings, setSettings] = useState<{ i: number; left: number; top: number } | null>(null);
   // the templates only tell a few widths apart: the grid is laid out again when the width crosses one
   const wclass = widthClass(gridW || 1200);
   useEffect(() => {
@@ -308,6 +312,21 @@ function PlayerView({
   };
 
   const cameraColor = (key: string) => CAMERA_PALETTE[Math.max(0, model.cameras.findIndex((c) => c.key === key)) % CAMERA_PALETTE.length];
+  // a camera as its cell shows it (frame pack, the browser's decoder, or <video>); also under a depth picture
+  const cameraView = (cam: VizCamera, e: VizEpisodeCamera) => {
+    const decodes = !!e.samples_url && !!e.index_url && cam.kind === 'video';
+    if (cam.kind === 'frames' || e.access === 'frames') return <FramesCell cam={cam} ep={e} clock={clock} />;
+    if (decodes) return <SamplesCell cam={cam} ep={e} clock={clock} onMode={onDecodeMode} onBusy={onBusy} />;
+    return <VideoCell cam={cam} ep={e} clock={clock} onBusy={onBusy} />;
+  };
+  // why a depth stream cannot be drawn over its camera, or null when it can
+  const overlayWhyNot = (stream: VizStream): string | null => {
+    const key = stream.depth?.pair_camera ?? null;
+    const cam = key ? model.cameras.find((x) => x.key === key) : undefined;
+    const e = key ? ep.cameras.find((x) => x.key === key) : undefined;
+    if (!cam || !e || e.access === 'unsupported') return zh.viz.depth.noPair;
+    return overlayFits(stream.depth ?? { width: null, height: null }, cam) ? null : zh.viz.depth.aspect;
+  };
   const rowH = cellHeight(gridW || 1200, max !== null ? 1 : shape.cols);
   const narrow = max === null && cellWidth(gridW || 1200, shape.cols) < NARROW_CELL_PX;
   const overflow = template !== 'custom' ? (layout?.overflow ?? 0) : 0;
@@ -403,6 +422,26 @@ function PlayerView({
               const tools =
                 c.kind === 'empty' ? null : (
                   <div className="vz-tools">
+                    {c.kind === 'depth' ? (
+                      <button
+                        type="button"
+                        title={zh.viz.depth.settingsTitle}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocus(i);
+                          if (settings?.i === i) {
+                            setSettings(null);
+                            return;
+                          }
+                          const w = wrap.current?.getBoundingClientRect();
+                          const r = (e.currentTarget.closest('.vz-cell') as HTMLElement).getBoundingClientRect();
+                          if (w) setSettings({ i, left: Math.max(0, Math.min(r.right - w.left - 268, w.width - 272)), top: r.top - w.top + 36 });
+                        }}
+                      >
+                        <IconSettings />
+                        <span className="t">{zh.viz.depth.settings}</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       title={zh.viz.cell.swapTitle}
@@ -446,17 +485,10 @@ function PlayerView({
                 const cam = model.cameras.find((x) => x.key === c.key);
                 const e = ep.cameras.find((x) => x.key === c.key);
                 if (!cam || !e) return <div key={i} className={cls} />;
-                const decodes = !!e.samples_url && !!e.index_url && cam.kind === 'video';
                 const transcoded = cam.transcoded || e.transcoded || (e.access !== 'frames' && !!e.transcode_url && !clientKeys.has(cam.key) && !canDecode(cam.codec_string));
                 return (
                   <div key={i} className={cls} onPointerDown={() => setFocus(i)} data-testid={`vz-cell-${i}`}>
-                    {cam.kind === 'frames' || e.access === 'frames' ? (
-                      <FramesCell cam={cam} ep={e} clock={clock} />
-                    ) : decodes ? (
-                      <SamplesCell cam={cam} ep={e} clock={clock} onMode={onDecodeMode} onBusy={onBusy} />
-                    ) : (
-                      <VideoCell cam={cam} ep={e} clock={clock} onBusy={onBusy} />
-                    )}
+                    {cameraView(cam, e)}
                     <span className="vz-cap">
                       <i className="dot" style={{ color: cameraColor(cam.key) }} />
                       {cam.name}
@@ -465,6 +497,31 @@ function PlayerView({
                           {zh.viz.video.transcodeTag}
                         </span>
                       ) : null}
+                    </span>
+                    <Stamp clock={clock} tl={tl} />
+                    {tools}
+                  </div>
+                );
+              }
+              if (c.kind === 'depth') {
+                const stream = model.streams.find((x) => x.key === c.key && x.kind === 'depth');
+                const e = (ep.streams ?? []).find((x) => x.key === c.key);
+                if (!stream || !e) return <div key={i} className={cls} />;
+                const view = c.view ?? DEFAULT_DEPTH_VIEW;
+                const whyNot = overlayWhyNot(stream);
+                const overlay = view.overlay && !whyNot;
+                const pairKey = stream.depth?.pair_camera ?? null;
+                const pairCam = pairKey ? model.cameras.find((x) => x.key === pairKey) : undefined;
+                const pairEp = pairKey ? ep.cameras.find((x) => x.key === pairKey) : undefined;
+                return (
+                  <div key={i} className={cls} onPointerDown={() => setFocus(i)} data-testid={`vz-cell-${i}`}>
+                    <DepthCell stream={stream} ep={e} clock={clock} view={view} overlay={overlay}>
+                      {overlay && pairCam && pairEp ? cameraView(pairCam, pairEp) : null}
+                    </DepthCell>
+                    <span className="vz-cap" title={stream.name}>
+                      <i className="dot" style={{ color: pairKey ? cameraColor(pairKey) : 'var(--c-text-3)' }} />
+                      {stream.name}
+                      <span className="vz-dp">{zh.viz.depth.tag}</span>
                     </span>
                     <Stamp clock={clock} tl={tl} />
                     {tools}
@@ -508,6 +565,28 @@ function PlayerView({
               {zh.viz.overflow(overflow)}
             </div>
           ) : null}
+          {settings && cells[settings.i]?.kind === 'depth'
+            ? (() => {
+                const c = cells[settings.i] as Extract<CellContent, { kind: 'depth' }>;
+                const stream = model.streams.find((x) => x.key === c.key && x.kind === 'depth');
+                const e = (ep.streams ?? []).find((x) => x.key === c.key);
+                if (!stream || !e) return null;
+                return (
+                  <DepthSettings
+                    at={{ left: settings.left, top: settings.top }}
+                    view={c.view ?? DEFAULT_DEPTH_VIEW}
+                    indexUrl={e.url ? e.index_url : null}
+                    overlayWhyNot={overlayWhyNot(stream)}
+                    onChange={(v) => {
+                      const next = [...cells];
+                      next[settings.i] = { kind: 'depth', key: c.key, view: v };
+                      setCustom(next);
+                    }}
+                    onClose={() => setSettings(null)}
+                  />
+                );
+              })()
+            : null}
           {menu ? (
             <CellMenu
               at={{ left: menu.left, top: menu.top }}

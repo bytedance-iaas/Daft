@@ -23,11 +23,14 @@ import numpy as np
 
 from curation.streams.rangefile import RangeFile
 from curation.viz import annotations as A
+from curation.viz import depth as D
 from curation.viz import lerobot_info as L
 from curation.viz.groups import Group, curve_groups
-from curation.viz.series import clock_problem, episode_times, json_values, read_episode_columns, thin, window
+from curation.viz.series import (clock_problem, episode_times, iter_episode_column, json_values, read_episode_columns,
+                                 thin, window)
 
 from ..errors import ApiError
+from . import depth as DEPTH
 from .source import Access, VizSource
 
 #: the widest per-frame numeric column read for curves (a flattened picture is not a curve)
@@ -76,6 +79,7 @@ class LeRobotMeta:
     annotation_columns: list[str]
     episode_fields: set[str]
     made_at: float = field(default_factory=time.monotonic)
+    depth: dict[str, str] = field(default_factory=dict)          # depth stream key -> feature key (design doc 21 §5)
 
 
 def _episode_table(pd, st, key: str):
@@ -167,11 +171,15 @@ class LeRobotReader:
         curve_cols = [c for c in curve_cols if L.width_of((info.get("features") or {}).get(c) or {}) <= MAX_CURVE_WIDTH]
         ann_cols = sorted({c for s in sources for c in s.columns} | {"quality_index"} & set(info.get("features") or {}))
         fps = info.get("fps") if isinstance(info.get("fps"), (int, float)) else None
+        feats = info.get("features") or {}
+        # depth pictures in the data columns (a depth video, video.is_depth_map, plays as a camera)
+        depth = {_slug(d): d for d in L.depth_features(info)
+                 if (feats.get(d) or {}).get("dtype") != "video" and D.depth_shape(feats.get(d) or {})}
         return LeRobotMeta(info=info, version=version, fps=float(fps) if fps else None, episodes=episodes,
                            by_index={e.index: e for e in episodes}, cameras=cameras,
                            camera_features=camera_features, groups=groups, sources=sources,
                            meta_files=meta_files, tasks=tasks, lookups=lookups, curve_columns=curve_cols,
-                           annotation_columns=ann_cols, episode_fields=ep_fields)
+                           annotation_columns=ann_cols, episode_fields=ep_fields, depth=depth)
 
     def _camera(self, src: VizSource, key: str, c: dict) -> dict:
         transcode = bool(c["needs_transcode"])
@@ -278,10 +286,9 @@ class LeRobotReader:
         m = self.meta(src)
         info = m.info
         streams = [g.as_stream() for g in m.groups]
-        for d in L.depth_features(info):
-            streams.append({"key": _slug(d), "kind": "depth", "name": d, "unit": None, "lines": [], "smart": False,
-                            "available": False, "reason": "深度图在第二期渲染（设计 18 §10）", "sources": [d],
-                            "rate_hz": None})
+        feats = info.get("features") or {}
+        for key, d in m.depth.items():
+            streams.append(DEPTH.stream_doc(key, d, feats.get(d) or {}, m.fps, m.camera_features))
         warnings = []
         for s in m.sources:
             if not s.supported:
@@ -311,8 +318,8 @@ class LeRobotReader:
 
         cameras = set(m.camera_features.values())
         cam_nodes = [{**node(c["source"], "camera", camera=c["key"]), "id": f"camera:{c['key']}"} for c in m.cameras]
-        depth = [d for d in L.depth_features(m.info) if d not in cameras]
-        depth_nodes = [node(d, "depth", stream=_slug(d)) for d in depth]
+        depth = [d for d in m.depth.values() if d not in cameras]
+        depth_nodes = [node(d, "depth", stream=key) for key, d in m.depth.items() if d not in cameras]
         group_of: dict[str, str] = {}
         for g in m.groups:
             for source in g.sources:
@@ -442,9 +449,10 @@ class LeRobotReader:
             cameras.append(urls.camera(src, index, c, rel, frm, to))
         ann = self._annotations(src, m, row, data)
         task = {"text": row.task, "source": "原始标注"} if row.task else None
+        streams = [urls.stream(src, index, key, "depth") for key in m.depth]
         return {"duration_s": round(duration, 3), "frames": int(frames), "fps": m.fps, "task": task,
                 "timeline": {"kind": "frame", "fps": m.fps, "frame_reference": None, "frame_times": None},
-                "cameras": cameras, "annotations": ann, "warnings": warnings,
+                "cameras": cameras, "streams": streams, "annotations": ann, "warnings": warnings,
                 "check_clock": {"offset_s": 0.0, "fps": m.fps} if src.scope == "task" else None}
 
     def _camera_place(self, m: LeRobotMeta, row: EpisodeRow, cam: dict) -> tuple[str | None, float | None, float | None]:
@@ -496,6 +504,52 @@ class LeRobotReader:
                 "t": json_values(tt, 4),
                 "lines": [{"name": ln.name, "role": ln.role, "values": json_values(y)} for ln, y in zip(group.lines, ys)],
                 "total_points": int(len(t[sl])), "downsampled": bool(thinned)}
+
+    # ------------------------------------------------------------ depth (design doc 21 §5.3)
+    def depth_batches(self, src: VizSource, m: LeRobotMeta, row: EpisodeRow, feature: str):
+        """The episode's rows of a depth column, a batch at a time (v3: only its row groups)."""
+        if not row.data_key:
+            raise ApiError("not_found", f"episode {row.index} 没有数据文件")
+        access = Access(self.svc.rt, src)
+        with access.storage() as st:
+            size = src.size_of(row.data_key)
+            if size is None:
+                info = st.stat(row.data_key)
+                if info is None:
+                    raise ApiError("not_found", f"数据集里没有 {row.data_key}")
+                size = info.size
+            kw = {"from_index": row.from_index, "to_index": row.to_index,
+                  "episode_index": row.index if m.version == "v3" else None, "batch": DEPTH.BATCH}
+            if st.remote:
+                yield from iter_episode_column(RangeFile(lambda s, n: st.read_range(row.data_key, s, n), size,
+                                                         name=row.data_key), feature, **kw)
+            else:
+                with open(os.path.join(st.root, row.data_key), "rb") as fh:
+                    yield from iter_episode_column(fh, feature, **kw)
+
+    def depth_pack(self, src: VizSource, index: int, key: str):
+        """(job, pack, index file) of a depth stream of an episode: made on the build pool the first time."""
+        from .media import digest
+
+        m, row = self.row(src, index)
+        feature = m.depth.get(key)
+        if feature is None:
+            raise ApiError("not_found", f"没有深度流 {key}", details={"reason": "unknown_stream"})
+        entry = (m.info.get("features") or {}).get(feature) or {}
+        shape, unit = D.depth_shape(entry), D.depth_unit(entry)
+        pack = self.svc.disk.path("depth", digest(src.scope, src.id, src.fingerprint), f"ep{int(index):06d}", f"{key}.frames")
+        doc = pack.with_suffix(".json")
+        if pack.is_file() and not doc.is_file():          # one of the two evicted: make both again
+            pack.unlink(missing_ok=True)
+
+        def build(progress) -> None:
+            times = [float(x) for x in self.frames(src, index)["__t__"]]
+            index_doc = DEPTH.build_pack(pack, key, self.depth_batches(src, m, row, feature), shape, unit, times,
+                                         row.length or len(times), progress)
+            D.write_index(doc, index_doc)
+
+        job = self.svc.builder.ensure(f"depth:{pack}", pack, build, keep=(doc,), message="深度图生成中")
+        return job, pack, doc
 
     # ------------------------------------------------------------ media
     def camera_file(self, src: VizSource, index: int, camera: str) -> tuple[dict, str, float | None, float | None]:

@@ -113,6 +113,38 @@ export function useFrameIndex(url: string | null) {
   });
 }
 
+/** A depth stream's index (design doc 21 §5.3): made by the Daemon the first time, 202 with its progress until then. */
+export type StreamIndex = { state: 'ready'; index: VizFrameIndex } | { state: 'pending'; progress: number | null; message: string } | { state: 'failed'; message: string };
+
+/** How often a pack in the making is asked about again (ms). */
+export const STREAM_POLL_MS = 1500;
+
+export function useStreamIndex(url: string | null) {
+  return useQuery({
+    queryKey: url ? (['viz', 'stream-index', url] as const) : (['viz', 'stream-index', 'none'] as const),
+    queryFn: async ({ signal }): Promise<StreamIndex> => {
+      let res: Response;
+      try {
+        res = await fetch(url as string, { headers: { Accept: 'application/json' }, signal });
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+        return { state: 'failed', message: ApiError.network(cause).message };
+      }
+      const body = await res.json().catch(() => undefined);
+      if (res.status === 202) {
+        const p = (body ?? {}) as Partial<VizMediaPending>;
+        if (p.state === 'failed') return { state: 'failed', message: p.message ?? '' };
+        return { state: 'pending', progress: typeof p.progress === 'number' ? p.progress : null, message: p.message ?? '' };
+      }
+      if (!res.ok) return { state: 'failed', message: ApiError.fromResponse(res.status, body).message };
+      return { state: 'ready', index: body as VizFrameIndex };
+    },
+    enabled: !!url,
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data?.state === 'pending' ? STREAM_POLL_MS : false),
+  });
+}
+
 export type MediaState = { state: 'ready' } | { state: 'pending'; progress: number | null; message: string } | { state: 'failed'; message: string };
 
 /**

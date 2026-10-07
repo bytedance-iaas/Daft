@@ -5,6 +5,7 @@ import type { CellContent } from '../../lib/vizLayout';
 import { fmtClock, frameAt } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
 import type { PlayerClock } from './clock';
+import { useStreamIndex } from './data';
 import { useClockValue } from './useClock';
 
 function Kv({ k, v }: { k: string; v: React.ReactNode }) {
@@ -32,6 +33,30 @@ function SeriesValue({ clock, series, i }: { clock: PlayerClock; series: VizSeri
   const main = v(i.main);
   const action = v(i.action);
   return <span className="val">{[main, action].filter((x) => x !== null).join(' / ')}</span>;
+}
+
+/** A depth cell's info (design doc 21 §5.5): its key, picture, unit and range, the camera it pairs with. */
+function DepthInfo({ stream, ep, model, clock }: { stream: VizStream; ep: VizEpisode; model: { cameras: VizCamera[] }; clock: PlayerClock }) {
+  const e = (ep.streams ?? []).find((x) => x.key === stream.key);
+  const index = useStreamIndex(e?.url ? e.index_url : null);
+  const ready = index.data?.state === 'ready' ? index.data.index : null;
+  const pair = stream.depth?.pair_camera ? model.cameras.find((c) => c.key === stream.depth?.pair_camera) : undefined;
+  return (
+    <>
+      <div className="sec">{zh.viz.side.depthStream}</div>
+      <Kv k={zh.viz.side.key} v={<span className="mono">{stream.sources[0] ?? stream.key}</span>} />
+      <Kv k={zh.viz.side.resolution} v={stream.depth?.width && stream.depth?.height ? `${stream.depth.width} × ${stream.depth.height}` : '—'} />
+      <Kv k={zh.viz.side.unit} v={zh.viz.side.depthUnit(stream.depth?.unit ?? stream.unit ?? 'mm')} />
+      <Kv k={zh.viz.side.depthRange} v={ready?.depth?.lo !== null && ready?.depth?.lo !== undefined ? zh.viz.depth.range(ready.depth.lo, ready.depth.hi ?? ready.depth.lo) : '—'} />
+      <Kv k={zh.viz.side.depthPair} v={pair ? pair.name : zh.viz.side.depthPairNone} />
+      <Kv k={zh.viz.side.frames} v={ready ? ready.count : '—'} />
+      <Kv k={zh.viz.side.access} v={zh.viz.side.depthAccess} />
+      <div className="sec">{zh.viz.side.current}</div>
+      <Now clock={clock} ep={ep} />
+      <div className="sec">{zh.viz.side.note}</div>
+      <div className="note">{zh.viz.side.depthNote}</div>
+    </>
+  );
 }
 
 /**
@@ -69,6 +94,13 @@ export function SidePanel({
   let body: React.ReactNode;
   if (!focused) body = <div className="empty">{zh.viz.side.none}</div>;
   else if (focused.kind === 'empty') body = <div className="empty">{zh.viz.side.empty}</div>;
+  else if (focused.kind === 'depth') {
+    const stream = model.streams.find((x) => x.key === focused.key && x.kind === 'depth');
+    if (stream) {
+      title = zh.viz.side.depthTitle(stream.name);
+      body = <DepthInfo stream={stream} ep={ep} model={model} clock={clock} />;
+    }
+  }
   else if (focused.kind === 'video') {
     const cam = model.cameras.find((c) => c.key === focused.key);
     const e: VizEpisodeCamera | undefined = ep.cameras.find((c) => c.key === focused.key);

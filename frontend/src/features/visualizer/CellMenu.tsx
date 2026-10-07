@@ -1,12 +1,12 @@
-import { IconLineHeight } from '@arco-design/web-react/icon';
+import { IconImage, IconLineHeight } from '@arco-design/web-react/icon';
 import { useEffect, useRef } from 'react';
 import type { VizCamera, VizStream } from '../../api/types';
 import type { CellContent } from '../../lib/vizLayout';
 import { zh } from '../../locales/zh';
 
 /**
- * 「选择 / 更换」 (design doc 18 §5.2): cameras, curve groups, and the streams this phase cannot draw
- * (depth, 3-D ...) greyed out with why. Closes on a pick, Escape or a click outside.
+ * 「选择 / 更换」 (design doc 18 §5.2): cameras, curve groups, depth pictures (design doc 21 §5.5), and the
+ * streams that cannot be drawn (3-D ...) greyed out with why. Closes on a pick, Escape or a click outside.
  */
 export function CellMenu({
   at,
@@ -41,7 +41,8 @@ export function CellMenu({
     };
   }, [onClose]);
   const curves = streams.filter((s) => s.kind === 'series' && s.available);
-  const others = streams.filter((s) => !(s.kind === 'series' && s.available));
+  const depths = streams.filter((s) => s.kind === 'depth' && s.available);
+  const others = streams.filter((s) => !s.available || (s.kind !== 'series' && s.kind !== 'depth'));
   return (
     <div ref={box} className="vz-pop" style={{ left: at.left, top: at.top }} role="menu" data-testid="vz-menu">
       {cameras.length ? <div className="grp">{zh.viz.menu.cameras}</div> : null}
@@ -70,6 +71,20 @@ export function CellMenu({
           <IconLineHeight />
           {s.name}
           <span className="sub">{zh.viz.menu.lines(new Set(s.lines.map((l) => l.name)).size)}</span>
+        </button>
+      ))}
+      {depths.length ? <div className="grp">{zh.viz.menu.depth}</div> : null}
+      {depths.map((s) => (
+        <button
+          key={s.key}
+          type="button"
+          role="menuitem"
+          className={`it${current.kind === 'depth' && current.key === s.key ? ' cur' : ''}`}
+          onClick={() => onPick({ kind: 'depth', key: s.key })}
+        >
+          <IconImage />
+          {s.name}
+          <span className="sub">{zh.viz.menu.size(s.depth?.width ?? null, s.depth?.height ?? null, s.unit)}</span>
         </button>
       ))}
       {others.length ? <div className="grp">{zh.viz.menu.other}</div> : null}

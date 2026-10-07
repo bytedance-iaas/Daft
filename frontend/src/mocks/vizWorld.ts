@@ -200,9 +200,11 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
       sources: ['observation.eef_pose'], rate_hz: null,
       lines: ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].map((n, i) => ({ name: n, role: 'other' as const, source: 'observation.eef_pose', dim: i, unit: null })),
     });
+    // the wrist camera's depth (design doc 21 §5): 16-bit PNG packs, paired with the camera by name
     streams.push({
-      key: 'observation_images_wrist_depth', kind: 'depth', name: 'wrist 深度', unit: 'mm', lines: [], smart: false, available: false,
-      reason: '深度图在第二期渲染（设计 18 §10）', sources: ['observation.images.wrist.depth'], rate_hz: null,
+      key: 'observation_images_wrist_image_left_depth', kind: 'depth', name: 'observation.images.wrist_image_left.depth', unit: 'mm', lines: [],
+      smart: false, available: true, reason: null, sources: ['observation.images.wrist_image_left.depth'], rate_hz: p.fps,
+      depth: { width: DEPTH_W, height: DEPTH_H, unit: 'mm', pair_camera: 'wrist_image_left' },
     });
     sources.push({ key: 'subtask_index', kind: 'segments', name: '子任务', format: 'subtask_index', source: 'subtask_index + meta/subtasks.parquet', supported: true, reason: null, primary: true });
   }
@@ -216,6 +218,10 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
 }
 
 /** The dataset info tree in the dataset's own words (design doc 21 §3, D71): info.json entries and mcap fields. */
+/** The mock depth pictures' size: a camera's aspect ratio (320 × 180 → 64 × 36). */
+export const DEPTH_W = 64;
+export const DEPTH_H = 36;
+
 function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
   if (p.format.kind === 'mcap') {
     return [
@@ -267,7 +273,7 @@ function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
       id: `camera:${c.key}`,
       camera: c.key,
     })) },
-    ...(depth.length ? [{ id: 'depth', name: '深度图', kind: 'group' as const, children: depth.map((s) => feature(s.sources[0] ?? s.key, 'depth', { dtype: 'uint16', shape: [180, 320], names: ['height', 'width'] }, { stream: s.key })) }] : []),
+    ...(depth.length ? [{ id: 'depth', name: '深度图', kind: 'group' as const, children: depth.map((s) => feature(s.sources[0] ?? s.key, 'depth', { dtype: 'uint16', shape: [DEPTH_H, DEPTH_W], names: ['height', 'width'] }, { stream: s.key })) }] : []),
     { id: 'streams', name: '状态与动作', kind: 'group', children: sources.map((src) => {
       const g = shape.streams.find((s) => s.kind === 'series' && s.sources.includes(src)) ?? smart;
       const dims = g ? g.lines.filter((l) => l.source === src).length : 1;
@@ -378,6 +384,8 @@ export interface EpisodeUrls {
   direct: (key: string) => string;
   /** the Daemon's camera route (``.mp4`` / ``.frames`` / ``.json``) */
   daemon: (camera: string, suffix: 'mp4' | 'frames' | 'json', transcode?: boolean) => string;
+  /** the Daemon's depth stream route (``.frames`` / ``.json``, design doc 21 §5) */
+  stream: (key: string, suffix: 'frames' | 'json') => string;
 }
 
 export function vizEpisode(scope: 'dataset' | 'task', id: string, model: VizDataset, index: number, d: DatasetDetail, urls: EpisodeUrls, now: number): VizEpisode {
@@ -427,6 +435,7 @@ export function vizEpisode(scope: 'dataset' | 'task', id: string, model: VizData
       ? { kind: 'timestamp', fps: null, frame_reference: '/action', frame_times: Array.from({ length: frames }, (_, k) => round(k / rate + 0.012, 4)) }
       : { kind: 'frame', fps: rate, frame_reference: null, frame_times: null },
     cameras,
+    streams: model.streams.filter((s) => s.kind === 'depth' && s.available).map((s) => ({ key: s.key, kind: 'depth' as const, url: urls.stream(s.key, 'frames'), index_url: urls.stream(s.key, 'json'), offset_s: 0, reason: null })),
     annotations,
     check_clock: scope === 'task' ? { offset_s: mcap ? 0.012 : 0, fps: rate } : null,
     warnings: [],
@@ -732,5 +741,34 @@ export function checkMappingOf(m: VizMapping): Record<string, unknown> {
     video_prefix: '/observation.images.',
     video_topics: m.cameras.map((c) => c.topic),
     ...(m.base === 'builtin:umi' ? { profile: 'umi_das' } : {}),
+  };
+}
+
+/** A depth picture of the mock world (millimetres): a slope that moves with the frame, a hole top left. */
+export function depthPicture(k: number): { width: number; height: number; data: Uint16Array } {
+  const data = new Uint16Array(DEPTH_W * DEPTH_H);
+  for (let y = 0; y < DEPTH_H; y += 1) {
+    for (let x = 0; x < DEPTH_W; x += 1) data[y * DEPTH_W + x] = y < 4 && x < 6 ? 0 : 500 + 12 * x + 9 * y + ((k * 7) % 300);
+  }
+  return { width: DEPTH_W, height: DEPTH_H, data };
+}
+
+/** A depth pack and its index (design doc 21 §5.2): every frame a 16-bit PNG; 30 distinct pictures, repeated. */
+export async function depthPack(key: string, frames: number, rate: number): Promise<{ index: VizFrameIndex; bytes: Uint8Array }> {
+  const { encodePng16 } = await import('../lib/vizDepth');
+  const distinct = await Promise.all(Array.from({ length: 30 }, (_, k) => encodePng16(depthPicture(k))));
+  const offset: number[] = [];
+  const size: number[] = [];
+  let pos = 0;
+  for (let k = 0; k < frames; k += 1) {
+    offset.push(pos);
+    size.push(distinct[k % 30].length);
+    pos += distinct[k % 30].length;
+  }
+  const bytes = new Uint8Array(pos);
+  for (let k = 0; k < frames; k += 1) bytes.set(distinct[k % 30], offset[k]);
+  return {
+    index: { camera: key, codec: 'png16', width: DEPTH_W, height: DEPTH_H, count: frames, t: Array.from({ length: frames }, (_, k) => round(k / rate, 4)), offset, size, bytes: pos, depth: { unit: 'mm', scale: 1, invalid: 0, lo: 560, hi: 1450 } },
+    bytes,
   };
 }

@@ -14,6 +14,7 @@
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
 | `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
 | `segments.py` | 切片（设计 21 §4）：按 GOP 从共用 mp4 里切出单条 episode（内核 `curation/viz/segment.py`，PyAV 流拷贝，只按区间读 `moov` 与这一条的字节），落在 `segment/<摘要>/ep<N>/`；转码的输入、开关下的切片播放与 `moov` 在头的版本都用它 |
+| `depth.py` | LeRobot / Lance 的深度流（设计 21 §5.3）：一条 episode 的深度列按批读（v3 只读它的行组，Lance 按行窗扫帧表），在几个线程上编成 16 位 PNG，写进 `depth/<摘要>/ep<N>/<流>.frames` 与索引 `.json`（时刻、偏移、大小、2% / 98% 范围）；第一次请求在生成池里做、回 202 带进度。格式层在内核 `curation/viz/depth.py` |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
 | `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
@@ -216,6 +217,13 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `to_ts − from_ts = 2.4`；`curl -s -o /tmp/s.mp4 "$B/datasets/$D/episodes/1/cameras/top.mp4?segment=1"` 后用 PyAV 解出约 25 帧，`from_ts` 处那帧白竖线在 x = 26；
     `python3 -c "import struct;d=open('/tmp/s.mp4','rb').read(64);print(d[4:8], d[struct.unpack('>I',d[:4])[0]+4:][:4])"` 打出 `b'ftyp' b'moov'`（索引在前）。
     `viz_v2` 的 `front`（PyAV 写的 mp4，`moov` 在尾）也是 `remux`、`from_ts` 为空，取回的文件 `moov` 在前、帧数不变。缓存目录里多了 `segment/`。不设开关时这两路照旧 `local`，`?segment=1` 回 404 `segment_disabled`。
+
+23. **深度图（设计 21 §5，F15.4）**：`../.venv/bin/python -c "from tests.viz.fixtures import make_v3_depth; make_v3_depth('$L/inputs/viz_depth')"` 后登记。
+    `curl -s $B/datasets/$D/viz | jq '.streams[] | select(.kind=="depth") | {key, name, depth}'` 有两路：`observation_images_front_depth`（配对 `front`）与
+    `observation_depths_top`（float32 米，没有同名相机，`pair_camera` 为 null）；`curl -s $B/datasets/$D/episodes/1/viz | jq '.streams'` 列出两路的 `.frames` / `.json`。
+    第一次 `curl -si $B/datasets/$D/episodes/1/streams/observation_images_front_depth.json` 是 202（`深度图生成中`，带进度），稍后 200：`codec: png16`、9 帧、`depth.unit: mm`；
+    用索引里第 0 帧的 `offset` / `size` 按 Range 取出那一段存成 `f0.png`，`python3 -c "from PIL import Image;import numpy as np;print(np.asarray(Image.open('f0.png'))[10,20])"`
+    打出 `834`（`500 + 10·20 + 5·10 + 7·12`，与 parquet 第 12 行同一个值）。缓存目录里多了 `depth/`。
 
 ## 自动化测试
 

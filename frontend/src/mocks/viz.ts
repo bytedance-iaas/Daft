@@ -12,6 +12,7 @@ import {
   annotationsInfo,
   BUILTIN_TEMPLATES,
   checkMappingOf,
+  depthPack,
   episodeItems,
   fakeVideo,
   frameIndex,
@@ -85,6 +86,7 @@ function urlsFor(s: Source, index: number) {
     direct: (key: string) => `https://${host}.tos-cn-beijing.volces.com/${prefix}/${key}?X-Tos-Expires=1800&X-Tos-Signature=mock`,
     daemon: (camera: string, suffix: 'mp4' | 'frames' | 'json', transcode = false) =>
       `${apiBaseUrl()}/${scopePath}/episodes/${index}/cameras/${camera}.${suffix}${transcode ? '?transcode=1' : ''}`,
+    stream: (key: string, suffix: 'frames' | 'json') => `${apiBaseUrl()}/${scopePath}/episodes/${index}/streams/${key}.${suffix}`,
   };
 }
 
@@ -149,6 +151,23 @@ function cameraBytes(s: Source, request: Request, index: number, file: string): 
   return ranged(request, fakeVideo(), 'video/mp4');
 }
 
+/** A depth stream's pack (design doc 21 §5.3): the first ask of its index answers 202, as the Daemon does while it makes it. */
+async function streamBytes(s: Source, request: Request, index: number, file: string): Promise<Response> {
+  const m = /^([0-9A-Za-z_-]+)\.(frames|json)$/.exec(file);
+  if (!m) return err(404, 'not_found', `没有 ${file}`);
+  const [, key, suffix] = m;
+  const stream = modelOf(s).streams.find((x) => x.key === key && x.kind === 'depth');
+  if (!stream) return err(404, 'not_found', `没有深度流 ${key}`, { reason: 'unknown_stream' });
+  const job = `${s.scope}:${s.id}:${index}:${key}`;
+  if (!db.vizDepthPacks.has(job)) {
+    db.vizDepthPacks.add(job);
+    return HttpResponse.json({ state: 'pending', progress: 0.5, message: '深度图生成中' }, { status: 202 });
+  }
+  const p = profileOf(s.dataset);
+  const pack = await depthPack(key, framesOf(p, index), p.fps ?? 30);
+  return suffix === 'json' ? HttpResponse.json(pack.index) : ranged(request, pack.bytes, 'application/octet-stream');
+}
+
 // ------------------------------------------------------------------ handlers
 
 function withSource(make: (id: string) => Source | Response, run: (s: Source, request: Request, params: Record<string, unknown>) => Response | Promise<Response>) {
@@ -186,6 +205,11 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
       const index = episodeOf(s, params.index);
       if (index instanceof Response) return index;
       return cameraBytes(s, request, index, String(params.file));
+    })),
+    http.get(`${API}/${prefix}/:id/episodes/:index/streams/:file`, withSource(make, (s, request, params) => {
+      const index = episodeOf(s, params.index);
+      if (index instanceof Response) return index;
+      return streamBytes(s, request, index, String(params.file));
     })),
   ];
 }

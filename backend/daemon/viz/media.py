@@ -144,19 +144,19 @@ class Job:
     future: cf.Future | None = field(default=None, repr=False)
 
 
-class Transcoder:
-    """One H.264 copy per (source fingerprint, episode, camera, window)."""
+class JobPool:
+    """Products made once on a small pool of their own (outside the checks' CPU pool), whoever asks again
+    in the meantime getting the same job: done, running (202 + progress), or failed (said for
+    :data:`FAILED_TTL_S`, then tried again)."""
 
-    def __init__(self, cache: DiskCache, workers: int = 2, *, python: str | None = None,
-                 timeout_s: float = 1800.0):
+    message = "处理中"
+
+    def __init__(self, cache: DiskCache, workers: int, name: str):
         self.cache = cache
         self.workers = max(1, int(workers))
-        self.python = python or sys.executable
-        self.timeout_s = timeout_s
-        self._pool = cf.ThreadPoolExecutor(self.workers, thread_name_prefix="viz-transcode")
+        self._pool = cf.ThreadPoolExecutor(self.workers, thread_name_prefix=name)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
-        self._procs: set[subprocess.Popen] = set()
         self._closed = False
 
     def status(self, key: str, out: pathlib.Path) -> Job | None:
@@ -175,15 +175,10 @@ class Transcoder:
                 self.cache.get(out)                     # recently used
             return job
         if self.cache.get(out) is not None:
-            return Job(key, out, state="done", progress=1.0)
+            return Job(key, out, state="done", progress=1.0, message="完成")
         return None
 
-    def ensure(self, key: str, out: pathlib.Path, prepare: Callable[[], object],
-               start: float | None = None, end: float | None = None,
-               keep: tuple[pathlib.Path, ...] = ()) -> Job:
-        """The job for ``key``: done, running, or started now. ``prepare`` returns the local input
-        file (it may fetch it), on the pool's thread - or ``(file, start, end)`` when the window moved
-        with it (an episode's slice, design doc 21 §4.3)."""
+    def _start(self, key: str, out: pathlib.Path, fn: Callable, *args, message: str | None = None) -> Job:
         job = self.status(key, out)
         if job is not None:
             return job
@@ -191,10 +186,71 @@ class Transcoder:
             job = self._jobs.get(key)
             if job is not None:
                 return job
-            job = Job(key, out, progress=0.0)
+            job = Job(key, out, progress=0.0, message=message or self.message)
             self._jobs[key] = job
-        job.future = self._pool.submit(self._run, job, prepare, start, end, keep)
+        job.future = self._pool.submit(fn, job, *args)
         return job
+
+    def shutdown(self) -> None:
+        self._closed = True
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
+class Builder(JobPool):
+    """Products the Daemon makes in its own process with progress - depth frame packs (design doc 21 §5.3):
+    ``build(progress)`` writes ``out`` (and whatever goes with it) or raises."""
+
+    message = "生成中"
+
+    def __init__(self, cache: DiskCache, workers: int = 2):
+        super().__init__(cache, workers, "viz-build")
+
+    def ensure(self, key: str, out: pathlib.Path, build: Callable[[Callable[[float], None]], None],
+               keep: tuple[pathlib.Path, ...] = (), message: str | None = None) -> Job:
+        return self._start(key, out, self._run, build, keep, message=message)
+
+    def _run(self, job: Job, build: Callable[[Callable[[float], None]], None], keep) -> None:
+        try:
+            if self._closed:
+                raise RuntimeError("Daemon 正在关停")
+
+            def progress(done: float) -> None:
+                job.progress = max(0.0, min(1.0, float(done)))
+
+            build(progress)
+            if not job.out.is_file():
+                raise RuntimeError("没有生成出文件")
+            self.cache.added(job.out, keep)
+            for k in keep:
+                if k.is_file():
+                    self.cache.added(k, (job.out,))
+            job.state, job.progress, job.message = "done", 1.0, "完成"
+        except Exception as exc:  # noqa: BLE001 - the page says why; the next ask after the TTL tries again
+            log.info("viz build %s failed: %s", job.key, exc)
+            job.state, job.message = "failed", f"{job.message}失败：{exc}"[:300]
+        finally:
+            job.finished_at = time.monotonic()
+
+
+class Transcoder(JobPool):
+    """One H.264 copy per (source fingerprint, episode, camera, window)."""
+
+    message = "平台转码中"
+
+    def __init__(self, cache: DiskCache, workers: int = 2, *, python: str | None = None,
+                 timeout_s: float = 1800.0):
+        super().__init__(cache, workers, "viz-transcode")
+        self.python = python or sys.executable
+        self.timeout_s = timeout_s
+        self._procs: set[subprocess.Popen] = set()
+
+    def ensure(self, key: str, out: pathlib.Path, prepare: Callable[[], object],
+               start: float | None = None, end: float | None = None,
+               keep: tuple[pathlib.Path, ...] = ()) -> Job:
+        """The job for ``key``: done, running, or started now. ``prepare`` returns the local input
+        file (it may fetch it), on the pool's thread - or ``(file, start, end)`` when the window moved
+        with it (an episode's slice, design doc 21 §4.3)."""
+        return self._start(key, out, self._run, prepare, start, end, keep)
 
     def _run(self, job: Job, prepare: Callable[[], object], start, end, keep) -> None:
         try:
@@ -258,8 +314,7 @@ class Transcoder:
     def shutdown(self) -> None:
         """Daemon shutdown: queued jobs are dropped, running children killed (their ``.part`` stays
         and is cleared later; the next Daemon makes the copy again when it is asked for)."""
-        self._closed = True
-        self._pool.shutdown(wait=False, cancel_futures=True)
+        super().shutdown()
         with self._lock:
             procs = list(self._procs)
         for proc in procs:

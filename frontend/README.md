@@ -221,6 +221,13 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     「平台转码」那一路的画面与时钟对齐（白竖线随帧右移，第 1 条的第 1 帧在 x = 26），不是共用文件里别的时刻；原样的 `viz_v3` 在控制台里
     `MediaSource.isTypeSupported = () => false; HTMLMediaElement.prototype.canPlayType = () => ''` 后换一条 episode（不要刷新；相机退到 `transcode_url`）同样对齐。「自定义」布局里把同一路相机放进两个格子，播放、拖动、逐帧时两格一起走。
 
+19. **深度图（设计 21 §5，F15.4）**：模拟世界里 droid_100 的 wrist 相机带一路深度（64 × 36）。可视化页选 droid_100，任一格子「更换」→「深度图」组里
+    `observation.images.wrist_image_left.depth`：格子先写「深度图生成中 50%」，一秒多后出伪彩画面（近蓝远红，左上角一小块空洞透明），右下角色标写
+    `560–1450 mm`，鼠标停在画面上顶部显示「(x, y) · N mm」；播放时深度与相机同一条进度条走。格子右上角「设置」：改「灰度」立即变黑白；
+    取消「自动」后近 / 远两个框带着 560、1450，改成 800 / 1000 画面对比变强；开「叠在 RGB 上」后下层出现 wrist 相机，深度按透明度叠在上面，拖滑杆变化。
+    点深度格子开「详细信息」：键名、分辨率、单位「mm，0 为空洞」、本条范围、配对的相机「wrist_image_left」、读取方式「16 位深度帧包（Daemon 生成）」。
+    真 Daemon：按 `backend/daemon/viz/README.md` 第 23 步造 `viz_depth`，同样能看，且画面与 parquet 里的值一致（悬停读数与第 23 步的 Python 打印对得上）。
+
 ## 手动验证：接口文档（真 Daemon）
 
 1. `npm run build`：`dist/` 下有 `api-docs.html`、`openapi.json`、`llms.txt`、`llms-zh.txt`。

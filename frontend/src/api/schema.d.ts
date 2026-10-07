@@ -559,6 +559,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/episodes/{index}/streams/{stream}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The frame pack of a depth stream - one 16-bit greyscale PNG a frame back to back, read by Range with the index; 202 with progress while the Daemon makes it the first time (2.7.0, design doc 21 §5) */
+        get: operations["getDatasetStreamFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/streams/{stream}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0) */
+        get: operations["getDatasetStreamFrameIndex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/datasets/{id}/mapping": {
         parameters: {
             query?: never;
@@ -1360,6 +1406,52 @@ export interface paths {
          *     memory as before 2.4.0.
          */
         get: operations["getTaskCameraVideo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/streams/{stream}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The frame pack of a depth stream of the task's input (as getDatasetStreamFrames) */
+        get: operations["getTaskStreamFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/streams/{stream}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0) */
+        get: operations["getTaskStreamFrameIndex"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2884,12 +2976,35 @@ export interface components {
             lines: components["schemas"]["VizLine"][];
             /** @description placed by the smart layout */
             smart: boolean;
-            /** @description false: listed (field tree, + menu) but not drawable in this phase */
+            /** @description false: listed (field tree, + menu) but not drawable; depth streams are drawable since 2.7.0 */
             available: boolean;
             reason: string | null;
             /** @description feature keys or topics it is read from */
             sources: string[];
             rate_hz?: number | null;
+            /** @description a depth stream's picture (2.7.0, design doc 21 §5) */
+            depth?: null | components["schemas"]["VizDepthStream"];
+        };
+        VizDepthStream: {
+            width: number | null;
+            height: number | null;
+            /** @description the unit of the pack's values: mm */
+            unit: string;
+            /** @description the camera the depth belongs to (by name; the player can draw the depth over it when their aspect ratios agree) */
+            pair_camera: null | components["schemas"]["VizCameraKey"];
+        };
+        /** @description a stream whose pictures an episode reads from its own pack (depth, 2.7.0) */
+        VizEpisodeStream: {
+            key: string;
+            /** @enum {unknown} */
+            kind: "depth";
+            /** @description the frame pack (getDatasetStreamFrames / getTaskStreamFrames); null when unsupported */
+            url: string | null;
+            /** @description its index (VizFrameIndex with codec png16 and depth) */
+            index_url: string | null;
+            /** @description episode time of the stream's first frame */
+            offset_s: number;
+            reason: string | null;
         };
         VizAnnotationSource: {
             key: string;
@@ -3089,6 +3204,8 @@ export interface components {
             };
             timeline: components["schemas"]["VizTimeline"];
             cameras: components["schemas"]["VizEpisodeCamera"][];
+            /** @description depth streams and their packs (2.7.0) */
+            streams: components["schemas"]["VizEpisodeStream"][];
             annotations: components["schemas"]["VizAnnotations"];
             check_clock: null | components["schemas"]["VizCheckClock"];
             warnings: components["schemas"]["VizWarning"][];
@@ -3146,12 +3263,13 @@ export interface components {
             frames: ((number | null)[] | null)[];
         };
         VizFrameIndex: {
+            /** @description the camera's key, or a depth stream's (2.7.0) */
             camera: components["schemas"]["VizCameraKey"];
             /**
-             * @description h264 / h265: a sample pack (2.5.0)
+             * @description h264 / h265: a sample pack (2.5.0); png16: a depth pack, every frame a 16-bit greyscale PNG (2.7.0)
              * @enum {unknown}
              */
-            codec: "jpeg" | "png" | "h264" | "h265";
+            codec: "jpeg" | "png" | "h264" | "h265" | "png16";
             width: number | null;
             height: number | null;
             count: number;
@@ -3168,6 +3286,18 @@ export interface components {
             size: number[];
             /** @description the pack's size */
             bytes: number;
+            /** @description a depth pack's values (2.7.0, design doc 21 §5.2) - a pixel's value times scale is a depth in unit */
+            depth?: {
+                /** @description mm */
+                unit: string;
+                scale: number;
+                /** @description the value of a hole (no depth): 0 */
+                invalid: number;
+                /** @description the episode's 2 % value of its valid pixels (the colour scale's default low end) */
+                lo: number | null;
+                /** @description its 98 % value */
+                hi: number | null;
+            };
         };
         VizMediaPending: {
             /** @enum {unknown} */
@@ -4036,9 +4166,11 @@ export interface components {
         PathIndex: number;
         /** @description the camera's `key` in the presentation model */
         PathCamera: components["schemas"]["VizCameraKey"];
+        /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+        PathStream: string;
         /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
         RangeHeader: string;
-        /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+        /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
         VizSegment: boolean;
         /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
         VizTranscode: boolean;
@@ -4923,7 +5055,7 @@ export interface operations {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
-                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
                 segment?: components["parameters"]["VizSegment"];
             };
             header?: {
@@ -4995,6 +5127,65 @@ export interface operations {
                 index: components["parameters"]["PathIndex"];
                 /** @description the camera's `key` in the presentation model */
                 camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetStreamFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetStreamFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
             };
             cookie?: never;
         };
@@ -6189,7 +6380,7 @@ export interface operations {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
-                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
                 segment?: components["parameters"]["VizSegment"];
             };
             header?: {
@@ -6217,6 +6408,65 @@ export interface operations {
                 };
                 content?: never;
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskStreamFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskStreamFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
             default: components["responses"]["Error"];
         };
     };

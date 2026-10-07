@@ -90,7 +90,11 @@ info:
     every node and attribute in the dataset's own metadata: a feature's `info.json` entry key by key, an
     mcap topic's channel, schema and statistics fields. The camera route takes `segment=true`: a LeRobot v3
     or Lance episode's own slice of the file it shares with other episodes, or a copy of a single-episode
-    mp4 with its index in front; the episode answer asks for it when the deployment turns it on.
+    mp4 with its index in front; the episode answer asks for it when the deployment turns it on. Depth:
+    a LeRobot or Lance depth column is a `depth` stream the player draws (`VizStream.depth`), an episode
+    lists its packs in `streams`, read from `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames`
+    and `.json` (and the task's) - every frame a 16-bit greyscale PNG, the index with the depth's unit and
+    value range.
   x-description-zh: |
     ## 概览
 
@@ -145,6 +149,8 @@ info:
     `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。可视化的字段树（`GET /datasets/{id}/viz` 的 `field_tree`）
     的节点名与属性一律是数据集元数据的原文：特征在 `info.json` 里的条目逐键列出，mcap 的 topic 列出 channel、schema 与统计的字段。相机接口新增 `segment=true`：
     LeRobot v3 或 Lance 的一条 episode 从它与别的 episode 共用的文件里切出的那一段，或把索引挪到文件开头的单条 mp4；部署打开这项时，episode 记录里的地址就带着它。
+    深度：LeRobot 或 Lance 的深度列是播放器能画的 `depth` 流（`VizStream.depth`），episode 在 `streams` 里列出各自的深度帧包，从
+    `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames` 与 `.json`（任务级同样一对）读取——每帧一张 16 位灰度 PNG，索引里带深度的单位与取值范围。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1040,6 +1046,45 @@ paths:
       tags: [viz]
       operationId: getDatasetCameraFrameIndex
       summary: The index of a camera's frame pack - time, offset and size of every frame (and, for a sample pack, its keyframes and codec string)
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/streams/{stream}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getDatasetStreamFrames
+      summary: The frame pack of a depth stream - one 16-bit greyscale PNG a frame back to back, read by Range with the index; 202 with progress while the Daemon makes it the first time (2.7.0, design doc 21 §5)
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/streams/{stream}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getDatasetStreamFrameIndex
+      summary: The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0)
       responses:
         "200":
           description: the index
@@ -2727,6 +2772,45 @@ paths:
         "416":
           description: the range is outside the file
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/streams/{stream}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getTaskStreamFrames
+      summary: The frame pack of a depth stream of the task's input (as getDatasetStreamFrames)
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/streams/{stream}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getTaskStreamFrameIndex
+      summary: The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0)
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
+        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}/cameras/{camera}.frames:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -3138,6 +3222,12 @@ components:
       required: true
       description: the camera's `key` in the presentation model
       schema: {$ref: "#/components/schemas/VizCameraKey"}
+    PathStream:
+      name: stream
+      in: path
+      required: true
+      description: the stream's `key` in the presentation model (a depth stream, 2.7.0)
+      schema: {type: string, pattern: "^[0-9A-Za-z_-]{1,96}$"}
     RangeHeader:
       name: Range
       in: header
@@ -3150,7 +3240,7 @@ components:
         true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding;
         its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a
         single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's
-        url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3-§4.4); 404 with details.reason
+        url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason
         segment_disabled when it is off, not_segmented when the camera is read as it is
       schema: {type: boolean, default: false}
     VizTranscode:
@@ -5035,10 +5125,40 @@ components:
         unit: {type: [string, "null"]}
         lines: {type: array, items: {$ref: "#/components/schemas/VizLine"}, description: "series: one per drawn number, state and action of the same name together"}
         smart: {type: boolean, description: "placed by the smart layout"}
-        available: {type: boolean, description: "false: listed (field tree, + menu) but not drawable in this phase"}
+        available: {type: boolean, description: "false: listed (field tree, + menu) but not drawable; depth streams are drawable since 2.7.0"}
         reason: {type: [string, "null"]}
         sources: {type: array, items: {type: string}, description: "feature keys or topics it is read from"}
         rate_hz: {type: [number, "null"]}
+        depth:
+          description: a depth stream's picture (2.7.0, design doc 21 §5)
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDepthStream"
+    VizDepthStream:
+      type: object
+      additionalProperties: false
+      required: [width, height, unit, pair_camera]
+      properties:
+        width: {type: [integer, "null"]}
+        height: {type: [integer, "null"]}
+        unit: {type: string, description: "the unit of the pack's values: mm"}
+        pair_camera:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizCameraKey"
+          description: the camera the depth belongs to (by name; the player can draw the depth over it when their aspect ratios agree)
+    VizEpisodeStream:
+      type: object
+      additionalProperties: false
+      required: [key, kind, url, index_url, offset_s, reason]
+      description: a stream whose pictures an episode reads from its own pack (depth, 2.7.0)
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_-]{1,96}$"}
+        kind: {enum: [depth]}
+        url: {type: [string, "null"], description: "the frame pack (getDatasetStreamFrames / getTaskStreamFrames); null when unsupported"}
+        index_url: {type: [string, "null"], description: "its index (VizFrameIndex with codec png16 and depth)"}
+        offset_s: {type: number, description: "episode time of the stream's first frame"}
+        reason: {type: [string, "null"]}
     VizAnnotationSource:
       type: object
       additionalProperties: false
@@ -5250,7 +5370,7 @@ components:
     VizEpisode:
       type: object
       additionalProperties: false
-      required: [scope, id, index, duration_s, frames, fps, task, timeline, cameras, annotations, check_clock, warnings]
+      required: [scope, id, index, duration_s, frames, fps, task, timeline, cameras, streams, annotations, check_clock, warnings]
       properties:
         scope: {enum: [dataset, task]}
         id: {type: string}
@@ -5269,6 +5389,7 @@ components:
                 source: {type: string, description: "原始标注 / 人工改标 / 自产描述"}
         timeline: {$ref: "#/components/schemas/VizTimeline"}
         cameras: {type: array, items: {$ref: "#/components/schemas/VizEpisodeCamera"}}
+        streams: {type: array, items: {$ref: "#/components/schemas/VizEpisodeStream"}, description: "depth streams and their packs (2.7.0)"}
         annotations: {$ref: "#/components/schemas/VizAnnotations"}
         check_clock:
           oneOf:
@@ -5358,8 +5479,8 @@ components:
       additionalProperties: false
       required: [camera, codec, width, height, count, t, offset, size, bytes]
       properties:
-        camera: {$ref: "#/components/schemas/VizCameraKey"}
-        codec: {enum: [jpeg, png, h264, h265], description: "h264 / h265: a sample pack (2.5.0)"}
+        camera: {$ref: "#/components/schemas/VizCameraKey", description: "the camera's key, or a depth stream's (2.7.0)"}
+        codec: {enum: [jpeg, png, h264, h265, png16], description: "h264 / h265: a sample pack (2.5.0); png16: a depth pack, every frame a 16-bit greyscale PNG (2.7.0)"}
         width: {type: [integer, "null"]}
         height: {type: [integer, "null"]}
         count: {type: integer, minimum: 0}
@@ -5370,6 +5491,17 @@ components:
         offset: {type: array, items: {type: integer}, description: "byte offset of every frame in the pack"}
         size: {type: array, items: {type: integer}}
         bytes: {type: integer, minimum: 0, description: "the pack's size"}
+        depth:
+          type: object
+          additionalProperties: false
+          required: [unit, scale, invalid, lo, hi]
+          description: a depth pack's values (2.7.0, design doc 21 §5.2) - a pixel's value times scale is a depth in unit
+          properties:
+            unit: {type: string, description: "mm"}
+            scale: {type: number}
+            invalid: {type: integer, description: "the value of a hole (no depth): 0"}
+            lo: {type: [integer, "null"], description: "the episode's 2 % value of its valid pixels (the colour scale's default low end)"}
+            hi: {type: [integer, "null"], description: "its 98 % value"}
     VizMediaPending:
       type: object
       additionalProperties: false

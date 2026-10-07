@@ -230,6 +230,25 @@ class LanceReader(LeRobotReader):
         self.svc.frames_cache.put(key, data, size=size)
         return data
 
+    def depth_batches(self, src: VizSource, m: LeRobotMeta, row: EpisodeRow, feature: str):
+        """The episode's rows of a depth column from the frames table (its row window), a batch at a time."""
+        from .depth import BATCH
+
+        ds = self.table(src, m.layout.frames)
+        names = set(ds.schema.names)
+        col = LL.column_of(feature, names, LL.column_map(ds.schema))
+        if not col:
+            raise ApiError("not_found", f"帧表里没有 {feature}")
+        if row.from_index is not None and row.to_index is not None and "index" in names:
+            flt = f"index >= {int(row.from_index)} AND index < {int(row.to_index)}"
+        elif "episode_index" in names:
+            flt = f"episode_index = {int(row.index)}"
+        else:
+            flt = None
+        for rb in ds.to_batches(columns=[col], filter=flt, batch_size=BATCH):
+            if rb.num_rows:
+                yield rb.column(col)
+
     def _camera_place(self, m: LeRobotMeta, row: EpisodeRow, cam: dict):
         if cam["access"] == "frames":
             return f"lance:{m.layout.frames}", None, None

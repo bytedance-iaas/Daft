@@ -14,7 +14,7 @@ from typing import Any
 
 from ..errors import ApiError
 from ..results.files import LRU
-from .media import DiskCache, Transcoder, digest, file_response, pending_body, ranged_response
+from .media import Builder, DiskCache, Transcoder, digest, file_response, pending_body, ranged_response
 from .source import URL_TTL_S, Access, VizSource, dataset_source, task_source
 
 _CREATE = threading.Lock()
@@ -31,6 +31,15 @@ class EpisodeUrls:
         base = self.svc.rt.links.base_path
         url = f"{base}/api/v1/{scope}/{src.id}/episodes/{int(index)}/cameras/{key}.{suffix}"
         return url + ("?transcode=1" if transcode else "")
+
+    def stream(self, src: VizSource, index: int, key: str, kind: str, reason: str | None = None,
+               offset_s: float = 0.0) -> dict:
+        """C4 ``VizEpisodeStream``: where an episode's depth pack is read from (design doc 21 §5)."""
+        scope = "datasets" if src.scope == "dataset" else "tasks"
+        base = f"{self.svc.rt.links.base_path}/api/v1/{scope}/{src.id}/episodes/{int(index)}/streams/{key}"
+        ok = reason is None
+        return {"key": key, "kind": kind, "url": f"{base}.frames" if ok else None,
+                "index_url": f"{base}.json" if ok else None, "offset_s": round(float(offset_s), 6), "reason": reason}
 
     def camera(self, src: VizSource, index: int, cam: dict, rel: str | None, frm, to) -> dict:
         out = {"key": cam["key"], "kind": cam["kind"], "access": cam["access"], "url": None, "index_url": None,
@@ -93,6 +102,7 @@ class VizService:
         self.disk = DiskCache(getattr(s, "viz_cache_dir", None) or pathlib.Path(s.scratch_dir) / "viz-cache",
                               int(float(getattr(s, "viz_cache_gb", 20.0)) * (1 << 30)))
         self.transcoder = Transcoder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
+        self.builder = Builder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
         self.urls = EpisodeUrls(self)
         from .segments import Segments
 
@@ -111,6 +121,7 @@ class VizService:
     def shutdown(self) -> None:
         """Daemon shutdown: running transcodes are killed (their copies are made again when asked)."""
         self.transcoder.shutdown()
+        self.builder.shutdown()
 
     def copy_lock(self, path: pathlib.Path) -> threading.Lock:
         """One writer per source copy: two transcodes of episodes in one shared file would otherwise
@@ -445,6 +456,37 @@ class VizService:
         if reader != "mcap":
             raise ApiError("not_found", "只有 mcap 与 Lance 逐帧图片的相机有帧包", details={"reason": "not_frames"})
         return self.mcap.frame_index(src, index, camera)
+
+    # ------------------------------------------------------------ depth streams (design doc 21 §5)
+    def _depth(self, src: VizSource, index: int, key: str):
+        reader = self._reader(src)
+        if not hasattr(reader, "depth_pack"):
+            raise ApiError("not_found", f"没有深度流 {key}", details={"reason": "unknown_stream"})
+        return reader.depth_pack(src, index, key)
+
+    def stream_frame_index(self, src: VizSource, index: int, key: str):
+        """C4 ``VizFrameIndex`` of a depth pack, or 202 + ``VizMediaPending`` while it is made."""
+        import json
+
+        from starlette.responses import JSONResponse
+
+        job, _, doc = self._depth(src, index, key)
+        if job.state == "done" and doc.is_file():
+            return json.loads(doc.read_text(encoding="utf-8"))
+        if job.state == "failed":
+            raise ApiError("internal", job.message, details={"reason": "depth_failed"})
+        return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
+
+    def stream_frames(self, src: VizSource, index: int, key: str, request_headers):
+        from starlette.responses import JSONResponse
+
+        job, pack, _ = self._depth(src, index, key)
+        if job.state == "done" and pack.is_file():
+            etag, immutable = self._cam_cache(src, index, key, "depth")
+            return file_response(pack, "application/octet-stream", request_headers, etag=etag, immutable=immutable)
+        if job.state == "failed":
+            raise ApiError("internal", job.message, details={"reason": "depth_failed"})
+        return JSONResponse(pending_body(job), status_code=202, headers={"Cache-Control": "no-store"})
 
     def camera_video(self, src: VizSource, index: int, camera: str, transcode: bool, request_headers,
                      segment: bool = False):

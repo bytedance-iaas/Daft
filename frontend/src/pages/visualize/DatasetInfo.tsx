@@ -137,7 +137,11 @@ export function DatasetInfo({ datasetId, model, player }: { datasetId: string; m
               {node.file ? <MetaPreview datasetId={datasetId} path={node.file} /> : null}
               {node.camera || (stream && stream.available) ? (
                 <div className="acts">
-                  <Button type="primary" size="small" onClick={() => add(node.camera ? { kind: 'video', key: node.camera } : { kind: 'curve', key: stream!.key })}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={() => add(node.camera ? { kind: 'video', key: node.camera } : stream!.kind === 'depth' ? { kind: 'depth', key: stream!.key } : { kind: 'curve', key: stream!.key })}
+                  >
                     {zh.vizPage.addToPlayer}
                   </Button>
                 </div>

@@ -105,6 +105,11 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "listVizTemplates": ("GET", "/api/v1/viz/templates"),
     "createVizTemplate": ("POST", "/api/v1/viz/templates"),
     "deleteVizTemplate": ("DELETE", "/api/v1/viz/templates/{template_id}"),
+    # F15.4 depth streams (design doc 21 §5)
+    "getDatasetStreamFrames": ("GET", "/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.frames"),
+    "getDatasetStreamFrameIndex": ("GET", "/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.json"),
+    "getTaskStreamFrames": ("GET", "/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.frames"),
+    "getTaskStreamFrameIndex": ("GET", "/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.json"),
 }
 
 #: operationId -> (owner, what it still needs); empty since the visualizer's mcap reader landed (F13.3)
