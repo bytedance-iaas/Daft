@@ -90,8 +90,9 @@ def test_the_queue_of_the_first_revision(world):
 
 
 def test_source_and_status_filters(world):
-    assert list(_cards(world, status="all", source="task_success")) == [2, 3, 4, 5, 6]
-    assert list(_cards(world, status="all", source="task_success")) == [3, 5]
+    # the label questions now come from the kill guard, so task_success is the source of both
+    # the verdict cards and the label cards (the skill profile was the other source until 3.0)
+    assert list(_cards(world, status="all", source="task_success")) == [3, 4, 5]
     assert list(_cards(world, status="all", source="timestamp_check")) == []
     assert list(_cards(world, tab="appeals", status="all", source="task_success")) == [2]
     assert list(_cards(world, tab="appeals", status="all", source="dedup")) == [7]

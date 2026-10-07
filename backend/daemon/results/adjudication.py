@@ -17,25 +17,13 @@ episode left the newer revision's review: the question is taken from the newest 
 revision that asked it, so ``decided`` / ``applied`` cards stay visible and can be
 changed.
 
-**Follow-ups** (C1 1.3 ``follow_ups``, C4 1.5.1): a card whose latest answer on a line
-opens a follow-up gains that question - v1's relabel card: after ``adopt_suggestion`` /
-``custom_label`` a label-only card also takes the task verdict (``success`` /
-``failure`` / ``unsure``); answered, the machine takes it and does not re-judge; left
-open, the episode is judged again with the new label (rule 4). It is listed on the card
-while open, with ``follow_up_of`` naming the line whose answer opened it (C4 1.5.2; the
-card's own questions carry null) and the source module of that line's question; it is
-optional - it never makes a card pending and never blocks ``decided`` - and its answer
-lapses once the answer that opened it changes: a lapsed answer is not shown, not
-counted and not handed to the CLI (:meth:`Queue.executable`); once no answer opens it,
-the question leaves the card.
-
 **Decisions** are the repository's rows, append only; the latest per (task, line,
 episode) counts. They never cross tasks (D32): the queue is this task's revision and
 this task's rows only. C4 1.5 carries ``line`` and ``decision`` as open strings;
 :meth:`Queue.answerable` is the one place that says whether a decision may answer a line
 of an episode: a catalog line the episode's card asks (then any of the line's catalog
 decisions) or a follow-up the card's answers open (then only the follow-up's decisions),
-and the rules below on top. :meth:`Queue._stands` is the one place of the lapse rule.
+and the rules below on top.
 
 **Card status** (optional follow-ups left out, except that their answers must be
 executed before a card is ``applied``): a discard on any line decides the card (rule 1:
@@ -86,7 +74,6 @@ class Question:
     duplicate_of: int | None = None
     revision: int = 0
     optional: bool = False              # an optional follow-up: never pending, never blocking
-    follow_up_of: str | None = None     # the line whose answer opened it (C1 1.3 follow_ups)
     codes: tuple[str, ...] = ()         # C2 2.0: the finding codes the question is about
     items: tuple[str, ...] = ()         # ... and their taxonomy items
 
@@ -191,7 +178,7 @@ class Card:
         for q in self.questions:
             d = standing.get((q.episode, q.line))
             qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
-                       "duplicate_of": q.duplicate_of, "follow_up_of": q.follow_up_of,
+                       "duplicate_of": q.duplicate_of,
                        "annotation": q.annotation, "caption": q.caption,
                        "suggestion": q.suggestion, "priority": q.priority,
                        "latest_decision": decision_json(d) if d is not None else None})
@@ -234,8 +221,7 @@ class Queue:
 
     ``asked`` are the questions modules asked (current revision, or an older one for an
     answered question); ``questions`` add the follow-ups that are open now; ``decisions``
-    are the latest rows per (episode, line); ``standing`` are those that count - a
-    follow-up answer lapses once the answer that opened it changes (:meth:`_stands`).
+    are the latest rows per (episode, line); every one of them counts.
     """
 
     def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task, *,
@@ -249,8 +235,8 @@ class Queue:
         self.asked: dict[tuple[int, str], Question] = {}
         if self.rev is not None:
             self.asked = self._asked(store, backfill)
-        self.questions = {**self.asked, **self._open_follow_ups()}
-        self.standing = {key: d for key, d in self.decisions.items() if self._stands(key, d)}
+        self.questions = dict(self.asked)
+        self.standing = dict(self.decisions)   # 一张卡片只问一个问题，答案不会失效
         self._cards: dict[str, list[Card]] = {}
 
     def _asked(self, store: ResultStore, backfill: bool) -> dict[tuple[int, str], Question]:
@@ -269,48 +255,6 @@ class Queue:
                 missing.remove(k)
         return qs
 
-    # -- follow-ups (C1 1.3 follow_ups; v1's verdict after a relabel) --------------------
-    def _follow_up(self, ep: int, line_id: str, answers: dict) -> tuple[C.FollowUpSpec, Question] | None:
-        """The follow-up on ``line_id`` that ``answers`` open on episode ``ep``'s card, with
-        the question it asks; None when the card asks that line itself or nothing opens it."""
-        if (ep, line_id) in self.asked:
-            return None
-        for f in C.follow_ups_onto(line_id):
-            owner = self.asked.get((ep, f.owner))
-            opener = answers.get((ep, f.owner))
-            opener = opener.decision if isinstance(opener, P.Adjudication) else opener
-            if owner is not None and f.opened_by(opener):
-                return f, Question(ep, line_id, owner.source_module, C.follow_up_reason(f),
-                                   annotation=owner.annotation, revision=owner.revision,
-                                   optional=f.optional, follow_up_of=f.owner)
-        return None
-
-    def _open_follow_ups(self) -> dict[tuple[int, str], Question]:
-        out = {}
-        for ep, owner_line in list(self.asked):
-            for f in C.line(owner_line).follow_ups if C.line(owner_line) else ():
-                hit = self._follow_up(ep, f.line, self.decisions)
-                if hit is not None:
-                    out[(ep, f.line)] = hit[1]
-        return out
-
-    def _stands(self, key: tuple[int, str], d: P.Adjudication) -> bool:
-        """Whether a latest answer counts. The one place of the lapse rule: an answer on a
-        follow-up counts only while the answer that opened it is still the owner's latest
-        and was given before it, and only with one of the follow-up's decisions."""
-        ep, line_id = key
-        if key in self.asked:
-            return True
-        hit = self._follow_up(ep, line_id, self.decisions)
-        if hit is None:
-            # no follow-up open on it: an answer on a follow-up line lapsed; anything else
-            # has no question left (an older revision's files are gone) and still counts
-            return not C.follow_ups_onto(line_id)
-        f, _ = hit
-        opener = self.decisions[(ep, f.owner)]
-        return d.id > opener.id and d.decision in f.decisions
-
-    # -- cards ------------------------------------------------------------------------
     def cards(self, tab: str) -> list[Card]:
         if tab not in self._cards:
             lines = C.tab_lines(tab)
@@ -407,17 +351,7 @@ class Queue:
                        f"{where}.decision")
         question = self.asked.get((ep, line_id))
         if question is None:
-            hit = self._follow_up(ep, line_id, latest)
-            if hit is None:
-                raise self._not_asked(ep, ln, latest, where)
-            f, question = hit
-            if decision_id not in f.decisions:
-                raise _bad(f"{name}：这里的{ln.title_zh}只能选{ln.titles(f.decisions)}",
-                           f"{where}.decision")
-            if not any(f.line in registry.get(m).review_lines for m in self.selected
-                       if m in registry.ids()):
-                raise _bad(f"{name}：这个任务没有勾选产生「{ln.title_zh}」的模块，不能回答",
-                           f"{where}.line")
+            raise self._not_asked(ep, ln, latest, where)
         if spec.verdict and any(
                 getattr(C.decision(r, latest.get((ep, r))), "discard", False)
                 for r in C.relabel_lines() if r != line_id):
@@ -430,12 +364,6 @@ class Queue:
         if ln.tab == "appeals":
             return _bad(f"{name} 不在复议列表里，不能复议：只有可复议模块判的拒绝能复议，"
                         f"物理与结构检查的拒绝是终局", f"{where}.episode_index")
-        closed = [f for f in C.follow_ups_onto(ln.id) if (ep, f.owner) in self.asked]
-        if closed:
-            f = closed[0]
-            owner = C.line(f.owner)
-            return _bad(f"{name} 先在「{owner.title_zh}」选{owner.titles(f.after, '或')}，才能回答"
-                        f"「{ln.title_zh}」", f"{where}.line")
         if ln.id in C.relabel_lines():
             return _bad(f"{name} 没有待裁决的标注分歧，不能裁决标注", f"{where}.episode_index")
         return _bad(f"{name} 不在这个任务的待裁决队列里（没有要人判成败的问题）",

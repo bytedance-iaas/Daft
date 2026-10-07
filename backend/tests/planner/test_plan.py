@@ -42,7 +42,7 @@ def test_example_preflight_is_valid():
 def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
     assert p["schema_version"] == "2.0"
-    assert ids(p) == ["numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
+    assert ids(p) == ["numeric", "frame", "dedup", "autolabel", "vlm", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 30, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
@@ -63,16 +63,12 @@ def test_full_plan_matches_the_design_example():
     assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
                             "guard_caption": 32}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
-    profile = stage(p, "profile")
-    assert (profile["block"], profile["after"], profile["full_set"], profile["episodes"]) == \
-        ("vlm", "vlm", True, "selected")
-    assert profile["gates"] == {"caption": 32, "llm": 16, "audit": 16}
     assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
 
 def test_blocks_never_chain_into_each_other():
     """design doc 17 §3.3: ``after`` names a stage of the same block; every stage takes the selection."""
-    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup", "skill_profile"]):
+    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup"]):
         p = plan(chosen, preflight=X.preflight(64, without_task=5))
         by_id = {s["id"]: s for s in p["stages"]}
         for s in p["stages"]:
@@ -89,7 +85,7 @@ def test_the_eef_module_is_in_the_vlm_block():
     """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success, and like every
     stage it takes the whole selection (D57: nothing upstream filters it)."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
+    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
         and vlm["episodes"] == "selected" and "hard_gates" not in vlm
@@ -191,9 +187,9 @@ def test_autolabel_only_with_unlabeled_episodes_and_task_success():
     labelled, unlabelled = X.preflight(64), X.preflight(64, without_task=10)
     assert "autolabel" not in ids(plan(["task_success"], preflight=labelled))
     assert ids(plan(["task_success"], preflight=unlabelled))[0] == "autolabel"
-    # v1 captions unlabeled episodes only when task_success runs; skill_profile reuses
+    # v1 captions unlabeled episodes only when task_success runs
     # those captions and captions the rest itself (run.py), so it does not trigger autolabel
-    assert "autolabel" not in ids(plan(["skill_profile"], preflight=unlabelled))
+    assert "autolabel" not in ids(plan(["dedup"], preflight=unlabelled))
     assert "autolabel" not in ids(plan(["timestamp_check", "visual_quality"], preflight=unlabelled))
 
 
@@ -276,7 +272,6 @@ def test_caps_flow_into_the_plan():
     g = derive_gates(16)
     assert stage(p, "vlm")["gates"] == {k: g[k] for k in
                                         ("episode", "probe", "endstate", "arbitration", "guard_caption")}
-    assert stage(p, "profile")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 
@@ -297,11 +292,10 @@ def test_site_gate_overrides_reach_the_plan():
     assert stage(p, "vlm")["gates"]["probe"] == 96
 
 
-def test_the_profile_takes_the_whole_selection():
-    """design doc 17 §3.2: a full-set stage of the vlm block, with or without dedup."""
-    for chosen in (["skill_profile"], ["dedup", "skill_profile"]):
-        profile = stage(plan(chosen), "profile")
-        assert (profile["episodes"], profile["full_set"], profile["block"]) == ("selected", True, "vlm")
+def test_dedup_takes_the_whole_selection():
+    """design doc 17 §3.2: the only full-set stage left after the skill profile went."""
+    dedup = stage(plan(["dedup"]), "dedup")
+    assert (dedup["episodes"], dedup["full_set"], dedup["block"]) == ("selected", True, "cpu")
 
 
 # ---------------------------------------------------------------- estimates
@@ -311,8 +305,8 @@ def test_estimates_follow_v1_call_graph():
     p = plan(["task_success"], preflight=pf)
     assert p["estimates"]["vlm_requests"] == 10 * (1 + 3)           # video assessment + per-camera review
     assert p["estimates"]["wall_clock_s"] > 0
-    p = plan(["task_success", "skill_profile"], preflight=X.preflight(10, without_task=4))
-    assert p["estimates"]["vlm_requests"] == 4 + 10 * 4 + 6          # autolabel, video judge/review, profile
+    p = plan(["task_success"], preflight=X.preflight(10, without_task=4))
+    assert p["estimates"]["vlm_requests"] == 4 + 10 * 4              # autolabel, video judge/review
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10))
     assert p["estimates"]["vlm_requests"] == 10                      # merged: one request per episode
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10),

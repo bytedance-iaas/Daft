@@ -120,26 +120,6 @@ class TableSpec:
 
 
 @dataclass(frozen=True)
-class FollowUp:
-    """A question a card gains once one of ``after`` is its answer on the owning line.
-
-    v1's relabel card: after adopting a new label a person may also give the task
-    verdict right away (the machine then takes it and does not re-judge); left open,
-    the episode is judged again with the new label. Only on cards that do not ask
-    ``line`` already; the answer lapses when the decision that opened it changes.
-    """
-
-    after: tuple[str, ...]               # decisions of the owning line that open it
-    line: str                            # the REVIEW_LINES id it answers on
-    decisions: tuple[str, ...]           # the subset of that line's decisions it offers
-    optional: bool = True                # may stay open; never counts as pending
-
-    def to_json(self) -> dict:
-        return {"after": list(self.after), "line": self.line, "decisions": list(self.decisions),
-                "optional": self.optional}
-
-
-@dataclass(frozen=True)
 class ReviewLine:
     """One kind of question a person answers on the adjudication page (design doc 06 §5)."""
 
@@ -149,24 +129,16 @@ class ReviewLine:
     applies_to: Literal["passed", "reject"]   # the list its episodes are in when asked
     counts_as_pending: bool              # an open item must be decided (vs. may be appealed)
     decisions: tuple[tuple[str, str], ...]    # (value, button title), in display order
-    follow_ups: tuple[FollowUp, ...] = ()
 
     def to_json(self) -> dict:
         return {"id": self.id, "review_kind": self.review_kind, "title_zh": self.title_zh,
                 "applies_to": self.applies_to, "counts_as_pending": self.counts_as_pending,
-                "decisions": [{"const": c, "title": title} for c, title in self.decisions],
-                "follow_ups": [f.to_json() for f in self.follow_ups]}
+                "decisions": [{"const": c, "title": title} for c, title in self.decisions]}
 
 
 #: The review lines of v1 (design doc 06 §5.1). ``discard`` drops the whole
 #: episode and wins over any task verdict; ``unsure`` is recorded and changes nothing.
 REVIEW_LINES: tuple[ReviewLine, ...] = (
-    ReviewLine("label", "label_conflict", "标注分歧", "passed", True,
-               (("adopt_suggestion", "采纳新标注"), ("custom_label", "自行改写标注"),
-                ("keep_label", "维持原标注"), ("unsure", "拿不准"),
-                ("discard", "其它原因，整条弃用")),
-               follow_ups=(FollowUp(("adopt_suggestion", "custom_label"), "task_verdict",
-                                    ("success", "failure", "unsure")),)),
     ReviewLine("task_verdict", "task_verdict", "任务成败弃权", "passed", True,
                (("success", "判成功"), ("failure", "判失败"), ("unsure", "拿不准"),
                 ("discard", "其它原因，整条弃用"))),
@@ -585,7 +557,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_blocking("failure", "TASK-5", "任务失败", appealable=True),
                _review("uncertain", "TASK-5", "任务成败拿不准", "task_verdict"),
                _info("recovery", "TASK-12", "中途失误后完成"),
-               _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "label"),
+               _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "task_verdict"),
                _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
@@ -694,14 +666,6 @@ def review_line_of_kind(review_kind: str) -> ReviewLine:
         if line.review_kind == review_kind:
             return line
     raise KeyError(f"unknown review kind {review_kind!r}")
-
-
-def follow_up(line_id: str, decision: str, target: str) -> FollowUp | None:
-    """The follow-up ``decision`` on ``line_id`` opens for ``target``, if any."""
-    for f in review_line(line_id).follow_ups:
-        if f.line == target and decision in f.after:
-            return f
-    return None
 
 
 def appealable(module_id: str) -> bool:

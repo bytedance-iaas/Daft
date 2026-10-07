@@ -130,7 +130,7 @@ def test_the_default_policy_reproduces_todays_gates():
     for soft in ("motion_quality", "visual_quality", "camera_defects"):
         assert {c.level for c in M.get(soft).codes} == {"info"}, soft
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
-    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict", "label"}
+    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {
         ("task_success", "failure"), ("eef_video_consistency", "inconsistent"), ("dedup", "duplicate")}
 
@@ -181,9 +181,11 @@ def test_the_data_integrity_module_is_the_first_stage():
 
 
 def test_review_lines():
-    """D42 / D43: the review catalog is v1's three lines, the EEF module's (C1 1.9) and the data
-    integrity module's (1.11); modules name the lines they raise."""
-    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal", "eef_check",
+    """D42 / D43: the review catalog, modules naming the lines they raise.
+
+    The label line went with the skill profile (registry 3.0): a label conflict the kill guard
+    finds now asks the task verdict, so one card asks one question."""
+    assert [line.id for line in M.REVIEW_LINES] == ["task_verdict", "reject_appeal", "eef_check",
                                                     "integrity_check"]
     for line in M.REVIEW_LINES:
         assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
@@ -191,7 +193,7 @@ def test_review_lines():
     assert M.review_line("reject_appeal").applies_to == "reject"
     assert not M.review_line("reject_appeal").counts_as_pending     # an appeal is optional
     assert all(M.review_line(x).counts_as_pending
-               for x in ("label", "task_verdict", "eef_check", "integrity_check"))
+               for x in ("task_verdict", "eef_check", "integrity_check"))
     integ = M.review_line("integrity_check")
     assert (integ.review_kind, integ.applies_to) == ("integrity_suspect", "passed")
     assert [c for c, _ in integ.decisions] == ["intact", "broken", "unsure"]
@@ -202,17 +204,12 @@ def test_review_lines():
     raised = {x for m in M.MODULES for x in m.review_lines}
     assert raised <= {line.id for line in M.REVIEW_LINES}
     assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup", "eef_video_consistency"}
-    assert M.get("task_success").review_lines == ("task_verdict", "label")
+    assert M.get("task_success").review_lines == ("task_verdict",)
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
-    # v1: after adopting a new label a person may give the task verdict (no re-judge)
-    f = M.follow_up("label", "adopt_suggestion", "task_verdict")
-    assert f is not None and f.optional and set(f.decisions) == {"success", "failure", "unsure"}
-    assert M.follow_up("label", "keep_label", "task_verdict") is None
-    for line in M.REVIEW_LINES:
-        for fu in line.follow_ups:
-            target = {c for c, _ in M.review_line(fu.line).decisions}
-            assert set(fu.decisions) <= target and set(fu.after) <= {c for c, _ in line.decisions}
+    # one card asks one question: the label line and the follow-up it owned are both gone
+    assert not hasattr(M, "follow_up") and not hasattr(M, "FollowUp")
+    assert all(not hasattr(line, "follow_ups") for line in M.REVIEW_LINES)
     # physical and structural gates are final; info-only modules reject nothing
     assert not any(M.appealable(m.id) for m in M.MODULES
                    if m.id in ("timestamp_check", "kinematic_limits", "video_action_sync", "data_integrity",

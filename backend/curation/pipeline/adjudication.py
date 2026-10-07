@@ -29,13 +29,6 @@ the data integrity module suspects. "consistent" / "intact" count as the module 
 "inconsistent" / "broken" as the module rejecting it - the gate's result, as a human task
 verdict is task_success's; nothing runs again.
 
-A task verdict on an episode task_success did not abstain on is not the card's own
-question but v1's verdict after a relabel - the registry's follow-up of the label
-line (C1 1.3 ``follow_ups``). It counts only while the label's latest answer opens
-that follow-up and was given before it; once the label answer changes it lapses:
-no effect, and a relabel still in force is judged again (``Decisions.stands``, the
-Daemon's ``Queue._stands``).
-
 Decisions never cross tasks (D32): only this task's decisions are given, and
 nothing is read from the delivery root.
 
@@ -124,35 +117,25 @@ def judged_with(record: dict | None, text: str) -> bool:
         and str(details.get("task_desc") or "") == str(text)[:80]
 
 
-def _follow_up_owners(line: str) -> tuple[str, ...]:
-    """The registry lines with a follow-up that asks ``line`` (C1 1.3)."""
-    from ..contracts import modules as registry
-
-    return tuple(ln.id for ln in registry.REVIEW_LINES
-                 if any(f.line == line for f in ln.follow_ups))
-
-
 class Decisions:
     """The applied decisions in force, per episode and line.
 
     ``asks(episode, line)`` says whether the episode's card asks a line itself
     (:func:`own_questions`; None: every answer counts as one to the card's own
-    question). An answer to a follow-up counts only while it stands (:meth:`stands`).
+    question).
     """
 
     def __init__(self, applied: list[dict],
                  asks: Callable[[int, str], bool] | None = None):
         self.applied = sorted(applied, key=lambda d: int(d["id"]))
         self.asks = asks
-        #: the latest answer per episode and line, standing or not (it opens follow-ups)
+        #: the latest answer per episode and line
         self.answered: dict[tuple[int, str], dict] = {}
         for d in self.applied:
             self.answered[(int(d["episode_index"]), d["line"])] = d
         self.effective: dict[tuple[int, str], dict] = {}    # latest standing non-unsure
         self.latest: dict[tuple[int, str], dict] = {}       # latest standing
         for d in self.applied:
-            if not self.stands(d):
-                continue
             key = (int(d["episode_index"]), d["line"])
             self.latest[key] = d
             if d["decision"] != "unsure":
@@ -161,27 +144,6 @@ class Decisions:
     @classmethod
     def of(cls, run_dir: str) -> Decisions:
         return cls(load_applied(run_dir), asks=own_questions(run_dir))
-
-    def stands(self, d: dict) -> bool:
-        """Whether an applied answer counts - the one place of the lapse rule (C1 1.3
-        ``follow_ups``, as the Daemon's ``Queue._stands``). An answer to a question the
-        card asks itself always counts. An answer on a line only a follow-up asks (v1's
-        task verdict after adopting a new label, on an episode task_success did not
-        abstain on) counts while the owner line's latest answer opens that follow-up
-        and was given before it (by decision id), and only with one of the follow-up's
-        decisions; otherwise it lapsed and has no effect."""
-        from ..contracts import modules as registry
-
-        episode, line = int(d["episode_index"]), d["line"]
-        owners = _follow_up_owners(line)
-        if not owners or self.asks is None or self.asks(episode, line):
-            return True
-        for owner in owners:
-            opener = self.answered.get((episode, owner))
-            f = registry.follow_up(owner, opener["decision"], line) if opener else None
-            if f is not None:
-                return int(d["id"]) > int(opener["id"]) and d["decision"] in f.decisions
-        return False
 
     def ids(self) -> list[int]:
         return [int(d["id"]) for d in self.applied]
