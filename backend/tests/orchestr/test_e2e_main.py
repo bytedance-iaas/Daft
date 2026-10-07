@@ -17,9 +17,10 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert created["state"] == "queued"
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    # the fixture: 2 captions, 2 rejected on their timestamps, 7 a copy of 3 -> 5 / 3 / 0 / 2
-    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
+    # the fixture under the one judgement (D71): 2 captions, 2 rejected on their timestamps, 4 the
+    # judgement rejects (1 4 5 6), 7 a copy of 3 -> 2 / 6 / 0; 0 and 3 abstain, 1 4 6 7 can be appealed
+    assert task["summary"] == {"total": 8, "passed": 2, "rejected": 6, "held": 0, "review": 6,
+                               "pass_rate": 0.25}
     assert task["result_rev"] == 1
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]

@@ -40,14 +40,13 @@ def _build_funnel_chain(df, cfg, registry, vlm_completion, cache_key=None):
             columns['_sync_curves'] = daft.DataType.string()
     deps = None
     if enabled(cfg, 'task_success') and vlm_completion is not None:
-        one_pass = f.single_pass(cfg)    # single pass: no reviewer, no arbitration
         try:
-            voter = None if one_pass else f.build_endstate_voter(cfg)
+            voter = f.build_endstate_voter(cfg)
         except Exception as e:
             voter = None
             print(f'[curation] review unavailable: {type(e).__name__}: {e}', flush=True)
         try:
-            arb = None if one_pass else f.build_arbitration_deps(cfg)
+            arb = f.build_arbitration_deps(cfg)
         except Exception as e:
             arb = None
             print(f'[curation] arbitration unavailable: {type(e).__name__}: {e}', flush=True)

@@ -93,8 +93,8 @@ v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门�
 |---|---|---|---|---|
 | episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2 |
 | probe | 打分请求，进程级一把，所有 episode 共用 | `checks.task_success.vlm.max_concurrency` | 64 | N |
-| endstate | 逐机位复核 | episode 并发 × 2 | 64 | N |
-| arbitration | 取证仲裁链（四个工厂共用一把） | = episode 并发 | 32 | N/2 |
+| endstate | 逐机位复核（**D71 起 v2 不发这类请求**，闸门与配置键留给 v1 的 `rejudge`） | episode 并发 × 2 | 64 | N |
+| arbitration | 取证仲裁链（**同上，D71 起 v2 不发**；判废护栏的 caption / 比对仍走它的闸门） | = episode 并发 | 32 | N/2 |
 | 护栏 caption | 判废护栏里的 caption | = episode 并发 | 32 | N/2 |
 | caption | autolabel 与判废护栏的打标 | `skill_profile.caption_concurrency` | 32 | N/2 |
 | llm | 纯文本调用（v1 的技能归纳；v2 没有模块用，闸门保留为参数位）| `skill_profile.llm_concurrency` | 16 | N/4 |

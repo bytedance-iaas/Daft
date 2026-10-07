@@ -174,11 +174,10 @@ v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_c
 3. **「拿不准」是合法答案**：只记一笔，条目保留在队列里，仍计为待裁，执行时不动它。
 4. **改写描述通常要重跑模型，但人已经给了成败结论的不重跑**：同一个答案既带了新描述、又判了成功/失败，
    就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。只带新描述、成败答「拿不准」的按新描述重跑。
-5. **改标重判默认用 v1 的两层**（D39）：v1 的 `rejudge` 只跑多视角打分和逐机位复核，不跑任务类型判定、
-   机位提示、判废护栏和取证仲裁（它的注释写「全协议」，但首轮加了护栏和仲裁之后这里没跟着更新）。
-   v2 默认照它，结论和调用与 v1 一致、能逐位对账；「执行裁决」对话框写明这一点，并提供「按首轮的完整流程重判」的选项
-   （判得更全，但同样的裁决可能得出和 v1 不同的结论）。选了什么记在子任务的 `scope.relabel_rerun` 和每条改写上，
-   之后重试这几条沿用同一口径。
+5. **改标重判就是再判一次**（D39 → D71）：改了标的条目用新描述发一次判定请求（含逐机位结论），过判废护栏，
+   拿不准转人工 —— 和首轮一样。D39 时 v2 有两种口径（`v1`：v1 的 `rejudge`，只跑多视角打分和逐机位复核；
+   `full`：首轮的完整流程），单次判决之后两者没有区别了；`scope.relabel_rerun` 和每条改写上记的口径暂留，
+   对话框里的选项也暂留，行为合一。
 6. **已被拒绝的条目不再问成败**（D42）：被去重或任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
    去重拒掉的可以在「被拒复议」里恢复：卡片写明与哪条重复，恢复为可用就推翻去重的结论、回到 passed；
    它若还有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
@@ -309,7 +308,7 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 | 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
 | 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
-| 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
+| 任务成败判定 | `judgements`（判定代码分布，D71 起只出 `success`、`failure`、`uncertain`；更早的任务还有 `recovery`、`endstate_success`、`arbitration_success`、`arbitration_failure`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
 | 精确去重 | `group_sizes`（按组大小数重复组） |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），

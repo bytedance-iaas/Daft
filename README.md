@@ -64,7 +64,7 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 14. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
     再 `cd .. && PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests/test_containers_parity.py`（合成数据的 mcap / Lance 两份上 v1 对 v2 回放逐位一致），应全部通过；
     用 `python -m parity make-fixture --format mcap|lance` 做两份 8 条的数据，命令行逐条跑一遍见 [CLI README](backend/curation/cli/README.md) 手动验证第 10 步
-    （判决与 LeRobot 版本相同：passed 5、reject 3），
+    （判决与 LeRobot 版本相同：passed 2、reject 6），
     真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
 15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py tests/cli/test_eef_record.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，

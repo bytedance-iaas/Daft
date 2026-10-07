@@ -81,21 +81,21 @@ def flow(tmp_path_factory, mini_dataset):
 
 
 def test_the_first_revision_rejects_them_and_every_module_saw_them(flow):
-    assert _eps(flow.rd, 1, "passed") == [1, 3, 4]
-    assert _eps(flow.rd, 1, "reject") == [0, 2, 5, 6, 7]
+    assert _eps(flow.rd, 1, "passed") == [3]
+    assert _eps(flow.rd, 1, "reject") == [0, 1, 2, 4, 5, 6, 7]
     assert _eps(flow.rd, 1, "held") == []
     assert sorted(records.latest_results(flow.rd, "dedup")) == list(range(8))           # the whole selection
 
 
 def test_restored_appeals_come_back_without_dedup_and_without_a_model_call(flow):
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
-        assert fh.read().split() == ["0", "1", "3", "4", "6", "7"]
+        assert fh.read().split() == ["0", "3", "6", "7"]
     assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
 
 
 def test_the_second_revision_delivers_them_again(flow):
-    assert _eps(flow.rd, 2, "passed") == [0, 1, 3, 4, 6]
-    assert _eps(flow.rd, 2, "reject") == [2, 5, 7]
+    assert _eps(flow.rd, 2, "passed") == [0, 3, 6]
+    assert _eps(flow.rd, 2, "reject") == [1, 2, 4, 5, 7]
     assert _eps(flow.rd, 2, "held") == []
     assert flow.steps["verify"].doc["failed"] == []
     assert flow.steps["verify"].doc["complete_marker"] is True

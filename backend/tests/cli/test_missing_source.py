@@ -75,9 +75,10 @@ def test_snapshot_lists_them_and_no_command_reads_them(flow):
 
 def test_they_are_in_no_list_and_not_in_the_total(flow):
     lists = {n: _eps(flow.rd, n) for n in ("passed", "reject", "held", "review")}
-    # 0 and 3 abstained (task_verdict), 7 is a duplicate that can be appealed
-    assert lists == {"passed": [0, 3, 6], "reject": [2, 5, 7], "held": [],
-                     "review": [0, 3, 7]}
+    # 0 and 3 abstained (task_verdict); 6 is rejected by the judgement and 7 is a duplicate,
+    # both can be appealed
+    assert lists == {"passed": [0, 3], "reject": [2, 5, 6, 7], "held": [],
+                     "review": [0, 3, 6, 7]}
     assert flow.steps["final"].doc["counts"]["total"] == 6
     assert flow.steps["final"].doc["counts"]["skipped"] == 2
     report = _json(flow.rd, "revisions", "r0001", "report.json")
@@ -89,7 +90,7 @@ def test_they_are_in_no_list_and_not_in_the_total(flow):
         md = fh.read()
     assert "缺源文件未质检:2 条" in md and "ep000004:缺 " + VIDEO_4 in md
     delivered = _json(flow.rd, "revisions", "r0001", "passed.json")["episodes"]
-    assert [e["episode_index"] for e in delivered] == [0, 3, 6]
+    assert [e["episode_index"] for e in delivered] == [0, 3]
 
 
 def test_without_a_manifest_check_finds_them_when_it_reads(dataset, tmp_path):

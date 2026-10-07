@@ -993,8 +993,6 @@ def vlm_completion_from_config(cfg: dict):
                                      api_key_env=vlm.get("api_key_env"),
                                      thinking=cfg.get("pipeline", {}).get("thinking"),
                                      timeout_s=timeout_for("probe", vlm),
-                                     # single pass: this one request also answers for every camera
-                                     per_camera=bool(vlm.get("single_pass", False)),
                                      fps=float((vlm.get("video") or {}).get("fps", 5)),
                                      max_in_flight=int(vlm.get("max_concurrency",
                                                                DEFAULT_MAX_CONCURRENCY)))

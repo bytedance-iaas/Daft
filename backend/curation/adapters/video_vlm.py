@@ -6,19 +6,17 @@ import math
 
 from .video_input import VideoClip, video_content
 
-PROTOCOL = "video-task/1"
-#: one request judges the episode AND every camera (design 13, single pass): no endstate review,
-#: no arbitration. The per-camera answers come out of the same reasoning pass, so they are not the
-#: independent second signature the two-pass protocol had - what guards a rejection instead is the
-#: evidence it must cite, the label guard, and sending everything else to a person.
-PROTOCOL_SINGLE = "video-task/2"
-#: the per-camera picture-defect report riding on every endstate review (camera_defects module).
+#: ONE request judges the episode AND every camera (design 13, D71): no review request per
+#: camera, no arbitration. The per-camera answers come out of the same reasoning pass, so they are
+#: not an independent second signature - what guards a rejection is the evidence it must cite, the
+#: label guard, and sending everything less than a clear answer to a person. Records judged under
+#: the earlier two-pass protocol (``video-task/1``) are stale: ``check --resume`` judges them again.
+PROTOCOL = "video-task/2"
+#: the per-camera picture-defect report answered inside that same request (camera_defects module).
 #: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
-#: stale, so ``check --resume`` judges them again (1.1: glitch vs shake told apart, up to four
-#: intervals, "intermittent" for recurring bursts).
-CAMERA_CHECK_PROTOCOL = "camera-check/1.1"
-#: the same three items answered inside the single-pass per-camera block
-CAMERA_CHECK_PROTOCOL_SINGLE = "camera-check/2"
+#: stale, so ``check --resume`` judges them again. ``camera-check/1`` and ``1.1`` were the two-pass
+#: review's; ``2`` is the single-pass block's.
+CAMERA_CHECK_PROTOCOL = "camera-check/2"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
@@ -331,10 +329,10 @@ def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
 def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
                         timeout_s: float = 60, api_key_env: str | None = None,
                         max_in_flight: int = 16, thinking: bool | None = None,
-                        json_mode: bool = True, per_camera: bool = False,
-                        fps: float = 5.0):
-    """``per_camera``: the single-pass shape - this one request also answers for every camera, so
-    there is no review request per camera and no arbitration."""
+                        json_mode: bool = True, fps: float = 5.0):
+    """The ``probe`` request is the judgement: it also answers for every camera (D71), so there is
+    no review request per camera and no arbitration. The ``endstate`` and ``arbitration`` tags are
+    v1's own commands' (``rejudge``), not the product's."""
     import requests
     from .vlm_client import SharedGate, _with_thinking, auth_headers
 
@@ -342,6 +340,7 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
     headers = auth_headers(api_key_env)
     url = endpoint.rstrip("/") + "/chat/completions"
     constrained = {"json": bool(json_mode)}      # flipped off if the backend refuses the field
+    per_camera = tag == "probe"                   # the judgement answers for every camera
 
     def assess(clips: list[VideoClip], instruction: str, *, hints: str = "") -> dict:
         from . import vlm_client

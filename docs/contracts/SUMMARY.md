@@ -362,3 +362,15 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   组内留的仍是下标最小的那条。两道保证：段把条目看完后把每组定一次（顺序造成的差异在那时补一条记录纠正，只有真撞车才发生）；
   判决本身把组看成整体，组里本来会留下的其余成员一律按副本判，所以进程被打断、来不及定组也不影响判决。
 
+## 十九、任务成败只有一次判决（2026-10-07，D71）
+
+需求方：「单次判决，不复核，拿不准直接人工判」，而且「根本不应该有开关」。之前合入的分支把单次判决做成了默认关的
+`pipeline.single_pass` 开关，这里把开关删掉，v2 只剩这一条协议。
+
+- **C2**：`task_success` 记录的 `details.protocol` 固定为 `video-task/2`，带 `cameras`（每路相机的结论与 `camera_check`）、
+  `cam_votes`、`review`，不再有 `video_reviews` / `video_arbitration`；`camera_defects` 记录的 `protocol` 为 `camera-check/2`，
+  `source` 为 `task_success.cameras`。计划的 `estimates.vlm_requests` 按每条 1 次算。旧协议的记录视为过期，重试会重判。
+  契约文件本身没有改（这些都是开放的 details 字段）。
+- **C4 不变**：`relabel_rerun`（`v1` / `full`）仍在请求体里，两种口径行为合一；去掉字段与控制台里的选项另算一刀。
+- 配置：`checks.task_success.vlm.single_pass` 删除；`timeouts.endstate` / `arbitration`、相关闸门键仍在，v1 的 `rejudge` 在读。
+

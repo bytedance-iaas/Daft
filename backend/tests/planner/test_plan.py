@@ -309,10 +309,10 @@ def test_dedup_is_a_streaming_segment_of_the_cpu_block():
 def test_estimates_follow_v1_call_graph():
     pf = X.preflight(10, cameras=("a", "b", "c"))
     p = plan(["task_success"], preflight=pf)
-    assert p["estimates"]["vlm_requests"] == 10 * (1 + 3)           # video assessment + per-camera review
+    assert p["estimates"]["vlm_requests"] == 10                     # one judgement per episode (D71)
     assert p["estimates"]["wall_clock_s"] > 0
     p = plan(["task_success"], preflight=X.preflight(10, without_task=4))
-    assert p["estimates"]["vlm_requests"] == 4 + 10 * 4              # autolabel, video judge/review
+    assert p["estimates"]["vlm_requests"] == 4 + 10                  # autolabel, then one judgement each
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10))
     assert p["estimates"]["vlm_requests"] == 10                      # merged: one request per episode
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10),

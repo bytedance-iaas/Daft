@@ -26,7 +26,9 @@ export function planNoteText(note: string, name: (moduleId: string) => string): 
   const blocks = ROUGH_BLOCKS.exec(note);
   if (blocks) return T().planNoteRoughBlocks(blocks[1], blocks[2], blocks[3]);
   if (note === 'data_integrity: its decode test (decode_test), when on, is not counted - about one more decode of every frame') return T().planNoteDecode;
-  if (note === 'task_success arbitration and label-guard calls depend on the data and are not counted') return T().planNoteTaskSuccess;
+  if (note === 'task_success label-guard calls depend on the data and are not counted') return T().planNoteTaskSuccess;
+  // plans made before D71 (one judgement per episode) still carry the two-pass note
+  if (note === 'task_success arbitration and label-guard calls depend on the data and are not counted') return T().planNoteTaskSuccessTwoPass;
   if (note === 'skill_profile text calls (taxonomy, label audit) are per dataset and not counted') return T().planNoteSkillProfile;
   const uncounted = UNCOUNTED.exec(note);
   if (uncounted) {

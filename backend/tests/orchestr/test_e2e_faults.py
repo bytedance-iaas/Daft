@@ -91,8 +91,8 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     assert r.json()["subtask"]["scope"] == {"modules": ["task_success"], "episodes": "errors"}
     done = d.wait(first["id"])
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
-    assert done["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
+    assert done["summary"] == {"total": 8, "passed": 2, "rejected": 6, "held": 0, "review": 6,
+                               "pass_rate": 0.25}
     assert 0 in _passed(rd, 2) and 0 not in _passed(rd, 1)  # r0001 is kept as it was
     new_parts = set(os.listdir(parts_dir)) - parts_before
     rerun = [r for part in new_parts for r in read_jsonl(os.path.join(parts_dir, part))]
@@ -151,7 +151,7 @@ def test_a_module_that_fails_as_a_whole_leaves_the_rest_running_and_a_retry_runs
     assert r.status_code == 202, r.text
     done = d.wait(first["id"])
     assert done["state"] == "succeeded", json.dumps(done)[:2000]
-    assert done["summary"]["passed"] == 5 and done["summary"]["held"] == 0
+    assert done["summary"]["passed"] == 2 and done["summary"]["held"] == 0
     assert {m["id"]: m["state"] for m in done["modules"]}["task_success"] == "succeeded"
 
 

@@ -1287,7 +1287,8 @@ def rerun_task_success(cfg: dict, video: dict, new_label: str, vlm, voter,
     if getattr(vlm, "media_input", None) == "video":
         from .video_task import judge_video_episode
 
-        return judge_video_episode(cfg, video, new_label, vlm, voter, task_src="人工改标")
+        # video input: the one judgement request (D71); ``voter`` is the image path's reviewer
+        return judge_video_episode(cfg, video, new_label, vlm, task_src="人工改标")
 
     if decode is None:
         from ..adapters.decode import decode_window as decode

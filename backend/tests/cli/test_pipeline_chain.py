@@ -48,7 +48,7 @@ def test_every_step_ran_and_fits_its_contract(chain):
 
 def test_by_default_one_model_request_at_a_time(chain):
     """No --concurrency anywhere in the chain: never two model requests in flight."""
-    assert len(chain.vlm_calls) > 20 and chain.max_in_flight == 1
+    assert len(chain.vlm_calls) >= 8 and chain.max_in_flight == 1   # one judgement per episode, plus the label guard
 
 
 def test_every_stage_judges_every_episode(chain):
@@ -61,7 +61,7 @@ def test_every_stage_judges_every_episode(chain):
     assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 8
     task = s["vlm"].doc["modules"]["task_success"]
     assert task["episodes"] == {"total": 8, "ok": 8, "error": 0}
-    assert task["findings"] == {"uncertain": 4, "task_text_missing": 2}  # 0 2 3 7; 4 and 6: captions
+    assert task["findings"] == {"uncertain": 4, "failure": 4, "task_text_missing": 2}  # 0 2 3 7 / 1 4 5 6; 4 and 6: captions
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
     assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
 
@@ -89,24 +89,23 @@ def test_files_fit_their_contracts(chain):
     assert schemas.errors("cli/plan.schema.json", plan) == []
 
 
-def test_final_lists_are_v1s_verdicts(chain):
+def test_final_lists_follow_the_one_judgement(chain):
     rev = os.path.join(chain.rd, "revisions", "r0001")
 
     def eps(name):
         doc = json.load(open(os.path.join(rev, f"{name}.json"), encoding="utf-8"))
         return [e["episode_index"] for e in doc["episodes"]]
 
-    assert eps("passed") == [0, 1, 3, 4, 6]
-    assert eps("reject") == [2, 5, 7]
+    assert eps("passed") == [0, 3]                      # 1 4 5 6: the judgement said failure (D71)
+    assert eps("reject") == [1, 2, 4, 5, 6, 7]
     assert eps("held") == []
-    assert eps("review") == [0, 3, 7]                 # 0 and 3 abstained, 7 is a copy
+    assert eps("review") == [0, 1, 3, 4, 6, 7]        # 0 and 3 abstained; 1 4 6 rejected by the judgement, 7 a copy: appealable
     reject = json.load(open(os.path.join(rev, "reject.json"), encoding="utf-8"))
     dup = [e for e in reject["episodes"] if e["episode_index"] == 7][0]
     assert dup["reasons"][0]["kind"] == "duplicate" and dup["reasons"][0]["duplicate_of"] == 3
     passed = json.load(open(os.path.join(rev, "passed.json"), encoding="utf-8"))
     sources = {e["episode_index"]: e["task_text"]["source"] for e in passed["episodes"]}
-    assert sources == {0: "原始标注", 1: "原始标注", 3: "原始标注", 4: "自产caption",
-                       6: "自产caption"}
+    assert sources == {0: "原始标注", 3: "原始标注"}      # 4 and 6 (captions) are rejected by the judgement
 
 
 def test_the_delivery_holds_the_results_and_verify_writes_complete(chain):
@@ -131,8 +130,11 @@ def test_usage_is_booked_per_module_on_both_ledgers(chain):
     assert sum(e["requests"] for e in actual) == len(posts)          # every request, once
     assert sum(e["requests_unknown_usage"] for e in actual) == 0
     # "llm" was the skill profile's taxonomy induction and left with it (registry 3.0)
-    assert {e["call_kind"] for e in actual} >= {"probe", "endstate", "caption"}
-    assert "llm" not in {e["call_kind"] for e in actual}
+    kinds = {e["call_kind"] for e in actual}
+    # llm here is the label guard's annotation-vs-caption comparison on the episodes the judgement
+    # rejected (the skill profile's induction, the other llm caller, left with registry 3.0)
+    assert kinds >= {"probe", "caption", "llm"}
+    assert not kinds & {"endstate", "arbitration"}, "no review request per camera, no arbitration (D71)"
     report = json.load(open(os.path.join(chain.rd, "revisions", "r0001", "report.json"),
                             encoding="utf-8"))
     tu = report["overview"]["token_usage"]
@@ -148,12 +150,13 @@ def test_report_follows_the_registry(chain):
     assert [m["id"] for m in report["modules"]] == MODULES
     assert all(m["state"] == "succeeded" for m in report["modules"])
     by_id = {m["id"]: m for m in report["modules"]}
-    # 7 is a copy (D42): no task question; dedup's appeal candidate never counts as pending
-    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 0}
+    # 7 is a copy (D42): no task question; 1 4 6 were rejected by the judgement and can be appealed
+    # (5 is rejected on its timestamps too, so not); dedup's appeal candidate never counts as pending
+    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 3}
     assert by_id["dedup"]["adjudication"] == {"pending": 0, "appealable": 1}
     assert by_id["timestamp_check"]["adjudication"] is None
-    assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
-                                            "held": 0, "review": 3, "skipped": 0}
+    assert report["overview"]["counts"] == {"total": 8, "passed": 2, "rejected": 6,
+                                            "held": 0, "review": 6, "skipped": 0}
     assert report["integrity"]["skipped_episodes"] == []
     for m in report["modules"]:
         for t in m["tables"]:
@@ -162,7 +165,7 @@ def test_report_follows_the_registry(chain):
     assert commit["parts"]["task_success"] == ["0001"]
     assert "report.json" in commit["files"] and "passed.json" in commit["files"]
     md = open(os.path.join(rev, "report.md"), encoding="utf-8").read()
-    assert "通过 5" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
+    assert "通过 2" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
     assert "- 评估 8 条;检出:丢帧跳变(STRM-3) 1 条(判废)、残段：短于最短时长(STRM-5) 1 条(判废)" in md
     assert "判决策略:默认" in md
 

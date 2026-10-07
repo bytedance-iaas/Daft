@@ -134,8 +134,8 @@ def _run(daemon, containers, fmt, **create):
 def test_a_task_on_the_format_runs_and_delivers(daemon, containers, fmt):
     d, task = _run(daemon, containers, fmt)
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
+    assert task["summary"] == {"total": 8, "passed": 2, "rejected": 6, "held": 0, "review": 6,
+                               "pass_rate": 0.25}
     batch = d.delivery(task["run_id"])
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
     assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "report.json"))
@@ -182,8 +182,8 @@ def test_a_confirmed_mapping_reaches_every_command_and_changes_no_verdict(daemon
     assert r.json()["viz_mapping"]["version"] == 1
     task = d.wait(d.create()["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
+    assert task["summary"] == {"total": 8, "passed": 2, "rejected": 6, "held": 0, "review": 6,
+                               "pass_rate": 0.25}
     with open(os.path.join(d.run_dir(task["id"]), "run.json"), encoding="utf-8") as fh:
         frozen = json.load(fh)["viz_mapping"]
     assert frozen["version"] == 1 and frozen["check_mapping"]["action"] == "/action"

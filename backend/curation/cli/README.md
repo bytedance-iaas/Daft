@@ -173,7 +173,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 一次只跑一档（D18）：`data_integrity`（完整性档，漏斗最前，设计 14）、`timestamp_check,kinematic_limits,motion_quality`（数值档）、`visual_quality,video_action_sync`（帧档，共用一次解码）、`task_success`（VLM 档，随附 `camera_defects`），或 `dedup`（对整个 keep 集合一次跑完）。混档是参数错误。
 - `data_integrity`（D50、D51）：文件结构、整读（mcap CRC、零填充、parquet 数据页）、v1 的逐条结构校验，`--param data_integrity.decode_test=true` 时逐帧解码；坏了判废、可疑的留给人（`integrity_check`），存储读失败算出错。数据集级发现写 `checks/data_integrity/dataset.json`。详见 [模块 README](../extensions/integrity/README.md)。
 - `camera_defects`（registry 1.14）：`task_success` 的随附模块，`--modules task_success` 自动带上它，不必列出也不能单独跑。
-  逐机位复核的回答里多一个 `camera_check` 字段（花屏 / 抖动 / 镜头污染），没有额外的模型调用；记录只出
+  判定请求的每路相机回答里多一个 `camera_check` 字段（花屏 / 抖动 / 镜头污染），没有额外的模型调用；记录只出
   `abstain`（`passed=score=null`），不影响判决。详见设计 13「逐机位画面缺陷」。
 - 每条做完立刻追加到 `checks/<module>/parts/<part>.jsonl`（整行写入并 fsync）；`--part` 不给时取比现有最大编号大一的号。结束时重写 `results.jsonl`。
 - `--survivors-out` 写出进入下一档的条（本档硬门没拦下、也没出错的），Daemon 用它当下一档的 `--episodes @文件`，与 v1 的漏斗一致。
@@ -367,9 +367,9 @@ with FakeVlmServer(port=8766) as s:
    $C report --run-dir "$R" --revision 1
    ```
 
-   应看到：autolabel 给 2 条（4、6）补了描述；数值档 `timestamp_check (part 0001): 8 episodes - ok 8, error 0; findings: gap 1, fragment 1`（2 时间戳跳变、5 残段，默认策略下 blocking，停在这一档）；task_success 6 条 `ok 6, error 0`，发现 `uncertain 3`（0、3 和 3 的字节级副本 7，进复核）与 `task_text_missing 2`（4、6 用的是自产描述，只报告）；dedup 报 `duplicate 1`（7 与 3 重复）；final 为 `passed 5, reject 3, held 0, review 3`（0 和 3 问成败，7 是可复议的去重拒绝），日志有 `policy default: 5 kept, 3 rejected, 0 held`；`$R/revisions/r0001/policy.json` 是 `{"preset": "default", ...}`。
+   应看到：autolabel 给 2 条（4、6）补了描述；数值档 `timestamp_check (part 0001): 8 episodes - ok 8, error 0; findings: gap 1, fragment 1`（2 时间戳跳变、5 残段，默认策略下 blocking，停在这一档）；task_success 6 条 `ok 6, error 0`，发现 `uncertain 3`（0、3 和 3 的字节级副本 7，进复核）、`failure 3`（1、4、6：一次判决就判失败，D71）与 `task_text_missing 2`（4、6 用的是自产描述，只报告）；dedup 报 `duplicate 1`（7 与 3 重复）；final 为 `passed 2, reject 6, held 0, review 6`（0 和 3 问成败，1、4、6 是可复议的判废，7 是可复议的去重拒绝），日志有 `policy default: 2 kept, 3 rejected, 0 held`；`$R/revisions/r0001/policy.json` 是 `{"preset": "default", ...}`。
    假模型的回答只看请求的文字、图片张数和像素尺寸，不看图片字节，所以这些数在 macOS 和 Linux 上一样（`tests/cli/test_fake_model.py`）。
-   `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 5」、判决策略、按细码的拒绝原因，每个模块一行「评估 N 条;检出:…」；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
+   `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 2」、判决策略、按细码的拒绝原因，每个模块一行「评估 N 条;检出:…」；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
    没给 `--concurrency`，所以整个过程中任何时刻只有一个模型请求在飞（`tests/cli/test_pipeline_chain.py` 在假模型那边量过）。
 
 4. 交付与核验（本地目录充当交付目录）：
@@ -475,7 +475,7 @@ with FakeVlmServer(port=8766) as s:
     ```
 
     应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 模块在 mcap 上是 `needs_input: trajectory_missing`（给了 trajectory.json 就能用，F5.13），在 Lance 上是 `unsupported`（`format_unsupported_by_module`），其余可用。
-    判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 3 pass 3 abstain，dedup 剔除 7，final 为 `passed 5, reject 3, held 0; 3 to review`。
+    判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 4 fail 4 abstain，dedup 剔除 7，final 为 `passed 2, reject 6, held 0; 6 to review`。
     `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：型号、时间轴、任务文本三项体检（D69 起没有交付数据集这一项）。
     两边 `verify` 都是 `"failed": []`、`"complete_marker": true`。`ls $TMPDIR` 里不留读取器转出的视频。
     TOS 上的读法（本地副本、按范围读摘要、源对象变化退出码 6、只读源桶）由 `tests/cli/test_containers.py` 在假 TOS 上核对；有自己的桶时，把两个目录传上去，

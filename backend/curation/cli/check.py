@@ -291,12 +291,9 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
             from ..adapters.vlm_client import vlm_completion_from_config
 
             vlm_completion = vlm_completion_from_config(cfg)
-            try:
-                cam_voter = funnel.build_endstate_voter(cfg, gates)
-            except Exception as e:  # noqa: BLE001 - v1: warn and judge on the score alone
-                cam_voter = None
-                ctx.log("warn", f"per-camera review unavailable ({type(e).__name__}: {e}); "
-                                "task_success judges on the score layer alone")
+            # D71: the judgement answers for every camera in its one request; there is no
+            # review client (the slot stays for v1's shape of TaskClients)
+            cam_voter = None
             try:
                 arb_deps = funnel.build_arbitration_deps(cfg, gates)
             except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people

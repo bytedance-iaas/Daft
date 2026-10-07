@@ -42,6 +42,13 @@ def answer(verdict="success", camera="cam"):
                           "observation": "object is lifted"}]}
 
 
+def judged(verdict="success", camera="cam", cam_verdict=None):
+    """The judgement's answer (D71): the five fields plus the per-camera block."""
+    return dict(answer(verdict, camera),
+                cameras={camera: {"verdict": cam_verdict or verdict, "reason": "this view",
+                                  "camera_check": {}}})
+
+
 def test_clip_preserves_continuous_frames_and_excludes_adjacent_episodes(video):
     clips = prepare_videos(video)
     assert len(clips) == 1 and clips[0].frames == 10
@@ -118,11 +125,12 @@ def mock_transport(monkeypatch, responses):
 
 
 def test_video_transport_and_schema_repair(monkeypatch):
-    malformed = answer()
+    malformed = judged()
     malformed["evidence"][0]["end_s"] = 100
-    sent = mock_transport(monkeypatch, [json.dumps(malformed), json.dumps(answer())])
+    sent = mock_transport(monkeypatch, [json.dumps(malformed), json.dumps(judged())])
     assess = make_video_assessor("http://test/v1", "video-model", fps=3)
-    assert assess([clip()], "pick up object") == answer()
+    out = assess([clip()], "pick up object")
+    assert {k: out[k] for k in answer()} == answer() and out["cameras"]["cam"]["verdict"] == "success"
     assert len(sent) == 2
     content = sent[0]["messages"][0]["content"]
     videos = [v for v in content if v["type"] == "video_url"]
@@ -159,22 +167,22 @@ def test_evidence_camera_suffix_match_and_repair_message(monkeypatch):
         else:
             with pytest.raises(ValueError):
                 parse_assessment(json.dumps(a), [long_clip])
-    sent = mock_transport(monkeypatch, [json.dumps(answer(camera="robot1_camera0")), json.dumps(short)])
+    sent = mock_transport(monkeypatch, [json.dumps(judged(camera="robot1_camera0")),
+                                        json.dumps(judged(camera="robot0_camera0"))])
     assess = make_video_assessor("http://test/v1", "video-model")
     assess([long_clip], "pick up object")
     assert "observation.images.robot0_camera0" in sent[1]["messages"][-1]["content"]
 
 
-@pytest.mark.parametrize("primary,review,passed", [
+@pytest.mark.parametrize("primary,camera,passed", [
     ("success", "success", True), ("failure", "failure", False),
     ("success", "failure", None), ("failure", "success", None),
-    ("failure", "uncertain", None), ("uncertain", "success", True),
+    ("failure", "uncertain", None), ("uncertain", "success", None),   # no rescue by a camera (D71)
 ])
-def test_video_decision_has_no_probe_thresholds(monkeypatch, primary, review, passed):
+def test_video_decision_has_no_probe_thresholds(monkeypatch, primary, camera, passed):
     monkeypatch.setattr("curation.pipeline.video_task.prepare_videos", lambda *a, **kw: [clip()])
     result = judge_video_episode({}, {}, "pick up object",
-                                 lambda *a, **kw: answer(primary),
-                                 lambda *a, **kw: answer(review))
+                                 lambda *a, **kw: judged(primary, cam_verdict=camera))
     assert result.passed is passed
     assert result.detail["input_mode"] == "video"
     assert result.detail["video_evidence"]
@@ -204,14 +212,17 @@ def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
     from curation.pipeline.rejudge import rerun_task_success
 
     cfg = {"checks": {"task_success": {"vlm": {"endpoint": "http://test/v1", "model": "m"}}}}
-    sent = mock_transport(monkeypatch, [json.dumps(answer())] * 4)
+    # the judgement is ONE request answering for every camera (D71); v1's own rejudge takes the
+    # same path for video input, so it is one request too
+    sent = mock_transport(monkeypatch, [json.dumps(judged()), json.dumps(judged())])
     scorer = wrap_call(vlm_completion_from_config(cfg), IncidentLog(), step="probe", call_kind="probe")
-    voter = wrap_voter(build_endstate_voter(cfg), IncidentLog())
-    deps = TaskDeps(scorer, voter, None, lambda *a, **kw: pytest.fail("sparse decode called"))
+    deps = TaskDeps(scorer, None, None, lambda *a, **kw: pytest.fail("sparse decode called"))
     result = task_check_episode(cfg, None, deps, video, "pick", "原始标注", 10, None, None, "")
     assert result["passed"] is True
+    assert len(sent) == 1
+    voter = wrap_voter(build_endstate_voter(cfg), IncidentLog())
     assert rerun_task_success(cfg, video, "pick", scorer, voter).passed is True
-    assert len(sent) == 4
+    assert len(sent) == 2
     assert all(any(c["type"] == "video_url" for c in p["messages"][0]["content"]) for p in sent)
 
 
@@ -365,6 +376,7 @@ def test_endstate_review_asks_for_camera_check_without_a_repair(monkeypatch):
     assert review["camera_check"]["glitch"]["level"] == "unknown"
     prompt = sent[0]["messages"][0]["content"][0]["text"]
     assert "Independently review ONLY this camera" in prompt and CAMERA_CHECK_PROMPT.strip() in prompt
-    sent = mock_transport(monkeypatch, [json.dumps(answer())])
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
     make_video_assessor("http://test/v1", "video-model")([clip()], "pick up")
-    assert "camera_check" not in sent[0]["messages"][0]["content"][0]["text"]   # the probe is untouched
+    prompt = sent[0]["messages"][0]["content"][0]["text"]
+    assert 'more field "cameras"' in prompt and len(sent) == 1       # the judgement asks per camera, once

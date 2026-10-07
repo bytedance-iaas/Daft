@@ -1,8 +1,8 @@
-"""The single-pass protocol (video-task/2): one request judges the episode and every camera.
+"""The judgement protocol (video-task/2, D71): one request judges the episode and every camera.
 
 What these check is the part that is not the model: the answer's shape is read correctly, a camera
 the model mishandled never costs the verdict, and the decision keeps rejection harder than passing
-now that the per-camera answers are no longer an independent second signature.
+since the per-camera answers are not an independent second signature.
 """
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ import json
 import pytest
 
 from curation.adapters.video_input import VideoClip
-from curation.adapters.video_vlm import PROTOCOL_SINGLE, parse_assessment, parse_cameras
-from curation.pipeline.funnel import single_pass
+from curation.adapters.video_vlm import PROTOCOL, parse_assessment, parse_cameras
 from curation.pipeline.video_task import judge_video_episode
 
 FRONT = "observation.images.front"
@@ -89,7 +88,8 @@ def test_each_camera_check_time_is_bounded_by_that_camera_window():
     assert out[WRIST]["camera_check"]["glitch"]["times"] == [[20.0, 25.0]]
 
 
-def test_the_two_pass_shape_is_untouched():
+def test_the_five_fields_still_parse_on_their_own():
+    """v1's own commands (``rejudge``) still read the plain shape."""
     out = parse_assessment(answer(), [clip(FRONT)])
     assert sorted(out) == ["completion", "evidence", "reason", "task_type", "verdict"]
 
@@ -112,71 +112,47 @@ def _judge(verdict, front, wrist, monkeypatch):
     clips = [clip(FRONT), clip(WRIST)]
     monkeypatch.setattr("curation.pipeline.video_task.prepare_videos", lambda *a, **k: clips)
     scorer = _Scorer(answer(verdict, cams(front, wrist)), clips)
-    reviewer = _Fail()
-    res = judge_video_episode({}, {}, "put the pen in the mug", scorer, reviewer,
-                              arb_deps={"video_judge": _Fail()}, single_pass=True)
-    return res, scorer, reviewer
+    res = judge_video_episode({}, {}, "put the pen in the mug", scorer)
+    return res, scorer
 
 
-class _Fail:
-    def __init__(self):
-        self.calls = 0
-
-    def __call__(self, *a, **k):
-        self.calls += 1
-        raise AssertionError("single pass must not send a second request")
-
-
-def test_single_pass_sends_one_request_and_no_review_or_arbitration(monkeypatch):
-    res, scorer, reviewer = _judge("success", "success", "success", monkeypatch)
-    assert scorer.calls == 1 and reviewer.calls == 0
-    assert res.detail["protocol"] == PROTOCOL_SINGLE
+def test_one_request_judges_the_episode(monkeypatch):
+    res, scorer = _judge("success", "success", "success", monkeypatch)
+    assert scorer.calls == 1, "no review request per camera, no arbitration"
+    assert res.detail["protocol"] == PROTOCOL
     assert res.passed is True
     assert res.detail["rules"] == ["video_single_pass_success"]
 
 
 def test_a_camera_saying_failure_blocks_the_pass(monkeypatch):
-    res, _s, _r = _judge("success", "success", "failure", monkeypatch)
+    res, _s = _judge("success", "success", "failure", monkeypatch)
     assert res.passed is None, "a contradicting camera sends it to a person, it does not pass"
     assert "video_single_pass_undecided" in res.detail["rules"]
 
 
 def test_rejection_needs_the_episode_and_a_camera_to_say_failure(monkeypatch):
-    res, _s, _r = _judge("failure", "failure", "uncertain", monkeypatch)
+    res, _s = _judge("failure", "failure", "uncertain", monkeypatch)
     assert res.passed is False
     assert res.detail["rules"] == ["video_single_pass_failure"]
 
 
 def test_a_failure_verdict_no_camera_backs_goes_to_a_person(monkeypatch):
-    res, _s, _r = _judge("failure", "uncertain", "uncertain", monkeypatch)
+    res, _s = _judge("failure", "uncertain", "uncertain", monkeypatch)
     assert res.passed is None
 
 
 def test_a_camera_saying_success_blocks_the_rejection(monkeypatch):
-    res, _s, _r = _judge("failure", "success", "failure", monkeypatch)
+    res, _s = _judge("failure", "success", "failure", monkeypatch)
     assert res.passed is None, "rejection stays the harder direction"
 
 
 def test_an_uncertain_episode_goes_to_a_person(monkeypatch):
-    res, _s, _r = _judge("uncertain", "success", "success", monkeypatch)
+    res, _s = _judge("uncertain", "success", "success", monkeypatch)
     assert res.passed is None
 
 
 def test_the_votes_and_camera_table_are_recorded_for_the_report(monkeypatch):
-    res, _s, _r = _judge("success", "success", "uncertain", monkeypatch)
+    res, _s = _judge("success", "success", "uncertain", monkeypatch)
     assert res.detail["cam_votes"] == {FRONT: "yes", WRIST: "unclear"}
     assert res.detail["review"] == "yes"
     assert sorted(res.detail["cameras"]) == sorted([FRONT, WRIST])
-
-
-# ---------------------------------------------------------------- the switch
-
-
-@pytest.mark.parametrize("cfg,want", [
-    ({}, False),
-    ({"checks": {"task_success": {"vlm": {}}}}, False),
-    ({"checks": {"task_success": {"vlm": {"single_pass": True}}}}, True),
-    ({"checks": {"task_success": {"vlm": {"single_pass": False}}}}, False),
-])
-def test_the_switch_is_off_unless_the_config_asks_for_it(cfg, want):
-    assert single_pass(cfg) is want

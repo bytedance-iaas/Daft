@@ -187,19 +187,19 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
     assert abstained and all(ref[e]["error"] is None for e in abstained)   # "can't tell"
 
     rd = _copy(vlm_stage, tmp_path)
-    review = "Independently review ONLY this camera"
-    with FakeVlmServer(fail=lambda text, payload: 500 if review in text else None) as vlm:
+    judge = "Assess the robot manipulation task"          # the one judgement request (D71)
+    with FakeVlmServer(fail=lambda text, payload: 500 if judge in text else None) as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0                          # an episode's error is not the command's
     recs = results(rd, "task_success")
     hit = sorted(e for e, r in recs.items() if r["status"] == "error")
-    assert hit and vlm.count(review) >= len(hit)
+    assert hit and vlm.count(judge) >= len(hit)
     for e in hit:
         incidents = recs[e]["error"]["incidents"]
         assert recs[e]["error"]["kind"] == "execution"
-        assert incidents and all(i["call_kind"] == "endstate" and i["cause"] == "server_error"
+        assert incidents and all(i["call_kind"] == "probe" and i["cause"] == "server_error"
                                  for i in incidents), incidents
-    for e in set(recs) - set(hit):              # never reviewed: untouched
+    for e in set(recs) - set(hit):              # never judged: untouched
         assert comparable(recs[e]) == comparable(ref[e])
     entry = res.doc["modules"]["task_success"]
     assert entry["error_episodes"] == hit and entry["episodes"]["error"] == len(hit)

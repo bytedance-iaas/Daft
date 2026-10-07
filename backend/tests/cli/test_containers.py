@@ -30,7 +30,7 @@ from .fakevlm_server import FakeVlmServer  # noqa: E402
 from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
-PASSED, REJECT = [0, 1, 3, 4, 6], [2, 5, 7]
+PASSED, REJECT = [0, 3], [1, 2, 4, 5, 6, 7]       # the one judgement (D71): 1 4 5 6 fail
 
 
 @pytest.fixture(scope="session")

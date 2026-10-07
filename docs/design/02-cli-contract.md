@@ -338,7 +338,7 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型**
  "relabel_rerun": "v1"}             // 这一批改标的重判口径（D39），照抄 decisions.json
 ```
 
-`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体，
+`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体（D71 起两种口径行为相同，字段暂留），
 随本次应用的每条改标记在批次目录里；`check --modules task_success` 重判 `rerun_task_success` 时照它选流程（§3.5）。
 
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →

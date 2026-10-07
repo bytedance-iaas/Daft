@@ -139,8 +139,11 @@ $python -m parity compare --golden $W/v2-golden --candidate $W/v2 --all-strict
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：
   这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。
   `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。
-- v2 的基线（第 5 步）终判清单相同：`$W/v2-golden/revisions/r0001/` 里 `passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`；
-  review 里 0、3 是 task_success 弃权，7 是被去重剔除条目的复议（D42）。第 6 步比 review 时不算被拒的条目（`review: golden 2`）。
+- v2 的基线（第 5 步）终判清单**和 v1 不同**（D71 起 v2 只判一次、不复核、不仲裁，拿不准就转人工）：`$W/v2-golden/revisions/r0001/`
+  里 `passed` `[0, 3]`、`reject` `[1, 2, 4, 5, 6, 7]`——1、4、6 在 v1 里是仲裁救回的，v2 一次判决就判失败；
+  review 里 0、3 是 task_success 弃权，1、4、6 是可复议的判废，7 是被去重剔除条目的复议（D42）。
+  第 2–4 步是 v1 对 v1 自己（`release_v1` 的代码，清单照旧），第 5–6 步是 v2 对 v2 自录的基线；两边的 task_success 清单不再相等，
+  这是设计内的差异（设计 10 §3.0），不是回归。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
   v2 的带子（`$W/v2-golden/vlm_tape.jsonl.gz`）37 条：probe 6（每条一次视频主判）、endstate 12（逐机位复核）、
   arbitration 6、caption 5，另有 5 次文本调用和 3 次 `/models` 探活，`0 failed calls`。
@@ -160,7 +163,7 @@ for F in mcap lance; do
 done
 ```
 
-两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`），回放 `misses=0 unused=0`；
+两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 3]`、`reject` `[1, 2, 4, 5, 6, 7]`），回放 `misses=0 unused=0`；
 v2 的交付是报告与结果清单（D69 起不写交付数据集），在 `$W/v2-mcap-delivery/` 与 `$W/v2-lance-delivery/` 下。
 自动化的版本是 `tools/parity/tests/test_containers_parity.py`。
 

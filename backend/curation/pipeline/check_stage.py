@@ -385,24 +385,17 @@ class StageRun:
             cam_voter=wrap_voter(clients.cam_voter, log),
             arb_deps=wrap_arbitration(clients.arb_deps, log),
             decode=wrap_decode(funnel._default_decode, log, camera_names(row.get("video"))))
-        # D39: a human relabel is judged again the way adjudicate-apply recorded -
-        # "v1" (default) is v1's rejudge itself, multi-view scoring and the
-        # per-camera vote; "full" is the first run's whole flow with the relabel as
-        # the annotation (label guard, arbitration intent)
+        # D39 recorded how a human relabel is judged again ("v1": v1's rejudge, scoring plus
+        # the per-camera vote; "full": the first run's flow). Under the one protocol (D71) there
+        # is nothing left to choose between: both judge the relabel in the single request, with
+        # the label guard. The recorded mode is kept on the record for aggregate.
         rerun = self.o.task_text.relabel_rerun(ep) if src == "人工改标" else None
         try:
-            if rerun == "v1":
-                from .rejudge import rerun_task_success
-
-                struct = funnel.result_to_struct(rerun_task_success(
-                    self.o.cfg, row["video"], text, deps.vlm_completion, deps.cam_voter,
-                    decode=deps.decode))
-            else:
-                protocol_src = "原始标注" if src == "人工改标" else src
-                struct = funnel.task_check_episode(
-                    self.o.cfg, self.registry, deps, row["video"], text, protocol_src,
-                    row["fps"], row["action"], row["timestamps"], row["embodiment_id"],
-                    column(row, "semantics_extras", "{}"))
+            protocol_src = "原始标注" if src == "人工改标" else src
+            struct = funnel.task_check_episode(
+                self.o.cfg, self.registry, deps, row["video"], text, protocol_src,
+                row["fps"], row["action"], row["timestamps"], row["embodiment_id"],
+                column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = funnel.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}")

@@ -183,7 +183,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
     然后按第 1、2 步各建一个任务（`uri` 换成 `$D/inputs/mini_mcap` / `$D/inputs/mini_lance`，交付目录换成
     `tos://deliveries/mini_mcap` / `tos://deliveries/mini_lance`，模块同第 2 步）。预检的 `format` 分别是
     `{"kind": "mcap", "version": null, …}` 与 `{"kind": "lance", "version": "v3", …}`。十几秒后两个任务都是 `succeeded`，
-    `summary` 为 `total 8, passed 5, rejected 3, held 0`，和 LeRobot 版本相同；两个交付目录里都只有报告与结果清单
+    `summary` 为 `total 8, passed 2, rejected 6, held 0`，和 LeRobot 版本相同；两个交付目录里都只有报告与结果清单
     （`ls $D/tos/deliveries/mini_mcap/*/` 有 `_COMPLETE`、`revisions/`，没有 `export/`）。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
     跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 

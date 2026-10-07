@@ -306,11 +306,19 @@ def compare_adjudicated_task_v2(g: Side, c: Side, max_diffs: int,
                                 exclude: set[int] = frozenset()) -> dict:
     """Plan A (2026-09-24): both sides are ``run-v2`` directories, the golden one recorded
     with ``--fake-vlm --decisions``. The re-judged records (parts after the first run's) are
-    compared exactly, bookkeeping fields included — same decisions file, so they match."""
+    compared exactly, bookkeeping fields included — same decisions file, so they match. The
+    one exception is ``relabel_rerun``: under the single judgement the recorded mode changes
+    nothing, so a candidate run with the other mode is still an exact replay."""
     g_eps = g.judged_again("task_success") - set(exclude)
     c_eps = c.judged_again("task_success") - set(exclude)
-    gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
-    cr = {i: R.comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
+
+    def comparable(rec: dict) -> dict:
+        details = dict(rec.get("details") or {})
+        details.pop("relabel_rerun", None)
+        return R.comparable({**rec, "details": details})
+
+    gr = {i: comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
+    cr = {i: comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
     out = _strict_diff(gr, cr, max_diffs)
     out["judged_again"] = sorted(set(gr) | set(cr))
     out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
