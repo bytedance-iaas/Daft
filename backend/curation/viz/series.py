@@ -74,10 +74,12 @@ def column_values(col):
     import pyarrow as pa
 
     t = col.type
-    if pa.types.is_fixed_size_list(t) or pa.types.is_list(t) or pa.types.is_large_list(t):
+    if _is_list(t):
         inner = t.value_type
+        while _is_list(inner):                   # [2, 7] poses: each row flattened, row-major
+            inner = inner.value_type
         if pa.types.is_floating(inner) or pa.types.is_integer(inner) or pa.types.is_boolean(inner):
-            rows = col.to_pylist()
+            rows = [_flat(r) for r in col.to_pylist()]
             width = max((len(r) for r in rows if r is not None), default=0)
             out = np.full((len(rows), width), np.nan, dtype=np.float64)
             for i, r in enumerate(rows):
@@ -88,6 +90,25 @@ def column_values(col):
     if pa.types.is_floating(t) or pa.types.is_integer(t) or pa.types.is_boolean(t):
         return np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float64)
     return col.to_pylist()
+
+
+def _is_list(t) -> bool:
+    import pyarrow as pa
+
+    return pa.types.is_fixed_size_list(t) or pa.types.is_list(t) or pa.types.is_large_list(t)
+
+
+def _flat(row):
+    """A row of nested lists as one flat list (None stays None)."""
+    if row is None or not isinstance(row, list) or not any(isinstance(x, list) for x in row):
+        return row
+    out: list = []
+    for x in row:
+        if isinstance(x, list):
+            out += _flat(x) or []
+        else:
+            out.append(x)
+    return out
 
 
 def episode_times(columns: dict[str, Any], fps: float | None, n: int) -> np.ndarray:

@@ -15,6 +15,8 @@ router is included first.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Query, Request
 from starlette.convertors import Convertor, register_url_convertor
 from starlette.responses import JSONResponse, Response
@@ -49,6 +51,7 @@ class _DatasetId(Convertor):
 register_url_convertor("ds_id", _DatasetId())
 
 router = APIRouter()
+log = logging.getLogger("daemon.routes.datasets")
 
 #: DatasetDetail lists at most this many checks and tasks (C4 maxItems).
 SHOWN = 20
@@ -164,6 +167,13 @@ async def delete_dataset(request: Request, dataset_id: str):
             rt.repo.append_event(actor=who.display_name, action="dataset.delete",
                                  resource=dataset_id, at=rt.clock(), owner=who.owner_id,
                                  detail={"name": ds.name, "source": ds.source, "uri": ds.uri})
+        # the visualizer's products of the registration go with it (design doc 21 §2; a task's stay)
+        try:
+            from ..viz.service import viz_of
+
+            viz_of(rt).forget(ds)
+        except Exception:  # noqa: BLE001 - the cache is only a cache: what is left ages out
+            log.warning("dropping the visualizer cache of dataset %s failed", dataset_id, exc_info=True)
         return Response(status_code=204)
 
     return await in_thread(rt.idempotency.run, key=idempotency_key(request),

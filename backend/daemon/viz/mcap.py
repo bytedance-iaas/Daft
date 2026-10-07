@@ -41,6 +41,16 @@ def _slug(text: str) -> str:
     return re.sub(r"[^0-9A-Za-z_.-]+", "_", text.lstrip("/")).strip("_.")[:120] or "x"
 
 
+def _leaves_at(tp: MP.TopicProbe | None, path: str) -> int:
+    """How many numbers the first message holds at ``path`` (``poses.0.position``: 3; ``*`` fans out)."""
+    import re
+
+    if tp is None or not tp.leaves:
+        return 0
+    pat = re.compile("^" + r"\.".join("[^.]+" if part == "*" else re.escape(part) for part in path.split(".")) + r"(\.|$)")
+    return sum(1 for leaf in tp.leaves if pat.match(leaf))
+
+
 class McapReader:
     def __init__(self, service):
         self.svc = service
@@ -174,8 +184,10 @@ class McapReader:
             kind, access, reason = "video", "remux", None
         elif tp is None:
             kind, access, reason = "video", "unsupported", f"第一条 episode 里没有 topic {c['topic']}"
+        elif codec == "raw":
+            kind, access, reason = "video", "unsupported", "原始图像（raw）本期不支持"
         else:
-            kind, access, reason = "video", "unsupported", f"编码 {codec or '未知'} 本期不支持（RawImage / 未知编码）"
+            kind, access, reason = "video", "unsupported", f"编码 {codec or '未知'} 本期不支持"
         from curation.viz.lerobot_info import codec_string
 
         return {"key": key, "name": c.get("name") or key, "source": c["topic"], "kind": kind, "access": access,
@@ -196,7 +208,7 @@ class McapReader:
             labels = names or [f"dim_{i}" for i in range(total)]
         else:
             for f in fields:
-                n = sizes.get(f) or sum(v for k, v in sizes.items() if k.startswith(f + ".")) or 1
+                n = sizes.get(f) or sum(v for k, v in sizes.items() if k.startswith(f + ".")) or _leaves_at(tp, f) or 1
                 labels += MM.transform_labels(f, n, transforms.get(f)) if transforms.get(f) else (
                     [f] if n == 1 else [f"{f}.{i}" for i in range(n)])
         given = entry.get("labels")
@@ -278,11 +290,17 @@ class McapReader:
         return out
 
     # ------------------------------------------------------------ one episode
-    def _dir(self, src: VizSource, index: int) -> pathlib.Path:
+    def _digest(self, src: VizSource, client_decode: bool) -> str:
         # the client-decode switch is part of the name: its products differ (sample packs, no mp4 yet)
-        fp = digest(src.scope, src.id, src.fingerprint, src.mapping_version or 0,
-                    json.dumps(src.mapping or {}, sort_keys=True), bool(self.svc.client_decode))
-        return self.svc.disk.root / "mcap" / fp / f"ep{int(index):06d}"
+        return digest(src.scope, src.id, src.fingerprint, src.mapping_version or 0,
+                      json.dumps(src.mapping or {}, sort_keys=True), bool(client_decode))
+
+    def _dir(self, src: VizSource, index: int) -> pathlib.Path:
+        return self.svc.disk.root / "mcap" / self._digest(src, self.svc.client_decode) / f"ep{int(index):06d}"
+
+    def dirs_of(self, src: VizSource) -> list[pathlib.Path]:
+        """Where the source's scans live (either client-decode state): what deleting a registration drops."""
+        return [self.svc.disk.root / "mcap" / self._digest(src, cd) for cd in (True, False)]
 
     def _cached_doc(self, src: VizSource, index: int) -> dict | None:
         """The scan of an episode while all its products are still there: the cache drops files one at a
@@ -294,12 +312,16 @@ class McapReader:
                 doc = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return None
+            wanted = [path, d / "series.npz"]
             for key, cd in (doc.get("cameras") or {}).items():
-                wanted = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
-                          else f"{key}.annexb" if cd.get("samples") else f"{key}.mp4" if cd.get("mp4") else None)
-                if wanted and not (d / wanted).is_file():
-                    return None
-            if not (d / "series.npz").is_file():
+                name = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
+                        else f"{key}.annexb" if cd.get("samples") else f"{key}.mp4" if cd.get("mp4") else None)
+                if name:
+                    wanted.append(d / name)
+            for key in (doc.get("depths") or {}):
+                wanted.append(d / f"{key}.frames")
+            # a hit is a use: the cache's least-recently-used order must not rest on the file system's atime
+            if any(self.svc.disk.get(p) is None for p in wanted):
                 return None
             return doc
         return None
@@ -450,7 +472,7 @@ class McapReader:
         the browser to decode is remuxed now, the first time a ``<video>`` asks."""
         cd, d = self.camera(src, index, key)
         path = d / f"{key}.mp4"
-        if cd.get("mp4") and path.is_file():
+        if cd.get("mp4") and self.svc.disk.get(path) is not None:
             return path
         if not (cd.get("samples") and (d / f"{key}.annexb").is_file()):
             return None

@@ -3022,10 +3022,11 @@ export interface components {
              *     slices.
              */
             samples_url: string | null;
-            /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one */
+            /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one. Its time 0 is the episode's start: played instead of url it runs from 0 to to_ts - from_ts (2.7.0, design doc 21 §4.5) */
             transcode_url: string | null;
-            /** @description LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts) */
+            /** @description where the episode starts in the media url serves (LeRobot v3 and Lance: a time in the file holding several episodes; 0 for a transcode, which starts at the episode's start); media time = t - offset_s + from_ts (2.7.0, design doc 21 §4.5) */
             from_ts: number | null;
+            /** @description where the episode ends in the media url serves (the next episode's first frame in a shared file) */
             to_ts: number | null;
             /** @description episode time of the camera's first frame (video time 0 after from_ts) */
             offset_s: number;

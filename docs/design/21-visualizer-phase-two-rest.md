@@ -48,7 +48,7 @@
 | 6 | 同一路相机放进两个格子时，后一个格子把前一个从时钟上摘掉（`attach` 用相机键作 id），前一个不再同步 | 每个格子用自己的 id 挂时钟 |
 | 7 | 字段树里 uint16 深度列在「其他字段」又列了一次 | 深度只在「深度图」组里（§3） |
 | 8 | mcap 的点云、原始图像（`RawImage`、`sensor_msgs/Image`）被起草成相机（「编码 unknown 本期不支持」）：探测只看有没有 `data` 字节 | 探测先认点云（`PointCloud`、`PointCloud2`：忽略）与原始图像（16UC1 / mono16 / 32FC1 → 深度，§5.4；其他编码 → 相机，写明「原始图像（raw）本期不支持」） |
-| 9 | `PoseInFrames` 按 `PoseInFrame` 起草，字段路径 `pose.position` 不存在，曲线全空 | 起草为 `poses.0.position`、`poses.0.orientation`（第一个位姿） |
+| 9 | 曲线组的字段路径带 `*` 或列表下标（设计 18 §6.2 的示例 `pose.position.*`、`poses.0.position`）时，模型按第一条消息的字段分组数不出线数，只给一条线，曲线只画出第一维（调研时以为 `PoseInFrames` 起草出空曲线：foxglove 的 schema 叫 `PosesInFrame`，原本就按全部位姿起草，曲线不空） | 探测记下第一条消息的数值叶子路径，按它数这类路径的线数 |
 | 10 | float32 的二维深度列也会进曲线分组（几千个 `dim_i`） | 曲线分组排除深度特征（`curve_groups` 现成的 `exclude`） |
 | 11 | 二维数值列（`[2, 7]` 的位姿）读成 Python 列表，曲线全空 | `column_values` 把嵌套数值列表按行展平（行优先） |
 | 12 | 删登记不清缓存，产物只能等 LRU 慢慢挤掉 | 删登记时删它当前指纹下的产物目录（转码、源拷贝、mcap、Lance 帧包、深度、切片）；旧指纹的照旧靠 LRU |

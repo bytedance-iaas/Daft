@@ -173,7 +173,14 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
                 continue
             t_ns = M.message_time(message, channel, decoded, tsource, tfield)
             if topic in cams:
-                frame = M.as_frame(decoded)
+                if M.raw_kind(getattr(schema, "name", None), decoded) is not None:
+                    # a raw image or a point cloud mapped as a camera: nothing the browser can show, and its
+                    # bytes must not be sniffed for a codec (zero pixels look like an Annex-B start code)
+                    cams[topic]["codec"] = cams[topic]["codec"] or "raw"
+                    cams[topic]["t"].append(t_ns)
+                    frame = None
+                else:
+                    frame = M.as_frame(decoded)
                 if frame is None:
                     continue
                 fmt, data = frame
@@ -307,7 +314,7 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
             finally:
                 annexb.unlink(missing_ok=True)
         elif cam["t"]:
-            doc["error"] = f"编码 {cam['codec']} 本期不支持"
+            doc["error"] = "原始图像（raw）本期不支持" if cam["codec"] == "raw" else f"编码 {cam['codec']} 本期不支持"
         cam_docs[key] = doc
     arrays = {}
     series_docs = {}

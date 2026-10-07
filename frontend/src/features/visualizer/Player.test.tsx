@@ -9,6 +9,7 @@ import { server } from '../../mocks/server';
 import { sampleIndex } from '../../mocks/vizWorld';
 import { DATASET_PROFILES, datasetDetail } from '../../mocks/world';
 import { renderWithProviders } from '../../test/render';
+import { PlayerClock } from './clock';
 import { Player } from './Player';
 
 const LEROBOT = { scope: 'dataset' as const, id: 'ds_droid200' };
@@ -284,5 +285,25 @@ describe('Player (design doc 18 §5)', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('Player · two cells of one camera (design doc 21 §2)', () => {
+  beforeEach(() => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
+  });
+
+  it('keeps both on the clock, each under its own id', async () => {
+    const ids: string[] = [];
+    const real = PlayerClock.prototype.attach;
+    const spy = vi.spyOn(PlayerClock.prototype, 'attach').mockImplementation(function (this: PlayerClock, id, el, b) {
+      ids.push(id);
+      return real.call(this, id, el, b);
+    });
+    const key = 'exterior_1';
+    renderWithProviders(<Player source={LEROBOT} index={0} arrangement={{ cells: [{ kind: 'video', key }, { kind: 'video', key }], shape: { cols: 2, rows: 1 } }} />);
+    await ready();
+    await waitFor(() => expect(new Set(ids.filter((i) => i.startsWith(`${key}:`))).size).toBe(2));
+    spy.mockRestore();
   });
 });

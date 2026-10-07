@@ -190,3 +190,92 @@ def make_v3(root: str) -> str:
     pq.write_table(pa.table({"subtask_index": [0, 1, 2], "subtask": SUBTASKS}), os.path.join(root, "meta", "subtasks.parquet"))
     _video(os.path.join(root, "videos", "observation.images.top", "chunk-000", "file-000.mp4"), sum(LENGTHS), "h264")
     return root
+
+
+DEPTH_LENGTHS = [12, 9]
+
+
+def depth_mm(i: int) -> np.ndarray:
+    """Frame i's synthetic depth (millimetres): a slope that moves with the frame, a hole (0) top left."""
+    y, x = np.mgrid[0:H, 0:W]
+    d = (500 + 10 * x + 5 * y + 7 * i).astype(np.uint16)
+    d[:6, :8] = 0
+    return d
+
+
+def make_v3_depth(root: str) -> str:
+    """so101_depth / dual_ur5e_rgbd-like (design doc 21 §5.1): LeRobot v3, two episodes in one data file of
+    several row groups; ``observation.images.front`` (H.264) with its depth ``observation.images.front.depth``
+    (``uint16 [H, W]`` per frame, millimetres) and ``observation.depths.top`` (``float32 [H, W]``, metres)
+    whose camera the dataset does not have."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    total = sum(DEPTH_LENGTHS)
+    info = {
+        "codebase_version": "v3.0", "robot_type": "so101_follower", "total_episodes": len(DEPTH_LENGTHS),
+        "total_frames": total, "chunks_size": 1000, "fps": FPS,
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+        "features": {
+            "action": {"dtype": "float32", "shape": [6], "names": JOINTS[:5] + ["gripper"]},
+            "observation.state": {"dtype": "float32", "shape": [6], "names": JOINTS[:5] + ["gripper"]},
+            "observation.images.front": {"dtype": "video", "shape": [H, W, 3], "names": ["height", "width", "channels"],
+                                         "info": {"video.height": H, "video.width": W, "video.codec": "h264",
+                                                  "video.pix_fmt": "yuv420p", "video.is_depth_map": False,
+                                                  "video.fps": FPS, "video.channels": 3, "has_audio": False}},
+            "observation.images.front.depth": {"dtype": "uint16", "shape": [H, W], "names": ["height", "width"]},
+            "observation.depths.top": {"dtype": "float32", "shape": [H, W], "names": ["height", "width"]},
+            "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+            "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+            "index": {"dtype": "int64", "shape": [1], "names": None},
+            "task_index": {"dtype": "int64", "shape": [1], "names": None},
+        },
+    }
+    os.makedirs(os.path.join(root, "meta", "episodes", "chunk-000"), exist_ok=True)
+    with open(os.path.join(root, "meta", "info.json"), "w") as fh:
+        json.dump(info, fh, indent=1)
+    rows: dict[str, list] = {k: [] for k in ("action", "observation.state", "observation.images.front.depth",
+                                             "observation.depths.top", "timestamp", "frame_index",
+                                             "episode_index", "index", "task_index")}
+    episodes, cursor = [], 0
+    for ep, n in enumerate(DEPTH_LENGTHS):
+        q = _arm(n, ep)[:, 2:]
+        for i in range(n):
+            d = depth_mm(cursor + i)
+            rows["action"].append(q[min(i + 1, n - 1)].tolist())
+            rows["observation.state"].append(q[i].tolist())
+            rows["observation.images.front.depth"].append(d.tolist())
+            rows["observation.depths.top"].append((d.astype(np.float32) / 1000.0).tolist())
+            rows["timestamp"].append(i / FPS)
+            rows["frame_index"].append(i)
+            rows["episode_index"].append(ep)
+            rows["index"].append(cursor + i)
+            rows["task_index"].append(0)
+        episodes.append({"episode_index": ep, "length": n, "tasks": ["Stack the cups"],
+                         "data/chunk_index": 0, "data/file_index": 0,
+                         "dataset_from_index": cursor, "dataset_to_index": cursor + n,
+                         "videos/observation.images.front/chunk_index": 0,
+                         "videos/observation.images.front/file_index": 0,
+                         "videos/observation.images.front/from_timestamp": round(cursor / FPS, 6),
+                         "videos/observation.images.front/to_timestamp": round((cursor + n) / FPS, 6)})
+        cursor += n
+    table = pa.table({
+        "action": pa.array(rows["action"], pa.list_(pa.float32(), 6)),
+        "observation.state": pa.array(rows["observation.state"], pa.list_(pa.float32(), 6)),
+        "observation.images.front.depth": pa.array(rows["observation.images.front.depth"], pa.list_(pa.list_(pa.uint16()))),
+        "observation.depths.top": pa.array(rows["observation.depths.top"], pa.list_(pa.list_(pa.float32()))),
+        "timestamp": pa.array(rows["timestamp"], pa.float32()),
+        "frame_index": pa.array(rows["frame_index"], pa.int64()),
+        "episode_index": pa.array(rows["episode_index"], pa.int64()),
+        "index": pa.array(rows["index"], pa.int64()),
+        "task_index": pa.array(rows["task_index"], pa.int64()),
+    })
+    path = os.path.join(root, "data", "chunk-000", "file-000.parquet")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    pq.write_table(table, path, row_group_size=8)
+    pq.write_table(pa.Table.from_pylist(episodes), os.path.join(root, "meta", "episodes", "chunk-000", "file-000.parquet"))
+    pq.write_table(pa.table({"task_index": [0], "task": ["Stack the cups"]}), os.path.join(root, "meta", "tasks.parquet"))
+    _video(os.path.join(root, "videos", "observation.images.front", "chunk-000", "file-000.mp4"), total, "h264")
+    return root

@@ -35,6 +35,8 @@ class TopicProbe:
     width: int | None = None
     height: int | None = None
     fields: list[dict] | None = None          # [{path, size}] of the first message
+    leaves: list[str] | None = None           # the first message's numeric leaf paths (at most 512)
+    image: dict | None = None                 # a raw image's encoding, size and row stride
     names: list[str] | None = None            # a name list (JointState.name)
     strings: list[str] | None = None          # paths of the first message's text fields
     text: str | None = None
@@ -131,6 +133,15 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
             tp.decodable = channel.message_encoding not in ("protobuf", "cdr", "json")
             tp.kind = "unknown"
             return True
+        raw = M.raw_kind(getattr(schema, "name", None), decoded)
+        if raw == "pointcloud":                    # 3-D points: no picture, no curve (design doc 21 §2)
+            tp.kind = "other"
+            return True
+        if raw == "raw":
+            tp.image = M.raw_image_info(decoded)
+            tp.kind, tp.codec = "camera", "raw"
+            tp.width, tp.height = tp.image["width"], tp.image["height"]
+            return True
         frame = M.as_frame(decoded)
         if frame is not None:
             fmt, data = frame
@@ -153,6 +164,7 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
         if fields:
             tp.kind = "series"
             tp.fields = fields
+            tp.leaves = [path for path, _ in M.leaves(decoded, limit=512)]
             tp.names = M.names_at(decoded, "name") or None
             tp.check_fields, tp.check_whole = _check_reads(decoded, fields)
         elif text:

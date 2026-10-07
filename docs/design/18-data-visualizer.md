@@ -156,7 +156,7 @@ flowchart LR
 ### 4.1 原则
 
 - 沿用 D16：**浏览器能直接播的媒体直连 TOS**（预签名，D55 的签名接口与现有续签逻辑）；Daemon 不中转能直连的字节。
-- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`——集群上是可丢的临时盘 `/scratch`，不占数据库所在的数据盘；按 `<范围>/<编号>/<指纹>/ep<N>/…` 存，指纹变了即作废，总量按 `CURATOR_VIZ_CACHE_GB` LRU 淘汰）。缓存与转码产物只放本地盘，不上 TOS（需求方 2026-10-03）。
+- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`——集群上是可丢的临时盘 `/scratch`，不占数据库所在的数据盘；按 `<产物类别>/<摘要>/ep<N>/…` 存，摘要由范围、编号、指纹（mcap 另加映射版本与内容）算出，2026-10-06 按实际写法更正；指纹变了即作废，总量按 `CURATOR_VIZ_CACHE_GB` LRU 淘汰）。缓存与转码产物只放本地盘，不上 TOS（需求方 2026-10-03）。
 - 一切都是**按需、首次打开时生成**；可选的「预生成」放第二期（登记后后台跑一遍，给大数据集）。
 
 ### 4.2 相机供给矩阵（D60）
@@ -164,7 +164,7 @@ flowchart LR
 | 来源 | 编码 | 浏览器能否直接播 | 供给方式 | 格子上的标签 |
 |---|---|---|---|---|
 | LeRobot v2 | av1 / h264 | 能 | 预签名直连整个 mp4 | — |
-| LeRobot v3 | av1 / h264 | 能 | 预签名直连 + `#t=from,to`（现有 `withFragment`），播放器按 `from_ts` 对齐；大文件可选由 Daemon 按 GOP 切出该 episode（第二期） | — |
+| LeRobot v3 | av1 / h264 | 能 | 预签名直连整个分块文件，播放器按 `from_ts` 定位（`currentTime = t − offset + from_ts`；`#t=` 片段在 F13 验收后已不用，2026-10-06 更正）；由 Daemon 按 GOP 切出该 episode 见设计 21 §4（转码一律以切片为输入，切片播放是开关） | — |
 | LeRobot | mpeg4 part 2、其他浏览器不支持的编码 | 不能 | Daemon 转码为 H.264 fMP4（首次慢，磁盘缓存；预检时就标出「需要转码」） | 「平台转码」 |
 | mcap `CompressedImage`（JPEG） | — | 不能当 `<video>` | **JPEG 帧包**：Daemon 输出 `<相机>.frames`（正文 = 各帧原 JPEG 字节首尾相接）与它的索引（`.json`：每帧时刻 / 偏移 / 长度），播放器用 `createImageBitmap` + canvas 逐帧绘；随机访问靠 Range，不转码。单路 1280×720 30 Hz 约 2 MB/s | — |
 | mcap `CompressedVideo` h264 | h264 | 能（要 fMP4） | Daemon 转封装为 fMP4（无重编码；现有 `_mux_annexb` 做成流式、带 Range） | — |
@@ -192,7 +192,7 @@ flowchart LR
 - **显示一律从 1 数**（需求方 2026-10-04 定）：数据里的帧序号（LeRobot 的 `frame_index`、发现的 `frames`、时间轴的下标、EEF 的帧号）照旧从 0 存，凡是给人看的帧号都 +1——播放器的帧号框（`1 / 帧数`，输入第 N 帧跳到下标 N − 1）、格子角标与进度条悬停、信息侧栏、报告与裁决里的帧段、模块写进发现的句子、上传校验的报错，以及 EEF 复核印在帧上给模型看的帧号（模型按印的数作答，答复换回数据帧号再存）。A 类读取器（`ingest/`）报数据错误时的原文保持 v1 原样，不在此列。
 - 质检的时钟与之对齐：mcap 的质检以第一条动作消息为零点、以动作速率为 fps（`ingest.mcap_reader`、`streams/clip.py`），所以任务级的 episode 记录给出 `check_clock{offset_s, fps}`（LeRobot 为 `{0, 数据集 fps}`），迷你版用它把发现的 `time_s` / `frames` 换到 episode 时间。
 - 相机帧率与数据 fps 不同（或 mcap 各 topic 各有节奏）时，每路按自己的时间戳取 ≤ t 的最近一帧；曲线按自己的采样时刻画，不插值。
-- v3 的 `from_ts`：直连视频的 `currentTime = t + from_ts`（现有 `SyncController` 的做法）。
+- v3 的 `from_ts`：`url` 所给媒体里这条 episode 的起点，视频的 `currentTime = t − offset_s + from_ts`；平台转码与切片以自己的起点为 0（设计 21 §4.5，D69）。
 
 ### 4.5 任务文本与标注（D64）
 

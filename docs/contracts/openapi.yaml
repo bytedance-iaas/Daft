@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.6.0
+  version: 2.7.0
   description: |
     ## Overview
 
@@ -82,6 +82,11 @@ info:
     end-effector check's video opinion (gripper centre, direction, fingers and recent trail) for drawing
     over the episode's own camera video. Opinion records no longer carry a marked video or evidence
     images; each segment still lists its evidence frame numbers.
+
+    **2.7.0** (2026-10-06): in an episode's camera list, `from_ts` / `to_ts` are times in the media `url`
+    serves: a transcoded camera of a file holding several episodes now starts at 0, and `transcode_url`
+    always starts at the episode's start (it used to be placed at the shared file's time, so such a camera
+    showed the wrong moment).
   x-description-zh: |
     ## 概览
 
@@ -131,6 +136,9 @@ info:
 
     **2.6.0**（2026-10-06）：新增 `GET /tasks/{id}/episodes/{index}/eef-overlay`，返回末端执行器检查中模型意见的标记（夹爪中心、朝向、手指连线与最近一段轨迹），
     供叠加在该 episode 的原始相机视频上显示。模型意见的记录不再附带标记视频和证据图片，各片段仍给出证据帧号。
+
+    **2.7.0**（2026-10-06）：episode 的相机列表里，`from_ts` / `to_ts` 指 `url` 所给媒体里的时间：一个文件装多条 episode 时，经平台转码的相机从 0 开始，
+    `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -5160,9 +5168,9 @@ components:
             itself (WebCodecs); it falls back to `url`. Null when CURATOR_VIZ_CLIENT_DECODE is off,
             for any other camera, or a stream without a keyframe, without parameter sets or with B
             slices.
-        transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one"}
-        from_ts: {type: [number, "null"], description: "LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts)"}
-        to_ts: {type: [number, "null"]}
+        transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one. Its time 0 is the episode's start: played instead of url it runs from 0 to to_ts - from_ts (2.7.0, design doc 21 §4.5)"}
+        from_ts: {type: [number, "null"], description: "where the episode starts in the media url serves (LeRobot v3 and Lance: a time in the file holding several episodes; 0 for a transcode, which starts at the episode's start); media time = t - offset_s + from_ts (2.7.0, design doc 21 §4.5)"}
+        to_ts: {type: [number, "null"], description: "where the episode ends in the media url serves (the next episode's first frame in a shared file)"}
         offset_s: {type: number, description: "episode time of the camera's first frame (video time 0 after from_ts)"}
         transcoded: {type: boolean}
         expires_at: {type: [integer, "null"], description: "epoch ms when a presigned url stops working"}

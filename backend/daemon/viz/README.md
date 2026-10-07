@@ -13,7 +13,7 @@
 | `lerobot.py` | LeRobot v2 / v3 读取器：`meta/` 的 episode 表、相机、曲线组、标注来源、字段树；一条 episode 的逐帧列只读一次（v3 只读它的行组）进缓存，episode 记录与曲线请求共用 |
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
 | `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
-| `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池）、带 Range 的本地文件应答 |
+| `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
 | `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
@@ -203,6 +203,11 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `curl -s $B/tasks/$T/episodes/0/eef-overlay | jq '.cameras[] | {camera_id, viz_camera, image_size_wh, skipped, layers: [.layers[] | {kind, label, color}]}'`：
     每路参与的相机有四层，`viz_camera` 等于 `curl -s $B/tasks/$T/episodes/0/viz | jq '[.cameras[].key]'` 里的一项；`layers[].frames` 的长度等于这条的样本帧数。
     `ls $D/data/runs/$T/checks/eef_video_consistency/` 没有 `opinion/`。没勾 EEF 的任务回 404，`error.details.reason` 是 `no_eef_module`。
+
+21. **转码的时间口径（设计 21 §4.5，F15.1）**：把第 1 步的 `viz_v3` 复制一份 `viz_v3_mpeg4`，`meta/info.json` 里 `observation.images.top` 的 `video.codec` 改成 `mpeg4`（字节仍是 H.264，转码器照样读）后登记。
+    `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, from_ts, to_ts}'` 是 `transcode`、`0`、`2.4`（这条 24 帧）；等 `.mp4` 转好（202 期间带进度）后
+    解出 24 帧，第一帧白竖线在 x = 26（共用文件里第 30 帧的位置），即这条 episode 的第一帧。原样的 `viz_v3` 第 2 条的 `transcode_url` 同理从这条的第一帧开始。
+    删掉 `viz_v3_mpeg4` 的登记后，缓存目录 `transcode/` 下它的产物目录随之消失。
 
 ## 自动化测试
 

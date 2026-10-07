@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { VizCamera, VizEpisodeCamera } from '../../../api/types';
+import { mediaBinding } from '../../../lib/vizTime';
 import { zh } from '../../../locales/zh';
 import type { PlayerClock } from '../clock';
 import { probeMedia } from '../data';
@@ -85,21 +86,25 @@ export function VideoCell({ cam, ep, clock, onBusy }: { cam: VizCamera; ep: VizE
   }, [target, wantTranscode, reason]);
 
   // a camera the platform is still transcoding holds 播放 back (requester 2026-10-05: it could not play
-  // yet); one id a cell, so two cells of one camera, or a cell going away, do not clear each other
-  const busyId = `${cam.key}:${useId()}`;
+  // yet); one id a cell, so two cells of one camera, or a cell going away, do not clear each other -
+  // on the clock too: two cells of one camera are two videos kept in step (design doc 21 §2)
+  const cellId = `${cam.key}:${useId()}`;
+  const busyId = cellId;
   const transcoding = phase.kind === 'pending';
   useEffect(() => {
     onBusy?.(busyId, transcoding);
   }, [onBusy, busyId, transcoding]);
   useEffect(() => () => onBusy?.(busyId, false), [onBusy, busyId]);
 
-  // on the clock while it plays this URL
+  // on the clock while it plays this URL: a transcode played instead of the original starts at the
+  // episode's start (design doc 21 §4.5)
+  const { offset, from, end } = mediaBinding(ep, src);
   useEffect(() => {
     const el = video.current;
     if (!el || !src) return undefined;
     played.current = src;
-    return clock.attach(cam.key, el, { offset: ep.offset_s ?? 0, from: ep.from_ts ?? 0, end: ep.to_ts ?? null });
-  }, [clock, cam.key, src, ep.offset_s, ep.from_ts, ep.to_ts]);
+    return clock.attach(cellId, el, { offset, from, end });
+  }, [clock, cellId, src, offset, from, end]);
 
   const onError = () => {
     if (!wantTranscode && ep.transcode_url && ep.url) {

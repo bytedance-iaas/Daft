@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import concurrent.futures as cf
+import contextlib
 import hashlib
 import json
 import logging
@@ -31,6 +32,8 @@ log = logging.getLogger("daemon.viz")
 
 #: a failed transcode is not retried for this long (whoever asks gets the failure)
 FAILED_TTL_S = 300.0
+#: a ``*.part`` file older than this is a write a crash left behind: the first scan deletes it
+STALE_PART_S = 3600.0
 
 
 def digest(*parts) -> str:
@@ -62,12 +65,19 @@ class DiskCache:
     def _scan(self) -> dict[pathlib.Path, int]:
         if self._sizes is None:
             sizes = {}
+            stale = time.time() - STALE_PART_S
             if self.root.is_dir():
                 for dirpath, _, files in os.walk(self.root):
                     for f in files:
-                        if f.endswith(".part"):
-                            continue
                         p = pathlib.Path(dirpath) / f
+                        if f.endswith(".part"):
+                            # a write a crash left behind (one still being written is younger)
+                            try:
+                                if p.stat().st_mtime < stale:
+                                    p.unlink()
+                            except OSError:
+                                pass
+                            continue
                         try:
                             sizes[p] = p.stat().st_size
                         except OSError:
@@ -107,6 +117,21 @@ class DiskCache:
         with self._lock:
             return sum(self._scan().values())
 
+    def drop(self, *dirs: pathlib.Path) -> int:
+        """Delete whole product directories (a deleted registration's); bytes freed."""
+        import shutil
+
+        freed = 0
+        with self._lock:
+            sizes = self._scan()
+            for d in dirs:
+                if not d.is_dir():
+                    continue
+                for p in [p for p in sizes if d in p.parents]:
+                    freed += sizes.pop(p, 0)
+                shutil.rmtree(d, ignore_errors=True)
+        return freed
+
 
 @dataclass
 class Job:
@@ -131,6 +156,8 @@ class Transcoder:
         self._pool = cf.ThreadPoolExecutor(self.workers, thread_name_prefix="viz-transcode")
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._procs: set[subprocess.Popen] = set()
+        self._closed = False
 
     def status(self, key: str, out: pathlib.Path) -> Job | None:
         with self._lock:
@@ -144,6 +171,8 @@ class Transcoder:
                 with self._lock:
                     self._jobs.pop(key, None)
                 return None
+            if job.state == "done":
+                self.cache.get(out)                     # recently used
             return job
         if self.cache.get(out) is not None:
             return Job(key, out, state="done", progress=1.0)
@@ -177,28 +206,44 @@ class Transcoder:
             job.out.parent.mkdir(parents=True, exist_ok=True)
             from ..exec.runner import child_env, set_oom_score_adj
 
+            if self._closed:
+                raise RuntimeError("Daemon 正在关停")
             proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                     stdin=subprocess.DEVNULL, env=child_env(dict(os.environ)))
             set_oom_score_adj(proc.pid, 500)          # the Daemon goes last when memory runs out
+            with self._lock:
+                self._procs.add(proc)
             error = None
-            deadline = time.monotonic() + self.timeout_s
-            assert proc.stderr is not None
-            for line in proc.stderr:
-                try:
-                    msg = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(msg.get("progress"), (int, float)):
-                    job.progress = float(msg["progress"])
-                if isinstance(msg.get("error"), str):
-                    error = msg["error"]
-                if time.monotonic() > deadline:
+            timed_out = threading.Event()
+
+            def kill() -> None:                       # a child that hangs without a word is killed too
+                timed_out.set()
+                with contextlib.suppress(OSError):
                     proc.kill()
-                    error = "转码超时"
-                    break
-            code = proc.wait()
+
+            timer = threading.Timer(self.timeout_s, kill)
+            timer.daemon = True
+            timer.start()
+            try:
+                assert proc.stderr is not None
+                for line in proc.stderr:
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(msg.get("progress"), (int, float)):
+                        job.progress = float(msg["progress"])
+                    if isinstance(msg.get("error"), str):
+                        error = msg["error"]
+                code = proc.wait()
+            finally:
+                timer.cancel()
+                with self._lock:
+                    self._procs.discard(proc)
+            if timed_out.is_set():
+                error = f"转码超时（{int(self.timeout_s)} 秒）"
             if code != 0 or not job.out.is_file():
-                raise RuntimeError(error or f"转码进程退出码 {code}")
+                raise RuntimeError(error or (f"转码进程退出码 {code}" if not self._closed else "Daemon 正在关停"))
             self.cache.added(job.out, keep)
             job.state, job.progress, job.message = "done", 1.0, "完成"
         except Exception as exc:  # noqa: BLE001 - the page says why; the next ask after the TTL tries again
@@ -208,7 +253,15 @@ class Transcoder:
             job.finished_at = time.monotonic()
 
     def shutdown(self) -> None:
+        """Daemon shutdown: queued jobs are dropped, running children killed (their ``.part`` stays
+        and is cleared later; the next Daemon makes the copy again when it is asked for)."""
+        self._closed = True
         self._pool.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            procs = list(self._procs)
+        for proc in procs:
+            with contextlib.suppress(OSError):
+                proc.kill()
 
 
 def pending_body(job: Job) -> dict:

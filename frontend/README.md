@@ -216,6 +216,9 @@ UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并�
     多条的 mcap（如 `viz_umi`）打开第 0 条，网络面板里紧跟着有 `episodes/1/viz`（后台预取下一条），再点「下一条」不用等扫描。
     预缓存（2026-10-05）：点播放后顶栏先写「缓冲中…」，每路攒够约 5 秒才开始走（本机几乎立刻）；开发者工具网络面板选「Slow 3G」再播，
     会多等一会儿才开播，播放中快用完时先停下补，不再一卡一卡；等满 8 秒还不够也会按已有的开播。
+18. **转码与同一路相机两格（设计 21 §2，F15.1，要真 Daemon）**：按 `backend/daemon/viz/README.md` 第 21 步登记 `viz_v3_mpeg4`，可视化页打开第 1、2 条：
+    「平台转码」那一路的画面与时钟对齐（白竖线随帧右移，第 1 条的第 1 帧在 x = 26），不是共用文件里别的时刻；原样的 `viz_v3` 在控制台里
+    `MediaSource.isTypeSupported = () => false; HTMLMediaElement.prototype.canPlayType = () => ''` 后换一条 episode（不要刷新；相机退到 `transcode_url`）同样对齐。「自定义」布局里把同一路相机放进两个格子，播放、拖动、逐帧时两格一起走。
 
 ## 手动验证：接口文档（真 Daemon）
 

@@ -161,7 +161,8 @@ class LeRobotReader:
         for s in sources:
             if s.table and s.table not in lookups and s.format in ("subtask_index", "index_table"):
                 lookups[s.table] = self._lookup(st, s.table)
-        groups = curve_groups(info)
+        # a float32 depth picture is no curve: thousands of dim_i (design doc 21 §2)
+        groups = curve_groups(info, exclude=frozenset(L.depth_features(info)))
         curve_cols = sorted({ln.source for g in groups for ln in g.lines})
         curve_cols = [c for c in curve_cols if L.width_of((info.get("features") or {}).get(c) or {}) <= MAX_CURVE_WIDTH]
         ann_cols = sorted({c for s in sources for c in s.columns} | {"quality_index"} & set(info.get("features") or {}))
@@ -335,10 +336,11 @@ class LeRobotReader:
             meta_nodes.append({"id": f"file:{f}", "name": f[len("meta/"):], "kind": "file",
                                "file": f if f.endswith((".json", ".jsonl", ".md")) else None,
                                "detail": {"大小": src.size_of(f)}})
+        depth = set(L.depth_features(m.info))
         other = [{"id": f"feature:{k}", "name": k, "kind": "other", "dtype": str(f.get("dtype")),
                   "shape": L.shape_of(f), "names": L.flat_names(f.get("names")), "detail": {}}
                  for k, f in feats.items() if isinstance(f, dict) and k not in m.camera_features.values()
-                 and str(f.get("dtype")) not in ("float16", "float32", "float64", "video")]
+                 and k not in depth and str(f.get("dtype")) not in ("float16", "float32", "float64", "video")]
         files = []
         listing = src.listing()
         if listing:

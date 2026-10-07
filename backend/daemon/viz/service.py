@@ -51,6 +51,10 @@ class EpisodeUrls:
             out["index_url"] = self.daemon(src, index, cam["key"], "json")
         if self.svc.transcode_enabled and access in ("direct", "local", "remux", "blob"):
             out["transcode_url"] = self.daemon(src, index, cam["key"], "mp4", transcode=True)
+        if access == "transcode" and frm is not None:
+            # from_ts / to_ts are times in what `url` serves (design doc 21 §4.5): a transcode's 0 is
+            # the episode's start (curation.viz.transcode --from), not the shared file's from_ts
+            out["from_ts"], out["to_ts"] = 0.0, (round(float(to) - float(frm), 6) if to is not None else None)
         if access == "transcode":                       # the copy starts now, before the player asks
             with contextlib.suppress(Exception):
                 if self.svc.reader_of(src) == "lance":
@@ -80,6 +84,8 @@ class VizService:
                               int(float(getattr(s, "viz_cache_gb", 20.0)) * (1 << 30)))
         self.transcoder = Transcoder(self.disk, int(getattr(s, "viz_transcode_workers", 2)))
         self.urls = EpisodeUrls(self)
+        self._copy_locks: dict[str, threading.Lock] = {}
+        self._copy_lock = threading.Lock()
         from .lance import LanceReader
         from .lerobot import LeRobotReader
         from .mcap import McapReader
@@ -88,6 +94,24 @@ class VizService:
         self.mcap = McapReader(self)
         self.lance = LanceReader(self)
         self._lance_roots: dict[tuple, bool] = {}
+
+    def shutdown(self) -> None:
+        """Daemon shutdown: running transcodes are killed (their copies are made again when asked)."""
+        self.transcoder.shutdown()
+
+    def copy_lock(self, path: pathlib.Path) -> threading.Lock:
+        """One writer per source copy: two transcodes of episodes in one shared file would otherwise
+        download it into the same ``.part`` at once."""
+        with self._copy_lock:
+            return self._copy_locks.setdefault(str(path), threading.Lock())
+
+    def forget(self, ds) -> int:
+        """A deleted registration's products (its current fingerprint; older ones age out); bytes freed."""
+        src = dataset_source(self.rt, ds, ds.owner_id)
+        fp = digest(src.scope, src.id, src.fingerprint)
+        dirs = [self.disk.root / kind / fp for kind in ("transcode", "source", "lance", "depth", "segment")]
+        dirs += self.mcap.dirs_of(src)
+        return self.disk.drop(*dirs)
 
     # ------------------------------------------------------------ sources
     def dataset_source(self, dataset_id: str, owner: str) -> VizSource:
@@ -264,12 +288,13 @@ class VizService:
         def prepare() -> pathlib.Path:
             if src.is_local:
                 return access.local_file(rel)
-            if self.disk.get(source_copy) is None:
-                tmp = source_copy.with_name(source_copy.name + ".part")
-                with access.storage() as st:
-                    st.download(rel, str(tmp))
-                tmp.replace(source_copy)
-                self.disk.added(source_copy)
+            with self.copy_lock(source_copy):
+                if self.disk.get(source_copy) is None:
+                    tmp = source_copy.with_name(source_copy.name + ".part")
+                    with access.storage() as st:
+                        st.download(rel, str(tmp))
+                    tmp.replace(source_copy)
+                    self.disk.added(source_copy)
             return source_copy
 
         return self.transcoder.ensure(key, out, prepare, start=frm, end=to, keep=(source_copy,))
@@ -310,18 +335,19 @@ class VizService:
         source_copy = self.disk.path("source", fp, "lance", f"{feature}-c{chunk}-f{file}.mp4")
 
         def prepare() -> pathlib.Path:
-            if self.disk.get(source_copy) is None:
-                tmp = source_copy.with_name(source_copy.name + ".part")
-                size, pos = blob.size(), 0
-                with open(tmp, "wb") as fh:
-                    while pos < size:
-                        data = blob.read_range(pos, min(1 << 22, size - pos))
-                        if not data:
-                            break
-                        fh.write(data)
-                        pos += len(data)
-                tmp.replace(source_copy)
-                self.disk.added(source_copy)
+            with self.copy_lock(source_copy):
+                if self.disk.get(source_copy) is None:
+                    tmp = source_copy.with_name(source_copy.name + ".part")
+                    size, pos = blob.size(), 0
+                    with open(tmp, "wb") as fh:
+                        while pos < size:
+                            data = blob.read_range(pos, min(1 << 22, size - pos))
+                            if not data:
+                                break
+                            fh.write(data)
+                            pos += len(data)
+                    tmp.replace(source_copy)
+                    self.disk.added(source_copy)
             return source_copy
 
         return self.transcoder.ensure(f"{fp}:{index}:{camera}", out, prepare, start=frm, end=to, keep=(source_copy,))
@@ -409,6 +435,9 @@ def viz_of(rt) -> VizService:
             if svc is None:
                 svc = VizService(rt)
                 rt.viz = svc
+                hooks = getattr(rt, "on_shutdown", None)
+                if isinstance(hooks, list):
+                    hooks.append(lambda _rt: svc.shutdown())
     return svc
 
 
