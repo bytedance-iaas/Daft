@@ -1,11 +1,14 @@
 # 16 回归测试样本集
 
-> 状态：**v1.4，样本集 v1 完善中（未定稿）**：2026-10-02 需求方要求 v1 继续完善、不另开 v2，`index.json` 与 `expectation.json` 改回 `status: draft`，定稿时再冻结。v1.3 落实了与 Pantheon Argus 比对后的处理意见（§18.6）；v1.4 按需求方「质量优先、正例反例都要明显」精简到 558 条（§7.8）。独立审计（2026-10-01）核实后的意见由需求方确认采纳，v1 按 §17 修订、
+> 状态：**v1.5，样本集 v1 完善中（未定稿）**：2026-10-02 需求方要求 v1 继续完善、不另开 v2，`index.json` 与 `expectation.json` 改回 `status: draft`，定稿时再冻结。v1.3 落实了与 Pantheon Argus 比对后的处理意见（§18.6）；v1.4 按需求方「质量优先、正例反例都要明显」精简到 558 条（§7.8）。v1.5 挑了 20 个子集登记到质检台（§7.9）。独立审计（2026-10-01）核实后的意见由需求方确认采纳，v1 按 §17 修订、
 > G1 拿不准的 20 条由需求方定完后重新冻结；交付说明见飞书文档《质检回归样本集 v1 · 交付说明》。
 > 口径：候选数据集的元数据来自 HuggingFace 的卡片、元数据文件与文件列表。标了「实测」的结论，是把样本下载到工作区、
 > 在平台 `1b30fb224` 这一版上跑出来的；只跑了不用模型的五个模块（数据完整性含逐帧解码、时间戳、运动质量、视觉质量、视频-动作同步，
 > 规格库里有的本体加运动学极限），任务成败与技能画像没有跑（没配模型后端）。没标「实测」的平台现状是照代码和已有测试写的。
 > 阶段 12 的平台（`249e172cd`：发现、策略判决、两块并行）在两个评测集上的全量实跑与 gap 见 §3.11，同样没有跑模型。
+
+v1.5 相对 v1.4（2026-10-04，需求方：挑 20 个上传到质检台，正反例期望清楚、多样性优先，Franka 别太多）：样本集与期望不变。
+§7.9 记挑法与清单（20 个子集、226 条，四种格式、11 种机器人，有正例的 52 项覆盖 49 项）；登记工具 `tools/regression_samples/register.py`。
 
 v1.4 相对 v1.3（2026-10-02，需求方：现在更重要的是质量而不是数量，正例反例都要非常明显、没有歧义，可以精简）：
 
@@ -758,6 +761,53 @@ AV-3 的正例从 2 条到 23 条、AV-4 从 1 条到 14 条。看帧的规则�
 | 录到一半就停 | 归 TASK-5；STRM-5 只看条目长度 |
 | MolmoAct2 | 每条除了会话任务（`rotate 3 blocks`），还有一条细标注（`tasks_annotated`，发布方的逐条描述）；LABEL-5 按细标注判（需求方对 MolmoAct2 标注写短的答复），细标注只说了一部分的记 `relation: narrower`；会话任务与细标注对成败说法不一时不写 TASK-5 |
 | 做法不同、终态相同（折叠方向） | LABEL-5，`relation: aligned`（需求方对 Fold_the_Suit 1138 的答复）；指令没提的收尾动作不定 |
+
+### 7.9 登记到质检台的 20 个（2026-10-04）
+
+需求方：从样本集里挑 20 个子集登记到 dataverse 的质检台（`dataverse-curation-0`）；正例反例的期望都要清楚，格式和机器人要多样，
+Franka 别太多，可以少覆盖几项。清单与备注在 `tools/regression_samples/console_picks.json`。
+
+**挑法**
+
+- 有正例的 52 项要全覆盖，至少得 18 个子集：23 项的正例各自只在一个子集里，落在 12 个子集上；FILE-8、STRM-9、TASK-10、ACT-7、TASK-6、STRM-5
+  的候选子集互不重叠，又各占一个。这 18 个里 6 个是 Franka（DROID 5 个、HABIT 1 个）。
+- DROID 只留合成注入的 `droid200_injected`（16 项的正例只有它有）；只做一项的三个 DROID 注入子集不登记，AV-5、FILE-5、FILE-8 因此没有正例。
+  STRM-5 改用 RSS 的失败子集。
+- 补上 Unitree G1 的两个来源、UR5e、Flexiv；能换的位置选同一子集里正反例都有、依据强的：STRM-9 用 `molmoact2_rotate_3_blocks`
+  （倍速 7 条、实时 10 条），TASK-6 用 Galaxea 摆矿泉水（不合格 5 条、合格 5 条）。
+
+结果：20 个子集、226 条、14.8 GB，四种格式都有，11 种机器人、来自 14 个数据集；有正例的 52 项覆盖 49 项。期望里没有待定的判断，
+只有读数（RH20T 的评分 5 行、深度 2 行）。
+
+| 子集 | 格式 | 机器人 | 正例 |
+|---|---|---|---|
+| `droid200_injected` | v2.0 | Franka（DROID） | 合成注入 21 项 |
+| `habit_hrc` | v2.0 | 双臂 Franka FR3 | IMG-14、TASK-1、TASK-12 |
+| `g1_failure_labeling` | v2.1 | Unitree G1 + Inspire 灵巧手 | TASK-5（20 条失败、20 条成功）、TASK-12 |
+| `fastumi_arrange_toothbrush` | v2.1 | FastUMI 手持双夹爪 | STRM-2、STRM-6、AV-3、AV-4、MV-1、MV-2、ACT-2、ACT-3、IMG-1 |
+| `galaxea_arrange_mineral_water_bottles`（nc） | v2.1 | Galaxea R1 Lite | TASK-6、LABEL-4、SET-4、TASK-1 |
+| `rss2026_tower_of_hanoi_game__success_and_hil`（nc） | v2.1 | ARX 双臂 | ACT-7、LABEL-3、TASK-1 |
+| `rss2026_seal_water_bottle_cap__failure`（nc） | v2.1 | ARX 双臂 | STRM-5、TASK-5、LABEL-3、TASK-1 |
+| `svla_so101_index_injected` | v3.0 | SO-101 | FILE-10（合成） |
+| `camera_swap_10r_as_published` | v3.0 | SO-101 | MV-2（发布方另出了改正版） |
+| `molmoact2_rotate_3_blocks` | v3.0 | 双臂 YAM | STRM-9、LABEL-5、TASK-12 |
+| `molmoact2_scan_barcode` | v3.0 | 双臂 YAM | IMG-13、LABEL-5、TASK-12 |
+| `molmoact2_clothes_folding` | v3.0 | 双臂 YAM | IMG-10（对照项） |
+| `hiw500_clothes_washing` | v3.0 | Unitree G1 | IMG-8、MV-1 |
+| `dual_ur5e_rgbd` | v3.0 | 双臂 UR5e，RGB-D | 无（反例与深度读数） |
+| `rh20t_cfg1_28` | v3.0 | Flexiv | STRM-1 |
+| `genrobot_desktop_object_sorting` | mcap | GenRobot 手持双夹爪 | STRM-7、FILE-4、STRM-3、ACT-3 |
+| `genrobot_clutter_tidyup_stage2` | mcap | GenRobot 手持双夹爪 | AV-2、FILE-4、ACT-3 |
+| `genrobot_mcap_structure_injected` | mcap | GenRobot 手持双夹爪 | FILE-3（合成） |
+| `genrobot_p2_lace_up_shoes_with_both_hands` | mcap | GenRobot 手持双夹爪 | TASK-8、TASK-10、TASK-11、TASK-5、LABEL-5、AV-3、ACT-2、STRM-3、TASK-12 |
+| `abc130k_arrange_flowers_zedx` | mcap | XDOF 双臂 YAM 工位 | TASK-7、STRM-3、SET-4 |
+
+**登记**：`tools/regression_samples/register.py` 读这份清单，经 REST 逐个登记（`POST /datasets`，TOS 地址加访问密钥名）；名字是 `anchor-v1/<子集>`、
+`anchor-nc-v1/<子集>`，备注写格式、机器人、正例和期望值在哪；mcap 的映射按探测起草的原样确认。接口要 HTTP Basic 登录，由需求方在自己的终端跑
+（脚本问账号密码，不落盘）。
+
+2026-10-04 需求方跑完，20 个都登上了（`ds-…` 编号见控制台，搜 `anchor`）：18 个预检通过，条数与清单一致；Galaxea（动作列拆开，§11 第 9 条）
+与 ABC-130k（没有 `/action`，§11 第 8 条）预检不收，只能可视化、不能质检。4 个 GenRobot 子集的映射按内置 UMI 模版确认，ABC-130k 按「Foxglove 通用」确认。
 
 ## 8. 期望值
 

@@ -1,4 +1,4 @@
-# 回归样本集的工具：合成注入与打分
+# 回归样本集的工具：合成注入、打分与登记
 
 设计见 `docs/design/16-regression-samples.md`（注入 §7.5，期望 §8，打分 §8.4）。样本集本身不在仓库里（在 `tos://curation-robo-anchor/`），
 这里放可复现的工具：
@@ -12,6 +12,8 @@
 | `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
 | `taxonomy.json` | 检测项分类 1.2（73 项；TASK-12 的子类、LABEL-5 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
+| `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
+| `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
 
 ## `coverage_from_registry.py`
 
@@ -112,6 +114,23 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 .venv/bin/python tools/regression_samples/inject_v3.py --base <v3 数据集> --out <新目录> --plan offset:0:6,offset:1:1,video_range:2:1.0,dangling_task:25,frame_index:38
 ```
 
+## `register.py`
+
+质检台的接口要登录（HTTP Basic，设计 08 §5）：账号密码从 `CURATOR_USER` / `CURATOR_PASSWORD` 读，没设就在终端问，只发给 Daemon，不打印、不落盘。
+`--kube 命名空间/pod` 由脚本自己开 `kubectl port-forward`、用完关掉；能直接访问 Daemon 时用 `--api`。不给 `--credential` 时用 Daemon 的缺省访问密钥
+（或唯一的一把）；登记前先用它列一次第一个子集的上级目录，钥匙或桶不对就停在这里，一个都不登记。
+
+```bash
+# 看 Daemon 里有哪些访问密钥（只有名字、区域、末 4 位）
+.venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 --list-credentials
+# 登记 console_picks.json 里的 20 个子集，每个一行结果；--out 另存一份 JSON Lines
+.venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 \
+    --picks tools/regression_samples/console_picks.json [--credential <访问密钥名>] [--out registered.jsonl]
+```
+
+每行是 `[i/20] 新登记|已登记 <ds-id> <名字> | <格式> <条数> 条 | 预检通过|预检有问题：… | 映射 …`；同一地址再登记返回原来那条（名字、备注变了就改过来）。
+退出码：0 全部登记；1 有失败的（其余照常登记）；2 登录被拒、钥匙不对、输入有误或连不上（中途断开时前面的已登记，重跑即可）。
+
 ## 手动验证步骤
 
 打分：
@@ -132,3 +151,13 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
    `resolution` 那一路的宽高与 `injection.json` 里的 `actual` 一致。
 5. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒；
    `duplicate` 记为可疑。
+
+登记：
+
+1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests/test_register.py`：对着桩 Daemon，登录头、写请求的
+   `Content-Type` 与 `Idempotency-Key`、请求体、缺省钥匙、mcap 映射确认、重跑只改备注、登录被拒时一个不登记都对。
+2. 本机起一个不鉴权的 Daemon（`.claude/launch.json` 的 `curator-daemon-local`，本地根目录放一份 LeRobot、一份 GenRobot mcap、一份 ABC-130k mcap），
+   `register.py --api http://127.0.0.1:<端口>/curation/api/v1 --no-auth <三个目录>`：三行都是「新登记」，LeRobot「预检通过」，GenRobot「映射 已确认（UMI 手持夹爪（内置），第 1 版）」，
+   ABC-130k「预检有问题：mcap 里找不到必需的动作 topic（/action）…」且映射已确认（只能可视化，不能质检）；再跑一遍三行都是「已登记」。
+3. 集群：`--kube dataverse/dataverse-curation-0 --list-credentials` 列出钥匙；带 `--picks console_picks.json` 跑完，控制台「数据集」里搜 `anchor` 能看到 20 条，
+   名字、备注、条数与 `console_picks.json` 一致。

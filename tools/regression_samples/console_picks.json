@@ -1,0 +1,107 @@
+{
+ "date": "2026-10-04",
+ "about": "20 subsets of sample set v1 registered in the console (design doc 16 §7.9): clear expectations on positives and negatives, every format (LeRobot v2.0 / v2.1 / v3.0, mcap), 11 robot models from 14 sources, 49 of the 52 items with positives",
+ "region": "cn-beijing",
+ "picks": [
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v20/droid200_injected/",
+   "name": "anchor-v1/droid200_injected",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.0｜Franka（DROID），合成注入｜47 条｜正例：ACT-8 4、FILE-2 4、IMG-2 4、SET-1 3、ACT-1 2、ACT-2 2、ACT-3 2、AV-1 2、FILE-1 2、FILE-4 2、FILE-6 2、FILE-7 2、IMG-1 2、IMG-4 2、IMG-5 2、IMG-6 2、IMG-7 2、IMG-8 2、MV-2 2、STRM-1 2、STRM-4 2｜有反例的检测项 22 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v20/droid200_injected）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v20/habit_hrc/",
+   "name": "anchor-v1/habit_hrc",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.0｜双臂 Franka FR3（HABIT，人机协作）｜22 条｜正例：TASK-1 22、IMG-14 7、TASK-12 4｜有反例的检测项 7 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v20/habit_hrc）｜许可：CC-BY-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v21/g1_failure_labeling/",
+   "name": "anchor-v1/g1_failure_labeling",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.1｜Unitree G1 + Inspire 灵巧手｜40 条｜正例：TASK-12 40、TASK-5 20｜有反例的检测项 6 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v21/g1_failure_labeling）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v21/fastumi_arrange_toothbrush/",
+   "name": "anchor-v1/fastumi_arrange_toothbrush",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.1｜FastUMI 手持双夹爪｜14 条｜正例：ACT-3 8、MV-2 6、ACT-2 4、AV-3 3、AV-4 2、IMG-1 1、MV-1 1、STRM-2 1、STRM-6 1｜有反例的检测项 10 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v21/fastumi_arrange_toothbrush）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor-nc/v1/lerobot_v21/galaxea_arrange_mineral_water_bottles/",
+   "name": "anchor-nc-v1/galaxea_arrange_mineral_water_bottles",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.1｜Galaxea R1 Lite 轮式双臂｜10 条｜正例：LABEL-4 10、SET-4 10、TASK-1 10、TASK-6 5｜有反例的检测项 4 个｜期望值：tos://curation-robo-anchor/anchor-nc/v1/expectation.json（dataset = lerobot_v21/galaxea_arrange_mineral_water_bottles）｜许可：mirror without a licence; the official release is CC-BY-NC-SA-4.0，非商用，仅内部使用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor-nc/v1/lerobot_v21/rss2026_tower_of_hanoi_game__success_and_hil/",
+   "name": "anchor-nc-v1/rss2026_tower_of_hanoi_game__success_and_hil",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.1｜ARX 双臂（RSS 2026 挑战赛，成功、带人工接管）｜5 条｜正例：LABEL-3 5、ACT-7 4、TASK-1 1｜有反例的检测项 6 个｜期望值：tos://curation-robo-anchor/anchor-nc/v1/expectation.json（dataset = lerobot_v21/rss2026_tower_of_hanoi_game__success_and_hil）｜许可：CC-BY-NC-4.0，非商用，仅内部使用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor-nc/v1/lerobot_v21/rss2026_seal_water_bottle_cap__failure/",
+   "name": "anchor-nc-v1/rss2026_seal_water_bottle_cap__failure",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v2.1｜ARX 双臂（RSS 2026 挑战赛，失败）｜6 条｜正例：LABEL-3 6、TASK-5 6、TASK-1 5、STRM-5 1｜有反例的检测项 4 个｜期望值：tos://curation-robo-anchor/anchor-nc/v1/expectation.json（dataset = lerobot_v21/rss2026_seal_water_bottle_cap__failure）｜许可：CC-BY-NC-4.0，非商用，仅内部使用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/svla_so101_index_injected/",
+   "name": "anchor-v1/svla_so101_index_injected",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜SO-101，合成注入（索引错位）｜10 条｜正例：FILE-10 5｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/svla_so101_index_injected）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/camera_swap_10r_as_published/",
+   "name": "anchor-v1/camera_swap_10r_as_published",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜SO-101（发布版，相机名标反）｜3 条｜正例：MV-2 3｜有反例的检测项 5 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/camera_swap_10r_as_published）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/molmoact2_rotate_3_blocks/",
+   "name": "anchor-v1/molmoact2_rotate_3_blocks",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜双臂 YAM（MolmoAct2）｜17 条｜正例：STRM-9 7、LABEL-5 4、TASK-12 2｜有反例的检测项 5 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/molmoact2_rotate_3_blocks）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/molmoact2_scan_barcode/",
+   "name": "anchor-v1/molmoact2_scan_barcode",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜双臂 YAM（MolmoAct2）｜7 条｜正例：LABEL-5 7、IMG-13 6、TASK-12 3｜有反例的检测项 3 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/molmoact2_scan_barcode）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/molmoact2_clothes_folding/",
+   "name": "anchor-v1/molmoact2_clothes_folding",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜双臂 YAM（MolmoAct2）｜3 条｜正例：IMG-10 1｜有反例的检测项 5 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/molmoact2_clothes_folding）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/hiw500_clothes_washing/",
+   "name": "anchor-v1/hiw500_clothes_washing",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜Unitree G1（HIW-500，居家）｜3 条｜正例：IMG-8 1、MV-1 1｜有反例的检测项 5 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/hiw500_clothes_washing）｜许可：CC-BY-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/dual_ur5e_rgbd/",
+   "name": "anchor-v1/dual_ur5e_rgbd",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜双臂 UR5e，4 路 RGB-D｜2 条｜正例：无｜有反例的检测项 3 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/dual_ur5e_rgbd）｜许可：Apache-2.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/rh20t_cfg1_28/",
+   "name": "anchor-v1/rh20t_cfg1_28",
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜Flexiv（RH20T）｜5 条｜正例：STRM-1 5｜有反例的检测项 6 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/rh20t_cfg1_28）｜许可：RH20T per-scene: CC-BY-SA-4.0 or CC-BY-NC-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/mcap/genrobot_desktop_object_sorting/",
+   "name": "anchor-v1/genrobot_desktop_object_sorting",
+   "note": "回归样本集 v1（设计 16）｜mcap｜GenRobot 手持双夹爪（RealOmni）｜5 条｜正例：FILE-4 4、ACT-3 1、STRM-3 1、STRM-7 1｜有反例的检测项 8 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = mcap/genrobot_desktop_object_sorting）｜许可：CC-BY-SA-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/mcap/genrobot_clutter_tidyup_stage2/",
+   "name": "anchor-v1/genrobot_clutter_tidyup_stage2",
+   "note": "回归样本集 v1（设计 16）｜mcap｜GenRobot 手持双夹爪（RealOmni）｜4 条｜正例：ACT-3 1、AV-2 1、FILE-4 1｜有反例的检测项 8 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = mcap/genrobot_clutter_tidyup_stage2）｜许可：CC-BY-SA-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/mcap/genrobot_mcap_structure_injected/",
+   "name": "anchor-v1/genrobot_mcap_structure_injected",
+   "note": "回归样本集 v1（设计 16）｜mcap｜GenRobot 手持双夹爪（RealOmni），合成注入（mcap 结构）｜7 条｜正例：FILE-3 3｜有反例的检测项 2 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = mcap/genrobot_mcap_structure_injected）｜许可：CC-BY-SA-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/mcap/genrobot_p2_lace_up_shoes_with_both_hands/",
+   "name": "anchor-v1/genrobot_p2_lace_up_shoes_with_both_hands",
+   "note": "回归样本集 v1（设计 16）｜mcap｜GenRobot 手持双夹爪（RealOmni）｜12 条｜正例：TASK-5 5、TASK-8 5、LABEL-5 3、TASK-10 3、TASK-11 2、ACT-2 1、AV-3 1、STRM-3 1、TASK-12 1｜有反例的检测项 8 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = mcap/genrobot_p2_lace_up_shoes_with_both_hands）｜许可：CC-BY-SA-4.0"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/anchor/v1/mcap/abc130k_arrange_flowers_zedx/",
+   "name": "anchor-v1/abc130k_arrange_flowers_zedx",
+   "note": "回归样本集 v1（设计 16）｜mcap｜XDOF 双臂 YAM 工位（ABC-130k）｜4 条｜正例：SET-4 4、STRM-3 1、TASK-7 1｜有反例的检测项 3 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = mcap/abc130k_arrange_flowers_zedx）｜许可：Apache-2.0"
+  }
+ ]
+}
