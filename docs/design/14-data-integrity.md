@@ -343,7 +343,7 @@ mcap（JPEG）约 39 GB。
 
 ## 8. 验收
 
-故障样本从干净的小数据集派生（LeRobot v2：对账工具的 8 条夹具；LeRobot v3：`tests/export/v3_fixture` 的 6 条共用文件夹具；
+故障样本从干净的小数据集派生（LeRobot v2：对账工具的 8 条夹具；LeRobot v3：`tests/cli/v3_fixture` 的 6 条共用文件夹具；
 mcap：对账工具的 8 条 mcap 夹具），每条只注入一种故障。测试在 `backend/tests/cli/test_integrity.py`、
 `test_integrity_adjudication.py`、`test_preflight_integrity.py`：
 

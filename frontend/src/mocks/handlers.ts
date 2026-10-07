@@ -812,7 +812,7 @@ function newSubtask(t: Task, kind: Subtask['kind'], scope: Subtask['scope']): Su
   list.push(s);
   db.subtasks.set(t.id, list);
   t.active_subtask = s;
-  timeline(t.id).push({ at: clock(), kind: 'subtask_started', text: { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决', reexport: '重新导出' }[kind] + '：子任务已创建，排队中', state: null, subtask_id: s.id, revision: null });
+  timeline(t.id).push({ at: clock(), kind: 'subtask_started', text: { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决' }[kind] + '：子任务已创建，排队中', state: null, subtask_id: s.id, revision: null });
   touch(t);
   return s;
 }

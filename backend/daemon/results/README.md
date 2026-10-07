@@ -29,7 +29,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   `GET /tasks/{id}/pipeline/episodes/{index}` 读取这条的当前模块结果。两块的运行（计划 2.0）每条给各逐条段的状态与临时判决
   （任务策略作用在已有的发现上），第一页还带 `modules`：每个逐条段模块到目前为止判过、出错、有发现的条数（episode 状态库的
   `findings` 列，C4 2.3.0，任务详情的模块卡在没有报告时用）；漏斗的旧任务照旧给机器漏斗判定。
-  去重和画像仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准。
+  去重仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准。
 - **读哪个版本**：缺省读 `task.result_rev`；`?rev=N` 可读 1 到 `result_rev` 之间任一已提交的版本。
   没有 `commit.json` 的版本不认；`result_rev` 之后已提交、还没切换过去的版本也不给看（D25）。
   任务还没有结果、版本号越界、本地文件不全，一律 404 `not_found`，`details.reason` 说明是

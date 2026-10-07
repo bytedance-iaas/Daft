@@ -1,6 +1,6 @@
 """A second result revision after human decisions, exported incrementally (W3).
 
-The Daemon's adjudication sequence (doc 02 §3.9, doc 06 §5) on the fixture,
+The Daemon's adjudication sequence (doc 02 §3.8, doc 06 §5) on the fixture,
 after a complete first run:
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)

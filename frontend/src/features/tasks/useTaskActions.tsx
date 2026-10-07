@@ -20,7 +20,6 @@ export interface ActionTarget {
   name: string;
   held?: number;
   deliveryUri?: string;
-  exported?: boolean;
 }
 
 export interface PrecheckItem {

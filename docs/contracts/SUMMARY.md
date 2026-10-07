@@ -8,12 +8,12 @@
 | # | 管什么 | 要点 |
 |---|---|---|
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 3.0（D68）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
-| C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
+| C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
-防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
+防漂移：35 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
 `examples/` 里 25 组合法与不合法样例，契约测试双向校验。
 
 ## 二、冻结时定下的细节（已按此落地，可否决）
@@ -328,3 +328,20 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **C2**：预检的数据集块只加可选字段，仍是 1.0——`features`、`camera_info`（与 `cameras` 同序；`cameras` 仍是短名数组）、`segment_sources`、mcap 的 `topics`。
 - **C5**：`Dataset` 多 `viz_mapping` / `viz_mapping_version` / `viz_mapping_updated_at` / `display_config` / `annotations_upload`，
   `set_dataset_viz_mapping` 每次确认加一版；新实体 `VizTemplate`（`vt-…`，名称唯一）与增删查；SQLite 迁移第 7 步。
+
+## 十七、三项下线：技能画像、裁决的追加问题、数据集导出（2026-10-07，D68 / D69）
+
+需求方要求把平台收回到「出质检报告」这一件事上，三项功能连着它们的契约一起下线。
+
+- **C1 → 3.0（D68）**：`skill_profile` 模块、`profile_vlm` 档、复核线 `skill_profile_review` 都没了，`modules.json` 重新导出；
+  注册表里剩 6 项漏斗检查 + 去重，另有完整性、EEF、画面缺陷。
+- **C2（D69）**：删掉 `cli/export.schema.json` 与 `cli/export-manifest.schema.json` 及它们的示例（`curation export` 命令同时下线），
+  CLI 的命令序列成了 `preflight → plan → snapshot → autolabel → check → aggregate → report → verify`；
+  `verify` 的「关键文件」就是运行目录里除在产物之外的全部文件（不再按产物清单找交付数据集），这一条原来是 W7 的缺口，现在无从发生。
+- **C4 → 3.0.0（D68）**：裁决一张卡一个问题 —— 改标随 `task_verdict` 的答案走（`new_label`），
+  `relabel` / `needs_label` 两条线与追加问题（`follow_ups`、`follow_up_of`）去掉。
+- **C4 → 4.0.0（D69）**：`POST /tasks/{id}/reexport`、子任务种类 `reexport`、任务上的 `delivery_stale`、`params.export`、
+  总览的 `todo.delivery_pending`、视频来源 `delivery_dataset` 全部去掉。交付目录保留：任务的运行目录（结果版本、报告与明细）
+  同步进 `<交付>/<run_id>/`，回读无误后写 `_COMPLETE`，`latest` 仍指向最新的完整一批。
+- **C5（D69）**：`Task` 去掉 `export_fingerprint` 与 `delivery_stale`，`Subtask.kind` 去掉 `reexport`；SQLite 迁移第 8 步丢两列。
+- 要重新生成交付数据集，用 `release_v1` 分支的 v1 流水线；导出下线之前跑的批次，它们的 `<run_id>/export/` 还留在交付目录里，平台不再更新。

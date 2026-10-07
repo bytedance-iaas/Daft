@@ -1,4 +1,4 @@
-"""The report of one result revision (design doc 02 §3.8, 06 §6).
+"""The report of one result revision (design doc 02 §3.7, 06 §6).
 
 ``report.json`` (``cli/report.schema.json``) drives the report page: an
 overview, then one section per selected module in registry order - a module
@@ -502,19 +502,15 @@ def integrity(rev: Revision) -> dict:
 
 def container_integrity(rev: Revision) -> dict | None:
     """mcap / lance (D44): v1's container findings (``export/report.container_findings``
-    over what ``check`` recorded in ``source_info.json``) and how the dataset is delivered
-    - for lance, that the native delivery is not done (v1's report line)."""
+    over what ``check`` recorded in ``source_info.json``).
+
+    No delivery line since D69: the delivery is this report and the result revision, the
+    same for every source format. Reports written before that still carry ``delivery``.
+    """
     kind = ((rev.preflight.get("format") or {}).get("kind"))
     if kind not in ("mcap", "lance"):
         return None
-    n = rev.lists["passed"]["count"]
-    if kind == "mcap":
-        delivery = (f"mcap_curated/（{n} 个 .mcap，原格式逐字节；清单见 index.json；"
-                    f"改标只写进清单，文件本体不动）")
-    else:
-        delivery = (f"lance_episodes/episodes_parquet/（{n} 条，轨迹级）与 videos/；"
-                    f"lance 原格式交付本版本未做，判决清单见 passed / reject / held")
-    out: dict = {"format": kind, "delivery": delivery, "findings": []}
+    out: dict = {"format": kind, "findings": []}
     facts = _read(os.path.join(rev.run_dir, "source_info.json"), None)
     if isinstance(facts, dict) and isinstance(facts.get("info"), dict):
         from ..export.report import container_findings
@@ -759,7 +755,8 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
     container = report["integrity"].get("container")
     if container:                               # mcap / lance (D44)
         lines.append(f"## 数据包({container['format']})")
-        lines.append(f"- 交付数据集:{container['delivery']}")
+        if container.get("delivery"):            # written before D69
+            lines.append(f"- 交付数据集:{container['delivery']}")
         for f in container.get("findings") or []:
             lines.append(f"- {f.get('项')}:{f.get('状态')} —— {f.get('说明')}")
         lines.append("")

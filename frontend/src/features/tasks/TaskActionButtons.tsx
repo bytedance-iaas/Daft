@@ -3,7 +3,7 @@ import { IconDown } from '@arco-design/web-react/icon';
 import type { ActionPlan, TaskActionKey } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
-export function actionLabel(key: TaskActionKey, opts: { held?: number; exported?: boolean; pending?: number } = {}): string {
+export function actionLabel(key: TaskActionKey, opts: { held?: number; pending?: number } = {}): string {
   switch (key) {
     case 'retry':
       return zh.taskList.retryCount(opts.held ?? 0);
@@ -20,7 +20,6 @@ export function TaskActionButtons({
   plan,
   onAction,
   held,
-  exported,
   pending,
   size = 'small',
   primaryType = 'text',
@@ -28,13 +27,12 @@ export function TaskActionButtons({
   plan: ActionPlan;
   onAction: (key: TaskActionKey) => void;
   held?: number;
-  exported?: boolean;
   /** Pending adjudication items, for 人工裁决（N）. */
   pending?: number;
   size?: 'mini' | 'small' | 'default';
   primaryType?: 'text' | 'primary' | 'secondary';
 }) {
-  const label = (k: TaskActionKey) => actionLabel(k, { held, exported, pending });
+  const label = (k: TaskActionKey) => actionLabel(k, { held, pending });
   const primary = plan.primary;
   const primaryDisabled = primary ? plan.disabled[primary] : undefined;
   return (

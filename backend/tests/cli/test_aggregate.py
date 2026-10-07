@@ -1,4 +1,4 @@
-"""aggregate and adjudicate-apply on hand-made run directories (W3, doc 02 §3.6 / §3.9, 17 §4).
+"""aggregate and adjudicate-apply on hand-made run directories (W3, doc 02 §3.6 / §3.8, 17 §4).
 
 Each test writes the module records it needs (records 2.0, the ``check`` record format), runs
 the commands in process - every ``--json`` checked against its C2 schema - and reads the files

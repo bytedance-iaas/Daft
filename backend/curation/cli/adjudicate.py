@@ -1,4 +1,4 @@
-"""``curation adjudicate-apply`` - apply this task's human decisions (design doc 02 §3.9).
+"""``curation adjudicate-apply`` - apply this task's human decisions (design doc 02 §3.8).
 
 The first step of v1's ``rejudge``: decisions are recorded as applied - no model
 call, no export (D9) - and the command names what runs next:

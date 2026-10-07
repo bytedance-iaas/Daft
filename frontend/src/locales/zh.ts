@@ -274,8 +274,6 @@ export const zh = {
     colCreated: '创建时间',
     colActions: '操作',
     pendingBadge: (n: number) => `待裁决 ${n}`,
-    deliveryStale: '交付待重新导出',
-    deliveryNeverExported: '交付待导出',
     moduleCount: (n: number) => `${n} 项`,
     moduleErrors: (n: number) => `${n} 项错误`,
     moduleNotRun: (n: number) => `${n} 项未运行`,
@@ -369,13 +367,6 @@ export const zh = {
       title: '继续运行',
       content: '从断点接着跑主流程里没完成的部分，已完成的模块和 episode 不会重跑。开始前会检查：数据集能读、交付目录能写、模型能调通。',
       ok: '继续运行',
-    },
-    confirmExport: {
-      titleFirst: '导出交付数据集',
-      titleAgain: '重新导出交付数据集',
-      content: (uri: string) =>
-        `按当前通过名单导出（含待裁决条目，不含待补跑条目），写到 ${uri}。导出走增量，只处理变动的 episode；导出后逐文件回读核验，通过才标记完成。以后人工裁决改了判决，还要再导出一次，平台不会自动重建数据集。`,
-      ok: '开始导出',
     },
     purgeDialog: {
       title: '清理交付产物',
@@ -910,10 +901,6 @@ export const zh = {
     renamed: '已保存',
     tabOverview: '概览',
     tabLogs: '日志',
-    stale: '判决已更新，交付数据集待重新导出。',
-    staleNever: '交付数据集待导出。',
-    staleDesc: '导出走增量，只处理变动的 episode；平台不会自动重建数据集。',
-    staleNeverDesc: '这个任务还没有导出过交付数据集（参数关了导出，或主流程结束时没有可交付的条目）。',
     subtaskRunning: (kind: string, state: string) => `子任务「${kind}」${state}，完成前不能再建子任务`,
     subtaskKind: { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决' } as Record<string, string>,
     stateReason: '原因：',
@@ -1176,7 +1163,7 @@ export const zh = {
     rejectItemsDesc: (n: number) => `共 ${n} 条，一条有几个检测项的原因就各记一次`,
     rejectNone: '没有判废的条目',
     heldTitle: (n: number) => `${n} 条待补跑`,
-    heldDesc: '执行出错，既不算通过也不算拒绝，补跑成功前不交付。补跑成功后按新结果进通过或拒绝，再重新导出。',
+    heldDesc: '执行出错，既不算通过也不算拒绝，补跑成功前不计入交付。补跑成功后按新结果进通过或拒绝，出新的结果版本。',
     retryHeld: (n: number) => `重试这 ${n} 条`,
     // D40: episodes left out because source files are missing
     skippedNote: (n: number) => `另有 ${n} 条缺源文件，未参与质检。`,
@@ -1198,7 +1185,7 @@ export const zh = {
       container: '数据包（mcap / Lance）',
     } as Record<string, string>,
     containerValue: (format: string, delivery: string, findings: string) =>
-      `${format} · 交付：${delivery}${findings ? ` · 体检：${findings}` : ''}`,
+      `${format}${delivery ? ` · 交付：${delivery}` : ''}${findings ? ` · 体检：${findings}` : ''}`,
     /** One of v1's container findings ({项, 状态, 说明}, export/report.container_findings). */
     containerFinding: (f: Record<string, unknown>) =>
       `${String(f['项'] ?? '')}：${String(f['状态'] ?? '')}${f['说明'] ? `（${String(f['说明'])}）` : ''}`,

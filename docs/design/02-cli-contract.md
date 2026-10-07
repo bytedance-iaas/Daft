@@ -10,8 +10,8 @@
 4. **不重试、不并发**，除非显式要求。默认参数下就是一次直来直去的执行；
    `--concurrency` / `--retry` / `--hedge` 是可选行为开关。这条是需求的硬要求。
 5. **两类命令，界线分明**（D22）：
-   - **原子命令**（§3.1–3.10）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
-   - **客户端命令**（§3.11，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
+   - **原子命令**（§3.1–3.9）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
+   - **客户端命令**（§3.10，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
 
 ## 2. 全局参数
 
@@ -179,8 +179,8 @@ v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有�
 {"episode_index": 17, "caption": "put the orange box into the bin", "source": "自产caption"}
 ```
 
-下游三处用它：`task_success` 拿它当任务文本（**有原始标注就用标注，没有才用它**）；
-`export` 把它写进交付数据集的任务文本，并标明来源。
+下游用它的地方：`task_success` 拿它当任务文本（**有原始标注就用标注，没有才用它**）；
+报告的明细表写每条的任务文本和它的来源。
 抽帧与提示词原样搬运 `dataset_level/caption.py`。
 
 ### 3.5 `curation check` — 跑检查
@@ -268,7 +268,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 **改了标的条目怎么重判**（D39）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用改标时记下的口径判：
 `v1`（缺省）照 v1 `rejudge._build_rerun`，只跑多视角打分和逐机位复核两层，结论与调用和 v1 一致；
 `full` 走首轮的完整判定（多了任务类型判定、机位提示、判废护栏和取证仲裁）。口径由 `adjudicate-apply` 从
-`decisions.json` 读进来、随每条改标记在批次目录里（§3.9），之后重试这几条沿用同一口径。
+`decisions.json` 读进来、随每条改标记在批次目录里（§3.8），之后重试这几条沿用同一口径。
 
 没带 `--source-manifest` 时，读到才发现缺源文件的 episode 同样剔除（D40）：不写结果行，
 列在输出的 `skipped_missing_source` 里；带了清单的，清单的 `skipped_episodes` 已经把它们排除在外。
@@ -307,25 +307,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
 就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。
 
-### 3.7 `curation export` — 导出交付数据集
-
-```bash
-curation export --run-dir <dir> --input tos://... --output tos://... \
-                [--revision N] [--incremental] [--concurrency N] --json
-```
-
-按 `passed.json` 导出 `lerobot_curated/`，**含待裁决条目**（v1 的保守放行），不含 `held` 里待补跑的条目。
-任务文本按来源写入：原始标注、自产 caption、人工改标，各带 `instruction_source`。
-`--incremental` 时对比上一次的产物清单，只处理变动部分，详见 `06-delivery-and-report.md` §4。
-`--revision` 省略时取编号最大、带 `commit.json` 的结果版本。上次导出中断、产物缺失或格式参数变了，
-`--incremental` 会自动退回全量导出，原因写在输出的 `full_reason` 里。
-
-mcap / Lance 源照 v1 交付（D44），输出的 `dataset_dir` 写明交付目录：mcap 是 `export/mcap_curated/`（passed 各条的 `.mcap`
-逐字节拷贝，`index.json` 列任务文本与来源，改标只写进清单）；Lance 原格式交付本版本未做，交的是 `export/lance_episodes/`
-（v1 的 `episodes_parquet/` 加 `videos/`），输出带 `note` 说明。这两种每次都是全量导出，`--incremental` 在 `full_reason` 里说明；
-内容没变的文件不重新上传。
-
-### 3.8 `curation report` — 生成报告
+### 3.7 `curation report` — 生成报告
 
 ```bash
 curation report --run-dir <dir> --revision N [--format md,json] --json
@@ -338,13 +320,13 @@ curation report --run-dir <dir> --revision N [--format md,json] --json
 明细表一律写成 Parquet（按 episode 下标排序），供报告页分页读取，见 03 篇 §6。
 延迟明细是追加式的（v1 的 rejudge 已如此），子任务跑过之后重新生成，性能剖析自然包含历次调用。
 
-### 3.9 `curation adjudicate-apply` — 执行人工裁决
+### 3.8 `curation adjudicate-apply` — 执行人工裁决
 
 ```bash
 curation adjudicate-apply --run-dir <dir> --decisions decisions.json --json
 ```
 
-v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型、不导出数据集**。
+v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型**。
 `decisions.json` 由 Daemon 从库里导出，只含**本任务**尚未执行的裁决；裁决不跨任务（D32）。三条裁决线的优先级规则原样保留
 （「整条弃用」压过成败裁决等，见 06 篇 §5）。输出里带两份名单，交给后续步骤：
 
@@ -360,18 +342,19 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型�
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
 `aggregate` → `report`。
 
-### 3.10 `curation verify` — 交付核验
+### 3.9 `curation verify` — 交付核验
 
 ```bash
 curation verify --run-dir <dir> --output tos://... --json
 ```
 
 逐个回读交付目录里的关键文件：存在、大小对、能解析（JSON / parquet 头 / mp4 的 moov / JPEG 魔数）。
-交付数据集的文件按 `export/manifest.json` 的 `files` 与 `dataset_dir`（mcap / Lance 源，D44）去找。
+关键文件就是运行目录里除在产物（`logs/`、`inflight.json`、隐藏与临时文件）之外的全部文件：
+结果版本、报告与明细、证据帧与曲线图。
 搬 v1 的 `_verify_delivery_visible`：写成功不等于读得到，读回来全零的文件 v1 见过六次。
 核验通过才写 `_COMPLETE`。
 
-### 3.11 客户端命令：`curation task …`
+### 3.10 客户端命令：`curation task …`
 
 给 Agent 和脚本用。只做一件事：调 Daemon 的 REST API，把响应原样（`--json`）或渲染后打出来。
 响应里带 `links`，见 §6。连接信息只从参数或环境变量来：`CURATOR_URL`、`CURATOR_USER`、`CURATOR_PASSWORD`。

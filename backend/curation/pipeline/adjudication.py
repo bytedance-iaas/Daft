@@ -1,4 +1,4 @@
-"""Human decisions of one task: storing them and what they do (design doc 02 §3.9, 06 §5).
+"""Human decisions of one task: storing them and what they do (design doc 02 §3.8, 06 §5).
 
 ``curation adjudicate-apply`` is the first step of v1's ``rejudge``: it records
 the task's decisions as applied - never calling a model and never exporting (D9)

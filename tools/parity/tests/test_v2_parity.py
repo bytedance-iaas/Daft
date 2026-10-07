@@ -29,7 +29,7 @@ pytestmark = pytest.mark.e2e
 #: the Daemon's two blocks one after the other, every stage on the whole selection (design doc 17 §3)
 STEPS = ["preflight", "plan", "snapshot", "autolabel", "check numeric", "check frame",
          "check vlm", "check dedup",
-         "aggregate final", "report", "export", "verify"]
+         "aggregate final", "report", "verify"]
 
 
 def run_v2(tmp, name: str, dataset: str, *mode: str):

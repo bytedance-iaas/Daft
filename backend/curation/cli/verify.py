@@ -1,4 +1,4 @@
-"""``curation verify`` - read the delivery back before calling it complete (doc 02 §3.10).
+"""``curation verify`` - read the delivery back before calling it complete (doc 02 §3.9).
 
 Writing is not the same as being readable: v1 once reported a 10853-byte
 all-zero ``passed.json`` as delivered (``pipeline/run.py``

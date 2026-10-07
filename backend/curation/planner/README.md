@@ -82,10 +82,10 @@ print(plan["estimates"])
 EOF
 ```
 
-核对：八档依次是 autolabel、numeric、frame、vlm、verdict、dedup、profile、final；frame 读 `survivors:numeric`，vlm 读
-`survivors:frame`；CPU 两档并发 30（32 核留 2 核）；dedup 并发 1；vlm 档闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 /
-guard_caption 32`，profile 档 `caption 32 / llm 16 / audit 16`；两个 VLM 档都是 `{"strategy": "none", "groups": []}`；
-估算 3000 次请求（autolabel 88 + 成败判定 200×(8+2×3) + 画像 112）；notes 里说明运动学极限缺型号、哪些调用没计入。
+核对：六段依次是 numeric、frame、dedup（CPU 块）、autolabel、vlm（VLM 块）与收尾的 final；CPU 两段并发 30（32 核留 2 核）；
+dedup 并发 1；autolabel 闸门 `caption 32`，vlm 段闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 / guard_caption 32`，
+合并是 `{"strategy": "none", "groups": []}`；上限 `cpu_concurrency 30 / vlm_parallelism 64`，都由 planner 定；
+估算 888 次请求（autolabel 88 + 成败判定 200×4）；notes 里说明运动学极限缺型号、哪些调用没计入。
 
 **3. 上限取交集与闸门推导**：
 
@@ -213,6 +213,6 @@ EOF
 - `check --json` 的 `merge.requests` 按模块计：一个合并请求在它携带的每个模块里各记一次；任务级请求总数以实际账为准。
 - 合并请求的延迟行还没有标签：`vlm_latency.csv` 的五个标签是数据契约，加 `merged` 要单独定。
 - 计划里的八把闸门是 v1 的调用点；新模块的请求暂按 `probe` 估算，真正接入时要定它归哪把闸门。
-- 估算是建议值：假定所选条目全部过硬门；仲裁、判废护栏与画像的纯文本调用随数据变化，不计入。
+- 估算是建议值：假定所选条目全部过硬门；仲裁与判废护栏的调用随数据变化，不计入。
 - 10 篇 §3.4 要求示例模块走真实的方舟端点再跑一遍对账：`run_merge_consistency` 可以直接用，
   缺的是真实的 `send`（上表「合并执行」一行）和按 `FramePolicy` 解码的 `frames`，都属于接入步骤。

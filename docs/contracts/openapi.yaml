@@ -190,7 +190,7 @@ tags:
       after), start / pause / resume / stop, delete and restore, delete its run directory on TOS,
       re-preflight, rebind keys, and the subtasks that retry and continue; a task's
       subtasks, plan, timeline, logs and token usage.
-    x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行、重新导出这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
+    x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
   - name: report
     description: >-
       What a task found: the report and its detail tables, the episodes with their verdicts and

@@ -11,7 +11,7 @@
 | `curation autolabel` | 给没有任务标注的 episode 补一句描述（`autolabel/captions.jsonl`） | `cli/autolabel.schema.json` |
 | `curation check` | 跑**一档**的模块（数值档、帧档、VLM 档，或 `dedup`），每条 episode 一行结果 | `cli/check.schema.json` |
 | `curation aggregate` | `funnel`：每条 keep / drop / held 与 `keep.txt`；`final`：passed / reject / held 三个清单和 review 视图 | `cli/aggregate.schema.json` |
-| `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型、不导出），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
+| `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
 | `curation report` | 一个结果版本的 `report.md` / `report.json` / `perf.json` / 明细表，最后写 `commit.json` | `cli/report-output.schema.json` |
 | `curation verify` | 从交付目录逐个回读关键文件，全部通过才最后写 `_COMPLETE` | `cli/verify.schema.json` |
 | `curation task …` | Daemon REST API 的薄客户端，给 Agent 和脚本用，输出带 `links` | `openapi.yaml` 里对应接口的响应，原样打印 |
@@ -307,7 +307,7 @@ adjudicate-apply → check task_success --episodes <rerun_task_success>（写新
 
 裁决之后**不再跑 dedup**：它报的重复组不变，`final` 在人工决定之后选每组留哪条（原件被人判失败时副本顶上），由人带回的条不做去重。
 
-重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup / 画像出错或
+重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup 出错或
 被点名时整段重跑，然后 `final`。
 
 mcap / Lance 数据集的顺序相同，`autolabel`、`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。

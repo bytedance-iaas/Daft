@@ -31,7 +31,6 @@ from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
 PASSED, REJECT = [0, 1, 3, 4, 6], [2, 5, 7]
-DATASET_DIR = {"mcap": "mcap_curated", "lance": "lance_episodes"}
 
 
 @pytest.fixture(scope="session")
@@ -223,17 +222,16 @@ def test_chain_semantics_come_from_the_selection(chain):
 def test_chain_leaves_no_temporary_videos(chain):
     assert os.listdir(chain.tmp) == []
 def test_chain_report_notes_the_container(chain):
+    """The container section is v1's health check of the data package - and since D69 only
+    that: there is no delivered dataset to describe."""
     with open(os.path.join(chain.rd, "revisions", "r0001", "report.json")) as fh:
         report = json.load(fh)
     container = report["integrity"]["container"]
-    assert container["format"] == chain.fmt
-    assert container["delivery"]
+    assert container["format"] == chain.fmt and "delivery" not in container
+    assert isinstance(container["findings"], list)
     with open(os.path.join(chain.rd, "revisions", "r0001", "report.md"), encoding="utf-8") as fh:
         md = fh.read()
-    if chain.fmt == "lance":
-        assert "原格式交付本版本未做" in md
-    else:
-        assert "mcap_curated" in md
+    assert f"## 数据包({chain.fmt})" in md and "交付数据集" not in md
 
 
 # ---------------------------------------------------------------- on a fake TOS

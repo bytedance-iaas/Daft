@@ -1,4 +1,4 @@
-"""``curation task ...`` - a thin client of the Daemon's REST API (design doc 02 §3.11, D22).
+"""``curation task ...`` - a thin client of the Daemon's REST API (design doc 02 §3.10, D22).
 
 For Agents and scripts. Each subcommand is one call of C4
 (``docs/contracts/openapi.yaml``); with ``--json`` the response body is printed

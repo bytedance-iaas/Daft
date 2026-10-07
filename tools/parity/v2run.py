@@ -6,7 +6,7 @@ one block after the other -
 
     preflight -> plan -> snapshot -> autolabel -> check (integrity) -> check numeric
     -> check frame -> check vlm -> check dedup
-    -> aggregate final -> report -> export -> verify
+    -> aggregate final -> report -> verify
 
 - every stage on the whole selection (no stage filters another, D57), into one v2 run
 directory, which ``python -m parity compare`` loads directly. Model calls go
@@ -135,9 +135,6 @@ class Chain:
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")
-        out = ["--output", self.delivery] if self.delivery else []
-        self.run("export", "export", "--run-dir", rd, "--input", ds, "--source-manifest", sm,
-                 *out)
         if self.delivery:
             _mirror(rd, self.delivery)            # what the Daemon uploads as it goes
             self.run("verify", "verify", "--run-dir", rd, "--output", self.delivery,
@@ -178,16 +175,12 @@ def next_revision(run_dir: str) -> int:
 
 
 def _mirror(run_dir: str, delivery: str) -> None:
-    """Copy the run directory into the delivery, as the Daemon's sync does (the dataset
-    itself went there through ``export --output``)."""
+    """Copy the run directory into the delivery, as the Daemon's sync does (D69: that is the
+    whole delivery - the result revisions, the report and its details)."""
     import shutil
 
-    skip = {os.path.join(run_dir, "export", name)
-            for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
-
     def ignore(d, names):
-        return [n for n in names if os.path.join(d, n) in skip or n == "inflight.json"
-                or n.startswith(".")]
+        return [n for n in names if n == "inflight.json" or n.startswith(".")]
 
     shutil.copytree(run_dir, delivery, ignore=ignore, dirs_exist_ok=True)
 
@@ -198,8 +191,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", required=True, help="the dataset")
     p.add_argument("--episodes", default=None,
                    help="episode expression (default: every episode of the dataset)")
-    p.add_argument("--delivery", help="a local directory standing in for the delivery (export "
-                                      "and verify run when given)")
+    p.add_argument("--delivery", help="a local directory standing in for the delivery (the run "
+                                      "directory is mirrored there and verified when given)")
     p.add_argument("--from", dest="from_run", metavar="RUN_DIR",
                    help="adjudicate: copy this finished v2 run directory to --out and run the "
                         "adjudication sequence on it (needs --decisions)")

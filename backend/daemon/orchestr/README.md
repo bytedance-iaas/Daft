@@ -51,9 +51,9 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `created → queued` 入队。第一次运行时 `run.json` 还冻结结果格式 `c2: "2.0"`、注册表版本和完整的判决策略（`params.policy`，缺省
   `default`；设计 17 §4.1），aggregate 按它判，每个结果版本另存一份 `policy.json`。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
-- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm → profile）各一个线程同时跑，互不过滤。
+- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm）各一个线程同时跑，互不过滤。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
-  autolabel 在 VLM 块的检查之前整段跑（任务成败要读补出的描述），dedup、画像是全量步骤：本块前面的段对全集跑完才整段启动。
+  autolabel 在 VLM 块的检查之前整段跑（任务成败要读补出的描述），dedup 是全量步骤：本块前面的段对全集跑完才整段启动。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
@@ -65,7 +65,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   耗时汇总按每条 episode 的处理时间计算，同层共享执行的模块只计一次；排队和 CPU 准入等待不计入。
   每档的运行区间只用于时间轴，任务总耗时仍是端到端墙钟时间。
   每条 episode 的模块结果和下一层位置写入 `.orchestr/episodes.sqlite3`，暂停或崩溃后按 episode 恢复。
-  整体失败的模块不拦后面的段（那些条目待补跑）。两块都结束后做终判 → 报告 → 导出 → 同步与核验。
+  整体失败的模块不拦后面的段（那些条目待补跑）。两块都结束后做终判 → 报告 → 同步与核验。
   缺源文件被剔除的 episode（D40）不进计划、不进进度总数。
   每个检查档做完就把 `checks/` 传到交付目录（随产随传），但 `_COMPLETE` 只在最后的核验通过后才写。
 - **模块与任务的状态**：模块状态看逐状态计数（有出错条目是 `completed_with_errors`，退出码 4 是 `failed`）；
@@ -81,19 +81,17 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   用户暂停的保持暂停，用户停止的不再运行。Daemon 被直接杀掉时留下的子进程，下次就绪后按 `.orchestr/proc.json` 收拾掉。
 - **崩溃**：worker 异常退出（段错误、OOM）时重新拉起，并按 SQLite 与在途记录恢复该批次；
   同一条连续两次出现在崩溃现场，CLI 把它记为出错并跳过（P14）。没有在处理的 episode 却反复崩溃，任务 `failed`。
-- **旧任务（D59）**：`run.json` 没有 `c2: "2.0"` 的任务由旧版本生成（结果格式 1.0），新版本只读：继续运行、重试、执行裁决、
-  重新导出一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
+- **旧任务（D59）**：`run.json` 没有 `c2: "2.0"` 的任务由旧版本生成（结果格式 1.0），新版本只读：继续运行、重试、执行裁决
+  一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：只补跑出错或没有记录的（模块 × 条目）（设计 17 §3.4）：每一档只带要补的模块与条目，整体失败的模块对全部所选重跑，
-    没有后段依赖它，不再「从出错的那一档往后跑」；去重、画像出错或被点名时整段重跑（画像走 `--incremental`）；新版本，终态按当前结果重算；
-    不导出（交付过期）。
+    没有后段依赖它，不再「从出错的那一档往后跑」；去重出错或被点名时整段重跑；新版本，终态按当前结果重算。
   - `resume`（「继续运行」）：已停止或失败的任务接着主流程的日志本往下做，两块各自从未完成处继续，不重做完成的（模块 × 条目）。
-  - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（追问的回答在打开它的判断变了之后作废，
-    C4 1.5.1，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
+  - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（一条 episode 的同一条线上只认最新的那一行，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
     用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改了描述的条目按新描述重跑任务成败判定，
     去重不重跑（每组留哪条由终判在人工决定之后选）；新版本，执行完标记这些裁决已应用。
 - **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去，
-  再删掉工作目录里除 `.orchestr/` 之外的一切，导出临时目录也删。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
+  再删掉工作目录里除 `.orchestr/` 之外的一切。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
   目录留着，下一轮（每小时）再试；只有被清理过交付产物（D28）的任务不上传、直接删。
   之后来的子任务、W5b 读结果的接口（`ResultStore.backfill` 钩子）从交付目录取回：只取本地没有的文件，不覆盖本地的，
   交付数据集、审片片段、证据帧、同步曲线不取回。取回算一次活动，保留期从取回时重新计。
@@ -151,7 +149,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
    c -X POST $B/tasks -d "{\"name\":\"mini\",\"input\":{\"source\":\"local\",\"uri\":\"$D/inputs/mini\"},
      \"output\":{\"uri\":\"tos://deliveries/mini\",\"credential\":\"out-key\"},\"preflight_id\":\"$P\",
      \"episodes\":{\"mode\":\"all\"},\"modules\":[\"timestamp_check\",\"kinematic_limits\",\"motion_quality\",
-     \"visual_quality\",\"video_action_sync\",\"dedup\"],\"params\":{\"export\":true}}"
+     \"visual_quality\",\"video_action_sync\",\"dedup\"]}"
    ```
 
    201，`state` 是 `queued`。记下 `T=<id>`；`c $B/tasks/$T` 里的 `dataset_id` 说明数据集顺带登记了。

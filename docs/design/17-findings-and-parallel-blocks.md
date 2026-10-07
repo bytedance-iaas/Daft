@@ -10,7 +10,7 @@
 
 ## 给实施 agent 的开工指引（先读这一节）
 
-1. **分支与纪律**：直接在 `feat/curator-v2` 上做。A 类目录（`core/`、`registry/`、`ingest/`、`dataset_level/` 与 `export/` 里的 A 类文件，
+1. **分支与纪律**：直接在 `feat/curator-v2` 上做。A 类目录（`core/`、`registry/`、`ingest/`、`dataset_level/`，
    清单见设计 10 §2）一行不改：算法只调用，发现在编排壳里生成。新代码落在 `backend/curation/contracts/`（注册表与分类表）、
    `backend/curation/pipeline/`（壳、aggregate、report）、`backend/curation/extensions/`、`backend/curation/planner/`、`backend/daemon/`、
    `frontend/`、`tools/regression_samples/`。每个 feature 一个 commit；提交前在 `backend/` 下跑
@@ -355,7 +355,7 @@ A 类算法不动，壳里读 `details` 生成。
       │                                                   │
       └──────────────────┬────────────────────────────────┘
                          ▼
-                  aggregate（策略判决，§4）→ report → export → verify
+                  aggregate（策略判决，§4）→ report → verify
 ```
 
 - **段只为效率**：帧档两个模块共享一次解码（D18 的这一半保留），各段有自己的并发宽度与内存准入；段之间传的是「本块的全部条目」，
@@ -438,7 +438,7 @@ overrides:
 
 `verdicts.jsonl` 2.0 每行：`{episode_index, verdict: keep|drop|held, blocking: [{module, code, item}], review: [{module, code, item, line}],
 info_count, error_modules, reason}`。`passed / reject / held / review` 四份清单的结构不变，`reasons[]` 的条目多 `code`、`item`，`kind` 取
-`finding | human | execution_error | duplicate`。`keep.txt` 保留为交付名单（导出与画像的交付集分布用）。
+`finding | human | execution_error | duplicate`。`keep.txt` 保留为交付名单（报告里交付集的分布用）。
 
 ### 4.4 人工复核与复议
 
@@ -451,11 +451,11 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
   级别，再按 §4.3 重算（别的模块出错的仍 held，P11）。物理与结构硬门的拒绝仍是终局。
 - 已被拒的条目不再出 review 卡片（D42 延伸到所有裁决线）。
 
-### 4.5 去重与画像
+### 4.5 去重（原「去重与画像」）
 
 - 去重模块对全集报重复组（`group_id`、组内成员、`duplicate_of` 留作读数）。aggregate 在人工决定之后，对每个组选 canonical =
   遍历顺序里第一条「没有因别的原因被拒」的；其余成员得到 `dedup.duplicate` 的 blocking 发现（可复议）。人工恢复过的条目不再被去重（v1 的规则）。
-- 画像的归类对全集算；报告给两份分布：全集与交付集（按 `passed`）。标注分歧对全集审计，但已被拒的条目不出卡片。
+- ~~画像的归类对全集算；报告给两份分布：全集与交付集。~~ 技能画像下线（D68）；标注分歧改由判废护栏报，已被拒的条目仍不出卡片。
 
 ### 4.6 与今天不同的地方
 
@@ -465,7 +465,6 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 | 软分 | 加权均值 < 0.5 拒 | 退役；子项 info（P18） |
 | 复议 | 按归因模块 | 按发现 |
 | 去重的输入 | 通过集合 | 全集；留「未因别的原因被拒的第一条」 |
-| 画像 | 交付集 | 全集归类，双分布 |
 | 弃权 | `passed=None` | review 级发现 |
 | 判决能否不重跑而改 | 不能 | 换预设只重跑 aggregate |
 
@@ -607,7 +606,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **报告 2.0**：`score_hist` 改成「读数 → 十格」（运动质量的综合分与五个子项分、视觉质量的综合分，`findings.SCORE_READINGS`），
   不再写 1.0 的单个十格；report.md 每个模块多一行「评估 N 条；检出：细码 条数（级别）」与评估不了的原因，总览多判决策略与覆盖的检测项。
 - **文字**：拒绝与待补跑的理由改用全角标点（「执行出错（…），不影响结论」「人工裁决判失败（任务未完成）」），理由多 `code / item / appealable`。
-- **旧任务（D59）**：Daemon 对 `run.json` 没有 `c2: "2.0"` 的任务拒绝再运行——继续运行、重试、执行裁决、重新导出都以 `legacy_task` 失败，
+- **旧任务（D59）**：Daemon 对 `run.json` 没有 `c2: "2.0"` 的任务拒绝再运行——继续运行、重试、执行裁决都以 `legacy_task` 失败，
   提示复制为新任务；升级时正在跑的任务也一样（写进部署说明）。aggregate 与 adjudicate-apply 遇到 1.0 记录以退出码 2 拒绝。
   控制台在 F12.5 之前经 `src/lib/records.ts` 把 2.0 的记录与报告按 1.0 的视图读。
 - **验收①**（离线，评估集基线 `1b30fb224` 的 89 个子集、1186 条：1.0 记录按同一推导升成 2.0，默认策略重判，与改前的

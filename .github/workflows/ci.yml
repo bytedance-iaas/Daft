@@ -73,11 +73,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/deploy
-      - name: Incremental re-export (W7)
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: backend
-        # the official lerobot loader cases skip here; the lerobot-loader job runs them
-        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/export
       - name: EEF-video consistency module (F5; DEMO-data cases skip without the local datasets)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
@@ -96,40 +91,6 @@ jobs:
         env:
           PYTHONPATH: tools
         run: bash .github/scripts/pytest-summary.sh -q -rfE tools/regression_samples/tests
-
-  lerobot-loader:
-    # The official LeRobot loaders read the incremental re-exports without warnings (F2.5).
-    # lerobot 0.3.x reads only v2.1 and 0.4+ only v3.0, so one job per format, in their own
-    # environments, never in the image.
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - reads: v2.1
-            pip: >-
-              lerobot==0.3.3 torch==2.6.0 torchvision==0.21.0 torchcodec==0.2.1
-              huggingface_hub[cli,hf-transfer]==0.34.4 datasets==3.6.0 numpy==2.2.6
-              pandas==2.3.3 pyarrow==21.0.0 av==15.1.0 opencv-python-headless==4.12.0.88
-          - reads: v3.0
-            pip: lerobot[dataset]==0.6.1 opencv-python-headless==4.12.0.88
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install lerobot (CPU torch) in this job only
-        run: >
-          pip install --extra-index-url https://download.pytorch.org/whl/cpu
-          ${{ matrix.pip }} pytest jsonschema referencing pyyaml pytest-github-actions-annotate-failures
-      - name: Official loader on incremental re-exports (${{ matrix.reads }})
-        working-directory: backend
-        env:
-          HF_HUB_OFFLINE: "1"
-          CURATOR_EXPECT_LOADER_READS: ${{ matrix.reads }}
-        run: |
-          python -c "import lerobot"
-          python -m pytest -q -rfE -rs tests/export/test_lerobot_loader.py tests/export/test_lerobot_loader_expected.py
 
   frontend:
     # the React console (W10): lint, types generated from the frozen C4, tests on the

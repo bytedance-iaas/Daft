@@ -161,7 +161,7 @@ done
 ```
 
 两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`），回放 `misses=0 unused=0`；
-v2 的交付在 `$W/v2-mcap-delivery/export/mcap_curated/` 与 `$W/v2-lance-delivery/export/lance_episodes/`。
+v2 的交付是报告与结果清单（D69 起不写交付数据集），在 `$W/v2-mcap-delivery/` 与 `$W/v2-lance-delivery/` 下。
 自动化的版本是 `tools/parity/tests/test_containers_parity.py`。
 
 人工裁决的对账（D39，约半分钟）：第 7 步是 v1 的 rejudge 在交付上执行两条改标（v1 一侧工具的回归）；

@@ -1,4 +1,4 @@
-"""curation verify (design doc 02 §3.10): read the delivery back; _COMPLETE only when all pass."""
+"""curation verify (design doc 02 §3.9): read the delivery back; _COMPLETE only when all pass."""
 from __future__ import annotations
 
 import json

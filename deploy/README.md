@@ -101,7 +101,7 @@ docker run --rm -p 8080:8080 -v curator-data:/data -e CURATOR_BASE_PATH=/curatio
 8. **资源**：dataverse 缺省 `requests 16 核 / 128Gi`、`limits 32 核 / 256Gi`（`curator.resources`），照节点的 allocatable 调；
    跑在 VCI 上时按 limits 计费。`limits.cpu` 就是质检台的 CPU 配额：减 2 是全部在跑任务共用的 CPU worker 数（32 → 30，D54），
    同时运行 3 个任务，都不用在 Chart 里配。
-9. **临时盘够大**：`curator.persistence.scratch`（缺省 500Gi）除了导出时的视频临时文件，还放 TOS 上 mcap / Lance 数据集的本地副本
+9. **临时盘够大**：`curator.persistence.scratch`（缺省 500Gi）放 TOS 上 mcap / Lance 数据集的本地副本
    （`CURATOR_SOURCE_CACHE_DIR=/scratch/source-cache`，D44）：mcap 读到哪条下载哪条，Lance 整表下载，任务跑完就删。
    按要质检的最大数据集加上导出的余量来定。副本不放数据盘：数据盘写满会让 SQLite 写不进去。
 10. **镜像能拉到**：`image.curator` 是完整引用，tag 是提交号（第 1 节）。
@@ -188,7 +188,7 @@ Daemon 不再接新任务，让运行中的 CLI 子进程收尾当前 episode（
 - 改站点配置（`curator.siteConfig`、`curator.publicDatasets`）也会滚动重启 Pod，同样走系统暂停再续跑。
 - **跨过结果格式 2.0 的升级**（设计 17 的策略判决，F12.3 起）：旧版本建的任务（`run.json` 里没有 `c2: "2.0"`）新版本只能查看、不能再运行（D59）。
   升级时还在跑或被暂停的旧任务，续跑会以 `legacy_task` 失败，失败原因写「这个任务由旧版本生成（结果格式 1.0），新版本只能查看、不能再运行；请复制为新任务」；
-  重试、执行裁决、重新导出同样不行。要么等它们跑完、裁决与导出都做完再升级，要么升级后复制为新任务重跑。
+  重试、执行裁决同样不行。要么等它们跑完再升级，要么升级后复制为新任务重跑。
 - 节点排水（drain）、Pod 被驱逐都等同一次重启；块存储盘会跟着 Pod 挂到同一可用区的新节点上。
 - ReRun 的 Pod 和质检台互不影响：只改 `image.rerun` 时质检台不重启，反过来也一样。
 

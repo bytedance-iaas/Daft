@@ -2,7 +2,7 @@
 
 Curator v2 是 Physical AI Kit 的机器人数据质检平台。它读入机器人操作数据集（LeRobot v2 / v3、mcap、Lance；来源是私有 TOS、
 HuggingFace 缓存桶，或站点开放的本地挂载路径），逐条 episode 跑一串质检模块，给出通过 / 拒绝 / 待定的判决和待人工复核的清单；
-人工裁决后重判受影响的条目，生成质检报告，并把通过的数据导出成交付数据集写回 TOS。控制台还内置数据可视化：一条进度条同步播放多路相机
+人工裁决后重判受影响的条目，生成质检报告，并把报告与结果清单写回 TOS 上的交付目录（D69 起不再导出交付数据集）。控制台还内置数据可视化：一条进度条同步播放多路相机
 与运动曲线，完整版是「数据集 › 可视化」页，报告、人工裁决与任务详情里的迷你版定位到每条发现（设计 18、19）。
 产品是「网页控制台 + REST API + 命令行」三件套，打成一个镜像，作为 rerun 仓库 dataverse Helm Chart 的一个组件部署在火山引擎 VKE 上（D53）。
 
@@ -15,16 +15,16 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
     │  子进程：argv 传参，stdout 出一份 --json（C2），stderr 出进度（C3）
 命令行       curation 原子命令，命令之间靠运行目录里的文件交接
     │
-内核         质检算法、数据集读取、导出、VLM 客户端
+内核         质检算法、数据集读取、报告生成、VLM 客户端
 ```
 
 | 组件 | 位置 | 做什么 |
 |---|---|---|
 | 前端控制台 | `frontend/` | 概览、数据集（列表、详情、「可视化」页）、质检任务（新建 / 列表 / 详情）、质检报告、人工裁决、系统和资源配置，报告、裁决与任务详情里的迷你播放器；构建产物由 Daemon 托管 |
 | API Daemon | `backend/daemon/` | REST 与 SSE、SQLite 仓储、鉴权、任务编排（排队、逐档流水线、暂停 / 停止 / 继续、崩溃恢复、子任务、发布到交付目录）、密钥与 VLM 后端管理、结果读取、数据可视化（`viz/`：LeRobot / mcap / Lance 读取器 → 统一展示模型，曲线、帧包与样本包、转封装 / 转码，按区间读 TOS） |
-| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → autolabel → check（逐档）→ aggregate → report → export → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
+| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → autolabel → check（逐档）→ aggregate → report → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分档、并发、八把 VLM 闸门、请求合并；`curation plan` 与 Daemon 共用 |
-| 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
+| 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、报告生成（`export/`，数据集写出器随 D69 删掉）、编排壳、VLM 客户端与视频输入；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
 | 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（按检测项的 precision / recall、与基线比较） |
@@ -43,8 +43,8 @@ task_success 的请求上）。两块同时跑、互不过滤：每一段都拿�
 keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 blocking 发现即拒，否则任一所选模块出错或没有记录即待补跑。
 
 **一次任务**：建任务时预检，开跑时生成并冻结执行计划 → Daemon 排队，两块同时调 CLI（每个逐条段一个常驻 worker，episode 逐条交接）→
-结果落在运行目录 `runs/<task_id>/`（`checks/<模块>/`、结果版本 `revisions/rNNNN/` 里的清单与报告、`export/`）→ 同步到交付目录，
-最后写 `_COMPLETE` → 前端经 REST / SSE 看进度和报告。重试、继续运行、执行裁决、重新导出都作为子任务跑；执行裁决会产生新的结果版本。
+结果落在运行目录 `runs/<task_id>/`（`checks/<模块>/`、结果版本 `revisions/rNNNN/` 里的清单与报告）→ 同步到交付目录，
+最后写 `_COMPLETE` → 前端经 REST / SSE 看进度和报告。重试、继续运行、执行裁决都作为子任务跑；执行裁决会产生新的结果版本。
 
 ## 目录
 
@@ -52,7 +52,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 |---|---|
 | `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`、可视化的格式解析 `viz/`；内核单测在包内 `tests/` |
 | `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）、`viz/`（数据可视化：数据源、读取器、缓存与转码池，说明见 `viz/README.md`）；`python -m daemon` 或 `curator-daemon` |
-| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`export`、`eef`、`optimizations`、`deploy`、`viz` |
+| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`eef`、`optimizations`、`deploy`、`viz` |
 | `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装；可视化的样例数据（`make_cams_dataset.py` 多路相机、`make_lance_dataset.py` Lance 三种布局）与样本集实测（`viz_sample_check.py`） |
 | `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`）；播放器在 `src/features/visualizer/`（完整版与迷你版共用），「可视化」页在 `src/pages/visualize/` |
@@ -180,14 +180,13 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 ### CI 门禁
 
 `.github/workflows/ci.yml`（工作流 `curator-ci`）：推送到 `feat/curator-v2` 和所有 PR 都会跑；同一分支上新的推送会取消还在跑的那一轮。
-五个任务都绿才算过：
+四个任务都绿才算过：
 
 | 任务 | 内容 | 时长 |
 |---|---|---|
-| `tests` | Python 3.10 下串行跑 15 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
+| `tests` | Python 3.10 下串行跑 14 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
 | `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` | 几分钟 |
 | `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记新哈希和理由，或在 PR 描述里写 `parity-change:` | 秒级 |
-| `lerobot-loader` | 官方 lerobot（0.3.3 读 v2.1、0.6.1 读 v3.0）加载增量重导出的产物 | 几分钟 |
 | `image` | 用公网源构建镜像，确认 Daemon 和 CLI 能在镜像里启动 | 几分钟 |
 
 失败时看运行页面上的注解和 Job summary（`scripts/pytest-summary.sh` 把 pytest 输出的尾部贴在那里，步骤日志要登录才能看）；
