@@ -51,7 +51,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 
 1. 改文件；不兼容的改动把对应的 `schema_version` / `info.version` / `registry_version` 升一级。
 2. 在 `examples/` 里补上合法与不合法的示例。C4 的常用接口还在 `openapi.yaml` 里就地带着请求 / 响应示例（媒体类型的 `examples`，
-   接口文档页把它们放在每个接口旁边，见设计 07 §2）：改了这些接口的结构，就地的示例要跟着改；
+   API 文档页把它们放在每个接口旁边，见设计 07 §2）：改了这些接口的结构，就地的示例要跟着改；
    `backend/tests/contracts/test_openapi.py` 逐条拿所在位置的 Schema 校验（`test_every_example_fits_its_schema`），
    并要求常用接口都有示例（`EXAMPLES_EXPECTED`）。
    C4 里给客户看的文案（`info.description` 的概览 / 约定 / 变更记录、tag 的 `description`、示例的 `summary`）要写中英两版：英文在原字段，

@@ -10,7 +10,7 @@
 ## 文档
 
 - [openapi.json](./openapi.json)：完整的接口定义，单个文件；`info.description` 是英文的概览、约定与变更记录（中文版在 `info.x-description-zh`），常用接口带请求 / 响应示例
-- [接口文档](./api-docs.html)：给人看的同一份接口定义，中英文可切换，可以在页面上直接试调用
+- [API 文档](./api-docs.html)：给人看的同一份接口定义，中英文可切换，可以在页面上直接试调用
 
 ## 怎么调用
 

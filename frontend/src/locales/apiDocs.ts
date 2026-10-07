@@ -6,7 +6,7 @@ export const apiDocsText = {
     language: '中文',
     server: '本服务',
     contentType: '每个写请求都要带，没有请求体也要带（见「约定 › 写请求」）。',
-    loadFailed: '接口文档加载失败',
+    loadFailed: 'API 文档加载失败',
   },
   en: {
     language: 'English',

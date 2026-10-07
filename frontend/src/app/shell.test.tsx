@@ -18,7 +18,7 @@ describe('app shell', () => {
     renderApp('/');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const items = within(nav).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集列表', '可视化', '系统和资源配置', '使用文档', '接口文档']);
+    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集列表', '可视化', '系统和资源配置', '使用文档', 'API 文档']);
     expect(within(nav).getByText('帮助')).toBeInTheDocument();
     // 质检 holds the two, open from the start (third round; 质检报告 dropped in the fourth)
     expect(within(nav).getByText('质检')).toBeInTheDocument();
@@ -57,16 +57,16 @@ describe('app shell', () => {
     expect(currentLocation()).toBe('/tasks');
   });
 
-  it('接口文档 opens the API reference built next to the console in a new tab', async () => {
+  it('API 文档 opens the API reference built next to the console in a new tab', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const { user } = renderApp('/tasks');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
-    await user.click(within(nav).getByRole('menuitem', { name: '接口文档' }));
+    await user.click(within(nav).getByRole('menuitem', { name: 'API 文档' }));
     expect(open).toHaveBeenCalledWith('/api-docs.html', '_blank', 'noopener,noreferrer');
     expect(currentLocation()).toBe('/tasks');
     HELP_LINKS.api = '';
-    await user.click(within(nav).getByRole('menuitem', { name: '接口文档' }));
-    expect(await screen.findByText('接口文档还没配置')).toBeInTheDocument();
+    await user.click(within(nav).getByRole('menuitem', { name: 'API 文档' }));
+    expect(await screen.findByText('API 文档还没配置')).toBeInTheDocument();
     expect(open).toHaveBeenCalledTimes(1);
   });
 
@@ -77,7 +77,7 @@ describe('app shell', () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(<App />);
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
-    await user.click(within(nav).getByRole('menuitem', { name: '接口文档' }));
+    await user.click(within(nav).getByRole('menuitem', { name: 'API 文档' }));
     expect(open).toHaveBeenLastCalledWith('/curation/api-docs.html', '_blank', 'noopener,noreferrer');
     HELP_LINKS.docs = '/guide/index.html';
     await user.click(within(nav).getByRole('menuitem', { name: '使用文档' }));

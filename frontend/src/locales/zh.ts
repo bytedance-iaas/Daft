@@ -37,8 +37,8 @@ export const zh = {
     groupHelp: '帮助',
     docs: '使用文档',
     docsMissing: '使用文档还没配置',
-    apiDocs: '接口文档',
-    apiDocsMissing: '接口文档还没配置',
+    apiDocs: 'API 文档',
+    apiDocsMissing: 'API 文档还没配置',
   },
 
   common: {
@@ -2351,7 +2351,6 @@ export const zh = {
   displayCfg: {
     entry: '展示配置',
     title: (name: string) => `展示配置 · ${name}`,
-    hint: '这个数据集在可视化里的缺省样子，所有人共用：相机的顺序与显示名、哪几路不进布局、曲线怎么分组、字幕轨、倍速与循环。缺省布局在播放器的「布局」菜单里保存。',
     none: '平台缺省（还没有保存过）',
     current: (v: number) => `已保存第 ${v} 版`,
     cameras: '相机',

@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Drawer, Input, Message, Modal, Select, Space, Spin, Switch, Table, Typography } from '@arco-design/web-react';
+import { Alert, Button, Checkbox, Drawer, Input, Message, Modal, Select, Space, Spin, Switch, Table } from '@arco-design/web-react';
 import { IconArrowDown, IconArrowUp, IconDelete, IconPlus } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
@@ -101,9 +101,6 @@ function Opened({ dataset, onClose }: { dataset: { id: string; name: string }; o
         <Spin style={{ display: 'block', margin: '60px auto' }} />
       ) : (
         <div className="dispcfg" data-testid="display-drawer">
-          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-            {T.hint}
-          </Typography.Paragraph>
           <div className="dispcfg-current" data-testid="display-current">
             {d.config ? (
               <span>

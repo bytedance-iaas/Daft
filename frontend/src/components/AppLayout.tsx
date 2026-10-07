@@ -52,7 +52,7 @@ export function navKey(pathname: string): string {
  * URL opens as it is, a path is taken under the mount prefix (so `/curation/api-docs.html` in
  * production). An empty one makes the entry only say it is not configured.
  * - docs, 使用文档: the guide for the people who check data; empty until it is published.
- * - api, 接口文档: the API reference built next to the console (api-docs.html, Scalar over C4).
+ * - api, API 文档: the API reference built next to the console (api-docs.html, Scalar over C4), Chinese first.
  */
 export const HELP_LINKS = { docs: '', api: '/api-docs.html' };
 
@@ -78,7 +78,7 @@ function openHelp(key: string): boolean {
 
 /**
  * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集 with 数据集列表 / 可视化、
- * 系统和资源配置, then 帮助 with 使用文档 / 接口文档; doc 07 §2, design doc 18 §5.0) around the
+ * 系统和资源配置, then 帮助 with 使用文档 / API 文档; doc 07 §2, design doc 18 §5.0) around the
  * routed page. The sidebar collapses to its icons (the button at its bottom; remembered in this browser),
  * where a group's entries open as a popup.
  */

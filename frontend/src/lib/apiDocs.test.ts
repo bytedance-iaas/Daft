@@ -36,16 +36,13 @@ describe('API reference page', () => {
     }
   });
 
-  it('reads the language off the browser: Chinese when it prefers Chinese, English otherwise', () => {
-    expect(pageLanguage(['zh-CN', 'en'])).toBe('zh');
-    expect(pageLanguage(['zh'])).toBe('zh');
-    expect(pageLanguage(['zh-Hant-TW'])).toBe('zh');
-    expect(pageLanguage(['en-US', 'zh-CN'])).toBe('en');
-    expect(pageLanguage(['ja'])).toBe('en');
-    expect(pageLanguage([])).toBe('en');
-    expect(pageLanguage(['zh-CN'], { search: '?api=en', hash: '' })).toBe('en');
-    expect(pageLanguage(['en-US'], { search: '', hash: '#zh/tag/tasks' })).toBe('zh');
-    expect(pageLanguage(['en-US'], { search: '?api=fr', hash: '' })).toBe('en');
+  it('opens in Chinese unless the address asks for English (requester 2026-10-07)', () => {
+    expect(pageLanguage()).toBe('zh');
+    expect(pageLanguage({ search: '', hash: '' })).toBe('zh');
+    expect(pageLanguage({ search: '?api=en', hash: '' })).toBe('en');
+    expect(pageLanguage({ search: '', hash: '#en/tag/tasks' })).toBe('en');
+    expect(pageLanguage({ search: '', hash: '#zh/tag/tasks' })).toBe('zh');
+    expect(pageLanguage({ search: '?api=fr', hash: '' })).toBe('zh');
   });
 
   it('gives the copy in Chinese or English and the API texts in English either way', () => {
