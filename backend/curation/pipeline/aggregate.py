@@ -40,10 +40,9 @@ from .records import (is_error, is_v2, latest_results, revision_dir, write_json_
 from .tasktext import TaskText, load_autolabel
 from .verdicts import Graded, Verdict, also_failed, judge, name_of
 
-#: the stages whose modules judge one episode at a time (the full-set stages, dedup and profile, judge them all)
+#: the stages whose modules judge an episode on its own; dedup judges one against the others
+#: (streaming since D70) and is added for a kept episode by :func:`decide`
 EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: the full-set modules (dedup): one run over the whole selection (a funnel run's: over its kept episodes)
-FULL_SET = tuple(m.id for m in registry.MODULES if m.stage in registry.FULL_SET_STAGES)
 NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
 DEDUP = "dedup"
 TASK = "task_success"
@@ -154,11 +153,34 @@ def _strip_duplicate(rec: dict | None) -> dict | None:
     return {**rec, "findings": [f for f in rec.get("findings") or [] if f.get("code") != "duplicate"]}
 
 
+def _as_duplicate(rec: dict | None, canonical: int) -> dict | None:
+    """A member of a dedup group whose own record carries no duplicate finding: the streaming segment
+    (D70) met it first and pointed the others at it, and the group's lowest index is another member -
+    so this one is the copy. Judged as one; the record on disk is not changed."""
+    if rec is None or is_error(rec):
+        return rec
+    if any(f.get("code") == "duplicate" for f in rec.get("findings") or []):
+        return rec
+    from .records import record_from_struct
+
+    detail = {k: v for k, v in (rec.get("details") or {}).items()
+              if k not in ("duplicate_of", "reason")}
+    detail["duplicate_of"] = int(canonical)
+    detail["reason"] = f"与 ep{int(canonical):06d} 字节级完全重复"
+    made = record_from_struct(DEDUP, int(rec.get("episode_index") or 0),
+                              {"passed": False, "score": None,
+                               "detail": json.dumps(detail, ensure_ascii=False)})
+    return {**rec, "details": made["details"], "findings": made["findings"],
+            "assessed": made["assessed"], "status": made["status"]}
+
+
 def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "final",
-           keeper: dict[int, bool] | None = None) -> Decided:
+           keeper: dict[int, bool] | None = None,
+           canonical: dict[int, int] | None = None) -> Decided:
     """``ep`` after the human decisions. ``phase``: ``funnel`` judges the funnel modules only; ``final`` adds
-    dedup (``keeper[ep]``: this member is the one its group keeps, so its duplicate finding is dropped) and
-    dedup. A kept episode a person did not bring in needs a judgement of both."""
+    dedup (``keeper[ep]``: this member is the one its group keeps, so its duplicate finding is dropped;
+    ``canonical[ep]``: which member that is, so a member without a finding of its own is judged as the copy
+    it is). A kept episode a person did not bring in needs a judgement of both."""
     recs = state.records(ep)
     funnel_recs = _without(recs, DEDUP)
     need = expected(state, ep, funnel_recs)
@@ -167,7 +189,12 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
     use = dict(funnel_recs)
     if phase == "final":
         if DEDUP in state.modules:
-            use[DEDUP] = _strip_duplicate(recs.get(DEDUP)) if (keeper or {}).get(ep) else recs.get(DEDUP)
+            rec = recs.get(DEDUP)
+            if (keeper or {}).get(ep):
+                rec = _strip_duplicate(rec)
+            elif (canonical or {}).get(ep) is not None:
+                rec = _as_duplicate(rec, canonical[ep])
+            use[DEDUP] = rec
     base = judge(ep, use, need, state.policy, answers=answers)
     discard = decisions.discarded(ep)
     admissible = discard is None and base.appeal_admissible()
@@ -187,7 +214,8 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
 
 
 def dedup_groups(state: RunState) -> dict[int, list[int]]:
-    """group id -> its members in dedup's traversal order (ascending), from dedup's findings."""
+    """group id -> its members (ascending), from dedup's findings. The id is the member that keeps:
+    the lowest index of the group, which the dedup segment settles on before it ends (D70)."""
     groups: dict[int, set[int]] = {}
     for ep, rec in (state.results.get(DEDUP) or {}).items():
         for f in (rec or {}).get("findings") or []:
@@ -204,6 +232,7 @@ def decide_all(state: RunState, decisions: Decisions, *, phase: str = "final") -
         return {e: decide(state, e, decisions, phase=phase) for e in state.episodes}
     groups = dedup_groups(state)
     keeper: dict[int, bool] = {}
+    canonical: dict[int, int] = {}
     if groups:
         # every member counts, also one outside ``state.episodes`` (adjudicate-apply asks about a few)
         alone = {e: decide(state, e, decisions, phase="funnel")
@@ -212,7 +241,12 @@ def decide_all(state: RunState, decisions: Decisions, *, phase: str = "final") -
             first = next((m for m in members if alone[m].state != "drop"), None)
             for m in members:
                 keeper[m] = m == first
-    return {e: decide(state, e, decisions, phase=phase, keeper=keeper) for e in state.episodes}
+                # the other members that nothing else rejects are copies of the one that keeps, even
+                # where the segment's own record does not say so (D70: it met them in another order)
+                if first is not None and m != first and alone[m].state != "drop":
+                    canonical[m] = first
+    return {e: decide(state, e, decisions, phase=phase, keeper=keeper, canonical=canonical)
+            for e in state.episodes}
 
 
 # ---------------------------------------------------------------- the lists

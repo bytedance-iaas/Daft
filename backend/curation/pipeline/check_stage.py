@@ -1,8 +1,9 @@
 """One funnel stage over a set of episodes: the engine of ``curation check`` (doc 02 §3.5).
 
-The stages and their order are v1's funnel (D18): ``numeric`` (timestamp_check,
-kinematic_limits, motion_quality), ``frame`` (visual_quality and
-video_action_sync on one shared decode per camera), ``vlm`` (task_success). Each
+The stages and their order are a block's segments (design doc 17 §3): ``numeric``
+(timestamp_check, kinematic_limits, motion_quality), ``frame`` (visual_quality and
+video_action_sync on one shared decode per camera), ``vlm`` (task_success), ``dedup``
+(exact duplicates, streaming since D70 - see :meth:`StageRun._dedup`). Each
 episode goes through the module bodies of ``pipeline.funnel`` - the very
 functions v1's DataFrame chain wraps in UDFs - with the row v1's lazy scan would
 build (``pipeline.rows``). What the shell adds, per episode:
@@ -44,7 +45,7 @@ from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact,
                       write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
-FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm", "dedup")
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
 #: P15: this many consecutive failures on one infrastructure cause at the start
 #: of a VLM stage fail the module instead of timing out episode by episode.
@@ -196,6 +197,16 @@ class StageRun:
             self._store = None
         #: episodes found without their source files (D40): no result line
         self.missing: dict[int, list[str]] = {}
+        #: dedup's streaming state (D70, design doc 17 §3.2): the action hash of every episode
+        #: this call hashed, the first episode of each hash, and - only for hashes that collide -
+        #: the content fingerprint of each member and the episode that owns it
+        self._dd_hash: dict[int, str] = {}
+        self._dd_first: dict[str, int] = {}
+        self._dd_groups: dict[str, dict[str, int]] = {}
+        self._dd_fp: dict[int, str] = {}
+        self._dd_order: list[int] = []
+        self._dd_seeded: list[int] = []
+        self._dd_dropped: dict[int, int] = {}
 
     # ------------------------------------------------------------ bookkeeping
     def _stale_inflight(self) -> dict[int, int]:
@@ -405,6 +416,214 @@ class StageRun:
         evidence = self._evidence(ep, row, struct)
         return {"task_success": struct}, {"task_success": evidence}
 
+    # ------------------------------------------------------------ dedup (D70)
+    def _eid(self, ep: int) -> str:
+        return f"ep{int(ep):06d}"
+
+    def _dedup_seed(self) -> None:
+        """Rebuild the streaming state from the records this run directory already has, so that
+        a resumed or retried call groups against the episodes it is not judging again."""
+        existing = latest_results(self.o.run_dir, "dedup")
+        for ep in sorted(existing):
+            rec = existing[ep] or {}
+            if is_error(rec):
+                continue
+            d = rec.get("details") or {}
+            ah = d.get("action_hash")
+            if not ah:
+                continue
+            ep = int(ep)
+            self._dd_seeded.append(ep)
+            self._dd_hash[ep] = str(ah)
+            owner = d.get("duplicate_of")
+            if owner is not None:
+                self._dd_dropped[ep] = int(owner)
+            self._dd_first.setdefault(str(ah), ep if owner is None else int(owner))
+        # the content fingerprints and the traversal order are the segment's own bookkeeping
+        doc = None
+        path = os.path.join(module_dir(self.o.run_dir, "dedup"), "groups.json")
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+            except (OSError, ValueError):       # the segment's own bookkeeping: rebuild it instead
+                doc = None
+        if isinstance(doc, dict):
+            for key, fp in (doc.get("fingerprints") or {}).items():
+                try:
+                    e = int(key)
+                except (TypeError, ValueError):
+                    continue
+                self._dd_fp[e] = str(fp)
+                ah = self._dd_hash.get(e)
+                if ah:
+                    self._dd_groups.setdefault(ah, {}).setdefault(str(fp), e)
+            seen = set(self._dd_seeded)
+            was = [int(e) for e in (doc.get("order") or []) if int(e) in seen]
+            self._dd_seeded = was + [e for e in self._dd_seeded if e not in set(was)]
+
+    def _fingerprint(self, source, ep: int, row: dict | None) -> str | None:
+        """The content fingerprint of one episode (v1's ``episode_fingerprint``: the action bytes and
+        every camera's content identity and time window). ``row`` None: the episode is not this
+        call's, so its row is read now - that happens only for a collision."""
+        from ..dataset_level.dedup import episode_fingerprint
+
+        if row is not None:
+            return str(episode_fingerprint(row))
+        got = None
+        try:
+            got = source.get(int(ep))
+        except Exception:  # noqa: BLE001 - not this call's episode: read it on its own
+            from .rows import read_rows
+
+            try:
+                rows = read_rows(self.o.input_dir, episode_indices={int(ep)},
+                                 embodiment_id=self.o.embodiment_id, validate=False,
+                                 skip_missing=True)
+                return str(episode_fingerprint(rows[0])) if rows else None
+            except Exception:  # noqa: BLE001 - the collision cannot be confirmed
+                return None
+        try:
+            return str(episode_fingerprint(got))
+        except Exception:  # noqa: BLE001 - the collision cannot be confirmed
+            return None
+        finally:
+            release = getattr(source, "release", None)
+            if release is not None:
+                release(got)
+
+    def _dedup(self, source, ep: int, row: dict, logs) -> dict:
+        """One episode's dedup record (D70, design doc 17 §3.2). v1's two passes, streaming: the
+        action bytes are hashed as the episode arrives; the video content is read only when a hash
+        collides, and then only for the two episodes involved. Byte-level duplicates (action and
+        video both identical) get the ``duplicate`` finding; the member seen first owns the group,
+        and ``aggregate`` picks which one the delivery keeps (§4.5)."""
+        from ..dataset_level.dedup import action_hash
+
+        m = "dedup"
+        ep = int(ep)
+        try:
+            ah = str(action_hash(row))
+        except Exception as e:  # noqa: BLE001 - this episode's action cannot be hashed
+            logs[m].add("internal", cause=f"{type(e).__name__}: {e}")
+            return {m: None}
+        with self._lock:
+            self._dd_hash[ep] = ah
+            self._dd_order.append(ep)
+            first = self._dd_first.get(ah)
+            if first is None:
+                self._dd_first[ah] = ep
+        detail: dict = {"action_hash": ah}
+        if first is None or first == ep:
+            return {m: self._dd_struct(True, detail)}
+        try:
+            mine = self._fingerprint(source, ep, row)
+        except Exception as e:  # noqa: BLE001 - this episode's video content cannot be read
+            logs[m].add("read", cause=f"{type(e).__name__}: {e}")
+            return {m: None}
+        if mine is None:
+            logs[m].add("read", cause=f"the action bytes collide with {self._eid(first)}, "
+                                      f"whose video content could not be read")
+            return {m: None}
+        with self._lock:
+            group = self._dd_groups.setdefault(ah, {})
+            first_collision = not group
+        if first_collision:                        # the member that owns the hash is fingerprinted now
+            theirs = self._fingerprint(source, first, None)
+            with self._lock:
+                if theirs is not None:
+                    self._dd_fp[first] = theirs
+                    group.setdefault(theirs, first)
+        with self._lock:
+            self._dd_fp[ep] = mine
+            owner = group.get(mine)
+            if owner is None:
+                group[mine] = ep
+        if owner is None or owner == ep:
+            return {m: self._dd_struct(True, detail)}
+        detail["duplicate_of"] = owner
+        detail["reason"] = f"与 {self._eid(owner)} 字节级完全重复"
+        with self._lock:
+            self._dd_dropped[ep] = owner
+        return {m: self._dd_struct(False, detail)}
+
+    @staticmethod
+    def _dd_struct(passed: bool, detail: dict) -> dict:
+        return {"passed": passed, "score": None,
+                "detail": json.dumps(detail, ensure_ascii=False)}
+
+    def _dedup_settle(self, writer) -> None:
+        """The group keeps its lowest episode index (D70), whatever order the block handed them over.
+
+        The segment hashes episodes as they arrive, so the member it met first is not always the
+        lowest index - and a paused run can leave a group half judged. Every confirmed duplicate is a
+        pointer (``duplicate_of``), so the groups are the connected components of those pointers,
+        including the ones read back from earlier calls: the lowest index of a component keeps, and a
+        member whose record says otherwise gets a corrected one appended. Byte-level copies are rare,
+        so this normally writes nothing; the command line feeds episodes in ascending order and never
+        needs it.
+        """
+        parent: dict[int, int] = {}
+
+        def find(x: int) -> int:
+            while parent.get(x, x) != x:
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+
+        for ep, owner in self._dd_dropped.items():
+            parent.setdefault(int(ep), int(ep))
+            parent.setdefault(int(owner), int(owner))
+            union(int(ep), int(owner))
+        components: dict[int, list[int]] = {}
+        for ep in parent:
+            components.setdefault(find(ep), []).append(ep)
+        mine = set(self.o.episodes)
+        for members in components.values():
+            canonical = min(members)
+            for ep in sorted(members):
+                want = None if ep == canonical else canonical
+                if self._dd_dropped.get(ep) == want:
+                    continue                                   # already recorded that way
+                detail: dict = {}
+                if self._dd_hash.get(ep):
+                    detail["action_hash"] = self._dd_hash[ep]
+                if want is None:
+                    self._dd_dropped.pop(ep, None)
+                else:
+                    detail["duplicate_of"] = want
+                    detail["reason"] = f"与 {self._eid(want)} 字节级完全重复"
+                    self._dd_dropped[ep] = want
+                records = self._records(ep, {"dedup": self._dd_struct(want is None, detail)},
+                                        {"dedup": IncidentLog()}, 0.0)
+                for rec in records.values():
+                    writer.write(rec)
+                if self._store is None:
+                    continue
+                if ep in mine:
+                    self._store.finish(self.o.stage, ep, records, self.o.pipeline_next)
+                else:                                          # an episode of an earlier call
+                    for rec in records.values():
+                        self._store.put_result(rec)
+
+    def _dedup_groups_doc(self) -> dict:
+        """``checks/dedup/groups.json``: the traversal order, the action-hash collisions, the
+        fingerprints computed and what this run dropped (the report and the parity tool read it)."""
+        order = self._dd_seeded + [e for e in self._dd_order if e not in set(self._dd_seeded)]
+        hit = {ah for ah, group in self._dd_groups.items() if group}
+        hit |= {self._dd_hash[e] for e in (set(self._dd_dropped) | set(self._dd_dropped.values()))
+                if e in self._dd_hash}
+        collisions = sorted(sorted(e for e, h in self._dd_hash.items() if h == ah) for ah in hit)
+        dropped = [{"episode_index": e, "duplicate_of": self._dd_dropped[e]}
+                   for e in sorted(self._dd_dropped)]
+        return {"order": order, "action_collisions": collisions,
+                "fingerprints": {str(e): fp for e, fp in sorted(self._dd_fp.items())},
+                "dropped": dropped}
+
     def _evidence(self, ep: int, row: dict, struct: dict) -> list[str]:
         mode = self.o.evidence_mode
         if mode == "off" or struct is None:
@@ -473,6 +692,8 @@ class StageRun:
                     contexts = {"motion_quality": {"action_semantics": action_semantics(row)}}
             elif self.o.stage == "frame":
                 structs = self._frame(ep, row, logs)
+            elif self.o.stage == "dedup":
+                structs = self._dedup(source, ep, row, logs)
             else:
                 structs, evidence = self._vlm(ep, row, logs)
         finally:
@@ -484,6 +705,8 @@ class StageRun:
     # ------------------------------------------------------------ the run
     def run(self) -> dict:
         o, ctx = self.o, self.ctx
+        if o.stage == "dedup":
+            self._dedup_seed()            # group against what this run directory already judged
         todo, skipped, crashed = self._todo()
         total = len(o.episodes)
         writer = PartWriter(o.run_dir, o.modules, o.part, index=self._store is None)
@@ -513,9 +736,16 @@ class StageRun:
                     o.verify_source(todo)
                 source = self._source(todo)
                 self._drive(source, todo, writer, inflight, breaker, total)
+            if o.stage == "dedup":
+                # also when this call was paused or stopped: the groups it did confirm are settled
+                # before it leaves, so a run that ends here is not left with a half-judged group
+                self._dedup_settle(writer)
             drained = True
         finally:
             writer.close()
+            if o.stage == "dedup":
+                write_json_atomic(os.path.join(module_dir(o.run_dir, "dedup"), "groups.json"),
+                                  self._dedup_groups_doc())
             if drained:
                 inflight.clear()        # SIGINT / a crash leave it for the next --resume
             if self._store is None:

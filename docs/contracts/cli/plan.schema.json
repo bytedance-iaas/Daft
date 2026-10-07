@@ -343,7 +343,7 @@
         },
         "full_set": {
           "type": "boolean",
-          "description": "2.0: needs the whole selection at once (dedup, profile)"
+          "description": "2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired)"
         }
       },
       "allOf": [

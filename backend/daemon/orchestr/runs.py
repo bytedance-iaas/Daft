@@ -33,10 +33,8 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
-#: the per-episode stages (the episode pipeline); dedup and profile take the whole selection
-EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: the full-set stages (design doc 17 §3.2)
-FULL_SET = tuple(registry.FULL_SET_STAGES)
+#: the stages the episode pipeline runs, dedup included since D70 (design doc 17 §3.2)
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm", "dedup")
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"
@@ -50,8 +48,7 @@ class StageRun(Run):
     """The stage runners the main run and the retry share."""
 
     # -- a check stage --------------------------------------------------------------
-    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool,
-                    incremental: bool = False) -> list[int]:
+    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool) -> list[int]:
         """Run one plan stage of ``check`` over ``episodes``; returns the survivors.
 
         ``fresh``: the main run (modules without episodes become succeeded with 0);
@@ -61,7 +58,6 @@ class StageRun(Run):
         out_file = self.wd.episodes_file(self.run_key, f"{sid}.out")
         if self.journal.done(sid):
             return read_lines(out_file) or []
-        post = sid in FULL_SET
         self.progress(sid, state="running", done=0, total=len(episodes))
         if not episodes:
             if fresh:
@@ -78,10 +74,7 @@ class StageRun(Run):
                 "--run-dir", str(self.wd.root),
                 "--episodes", self.episodes_arg(f"{sid}.in", episodes),
                 "--plan-stage", str(self.wd.plan), "--survivors-out", str(out_file)]
-        if not post:
-            argv.append("--resume")
-        if incremental:
-            argv.append("--incremental")
+        argv.append("--resume")
         if vlm:
             argv += self.vlm_args()
         argv += self.module_param_args(mods)
@@ -90,18 +83,14 @@ class StageRun(Run):
         with self.cpu_slots(st, len(episodes)) as workers:
             if workers is not None and sid in EPISODE_STAGES:
                 argv += ["--concurrency", str(workers)]
-            outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
+            outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=True,
                                inflight_modules=mods, episodes=len(episodes))
         if outcome.ok:
             doc = outcome.doc.get("modules") or {}
             any_error = False
             for m in mods:
                 entry = doc.get(m) or {}
-                if post:
-                    counts = entry.get("episodes") or {}
-                    total, errors = int(counts.get("total") or 0), int(counts.get("error") or 0)
-                else:
-                    total, errors = self.counts_from_records(m)
+                total, errors = self.counts_from_records(m)
                 any_error |= errors > 0
                 self.module_result(m, "completed_with_errors" if errors else "succeeded",
                                    total=total, errors=errors, digest=entry.get("input_digest"))
@@ -115,7 +104,7 @@ class StageRun(Run):
         if outcome.status == "module_failed":
             msg = outcome.message or outcome.reason()
             for m in mods:
-                total, errors = (0, 0) if post else self.counts_from_records(m)
+                total, errors = self.counts_from_records(m)
                 self.module_result(m, "failed", total=total, errors=errors,
                                    digest=input_digest(episodes), error=msg[:2000])
             self.log(sid, "error", f"{names(mods)}整体失败：{msg}。别的模块照常跑；这些条目都待补跑，等「重试」")
@@ -332,8 +321,7 @@ class RetryRun(StageRun):
         selection = self.selection()
         left_out = set(all_skipped(str(self.wd.root)))        # missing source files (D40)
         judged = [e for e in selection if e not in left_out]
-        stream = [s for s in plan["stages"] if s.get("command") == "check" and not s.get("full_set")]
-        full = [s for s in plan["stages"] if s.get("full_set")]
+        stream = [s for s in plan["stages"] if s.get("command") == "check"]
         todo: dict[str, tuple[list[str], list[int]]] = {}
         for st in stream:
             mods, eps = [], set()
@@ -353,7 +341,7 @@ class RetryRun(StageRun):
         vlm = todo.get("vlm", ([], []))
         captions = vlm[1] if "task_success" in vlm[0] and any(
             s.get("command") == "autolabel" for s in plan["stages"]) else []
-        ids = (["autolabel"] if captions else []) + [s["id"] for s in stream] + [s["id"] for s in full] \
+        ids = (["autolabel"] if captions else []) + [s["id"] for s in stream] \
             + ["final", "report", "verify"]
         self.plan_progress(ids, plan)
         pairs = sum(len(m) * len(e) for m, e in todo.values())
@@ -373,31 +361,12 @@ class RetryRun(StageRun):
             elif not self.journal.done(st["id"]):
                 self.stage_done(st["id"], "skipped")
                 self.progress(st["id"], note="没有需要补跑的条目", force=True)
-        for st in full:
-            self.check_intent()
-            self.sync_full_set(st, selection, scope, rows)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
         self.publish(rev)
         return self.recomputed_state(rev)
-
-    def sync_full_set(self, st: dict, episodes: list[int], scope: set, rows: dict) -> None:
-        """dedup / the profile again when they erred, failed, went stale or were asked for (full selection)."""
-        sid = st["id"]
-        module = st["modules"][0]
-        row = rows.get(module)
-        if self.journal.done(sid):
-            return
-        erred = row is None or row.state in ("failed", "stale") or row.episodes_error > 0
-        if not (erred or module in scope):
-            self.stage_done(sid, "skipped")
-            self.progress(sid, note="没有出错，沿用上一版结果", force=True)
-            return
-        # --incremental builds on an existing profile; without one (never ran, failed, empty) it runs in full
-        incremental = sid == "profile" and not (row is None or row.state == "failed" or row.episodes_total == 0)
-        self.check_stage(st, episodes, fresh=True, incremental=incremental)
 
 
 class AdjudicationRun(StageRun):

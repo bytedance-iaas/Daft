@@ -14,6 +14,9 @@ from daemon.orchestr import blocks
 from daemon.orchestr import episode_pipeline as ep
 from daemon.orchestr.workdir import WorkDir
 
+#: A plan from before D70, so that the whole-set path (``full_set``: dedup as one command over the
+#: selection) stays covered - tasks planned then can still be resumed and retried. Dedup as a streaming
+#: segment is covered by ``tests/cli/test_dedup_stream.py`` and the end-to-end runs.
 PLAN = {"schema_version": "2.0", "stages": [
     {"id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 4,
      "modules": ["timestamp_check"], "episodes": "selected"},
@@ -185,7 +188,7 @@ def test_the_blocks_run_side_by_side_and_never_filter_each_other(tmp_path, monke
     last_vlm = max(at(events, "vlm", "done", e) for e in selection)
     last_frame = max(at(events, "frame", "done", e) for e in selection)
     assert last_vlm < last_frame
-    # autolabel before the block's checks, the full-set steps after them, on the whole selection
+    # autolabel before the block's checks; this plan's dedup is a whole-set step after them
     assert at(events, "autolabel", "done", None) < min(at(events, "vlm", "start", e) for e in selection)
     assert at(events, "dedup", "start", tuple(selection)) > last_frame
     assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "dedup": "succeeded",

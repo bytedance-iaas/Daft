@@ -17,8 +17,8 @@ takes the whole selection, a stage without modules is left out:
                 vlm        the VLM checks                       vlm gates, merge proposal
     final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
-A full-set stage (``full_set``) needs the whole selection at once and starts when the
-stages before it in its block are done (§3.2). autolabel runs only if a selected module
+Every segment is per-episode since D70: no stage waits for the whole selection, and a plan
+no longer carries ``full_set`` (a plan from before that still may). autolabel runs only if a selected module
 reads the task text (task_success; v1 captions unlabeled episodes only when it is on) and
 some selected episode may lack one. Modules the preflight marked unsupported stay out, and
 the plan says why.
@@ -203,8 +203,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
 
     stages: list[dict[str, Any]] = []
     unlabeled = _unlabeled(dataset, selected, count, unlabeled_episodes, notes)
-    captions = bool(unlabeled) and any(
-        s.stage not in registry_mod.FULL_SET_STAGES and "autolabel" in s.depends_on for s in chosen)
+    captions = bool(unlabeled) and any("autolabel" in s.depends_on for s in chosen)
     for block, block_stages in registry_mod.BLOCKS.items():
         previous = None
         for stage_id in block_stages:
@@ -222,8 +221,6 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
                 stage = {"id": stage_id, "kind": kind, "command": "check", "block": block}
                 if previous:
                     stage["after"] = previous
-                if stage_id in registry_mod.FULL_SET_STAGES:
-                    stage["full_set"] = True
                 if kind == "cpu":
                     stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
                 stage["modules"] = [s.id for s in members]

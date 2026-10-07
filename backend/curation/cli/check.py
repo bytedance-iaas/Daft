@@ -50,14 +50,12 @@ def add_parser(sub, parents) -> None:
                    help="skip episodes that already have a result that is not an error")
     p.add_argument("--plan-stage", metavar="FILE",
                    help="this stage of plan.json (gates, concurrency, merge proposal)")
-    p.add_argument("--incremental", action="store_true",
-                   help="a whole-set stage: re-file only what changed")
     p.add_argument("--survivors-out", metavar="FILE",
                    help="write the episodes that go on to the next stage, one per line")
     p.add_argument("--pipeline-state", metavar="SQLITE",
                    help=argparse.SUPPRESS)
-    p.add_argument("--pipeline-next", metavar="STAGE", choices=("numeric", "frame", "vlm", "done"),
-                   default="done",
+    p.add_argument("--pipeline-next", metavar="STAGE",
+                   choices=("numeric", "frame", "vlm", "dedup", "done"), default="done",
                    help=argparse.SUPPRESS)
     runctx.add_vlm(p)
     runctx.add_behaviour(p)
@@ -85,8 +83,6 @@ def _modules(raw: str) -> tuple[list[str], str]:
             raise UsageError(f"{m} is answered inside {host}'s model requests and runs with it: "
                              f"--modules {host} brings it along; it cannot run on its own")
     mods = registry.with_riders(mods)                  # a host's riders always run with it
-    if stage in registry.FULL_SET_STAGES and len(mods) != 1:
-        raise UsageError("a whole-set stage runs one module at a time")
     ordered = [m for m in registry.ids() if m in mods]
     return ordered, stage
 
@@ -100,8 +96,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
     runctx.apply_thread_limit()
-    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm"):
-        raise UsageError("--pipeline-state is only valid for funnel stages")
+    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm", "dedup"):
+        raise UsageError("--pipeline-state is only valid for a block's segments")
     src = runctx.open_source(ctx, args)
     storage = src.storage
     available, info = runctx.dataset_episodes(ctx, src)
@@ -123,14 +119,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if stage == "integrity":
         payload, survivors = _integrity(ctx, args, modules, run_dir, src, episodes, part,
                                         plan_stage, guard)
-    elif stage in ("numeric", "frame"):
+    elif stage in ("numeric", "frame", "dedup"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
-    elif stage == "vlm":
+    else:
         payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard)
-    else:
-        payload, survivors = _dedup(ctx, args, run_dir, src, episodes, part, guard)
     if args.survivors_out:
         records.write_text_atomic(os.path.abspath(args.survivors_out),
                                   "".join(f"{e}\n" for e in survivors))
@@ -184,7 +178,9 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
-                        concurrency=runctx.cpu_workers(args, plan_stage),
+                        # dedup keeps its streaming state in one process, so it judges one at a
+                        # time (D70); its cost is the read, which overlaps the other segments
+                        concurrency=1 if "dedup" in modules else runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
                         verify_source=guard, pipeline_state=args.pipeline_state,
                         pipeline_next=args.pipeline_next,
@@ -345,37 +341,6 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         # the file, seeds, template, configuration and model are part of the module's input
         payload["modules"][judge.module]["input_digest"] = judge.input_digest(list(opts.episodes))
     return payload, stage.survivors()
-
-
-def _dedup(ctx, args, run_dir, src, episodes, part, guard):
-    from ..pipeline.dataset_stages import run_dedup
-
-    if args.resume:
-        ctx.log("info", "--resume: dedup always runs on the whole kept set")
-    if guard is not None:
-        guard(episodes)
-    src.fetch(episodes)
-    payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
-                        embodiment_id=args.embodiment_id)
-    from ..pipeline.policy import load as load_policy
-    from ..pipeline.records import passes_funnel, two_blocks
-
-    # the copies the task's policy rejects (default: every duplicate but its group's first; report_only: none);
-    # plan 2.0 hands the profile every episode (design doc 17 §3.2): dedup only reports its groups
-    policy = load_policy(run_dir)
-    dups = set() if two_blocks(run_dir) else \
-        {e for e, rec in _latest(run_dir, "dedup").items() if not passes_funnel(rec, policy)}
-    errors = set(payload["modules"]["dedup"]["error_episodes"])
-    left_out = {s["episode_index"] for s in
-                payload["modules"]["dedup"].get("skipped_missing_source") or []}
-    return payload, [e for e in episodes if e not in dups and e not in errors
-                     and e not in left_out]
-
-
-def _latest(run_dir, module):
-    from ..pipeline.records import latest_results
-
-    return latest_results(run_dir, module)
 
 
 def render(payload: dict) -> str:

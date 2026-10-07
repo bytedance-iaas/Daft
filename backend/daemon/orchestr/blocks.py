@@ -1,15 +1,14 @@
 """The two blocks of a plan 2.0 run, side by side (design doc 17 §3, D57).
 
-The CPU block (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm ->
-profile) run in two threads and never filter each other. Inside a block the stages run in the
-plan's order:
+The CPU block (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm)
+run in two threads and never filter each other. Inside a block the stages run in the plan's order:
 
 * ``autolabel`` - one command over the selection's unlabeled episodes, before the block's checks
   (task_success reads the captions: a data dependency);
 * the per-episode stages - one chain of the episode pipeline (:func:`.pipeline.run_funnel`):
-  every episode with a record of a stage goes on to the next one, findings and errors stop nothing;
-* the full-set stages (``full_set``: dedup, profile) - one command over the whole selection once the
-  block's earlier stages are done (§3.2).
+  every episode with a record of a stage goes on to the next one, findings and errors stop nothing.
+  Since D70 that is every stage of a block, dedup included; a plan from before it marks dedup
+  ``full_set`` and that stage then runs as one command over the whole selection.
 
 Either block failing stops the other (a shared abort event, :meth:`Run.check_intent`); a pause or a
 stop reaches every process of both. The CPU block books its CPU-pool slots to the run's key

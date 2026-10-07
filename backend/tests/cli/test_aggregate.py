@@ -692,3 +692,20 @@ def test_every_entry_lists_its_findings_with_the_level_they_have(tmp_path):
     assert graded(after, 3) == [("task_success", "failure", "TASK-5", "blocking", None, None, True, False)]
     assert after["reject"][3]["findings"][0]["message_zh"] == "人工裁决判失败（任务未完成）"
     assert graded(after, 4) == []                                              # its abstention is settled
+
+
+def test_a_group_whose_pointer_runs_the_other_way_still_keeps_the_lowest_index(tmp_path):
+    """The streaming segment (D70) points the member it met second at the one it met first, and a run
+    that was killed before the segment settled the group leaves it that way. aggregate judges the
+    group all the same: the lowest index keeps, the other member is the copy - whichever record
+    carries dedup's pointer."""
+    rd = RunDir(str(tmp_path / "run")).good(0, 3, 7)
+    rd.replace("dedup", 3, "fail", details={"duplicate_of": 7})      # 7 was hashed first
+    run_dir = rd.write()
+    lists = final(run_dir, "0,3,7")
+    assert sorted(lists["passed"]) == [0, 3]
+    assert sorted(lists["reject"]) == [7]
+    assert [r["code"] for r in lists["reject"][7]["reasons"]] == ["duplicate"]
+    assert lists["reject"][7]["reasons"][0]["duplicate_of"] == 3
+    assert not lists["passed"][3].get("reasons"), "the one that keeps is not a duplicate of anything"
+    assert not any(f.get("code") == "duplicate" for f in lists["passed"][3].get("findings") or [])

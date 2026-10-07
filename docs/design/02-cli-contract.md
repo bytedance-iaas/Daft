@@ -204,7 +204,9 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 - `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑、重试补跑都靠它。
 - 进程每开始处理一条 episode，就把它记进 `<run-dir>/checks/<module>/inflight.json`，处理完抹掉。
   进程被杀或自己崩了，Daemon 从这个文件知道「出事时手上是哪几条」（04 篇 §7）。
-- 数据集级模块（`dedup`）不分批，一次调用吃整个 keep 集合。
+- 数据集级模块（`dedup`）也是逐条判的（D70）：一条 episode 进来就算它的 action 哈希，和已经判过的比；
+  哈希撞上了才读视频算内容指纹。并发恒为 1（状态在一个进程里），`--resume` 跳过已有记录的条目，
+  再把它们的哈希读回来重建状态。
 
 > **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
 > `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、

@@ -20,7 +20,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
-| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内依次是 autolabel、逐条交接的段、全量步骤；一块失败另一块随之停下 |
+| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内依次是 autolabel 与逐条交接的段（D70 起没有全量步骤；更早的计划里的 `full_set` 段仍按整段跑）；一块失败另一块随之停下 |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 一块的逐条段（一条链）：每段一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`（只在块内），每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
@@ -53,7 +53,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   逐个开始失败的写进 `warnings`。
 - **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm）各一个线程同时跑，互不过滤。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
-  autolabel 在 VLM 块的检查之前整段跑（任务成败要读补出的描述），dedup 是全量步骤：本块前面的段对全集跑完才整段启动。
+  autolabel 在 VLM 块的检查之前整段跑（任务成败要读补出的描述）；dedup 是 CPU 块最后一个逐条段，和前面的段交叠（D70）。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
@@ -85,7 +85,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：只补跑出错或没有记录的（模块 × 条目）（设计 17 §3.4）：每一档只带要补的模块与条目，整体失败的模块对全部所选重跑，
-    没有后段依赖它，不再「从出错的那一档往后跑」；去重出错或被点名时整段重跑；新版本，终态按当前结果重算。
+    没有后段依赖它，不再「从出错的那一档往后跑」；去重和别的段一样只补出错或缺记录的条目（状态从已有记录里重建）；新版本，终态按当前结果重算。
   - `resume`（「继续运行」）：已停止或失败的任务接着主流程的日志本往下做，两块各自从未完成处继续，不重做完成的（模块 × 条目）。
   - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（一条 episode 的同一条线上只认最新的那一行，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
     用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改了描述的条目按新描述重跑任务成败判定，

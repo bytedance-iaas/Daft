@@ -13,7 +13,7 @@ Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联�
 |---|---|
 | `limits.py` | 上限取交集（D31）：CPU 并发 = min(核数 − 2（至少 1），任务上限)，是一个任务最多用多少，核本身由 Daemon 的全局 CPU 池在任务之间分（P4、D54）；VLM 并行度 N = min(任务、模型、后端、站点上限，模型和后端都没配时再加站点默认或 64)，多任务同跑时按任务数均分（P1）；计划里记下是哪一层卡住的（`bound_by`） |
 | `gates.py` | 一个 N 推导八把闸门（04 §2.2）；endstate、arbitration、guard_caption 沿用 v1 在 `funnel.py` 里对 episode 闸门的耦合；站点可逐把覆盖，按 N 等比缩放；`v1_set_overrides()` 给出让 v1 代码用上这组闸门的 `--set` |
-| `plan.py` | `build_plan()`：分档、幸存者链、硬门、autolabel 条件、两个聚合档、dedup（并发恒为 1）、合并提案、估算；输出符合 `docs/contracts/cli/plan.schema.json` |
+| `plan.py` | `build_plan()`：两块的段、autolabel 条件、聚合档、dedup（逐条段，并发恒为 1）、合并提案、估算；输出符合 `docs/contracts/cli/plan.schema.json` |
 | `estimates.py` | 估算用的常数全部来自 v1 的实测与出厂配置，逐条注明出处 |
 | `merge.py` | `FramePolicy`、`MergeUnit`、`MergeGroup`、`MergeLimits`、`none` 与 `per_episode_multi_module` 两个策略、合并请求的拼装与按 key 拆回、`vlm.merge.enabled` 开关 |
 | `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块）；`chat_payload()` 把请求拼成 v1 形态的请求体 |

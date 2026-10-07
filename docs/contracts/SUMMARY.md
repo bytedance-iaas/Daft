@@ -345,3 +345,20 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   同步进 `<交付>/<run_id>/`，回读无误后写 `_COMPLETE`，`latest` 仍指向最新的完整一批。
 - **C5（D69）**：`Task` 去掉 `export_fingerprint` 与 `delivery_stale`，`Subtask.kind` 去掉 `reexport`；SQLite 迁移第 8 步丢两列。
 - 要重新生成交付数据集，用 `release_v1` 分支的 v1 流水线；导出下线之前跑的批次，它们的 `<run_id>/export/` 还留在交付目录里，平台不再更新。
+
+## 十八、去重改成流式，没有全量步骤了（2026-10-07，D70）
+
+需求方：「去重还是不能 overlap」。精确去重从 CPU 块的全量步骤改成块里最后一个逐条段，和前面的段交叠执行。
+
+- **C1 → 3.1**：`FULL_SET_STAGES` 变空（字段保留，将来真有只能看全集的模块再用）；`modules.json` 重新导出。
+  dedup 仍是数据集级模块、仍在 `dedup` 段、并发恒为 1（流式状态在一个进程里）。
+- **C2**：计划不再写 `full_set`（`plan.schema.json` 里仍是可选字段，旧任务的计划要读得懂）；`check --modules dedup`
+  现在走逐条路径，认 `--pipeline-state` / `--pipeline-next dedup`，`--resume` 按条目跳过；`--incremental` 这个没人读的开关删掉。
+  去重记录的 `details` 多 `action_hash`（撞车的还多 `fingerprint`），续跑与重试靠它们重建状态；`checks/dedup/groups.json`
+  的结构不变，在这一段结束时写。
+- **C4 → 4.1.0**：任务 `progress.stages` 不再出现 `full_set`（之前排好计划的任务仍带着它），`GET /modules` 的
+  `full_set_stages` 是空数组；逐条进度（`PipelineEpisode.stages`）多一个 `dedup` 位置。
+- **判决口径不变**：重复组仍只由去重报，canonical 仍由 `aggregate` 按「组内第一条没因别的原因被拒的」选，
+  组内留的仍是下标最小的那条。两道保证：段把条目看完后把每组定一次（顺序造成的差异在那时补一条记录纠正，只有真撞车才发生）；
+  判决本身把组看成整体，组里本来会留下的其余成员一律按副本判，所以进程被打断、来不及定组也不影响判决。
+

@@ -26,7 +26,7 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
 
 > **两块并行（2026-10-01，设计 17 §3，D57；2026-10-01 F12.4 已实现）**：漏斗的执行短路取消，改成 CPU 块
 > （integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm）并行、互不过滤；块内的段只为共享解码与各自的并发宽度，
-> 段之间传全部条目；去重是 CPU 块的全量步骤，等本块前面的段跑完全集才启动（VLM 块原来的 `profile` 段随技能画像下线，D68）。计划 2.0 的段带 `block`、`after`、`full_set`，
+> 段之间传全部条目；去重是 CPU 块最后一个逐条段，和前面的段交叠（D70 起不再是全量步骤；VLM 块原来的 `profile` 段随技能画像下线，D68）。计划 2.0 的段带 `block`、`after`，
 > 没有 `hard_gates` 和幸存者集合。CPU 名额池（D54）与 VLM 闸门（§2.2）不变；Daemon 一块一个线程（`orchestr/blocks.py`），
 > 落地细节见设计 17 §7「F12.4 落地时的细化」。下文是漏斗的写法，只对旧任务的计划成立。
 

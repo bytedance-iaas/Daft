@@ -1700,7 +1700,7 @@ export interface components {
             }[];
             /** @description every stage, the CPU block's first */
             stages: components["schemas"]["RegistryStage"][];
-            /** @description stages that need the whole selection and start once the earlier stages of their block are done */
+            /** @description stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it */
             full_set_stages: components["schemas"]["RegistryStage"][];
             /** @description blocking (rejects), review (asks a person), info (reported only), with the console's titles */
             finding_levels: {
@@ -2181,7 +2181,7 @@ export interface components {
              * @enum {unknown}
              */
             block?: "cpu" | "vlm";
-            /** @description a full-set stage: it starts once the earlier stages of its block are done (dedup, profile) */
+            /** @description a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it */
             full_set?: boolean;
             /** @enum {unknown} */
             state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
@@ -3477,7 +3477,7 @@ export interface components {
             block?: "cpu" | "vlm";
             /** @description 2.0: the stage before it in its block; a block's first stage has none */
             after?: string;
-            /** @description 2.0: needs the whole selection at once (dedup, profile) */
+            /** @description 2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired) */
             full_set?: boolean;
         } & (unknown & unknown);
         stage_2: {

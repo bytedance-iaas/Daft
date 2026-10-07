@@ -47,7 +47,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `vlm_policy.py` | 传输策略：对冲开关、外层重试、文本调用一次一发、用量记账（W6 的两本账） |
 | `tasktext.py` | 任务描述的来源：原始标注 / 自产 caption / 人工改标（改标的重判口径） |
 | `skipped.py` | 缺源文件、照 v1 跳过的条（D40）：快照里的 `skipped_episodes` 与读到才发现的 `skipped_episodes.json` |
-| `dataset_stages.py` | `autolabel`、`dedup` |
+| `dataset_stages.py` | `autolabel` |
 | `aggregate.py` / `adjudication.py` / `reporting.py` | 聚合判决、人工裁决、报告 |
 | `funnel.py` / `run.py` | v1 的编排（B 类），只把闭包里的构建函数提到模块级；`curation run` 仍走它们 |
 | `rejudge.py` | v1 的 rejudge（B 类）；改标重判的函数体提成 `rerun_task_success`，`check` 按 v1 口径重判时调的就是它（D39） |
@@ -182,6 +182,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 不带 `--source-manifest` 时，读到才发现缺源文件的条（规则同 snapshot，只对 v2）不写结果行，列在 `--json` 的 `skipped_missing_source` 里并记进 `skipped_episodes.json`，不计入总数；其它读失败照旧记为出错（聚合时 held）。
 - `--resume`：跳过已有非错误结果的条。SIGTERM 时做完在手的条再退出（退出码 5）；SIGKILL 后 `inflight.json` 留着当时在手的条，下次 `--resume` 把它们的崩溃次数加一，重跑；同一条两次出现在死掉的进程手里就记为 `error`（步骤 `crash`）并跳过（P14）。中断后续跑的结果与一次跑完逐字段相同（耗时字段除外）。
 - VLM 档熔断（P15）：开头连续 20 条都因为基础设施原因出错（连不上、超时、5xx、限流），整个模块以退出码 4 结束，不再烧配额。
+- **dedup 是逐条的**（D70）：一条进来算 action 哈希（便宜），撞车才读视频算内容指纹（只读撞上的那两条）；
+  记录的 `details.action_hash`（撞车的还有 `fingerprint`）让 `--resume` 和重试能把状态读回来。
+  这一段结束时把每组定下来：留下标最小的那条，说法不对的补一条记录（只有真撞车才发生），然后写 `groups.json`。
 - 技能画像已下线（D68）。下面这段关于它的说明仅对 v1 的 `curation run` 还成立：dedup 判定为字节级重复的条不进画像（由人捞回的条除外，见 aggregate）。`--incremental` 保留已有的分类体系，只动变化的部分（v1 的 `_sync_profile`）：不在 `--episodes` 里的条移出画像（弃用、人工判失败、改标重判仍失败），改标的条按新标注重新归类，由人带回交付的条（复议捞回、对拒绝条目人工判成功）不调模型打 caption、直接按文本归类（人工改标，否则原始标注，否则 autolabel 的 caption，都没有就留「未归类」），其余新加入的条先打 caption 再归类。分类体系要的文本调用最终失败，模块以退出码 4 结束。
 
 **aggregate**：`curation aggregate --run-dir … --phase funnel|final [--revision N] [--modules a,b] [--episodes 表达式] [--input …] --json`
@@ -289,13 +292,13 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 
 ```
 preflight → plan → snapshot
-CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（全量步骤：块内前面的段对全集跑完才启动）
+CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（逐条交接，和前面的段交叠，D70）
 VLM 块：autolabel（只补无标注条目）→ check task_success（及 EEF）
 两块都结束 → aggregate --phase final --revision N → report --revision N → （同步运行目录到交付目录）→ verify
 ```
 
 块内的逐条段由 Daemon 的流水线逐条交接（`check --pipeline-state … --pipeline-next …`，常驻 worker）：一条在本段有了记录（判完或出错）
-就交给下一段，判废的发现、执行出错都不拦它。全量步骤是整段命令。没有 `aggregate --phase funnel`：判决只在两块都结束后由 `final` 按任务策略算一次。
+就交给下一段，判废的发现、执行出错都不拦它。D70 起块里没有全量步骤了。没有 `aggregate --phase funnel`：判决只在两块都结束后由 `final` 按任务策略算一次。
 
 人工裁决后的重跑（新版本 N+1，旧版本原样保留）：
 
@@ -307,8 +310,7 @@ adjudicate-apply → check task_success --episodes <rerun_task_success>（写新
 
 裁决之后**不再跑 dedup**：它报的重复组不变，`final` 在人工决定之后选每组留哪条（原件被人判失败时副本顶上），由人带回的条不做去重。
 
-重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup 出错或
-被点名时整段重跑，然后 `final`。
+重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup 和别的段一样只补出错或缺记录的条目，然后 `final`。
 
 mcap / Lance 数据集的顺序相同，`autolabel`、`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。
 

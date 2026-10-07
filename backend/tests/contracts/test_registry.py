@@ -19,7 +19,7 @@ def test_modules_in_block_and_stage_order():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
     assert M.STAGES == M.BLOCKS["cpu"] + M.BLOCKS["vlm"]
-    assert set(M.FULL_SET_STAGES) == {"dedup"}
+    assert M.FULL_SET_STAGES == (), "D70: every stage judges one episode at a time"
     assert all(s in M.STAGES for s in M.FULL_SET_STAGES)
 
 

@@ -53,7 +53,7 @@ def test_full_plan_matches_the_design_example():
         "id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric",
         "concurrency": 30, "modules": ["visual_quality", "video_action_sync"], "episodes": "selected"}
     assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check", "block": "cpu",
-                                 "after": "frame", "full_set": True, "concurrency": 1,
+                                 "after": "frame", "concurrency": 1,
                                  "modules": ["dedup"], "episodes": "selected"}
     assert stage(p, "autolabel") == {"id": "autolabel", "kind": "vlm", "command": "autolabel",
                                      "block": "vlm", "episodes": "unlabeled", "gates": {"caption": 32}}
@@ -78,7 +78,7 @@ def test_blocks_never_chain_into_each_other():
             if "after" in s:
                 assert by_id[s["after"]]["block"] == s["block"]
             assert s["episodes"] in ("selected", "unlabeled")
-            assert ("full_set" in s) == (s["id"] in C1.FULL_SET_STAGES)
+            assert "full_set" not in s, "D70: a plan no longer marks a whole-set stage"
 
 
 def test_the_eef_module_is_in_the_vlm_block():
@@ -292,10 +292,16 @@ def test_site_gate_overrides_reach_the_plan():
     assert stage(p, "vlm")["gates"]["probe"] == 96
 
 
-def test_dedup_takes_the_whole_selection():
-    """design doc 17 §3.2: the only full-set stage left after the skill profile went."""
-    dedup = stage(plan(["dedup"]), "dedup")
-    assert (dedup["episodes"], dedup["full_set"], dedup["block"]) == ("selected", True, "cpu")
+def test_dedup_is_a_streaming_segment_of_the_cpu_block():
+    """design doc 17 §3.2 (D70): it reads every selected episode, one at a time, after the frame
+    segment - no ``full_set``, so nothing in the block waits for the whole selection."""
+    alone = stage(plan(["dedup"]), "dedup")
+    assert (alone["episodes"], alone["block"]) == ("selected", "cpu")
+    assert "after" not in alone, "selected on its own it is the block's first segment"
+    with_frame = stage(plan(["visual_quality", "dedup"]), "dedup")
+    assert with_frame["after"] == "frame"
+    assert alone["concurrency"] == with_frame["concurrency"] == 1
+    assert "full_set" not in alone and "full_set" not in with_frame
 
 
 # ---------------------------------------------------------------- estimates

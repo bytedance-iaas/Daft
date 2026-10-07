@@ -56,7 +56,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "3.0"
+REGISTRY_VERSION = "3.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "1.2"
 
@@ -69,7 +69,9 @@ BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "
                                       "vlm": ("autolabel", "vlm")}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
-FULL_SET_STAGES: tuple[str, ...] = ("dedup",)
+#: No stage needs the whole selection at once since D70 (dedup streams like the others);
+#: the tuple stays so a future whole-set module has a place to say so.
+FULL_SET_STAGES: tuple[str, ...] = ()
 #: Every stage, the CPU block's first.
 STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 

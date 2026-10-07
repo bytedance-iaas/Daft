@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.0.0
+  version: 4.1.0
   description: |
     ## Overview
 
@@ -94,6 +94,11 @@ info:
     the adjudication page). The delivery directory itself stays: a task's run directory - the result
     revisions, the report and its details - is synced into `<delivery>/<run_id>/`, read back, and marked
     `_COMPLETE`; `latest` still points at the newest complete batch.
+
+    **4.1.0** (2026-10-07): no stage waits for the whole selection any more. Exact dedup is a streaming
+    segment of the CPU block like the other checks, so a task's `progress.stages` no longer carries
+    `full_set` (a task planned before this still does, and the field stays in the contract), and the
+    module registry's `full_set_stages` is empty.
   x-description-zh: |
     ## 概览
 
@@ -151,6 +156,10 @@ info:
     总览的 `todo.delivery_pending`，以及 episode 视频的来源 `delivery_dataset`（相机现在从源数据集放，
     或者放裁决页裁好的片段）。交付目录本身保留：任务的运行目录（结果版本、报告与明细）同步到
     `<交付>/<run_id>/`，回读无误后写 `_COMPLETE`；`latest` 仍指向最新的完整一批。
+
+    **4.1.0**（2026-10-07）：没有「等全集」的档了。精确去重和别的检查一样是 CPU 块里逐条跑的一段，
+    所以任务 `progress.stages` 里不再出现 `full_set`（这之前排好计划的任务仍带着它，字段保留在契约里），
+    模块注册表的 `full_set_stages` 是空数组。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -3462,7 +3471,7 @@ components:
         full_set_stages:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
-          description: stages that need the whole selection and start once the earlier stages of their block are done
+          description: "stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it"
         finding_levels:
           type: array
           description: blocking (rejects), review (asks a person), info (reported only), with the console's titles
@@ -4140,7 +4149,7 @@ components:
       properties:
         id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
-        full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
+        full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
         done: {type: integer, minimum: 0}
         total: {type: integer, minimum: 0}

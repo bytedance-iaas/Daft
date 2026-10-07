@@ -27,7 +27,7 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
         "numeric", "frame", "dedup", "autolabel", "vlm", "final", "report", "verify"]
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
         "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm"}
-    assert [s["id"] for s in stages if s.get("full_set")] == ["dedup"]
+    assert not [s["id"] for s in stages if s.get("full_set")], "D70: no stage waits for the whole set"
     assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}
     assert mods["timestamp_check"]["state"] == "succeeded"
@@ -60,7 +60,9 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert set(results(rd, "task_success")) == set(range(8))
     page = d.api("GET", f"/tasks/{task['id']}/pipeline/episodes").json()
     assert page["started"] == page["finished"] == 8
-    assert all(set(r["stages"]) == {"numeric", "frame", "vlm"} and set(r["stages"].values()) == {"done"}
+    # dedup is a segment of the CPU block like the others since D70, so it has a per-episode position too
+    assert all(set(r["stages"]) == {"numeric", "frame", "dedup", "vlm"}
+               and set(r["stages"].values()) == {"done"}
                and r["provisional"] for r in page["items"])
     counts = {m["id"]: m for m in page["modules"]}            # the live module cards (C4 2.3.0)
     assert {"timestamp_check", "visual_quality", "task_success"} <= set(counts)

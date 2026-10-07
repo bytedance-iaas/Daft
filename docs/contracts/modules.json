@@ -1,5 +1,5 @@
 {
- "registry_version": "3.0",
+ "registry_version": "3.1",
  "taxonomy_version": "1.2",
  "blocks": [
   {
@@ -29,9 +29,7 @@
   "autolabel",
   "vlm"
  ],
- "full_set_stages": [
-  "dedup"
- ],
+ "full_set_stages": [],
  "finding_levels": [
   {
    "id": "blocking",
