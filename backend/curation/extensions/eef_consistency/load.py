@@ -100,6 +100,8 @@ class EefSample:
     cameras: dict[str, CameraStream]
     consistency: dict[str, Any]        # provided vs recomputed summary (design 12 §6.1)
     warnings: list[C.Issue]
+    hand_poses: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
+    hand_openings: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
 
     @property
     def has_absolute_pose(self) -> bool:
@@ -571,6 +573,13 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
         pose_type=next(iter(pose_types)) if pose_types else None, T_reference_eef=T_abs, T_declared=T_decl,
         eef_mask=eef_mask, anchor_missing=anchor_missing, gripper=grip, source_state_index=ssi, clocks=clocks,
         points=points, axes=axes, cameras=streams, consistency={}, warnings=[])
+    from .umi import load_hands
+
+    try:
+        load_hands(sample, rows)
+    except ValueError as exc:
+        col.error(SEMANTIC, str(exc), path=f"{where}/sample/umi")
+        return None, summary
     sample.consistency = self_consistency(sample)
     for cid, per in sample.consistency.get("cameras", {}).items():
         for pid, stats in per.items():

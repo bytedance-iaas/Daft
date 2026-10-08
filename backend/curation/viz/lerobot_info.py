@@ -168,6 +168,27 @@ def image_features(info: dict) -> list[str]:
             if isinstance(f, dict) and f.get("dtype") == "image"]
 
 
+def raw_detail(entry: Any, prefix: str = "") -> dict[str, Any]:
+    """A metadata entry key by key as the dataset writes it (design doc 21 §3, D71): nested objects with
+    their keys joined by dots (``info.video.codec``), lists as JSON text, scalars as they are."""
+    import json
+
+    out: dict[str, Any] = {}
+    if not isinstance(entry, dict):
+        return out
+    for k, v in entry.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(raw_detail(v, key + "."))
+        elif isinstance(v, (list, tuple)):
+            out[key] = json.dumps(list(v), ensure_ascii=False)
+        elif v is None or isinstance(v, (str, bool, int, float)):
+            out[key] = v
+        else:
+            out[key] = str(v)
+    return out
+
+
 def _number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 

@@ -10,6 +10,9 @@ import type {
   VizAnnotationSource,
   VizCamera,
   VizDataset,
+  VizDisplay,
+  VizDisplayConfig,
+  VizDisplayGroup,
   VizEpisode,
   VizEpisodeCamera,
   VizEpisodeItem,
@@ -123,19 +126,21 @@ function camera(key: string, p: DatasetProfile, over: Partial<VizCamera> = {}): 
     pix_fmt: 'yuv420p',
     transcoded: false,
     reason: null,
+    hidden: false,
     ...over,
   };
 }
 
-function seriesGroup(key: string, name: string, dims: string[], over: Partial<VizStream> = {}): VizStream {
+/** A state / action group of the dimensions `dims`, the first of them at `first` in the two features. */
+function seriesGroup(key: string, name: string, dims: string[], over: Partial<VizStream> = {}, first = 0): VizStream {
   return {
     key,
     kind: 'series',
     name,
     unit: null,
     lines: dims.flatMap((d, i) => [
-      { name: d, role: 'state' as const, source: 'observation.state', dim: i, unit: null },
-      { name: d, role: 'action' as const, source: 'action', dim: i, unit: null },
+      { name: d, role: 'state' as const, source: 'observation.state', dim: first + i, unit: null },
+      { name: d, role: 'action' as const, source: 'action', dim: first + i, unit: null },
     ]),
     smart: true,
     available: true,
@@ -165,11 +170,12 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
         pix_fmt: null,
         transcoded: false,
         reason: null,
+        hidden: false,
       };
     });
     // the dataset's own names (2026-10-04: nothing translated)
     const arm = seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad', sources: ['/observation.state', '/action'], rate_hz: 30 });
-    const gripper = seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 });
+    const gripper = seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], { sources: ['/observation.state', '/action'], rate_hz: 30 }, 7);
     const imu: VizStream = {
       key: 'imu', kind: 'series', name: 'IMU', unit: 'm/s²', smart: false, available: true, reason: null, sources: ['/imu'], rate_hz: 200,
       lines: ['x', 'y', 'z'].map((n, i) => ({ name: n, role: 'other' as const, source: '/imu', dim: i, unit: 'm/s²' })),
@@ -186,13 +192,13 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
   if (p.name.startsWith('umi')) {
     const pose = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'];
     streams.push(seriesGroup('left', 'observation.state / action · left', pose.map((n) => `left_${n}`)));
-    streams.push(seriesGroup('right', 'observation.state / action · right', pose.map((n) => `right_${n}`)));
-    streams.push(seriesGroup('gripper', 'observation.state / action · gripper', ['left_gripper', 'right_gripper']));
+    streams.push(seriesGroup('right', 'observation.state / action · right', pose.map((n) => `right_${n}`), {}, 6));
+    streams.push(seriesGroup('gripper', 'observation.state / action · gripper', ['left_gripper', 'right_gripper'], {}, 12));
   } else if (p.name === 'pusht') {
     streams.push(seriesGroup('observation_state', 'observation.state / action', ['x', 'y']));
   } else {
     streams.push(seriesGroup('observation_state', 'observation.state / action', JOINTS().slice(0, 7), { unit: 'rad' }));
-    streams.push(seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper']));
+    streams.push(seriesGroup('observation_state.gripper', 'observation.state / action · gripper', ['gripper'], {}, 7));
   }
   if (p.name === 'droid_100') {
     streams.push({
@@ -200,9 +206,11 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
       sources: ['observation.eef_pose'], rate_hz: null,
       lines: ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].map((n, i) => ({ name: n, role: 'other' as const, source: 'observation.eef_pose', dim: i, unit: null })),
     });
+    // the wrist camera's depth (design doc 21 §5): 16-bit PNG packs, paired with the camera by name
     streams.push({
-      key: 'observation_images_wrist_depth', kind: 'depth', name: 'wrist 深度', unit: 'mm', lines: [], smart: false, available: false,
-      reason: '深度图在第二期渲染（设计 18 §10）', sources: ['observation.images.wrist.depth'], rate_hz: null,
+      key: 'observation_images_wrist_image_left_depth', kind: 'depth', name: 'observation.images.wrist_image_left.depth', unit: 'mm', lines: [],
+      smart: false, available: true, reason: null, sources: ['observation.images.wrist_image_left.depth'], rate_hz: p.fps,
+      depth: { width: DEPTH_W, height: DEPTH_H, unit: 'mm', pair_camera: 'wrist_image_left' },
     });
     sources.push({ key: 'subtask_index', kind: 'segments', name: '子任务', format: 'subtask_index', source: 'subtask_index + meta/subtasks.parquet', supported: true, reason: null, primary: true });
   }
@@ -215,31 +223,92 @@ function shapeOf(p: DatasetProfile, mapping: VizMapping | null): Shape {
   return { cameras: cams, streams, sources, fps: p.fps };
 }
 
+/** The dataset info tree in the dataset's own words (design doc 21 §3, D71): info.json entries and mcap fields. */
+/** The mock depth pictures' size: a camera's aspect ratio (320 × 180 → 64 × 36). */
+export const DEPTH_W = 64;
+export const DEPTH_H = 36;
+
 function fieldTree(p: DatasetProfile, shape: Shape): VizFieldNode[] {
   if (p.format.kind === 'mcap') {
     return [
       { id: 'topics', name: 'Topic', kind: 'group', children: [
-        ...shape.cameras.map((c) => ({ id: `topic:${c.source}`, name: c.source, kind: 'topic' as const, camera: c.key, detail: { schema: c.access === 'frames' ? 'foxglove.CompressedImage' : 'foxglove.CompressedVideo', 编码: c.codec, 尺寸: `${c.width}×${c.height}` } })),
-        ...shape.streams.map((s) => ({ id: `topic:${s.sources[0]}`, name: s.sources[0] ?? s.key, kind: 'topic' as const, stream: s.key, detail: { 频率: s.rate_hz ? `${s.rate_hz} Hz` : null } })),
+        ...shape.cameras.map((c) => ({
+          id: `topic:${c.source}`,
+          name: c.source,
+          kind: 'topic' as const,
+          camera: c.key,
+          detail: {
+            'schema.name': c.access === 'frames' ? 'foxglove.CompressedImage' : 'foxglove.CompressedVideo',
+            'schema.encoding': 'protobuf',
+            message_encoding: 'protobuf',
+            message_count: 600,
+            format: c.codec,
+            width: c.width,
+            height: c.height,
+          },
+        })),
+        ...shape.streams.map((s) => ({
+          id: `topic:${s.sources[0]}`,
+          name: s.sources[0] ?? s.key,
+          kind: 'topic' as const,
+          stream: s.key,
+          detail: { 'schema.name': 'RobotState', 'schema.encoding': 'protobuf', message_encoding: 'protobuf', message_count: 1200, fields: JSON.stringify({ q: s.lines.length }) },
+        })),
       ] },
       { id: 'metadata', name: 'Metadata', kind: 'group', children: [{ id: 'metadata:episode', name: 'episode', kind: 'metadata', detail: { task: 'pick the box' } }] },
     ];
   }
+  const feature = (key: string, kind: 'camera' | 'series' | 'depth' | 'other', entry: Record<string, unknown>, more: Partial<VizFieldNode> = {}): VizFieldNode => {
+    const detail: Record<string, string | number | boolean | null> = {};
+    const put = (prefix: string, obj: Record<string, unknown>) => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === 'object' && !Array.isArray(v)) put(`${prefix}${k}.`, v as Record<string, unknown>);
+        else detail[`${prefix}${k}`] = Array.isArray(v) ? JSON.stringify(v) : (v as string | number | boolean | null);
+      }
+    };
+    put('', entry);
+    return { id: `${kind === 'series' ? 'feature' : kind}:${key}`, name: key, kind, dtype: String(entry.dtype), shape: entry.shape as number[], detail, ...more };
+  };
+  const smart = shape.streams.find((s) => s.kind === 'series' && s.smart);
+  const sources = [...new Set(shape.streams.filter((s) => s.kind === 'series').flatMap((s) => s.sources))];
+  const depth = shape.streams.filter((s) => s.kind === 'depth');
   return [
-    { id: 'cameras', name: '相机', kind: 'group', children: shape.cameras.map((c) => ({ id: `camera:${c.key}`, name: c.key, kind: 'camera' as const, camera: c.key, dtype: 'video', shape: [c.height ?? 0, c.width ?? 0, 3], detail: { 分辨率: `${c.width}×${c.height}`, 编码: c.codec, 帧率: c.fps, 读取方式: c.access } })) },
-    { id: 'state_action', name: '状态与动作', kind: 'group', children: shape.streams.map((s) => ({ id: `stream:${s.key}`, name: s.name, kind: s.kind === 'depth' ? ('depth' as const) : ('series' as const), stream: s.key, dtype: s.kind === 'depth' ? 'uint16' : 'float32', shape: [Math.max(1, s.lines.filter((l) => l.role !== 'action').length)], names: s.lines.filter((l) => l.role !== 'action').map((l) => l.name), detail: { 来源: s.sources.join('、') } })) },
+    { id: 'cameras', name: '相机', kind: 'group', children: shape.cameras.map((c) => ({
+      ...feature(`observation.images.${c.key}`, 'camera', { dtype: 'video', shape: [c.height ?? 0, c.width ?? 0, 3], names: ['height', 'width', 'channels'],
+        info: { 'video.height': c.height, 'video.width': c.width, 'video.codec': c.codec, 'video.pix_fmt': c.pix_fmt, 'video.fps': c.fps } }),
+      id: `camera:${c.key}`,
+      camera: c.key,
+    })) },
+    ...(depth.length ? [{ id: 'depth', name: '深度图', kind: 'group' as const, children: depth.map((s) => feature(s.sources[0] ?? s.key, 'depth', { dtype: 'uint16', shape: [DEPTH_H, DEPTH_W], names: ['height', 'width'] }, { stream: s.key })) }] : []),
+    { id: 'streams', name: '状态与动作', kind: 'group', children: sources.map((src) => {
+      const g = shape.streams.find((s) => s.kind === 'series' && s.sources.includes(src)) ?? smart;
+      const dims = g ? g.lines.filter((l) => l.source === src).length : 1;
+      return feature(src, 'series', { dtype: 'float32', shape: [Math.max(1, dims)], names: g ? g.lines.filter((l) => l.source === src).map((l) => l.name) : null }, { stream: g?.key });
+    }) },
     { id: 'annotations', name: '任务与标注', kind: 'group', children: [
-      { id: 'tasks', name: p.format.version === 'v3' ? 'meta/tasks.parquet' : 'meta/tasks.jsonl', kind: 'table', file: p.format.version === 'v3' ? undefined : 'meta/tasks.jsonl', detail: { 有任务描述: p.withTask, 无任务描述: p.episodes - p.withTask } },
-      ...shape.sources.map((a) => ({ id: `annotation:${a.key}`, name: a.name, kind: 'table' as const, detail: { 来源: a.source, 支持: a.supported, 原因: a.reason } })),
+      { id: 'tasks', name: p.format.version === 'v3' ? 'tasks.parquet' : 'tasks.jsonl', kind: 'table', file: p.format.version === 'v3' ? undefined : 'meta/tasks.jsonl', detail: { size: 2048 } },
+      ...shape.sources.map((a) => ({ id: `annotation:${a.key}`, name: a.key, kind: 'table' as const, detail: { dtype: a.kind === 'labels' ? 'bool' : 'int64', shape: '[1]', names: null } })),
     ] },
     { id: 'meta', name: '元数据', kind: 'group', children: [
-      { id: 'meta:info', name: 'info.json', kind: 'file', file: 'meta/info.json', detail: { fps: p.fps, robot_type: p.robotType } },
-      { id: 'meta:stats', name: p.format.version === 'v3' ? 'stats.json' : 'episodes_stats.jsonl', kind: 'file', file: p.format.version === 'v3' ? 'meta/stats.json' : 'meta/episodes_stats.jsonl' },
+      { id: 'meta:info', name: 'info.json', kind: 'file', file: 'meta/info.json', detail: { size: 4096 } },
+      { id: 'meta:stats', name: p.format.version === 'v3' ? 'stats.json' : 'episodes_stats.jsonl', kind: 'file', file: p.format.version === 'v3' ? 'meta/stats.json' : 'meta/episodes_stats.jsonl', detail: { size: 65536 } },
     ] },
   ];
 }
 
-export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDetail, mapping: VizMapping | null, mappingVersion: number | null): VizDataset {
+export function vizDataset(
+  scope: 'dataset' | 'task',
+  id: string,
+  d: DatasetDetail,
+  mapping: VizMapping | null,
+  mappingVersion: number | null,
+  display: VizDisplayConfig | null = null,
+): VizDataset {
+  return applyDisplay(baseModel(scope, id, d, mapping, mappingVersion), scope === 'task' ? displayForTask(display) : display);
+}
+
+/** The model without a display configuration (the defaults an editor starts from). */
+export function baseModel(scope: 'dataset' | 'task', id: string, d: DatasetDetail, mapping: VizMapping | null, mappingVersion: number | null): VizDataset {
   const p = DATASET_PROFILES.find((x) => x.uri === d.uri) ?? DATASET_PROFILES[1];
   const fmt = vizFormatOf(d);
   const reader = READERS[fmt] ?? null;
@@ -270,7 +339,119 @@ export function vizDataset(scope: 'dataset' | 'task', id: string, d: DatasetDeta
     transcode: { enabled: true },
     warnings,
     fingerprint: d.meta_fingerprint,
+    display: null,
   };
+}
+
+// ------------------------------------------------------------------ display configurations (design doc 21 §6)
+
+/** What a task's mini player takes of the registration's configuration (the Daemon's ``for_task``). */
+function displayForTask(cfg: VizDisplayConfig | null): VizDisplayConfig | null {
+  if (!cfg) return null;
+  const groups = cfg.curves?.groups ?? null;
+  const out: VizDisplayConfig = { cameras: cfg.cameras ?? null, curves: groups?.length ? { groups } : null, track: cfg.track ?? null };
+  return out.cameras || out.curves || out.track ? out : null;
+}
+
+const dimKey = (source: string, dim: number) => `${source}#${dim}`;
+
+/** The model with a configuration applied, as the Daemon does: cameras, curve groups (not mcap), the track. */
+export function applyDisplay(model: VizDataset, cfg: VizDisplayConfig | null): VizDataset {
+  const byKey = new Map(model.cameras.map((c) => [c.key, c]));
+  const seen = new Set<string>();
+  const cameras: VizCamera[] = [];
+  for (const e of cfg?.cameras ?? []) {
+    const c = byKey.get(e.key);
+    if (!c || seen.has(c.key)) continue;
+    seen.add(c.key);
+    cameras.push({ ...c, name: e.name || c.name, hidden: Boolean(e.hidden) });
+  }
+  for (const c of model.cameras) if (!seen.has(c.key)) cameras.push({ ...c, hidden: false });
+  let streams = model.streams;
+  const groups = model.format.reader !== 'mcap' ? (cfg?.curves?.groups ?? []) : [];
+  if (groups.length) {
+    const dims = new Set(model.streams.filter((x) => x.kind === 'series').flatMap((x) => x.lines.map((l) => dimKey(l.source ?? '', l.dim ?? -1))));
+    const drawn = groups
+      .map((g) => ({ ...g, lines: g.lines.filter((l) => dims.has(dimKey(l.source, l.dim))) }))
+      .filter((g) => g.lines.length)
+      .map(
+        (g): VizStream => ({
+          key: g.key,
+          kind: 'series',
+          name: g.name,
+          unit: g.unit ?? null,
+          lines: g.lines.map((l) => ({ name: l.name, role: l.role, source: l.source, dim: l.dim, unit: null })),
+          smart: g.smart,
+          available: true,
+          reason: null,
+          sources: [...new Set(g.lines.map((l) => l.source))],
+          rate_hz: null,
+        }),
+      );
+    if (drawn.length) streams = [...drawn, ...model.streams.filter((x) => x.kind !== 'series')];
+  }
+  const track = cfg?.track ?? null;
+  const sources =
+    track && model.annotation_sources.some((x) => x.key === track && x.kind === 'segments')
+      ? model.annotation_sources.map((x) => (x.kind === 'segments' ? { ...x, primary: x.key === track } : x))
+      : model.annotation_sources;
+  return { ...model, cameras, streams, annotation_sources: sources, display: cfg };
+}
+
+/** ``VizDisplay.defaults`` of a model made without a configuration. */
+export function displayDefaults(model: VizDataset): VizDisplay['defaults'] {
+  const editable = model.format.reader !== null && model.format.reader !== 'mcap';
+  const series = model.streams.filter((x) => x.kind === 'series' && x.available);
+  const groups: VizDisplayGroup[] = editable
+    ? series.map((x) => ({
+        key: x.key,
+        name: x.name,
+        unit: x.unit,
+        smart: x.smart,
+        lines: x.lines.map((l) => ({ source: l.source ?? '', dim: l.dim ?? 0, name: l.name, role: l.role })),
+      }))
+    : [];
+  return {
+    cameras: model.cameras.map((c) => ({ key: c.key, name: c.name, source: c.source })),
+    groups,
+    dimensions: groups.flatMap((g) => g.lines),
+    tracks: model.annotation_sources.filter((x) => x.kind === 'segments' && x.supported).map((x) => ({ key: x.key, name: x.name })),
+    groups_editable: editable,
+  };
+}
+
+/** Where a configuration does not fit the model (the Daemon's ``check``, the main rules). */
+export function checkDisplay(cfg: VizDisplayConfig, model: VizDataset): { field: string; problem: string }[] {
+  const out: { field: string; problem: string }[] = [];
+  const cams = new Set(model.cameras.map((c) => c.key));
+  (cfg.cameras ?? []).forEach((c, i) => {
+    if (!cams.has(c.key)) out.push({ field: `cameras.${i}.key`, problem: `数据集里没有相机 ${c.key}` });
+  });
+  const groups = cfg.curves?.groups ?? [];
+  const editable = model.format.reader !== 'mcap';
+  if (groups.length && !editable) out.push({ field: 'curves.groups', problem: 'mcap 数据集的曲线分组由字段映射决定，在「mcap 配置」里改' });
+  const dims = new Set(displayDefaults(model).dimensions.map((l) => dimKey(l.source, l.dim)));
+  if (editable) {
+    groups.forEach((g, i) =>
+      g.lines.forEach((l, j) => {
+        if (!dims.has(dimKey(l.source, l.dim))) out.push({ field: `curves.groups.${i}.lines.${j}`, problem: `数据集里没有 ${l.source} 的第 ${l.dim} 维` });
+      }),
+    );
+  }
+  const drawn = new Set(groups.length && editable ? groups.map((g) => g.key) : model.streams.filter((x) => x.kind === 'series').map((x) => x.key));
+  for (const key of Object.keys(cfg.curves?.hidden ?? {})) if (!drawn.has(key)) out.push({ field: `curves.hidden.${key}`, problem: `没有曲线组 ${key}` });
+  if (cfg.track && !model.annotation_sources.some((x) => x.key === cfg.track && x.kind === 'segments')) out.push({ field: 'track', problem: `没有能作字幕轨的标注来源 ${cfg.track}` });
+  const layout = cfg.layout;
+  if (layout?.template === 'custom') {
+    if (!layout.cols || !layout.rows || !layout.cells) out.push({ field: 'layout', problem: '自定义布局要写 cols、rows 与 cells' });
+    else if (layout.cells.length !== layout.cols * layout.rows) out.push({ field: 'layout.cells', problem: `应有 ${layout.cols * layout.rows} 格，写了 ${layout.cells.length} 格` });
+    else
+      layout.cells.forEach((c, i) => {
+        if (c.kind === 'video' && !cams.has(c.key ?? '')) out.push({ field: `layout.cells.${i}.key`, problem: `数据集里没有相机 ${c.key}` });
+        if (c.kind === 'curve' && !drawn.has(c.key ?? '')) out.push({ field: `layout.cells.${i}.key`, problem: `没有曲线组 ${c.key}` });
+      });
+  }
+  return out;
 }
 
 function episodeFrameSum(p: DatasetProfile): number {
@@ -333,6 +514,8 @@ export interface EpisodeUrls {
   direct: (key: string) => string;
   /** the Daemon's camera route (``.mp4`` / ``.frames`` / ``.json``) */
   daemon: (camera: string, suffix: 'mp4' | 'frames' | 'json', transcode?: boolean) => string;
+  /** the Daemon's depth stream route (``.frames`` / ``.json``, design doc 21 §5) */
+  stream: (key: string, suffix: 'frames' | 'json') => string;
 }
 
 export function vizEpisode(scope: 'dataset' | 'task', id: string, model: VizDataset, index: number, d: DatasetDetail, urls: EpisodeUrls, now: number): VizEpisode {
@@ -382,6 +565,7 @@ export function vizEpisode(scope: 'dataset' | 'task', id: string, model: VizData
       ? { kind: 'timestamp', fps: null, frame_reference: '/action', frame_times: Array.from({ length: frames }, (_, k) => round(k / rate + 0.012, 4)) }
       : { kind: 'frame', fps: rate, frame_reference: null, frame_times: null },
     cameras,
+    streams: model.streams.filter((s) => s.kind === 'depth' && s.available).map((s) => ({ key: s.key, kind: 'depth' as const, url: urls.stream(s.key, 'frames'), index_url: urls.stream(s.key, 'json'), offset_s: 0, reason: null })),
     annotations,
     check_clock: scope === 'task' ? { offset_s: mcap ? 0.012 : 0, fps: rate } : null,
     warnings: [],
@@ -609,10 +793,66 @@ function warehouseProbe(file: string, files: number, template: string | null): M
   };
 }
 
+/** A RoboMIND episode (real probe of ur/1018_102225, its .plot copies left out): a 16-bit PNG depth beside its camera, 10 Hz. */
+const ROBOMIND_TOPICS: [string, string, [string, number][], McapTopic['image']][] = [
+  ['/instruction', 'Instructions', [], null],
+  ['/master-joint-position', 'RobotState', [['position', 7]], null],
+  ['/puppet-end-effector', 'RobotState', [['position', 6]], null],
+  ['/puppet-joint-position', 'RobotState', [['position', 7]], null],
+  ['/top-camera', 'foxglove.CompressedImage', [], { codec: 'jpeg', width: 640, height: 480 }],
+  ['/top-depth', 'foxglove.CompressedImage', [], { codec: 'png16', width: 640, height: 480 }],
+];
+
+/** The probe of a RoboMIND-like dataset: builtin:foxglove drafts it, the depth topic paired with its camera (design doc 21 §5.4). */
+function robomindProbe(file: string, files: number, template: string | null): McapProbe {
+  const topics: McapTopic[] = ROBOMIND_TOPICS.map(([topic, schema, fields, image]) => {
+    const use: McapTopic['use'] = topic === '/instruction' ? 'task' : image?.codec === 'png16' ? 'depth' : image ? 'camera' : 'series';
+    return {
+      topic,
+      schema,
+      schema_encoding: 'protobuf',
+      message_encoding: 'protobuf',
+      count: use === 'task' ? 1 : 217,
+      rate_hz: use === 'task' ? null : 10,
+      start_s: 0,
+      end_s: 21.6,
+      image,
+      fields: fields.map(([path, size]) => ({ path, size })),
+      use,
+      role: use === 'series' ? (topic.includes('joint') ? 'state' : 'other') : null,
+      name: use === 'task' ? '任务描述' : topic.slice(1),
+      notes: [],
+    };
+  });
+  const draft: VizMapping = {
+    schema_version: 'viz-mapping/1.1',
+    name: 'Foxglove 通用',
+    base: 'builtin:foxglove',
+    timeline: { source: 'log_time', frame_reference: null },
+    cameras: [{ topic: '/top-camera', name: 'top-camera', schema: 'foxglove.CompressedImage' }],
+    depths: [{ topic: '/top-depth', name: 'top-depth', schema: 'foxglove.CompressedImage', pair_with: '/top-camera' }],
+    series: topics.filter((t) => t.use === 'series').map((t) => ({ topic: t.topic, name: t.name, schema: t.schema ?? undefined, role: t.role ?? 'other', fields: ['position'] })),
+    task: { topic: '/instruction' },
+    segments: null,
+    ignore: [],
+  };
+  return {
+    file,
+    files,
+    topics,
+    metadata: {},
+    attachments: [],
+    draft,
+    matched: template ? { template_id: 'builtin:foxglove', name: 'Foxglove 通用（内置）', coverage: 1 } : null,
+    warnings: [],
+  };
+}
+
 /** The probe of a UMI-like mcap dataset (GenRobot), drafted with builtin:umi or another template; `abc` an ABC-130k-like one. */
-export function mcapProbe(file: string, files: number, template: string | null, flavor: 'umi' | 'abc' | 'warehouse' = 'umi'): McapProbe {
+export function mcapProbe(file: string, files: number, template: string | null, flavor: 'umi' | 'abc' | 'warehouse' | 'robomind' = 'umi'): McapProbe {
   if (flavor === 'abc') return abcProbe(file, files, template);
   if (flavor === 'warehouse') return warehouseProbe(file, files, template);
+  if (flavor === 'robomind') return robomindProbe(file, files, template);
   const umi = !template || template === 'builtin:umi';
   const topics: McapTopic[] = UMI_TOPICS.map(([topic, schema, use, count, rate]) => {
     const asCamera = use === 'camera';
@@ -687,5 +927,34 @@ export function checkMappingOf(m: VizMapping): Record<string, unknown> {
     video_prefix: '/observation.images.',
     video_topics: m.cameras.map((c) => c.topic),
     ...(m.base === 'builtin:umi' ? { profile: 'umi_das' } : {}),
+  };
+}
+
+/** A depth picture of the mock world (millimetres): a slope that moves with the frame, a hole top left. */
+export function depthPicture(k: number): { width: number; height: number; data: Uint16Array } {
+  const data = new Uint16Array(DEPTH_W * DEPTH_H);
+  for (let y = 0; y < DEPTH_H; y += 1) {
+    for (let x = 0; x < DEPTH_W; x += 1) data[y * DEPTH_W + x] = y < 4 && x < 6 ? 0 : 500 + 12 * x + 9 * y + ((k * 7) % 300);
+  }
+  return { width: DEPTH_W, height: DEPTH_H, data };
+}
+
+/** A depth pack and its index (design doc 21 §5.2): every frame a 16-bit PNG; 30 distinct pictures, repeated. */
+export async function depthPack(key: string, frames: number, rate: number): Promise<{ index: VizFrameIndex; bytes: Uint8Array }> {
+  const { encodePng16 } = await import('../lib/vizDepth');
+  const distinct = await Promise.all(Array.from({ length: 30 }, (_, k) => encodePng16(depthPicture(k))));
+  const offset: number[] = [];
+  const size: number[] = [];
+  let pos = 0;
+  for (let k = 0; k < frames; k += 1) {
+    offset.push(pos);
+    size.push(distinct[k % 30].length);
+    pos += distinct[k % 30].length;
+  }
+  const bytes = new Uint8Array(pos);
+  for (let k = 0; k < frames; k += 1) bytes.set(distinct[k % 30], offset[k]);
+  return {
+    index: { camera: key, codec: 'png16', width: DEPTH_W, height: DEPTH_H, count: frames, t: Array.from({ length: frames }, (_, k) => round(k / rate, 4)), offset, size, bytes: pos, depth: { unit: 'mm', scale: 1, invalid: 0, lo: 560, hi: 1450 } },
+    bytes,
   };
 }

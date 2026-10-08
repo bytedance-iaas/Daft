@@ -397,7 +397,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
     for key, item, why_key in (("smoothness", "ACT-1", None), ("spike", "ACT-2", "spike_reason"),
                                ("gripper_jitter", "ACT-5", "gripper_reason"),
                                ("actuator_saturation", "ACT-4", "saturation_reason"),
-                               ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-8", "fluency_reason")):
+                               ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-7", "fluency_reason")):
         if d.get(key) is None:
             why = str(d.get(why_key) or "") if why_key else ""
             if not why and key in ("actuator_saturation", "stuck") and no_state:
@@ -426,7 +426,7 @@ def _task_success(passed, score, d, p) -> Derived:
     """v1's verdict (video protocol in production, the frame-probe protocol in older records): failure,
     an abstention, the label guard's hold (which today also asks the task verdict), a mid-way recovery
     (frame protocol only; the video protocol does not report mistakes), and a task text the platform wrote
-    itself (LABEL-3). The completion estimate is a reading; the primary answer's evidence stretch is the
+    itself (LABEL-2). The completion estimate is a reading; the primary answer's evidence stretch is the
     failure's interval (P19)."""
     out = Derived()
     m = "task_success"
@@ -434,9 +434,9 @@ def _task_success(passed, score, d, p) -> Derived:
         # D72: the episode has no task text, so there was no judgement to derive from
         text = "没有任务标注，没有做任务成败判定"
         out.add(m, "task_text_missing", text, readings={"task_text_source": "无"})
-        for item in ("TASK-5", "LABEL-5"):
+        for item in ("TASK-4", "LABEL-4"):
             out.cannot(item, "no_task_text", text)
-        out.cannot("TASK-12", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
         return out
     verdict = str(d.get("verdict") or "")
     completion = d.get("video_completion", d.get("completion_final"))
@@ -466,14 +466,14 @@ def _task_success(passed, score, d, p) -> Derived:
     if verdict == "recovery" or "recovery_dip" in (d.get("rules") or []):
         out.add(m, "recovery", "中途进度回落后又完成了任务", readings={"dip": _r(d.get("dip", (d.get("raw") or {}).get("dip")))})
     elif d.get("input_mode") == "video" or d.get("protocol"):
-        out.cannot("TASK-12", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
     source = str(d.get("task_desc_source") or "")
     if source in ("自产caption", "无"):
         # "自产caption": a record from before D72, judged with a caption the platform wrote
         out.add(m, "task_text_missing", "没有任务标注，用的是当时平台生成的描述" if source == "自产caption"
                 else "没有任务标注，也没有描述", readings={"task_text_source": source})
     elif not source:
-        out.cannot("LABEL-3", "not_applicable", "记录里没有任务描述的来源")
+        out.cannot("LABEL-2", "not_applicable", "记录里没有任务描述的来源")
     return out
 
 
@@ -633,6 +633,7 @@ def _dedup(passed, score, d, p) -> Derived:
         out.add("dedup", "duplicate", f"与 ep{first:06d} 字节级完全重复",
                 readings={"group_id": first, "duplicate_of": first})
     return out
+
 
 
 # ---------------------------------------------------------------- dataset-level findings

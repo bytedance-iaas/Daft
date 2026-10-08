@@ -12,16 +12,20 @@
 | `source.py` | 数据源：数据集级（登记的地址、密钥、文件清单、映射、展示配置、外部标注）与任务级（任务冻结的输入、`preflight.json`、`source_manifest.json`、`run.json` 里的映射）；打开存储、签浏览器地址、本地文件只在数据集目录之内 |
 | `lerobot.py` | LeRobot v2 / v3 读取器：`meta/` 的 episode 表、相机、曲线组、标注来源、字段树；一条 episode 的逐帧列只读一次（v3 只读它的行组）进缓存，episode 记录与曲线请求共用 |
 | `lance.py` | Lance 读取器（设计 19 §4）：lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG）；元数据照 LeRobot 读（`meta/`，或只有表的根里的 `meta.lance`），一条 episode 的逐帧列从帧表按行窗读，视频从 videos 表的 blob 按 Range 出（`access: blob`），逐帧 JPEG 落成帧包；本地直接开表，TOS 经 S3 兼容端点按区间读、不整表拷贝 |
-| `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
-| `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池）、带 Range 的本地文件应答 |
+| `mcap.py` | mcap 读取器（设计 18 §6；浏览器内解码见设计 19 §3：`CURATOR_VIZ_CLIENT_DECODE` 开着时 H.264 / H.265 相机留 Annex-B 样本包与索引——从第一个关键帧起、带参数集 `config` 与 `codec_string`，由帧包路由出——`.mp4` 第一次被要时才转封装）：按确认的映射（C7）出展示模型；一条 episode 只顺序读一遍，产物（帧包、重封装的 mp4、深度帧包 `depth-<键>.frames` 与索引——设计 21 §5.4，映射 1.1 的 `depths`——曲线 `series.npz`、`episode.json`）落在磁盘缓存，按数据集指纹与映射版本分目录；探测结果按指纹缓存，前三个文件的 topic 不一致时警告 |
+| `segments.py` | 切片（设计 21 §4）：按 GOP 从共用 mp4 里切出单条 episode（内核 `curation/viz/segment.py`，PyAV 流拷贝，只按区间读 `moov` 与这一条的字节），落在 `segment/<摘要>/ep<N>/`；转码的输入、开关下的切片播放与 `moov` 在头的版本都用它 |
+| `depth.py` | LeRobot / Lance 的深度流（设计 21 §5.3）：一条 episode 的深度列按批读（v3 只读它的行组，Lance 按行窗扫帧表），在几个线程上编成 16 位 PNG，写进 `depth/<摘要>/ep<N>/<流>.frames` 与索引 `.json`（时刻、偏移、大小、2% / 98% 范围）；第一次请求在生成池里做、回 202 带进度。格式层在内核 `curation/viz/depth.py` |
+| `display.py` | 展示配置（设计 21 §6，C4 `VizDisplay`）：存在登记的 `display_config` 列里（`{version, updated_at, config}`）；读的时候叠在缓存的读取器元数据上——相机的顺序、显示名与 `hidden`、字幕轨的主轨由这里做，LeRobot / Lance 的曲线分组由读取器换成配置里的组（字段树与曲线接口跟着走）；保存前按不带配置的模型逐项校验，数据集后来变了对不上的键读的时候跳过；任务级只取相机、分组与字幕轨 |
+| `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
+| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
 
 内核（`backend/curation/viz/`）：`lerobot_info.py`（features、names 的几种写法、相机编码与 `needs_transcode`、RFC 6381 编码串）、`groups.py`（曲线分组 §5.3）、
 `annotations.py`（标注识别 §4.5：`subtask_index`、`language_*`、逐帧 `task_index`、`*_index` 查表、文字列、`*_segment` 布尔段、成败 / 质量 / 评分 / `task_status`、Argus 外部标注）、
 `series.py`（按行组读 episode 的列、min / max 抽稀）、`transcode.py`（PyAV 转 H.264 fMP4）；mcap 的 `mcap_messages.py`（解码、数值叶子与字段路径、
 画面编码与尺寸、显示用的变换）、`mcap_probe.py`（summary 加每个 topic 的首条消息）、`mcap_mapping.py`（三个内置模版、起草与按覆盖率匹配、校验、派生质检映射
-`check_mapping`）、`mcap_episode.py`（一条 episode 的一遍扫描；样本包的索引与按需转封装 `remux_samples`）、`annexb.py`（只看 NAL 头与 SPS / PPS 前几个字节：关键帧、参数集、B 帧、`codec_string`）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
+`check_mapping`；1.1 的深度 topic 按主干配相机）、`mcap_episode.py`（一条 episode 的一遍扫描，深度 topic 在几个线程上转成 16 位 PNG；样本包的索引与按需转封装 `remux_samples`）、`depth.py`（16 位 PNG 编解码、深度单位与范围、mcap 深度编码的识别与还原：png16、ROS compressedDepth、16UC1 / 32FC1 原始图）、`annexb.py`（只看 NAL 头与 SPS / PPS 前几个字节：关键帧、参数集、B 帧、`codec_string`）、`remux.py`（H.264 / H.265 Annex-B 流拷贝成 fMP4，H.265 标 `hvc1`）；Lance 的 `lance_layout.py`（三种布局的识别、列名映射——帧表 schema 元数据的 `source-column-name-map` 或点换下划线、按行窗读一条 episode、`meta.lance`、videos 表的行号、S3 兼容端点的参数）。
 
 mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准缺省是第一组 `role=action`（与质检的行同一口径），没有才用第一路相机；`check_clock` 是质检的锚
 （第一条 action 消息相对零点的秒数）与 action 的频率，迷你版用它把发现的帧号换成时刻。一条 episode 按文件顺序扫一遍，相机字节边读边落盘；H.264 / H.265 从第一个
@@ -38,6 +42,7 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
 | `CURATOR_VIZ_CACHE_GB` | 20 | 缓存上限，超了按最近最少使用淘汰 |
 | `CURATOR_VIZ_TRANSCODE_WORKERS` | 2 | 同时转码的路数 |
 | `CURATOR_VIZ_CLIENT_DECODE` | `1` | mcap 的 H.264 / H.265 相机另出样本包，浏览器用 WebCodecs 自己解码，转封装改为按需（设计 19 §3）；`0` 回到扫描时就转封装 |
+| `CURATOR_VIZ_SEGMENT` | `0` | `1`：LeRobot v3 / Lance 的相机由 Daemon 出这条 episode 的切片（`access: remux`，`.mp4?segment=1`），`moov` 在尾的单条 mp4 出 `moov` 在头的版本（设计 21 §4.3–§4.4）；`0` 照旧由浏览器直接读。转码不管开关如何都以切片为输入（TOS 上不再整块下载分块文件） |
 | `CURATOR_VIZ_LANCE_S3_ENDPOINT` | 空 | 读 TOS 上 Lance 表走的 S3 兼容端点；空 = 按地区用 `tos-s3-<地区>`（内网部署用 ivolces），测试或代理时改。TOS 的端点按虚拟主机风格用，桶名由 Daemon 补进主机名（`<桶>.tos-s3-<地区>…`），这里不用写桶 |
 
 ## 手动验证步骤
@@ -189,12 +194,60 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     字段树最后一组「Lance 表」列出各表的行数与列。把 `lance_03` 的 `meta/` 挪走（只留三张表）再看一遍：元数据从 `meta.lance` 读，`viz/meta?path=meta/info.json` 里有 `"storage_format": "lance"`。
     TOS 上的 Lance 数据集按 S3 兼容端点读，自动化测试里用一个最小的本地 S3（`tests/viz/fake_s3.py`）跑同样的流程。
     有 TOS 密钥时登记一份 TOS 上的 0.3 数据集（如 `tos://galbot/so101-pick-place-lance/`）：`/viz` 的 `format.layout` 是 `lance-0.3`，episode 能开，相机 `Range: bytes=0-31` 返回 206、第 5–12 字节是 `ftypisom`。
+    把一份 0.3 副本的 `meta/episodes/chunk-000/file-000.parquet` 换成 Git LFS 指针文本（`version https://git-lfs.github.com/spec/v1` 开头）再登记：
+    `/viz` 与 `/viz/episodes` 是 404，`message` 写「…file-000.parquet 是 Git LFS 指针文件（N 字节的占位），不是数据…」（以前是 500）。
 
 19. **浏览器内解码（设计 19 §3，F14.2）**：缺省开着（`CURATOR_VIZ_CLIENT_DECODE=1`）。第 14 步的 `viz_abc` 确认映射后打开一条 episode：
     `curl -s $B/datasets/$D/episodes/0/viz | jq '.cameras[] | {key, access, samples_url, index_url}'` 每路都是 `remux`，另有 `samples_url`（`.frames`）与 `index_url`（`.json`）；
     `curl -s $B/datasets/$D/episodes/0/cameras/camera_wrist.json | jq '{codec, count, codec_string, k: .key[:3], config: (.config|length)}'` 是 `h264`、20 帧、`avc1.64…`、`[true,false,false]`、一段 base64；
     这时缓存目录里有 `camera_wrist.annexb`、还没有 `camera_wrist.mp4`。`curl -s -o /tmp/w.mp4 $B/datasets/$D/episodes/0/cameras/camera_wrist.mp4` 才转封装（之后 `episode.json` 里这路 `mp4: true`），
     `ffprobe /tmp/w.mp4`（或 PyAV）有 20 帧。用 `CURATOR_VIZ_CLIENT_DECODE=0` 重启：相机没有 `samples_url`，`.json` 回 404，扫描时就转封装，与阶段 13 一样。
+
+20. **EEF 标记叠加（设计 20）**：跑一条勾了「EEF–视频一致性」、没给夹爪参考的任务（UMI 数据见 EEF extension README 的 `export-umi`）。
+    `curl -s $B/tasks/$T/episodes/0/eef-overlay | jq '.cameras[] | {camera_id, viz_camera, image_size_wh, skipped, layers: [.layers[] | {kind, label, color}]}'`：
+    每路参与的相机有四层，`viz_camera` 等于 `curl -s $B/tasks/$T/episodes/0/viz | jq '[.cameras[].key]'` 里的一项；`layers[].frames` 的长度等于这条的样本帧数。
+    `ls $D/data/runs/$T/checks/eef_video_consistency/` 没有 `opinion/`。没勾 EEF 的任务回 404，`error.details.reason` 是 `no_eef_module`。
+
+21. **转码的时间口径（设计 21 §4.5，F15.1）**：把第 1 步的 `viz_v3` 复制一份 `viz_v3_mpeg4`，`meta/info.json` 里 `observation.images.top` 的 `video.codec` 改成 `mpeg4`（字节仍是 H.264，转码器照样读）后登记。
+    `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, from_ts, to_ts}'` 是 `transcode`、`0`、`2.4`（这条 24 帧）；等 `.mp4` 转好（202 期间带进度）后
+    解出 24 帧，第一帧白竖线在 x = 26（共用文件里第 30 帧的位置），即这条 episode 的第一帧。原样的 `viz_v3` 第 2 条的 `transcode_url` 同理从这条的第一帧开始。
+    删掉 `viz_v3_mpeg4` 的登记后，缓存目录 `transcode/` 下它的产物目录随之消失。
+
+22. **切片（设计 21 §4，F15.3）**：用 `CURATOR_VIZ_SEGMENT=1` 重启 Daemon。`viz_v3` 第 1 条：
+    `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, url, from_ts, to_ts}'` 是 `remux`、`…/top.mp4?segment=1`、`from_ts` 为这条在切片里的起点（0.1 左右，切片从它前面最近的关键帧起）、
+    `to_ts − from_ts = 2.4`；`curl -s -o /tmp/s.mp4 "$B/datasets/$D/episodes/1/cameras/top.mp4?segment=1"` 后用 PyAV 解出约 25 帧，`from_ts` 处那帧白竖线在 x = 26；
+    `python3 -c "import struct;d=open('/tmp/s.mp4','rb').read(64);print(d[4:8], d[struct.unpack('>I',d[:4])[0]+4:][:4])"` 打出 `b'ftyp' b'moov'`（索引在前）。
+    `viz_v2` 的 `front`（PyAV 写的 mp4，`moov` 在尾）也是 `remux`、`from_ts` 为空，取回的文件 `moov` 在前、帧数不变。缓存目录里多了 `segment/`。不设开关时这两路照旧 `local`，`?segment=1` 回 404 `segment_disabled`。
+    切一条要读多少：`../.venv/bin/python scripts/viz_slice_reads.py $L/inputs/viz_v3`（或 `tos://桶/前缀`，TOS 密钥照命令行的输入角色放在环境变量里）按 Daemon 的读法切头、中、尾三条，
+    逐条列出文件大小、读的字节与 GET 数、切片大小与耗时——读的字节应只比切片多一两 MB（两头各一块与文件头），而不是整个文件。
+
+23. **深度图（设计 21 §5，F15.4）**：`../.venv/bin/python -c "from tests.viz.fixtures import make_v3_depth; make_v3_depth('$L/inputs/viz_depth')"` 后登记。
+    `curl -s $B/datasets/$D/viz | jq '.streams[] | select(.kind=="depth") | {key, name, depth}'` 有两路：`observation_images_front_depth`（配对 `front`）与
+    `observation_depths_top`（float32 米，没有同名相机，`pair_camera` 为 null）；`curl -s $B/datasets/$D/episodes/1/viz | jq '.streams'` 列出两路的 `.frames` / `.json`。
+    第一次 `curl -si $B/datasets/$D/episodes/1/streams/observation_images_front_depth.json` 是 202（`深度图生成中`，带进度），稍后 200：`codec: png16`、9 帧、`depth.unit: mm`；
+    用索引里第 0 帧的 `offset` / `size` 按 Range 取出那一段存成 `f0.png`，`python3 -c "from PIL import Image;import numpy as np;print(np.asarray(Image.open('f0.png'))[10,20])"`
+    打出 `834`（`500 + 10·20 + 5·10 + 7·12`，与 parquet 第 12 行同一个值）。缓存目录里多了 `depth/`。
+
+24. **mcap 深度图（设计 21 §5.4，F15.5）**：
+    `../.venv/bin/python -c "from tests.viz.mcap_fixtures import make_rgbd; make_rgbd('$L/inputs/viz_rgbd')"` 造一份 12 帧的合成 RGB-D（深度的四种写法：
+    16 位 PNG、16UC1、32FC1 米、ROS compressedDepth；还有一路 rgb8 原始图与一路点云），登记后 `POST $B/viz/mcap-probe`（`{"input": {"dataset_id": "<编号>"}}`）：
+    `/front-depth`、`/raw-depth`、`/float-depth`、`/wrist/depth/compressedDepth` 的 `use` 都是 `depth`，`image.codec` 依次 `png16`、`raw16`、`raw32f`、`cdepth`；
+    `/raw-color` 是 `camera`、注「原始图像（raw）本期不支持」，`/cloud` 是 `ignore`。草稿是 `viz-mapping/1.1`，`depths` 四路，`/front-depth` 配 `/front-camera`、
+    `/raw-depth` 配 `/raw-color`（主干都空），另两路不配。把草稿 PUT 到 `$B/datasets/$D/mapping` 确认后，`$B/datasets/$D/episodes/0/viz` 的 `streams` 四路，
+    `.json` 直接 200（深度随 episode 一遍扫描生成，没有 202），`codec: png16`、12 帧、`depth` 范围 630–1337；四路各按索引取第 5 帧存成 PNG，
+    `[10, 20]` 处都是 `785`（`500 + 10·20 + 5·10 + 7·5`，32FC1 由米换成毫米、compressedDepth 去掉 12 字节头）。
+    真数据：h200-14 上 RoboMIND 的 `/data08/yichen/dataset/raw/Voxel51__RoboMIND/data/ur/1018_102225/episode.fo.mcap`（40 MB）拷成
+    `$L/inputs/robomind_ur/episode_0.mcap` 后登记，详情页「mcap 配置」里 `/top-depth` 起草为「深度图」、「叠放的相机」是 `/top-camera`，确认后可视化页
+    「+」→「深度图」→ `top-depth`：伪彩，色标 649–2425 mm；悬停 (320, 240) 是 1119 mm，与 PIL 解 mcap 里第一条 `/top-depth` 的 PNG 同一像素一致；
+    「设置」里「叠在 RGB 上」后抽屉、机械臂的轮廓与相机对得上，连播时深度与相机同帧。
+
+25. **展示配置（设计 21 §6，F15.6）**：对第 1 步的 `viz_v2`：`curl -s $B/datasets/$D/viz/display | jq '{config, version, g: [.defaults.groups[].key], n: (.defaults.dimensions | length), t: [.defaults.tracks[].key]}'`
+    是 `config: null`、`version: 0`、三组自动分组与它们的全部维度、分段类的标注来源。存一份：
+    `curl -s -X PUT $B/datasets/$D/viz/display -H 'Content-Type: application/json' -H 'Idempotency-Key: display-try-1' -d '{"config": {"cameras": [{"key": "wrist", "name": "腕部"}, {"key": "front", "hidden": true}], "curves": {"groups": [{"key": "arm", "name": "arm", "unit": "rad", "smart": true, "lines": [{"source": "observation.state", "dim": 0, "name": "j0", "role": "state"}, {"source": "action", "dim": 0, "name": "j0 cmd", "role": "action"}]}]}, "track": "flags"}}' | jq .version`
+    是 1；`$B/datasets/$D/viz` 的相机依次是「腕部」与 `front`（`hidden: true`），曲线组只剩 `arm`（单位 rad），字段树里 `observation.state` 与 `action` 指向它，`annotation_sources` 里 `flags` 是主轨；
+    `$B/datasets/$D/episodes/1/series?stream=arm` 两条线的数值与 parquet 的 `observation.state[0]`、`action[0]` 一样。把相机写成 `top` 再 PUT 回 400
+    `validation_failed`，`details.errors` 是 `cameras.0.key：数据集里没有相机 top`。`curl -s -X DELETE $B/datasets/$D/viz/display -H 'Idempotency-Key: display-try-2' | jq '{config, version}'`
+    是 `null`、2，模型回到自动分组。控制台上：可视化页「布局 → 保存为缺省布局」后刷新、换一个浏览器打开都是这个布局。
 
 ## 自动化测试
 

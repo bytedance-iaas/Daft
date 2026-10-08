@@ -295,6 +295,11 @@ def test_episode_frames_curves_and_video(mc):
     assert_schema("VizFrameIndex", idx)
     r = mc.get(cam["url"], headers={"Range": f"bytes={idx['offset'][2]}-{idx['offset'][2] + idx['size'][2] - 1}"})
     assert r.status_code == 206 and r.content[:2] == b"\xff\xd8" and len(r.content) == idx["size"][2]
+    # an mcap dataset's mapping can be re-confirmed in place, so its camera bytes carry an ETag
+    # to revalidate by but are not marked immutable (design doc 18 §5.8)
+    whole = mc.get(cam["url"])
+    assert whole.headers["cache-control"] == "private, max-age=600" and whole.headers.get("etag")
+    assert mc.get(cam["url"], headers={"If-None-Match": whole.headers["etag"]}).status_code == 304
     s = mc.get(f"{API}/datasets/{ds}/episodes/1/series", params={"stream": "robot0_vio_eef_pose"}).json()
     assert_schema("VizSeries", s)
     assert s["total_points"] == 20 and s["lines"][0]["name"] == "robot0_x"
@@ -433,3 +438,25 @@ def test_the_mapping_reaches_preflight_and_runs(mc):
     pf = json.loads(out.getvalue())
     assert pf["format"]["kind"] == "mcap" and pf["dataset"]["episode_count"] == 2
     assert "topics mapped by ingest.mcap_mapping" in pf["format"]["detail"]
+
+
+def test_a_display_configuration_orders_the_cameras_but_leaves_the_curves_to_the_mapping(mc):
+    # design doc 21 §6: an mcap dataset's curve groups come from its field mapping, not from the display configuration
+    ds = mc.ids["abc"]
+    _confirm(mc, "abc")
+    model = mc.get(f"{API}/datasets/{ds}/viz").json()
+    keys = [c["key"] for c in model["cameras"]]
+    assert len(keys) >= 2
+    doc = mc.get(f"{API}/datasets/{ds}/viz/display").json()
+    assert_schema("VizDisplay", doc)
+    assert not doc["defaults"]["groups_editable"] and doc["defaults"]["groups"] == [] and doc["defaults"]["dimensions"] == []
+    put = mc.put(f"{API}/datasets/{ds}/viz/display", headers={"Idempotency-Key": "display-mcap-1"},
+                 json={"config": {"cameras": [{"key": k} for k in reversed(keys)]}})
+    assert put.status_code == 200, put.text
+    assert [c["key"] for c in mc.get(f"{API}/datasets/{ds}/viz").json()["cameras"]] == list(reversed(keys))
+    series = next(s for s in model["streams"] if s["kind"] == "series")
+    groups = {"curves": {"groups": [{"key": "g", "name": "g", "smart": True, "lines": [
+        {"source": series["lines"][0].get("source") or "x", "dim": 0, "name": "x", "role": "state"}]}]}}
+    body = assert_error(mc.put(f"{API}/datasets/{ds}/viz/display", headers={"Idempotency-Key": "display-mcap-2"},
+                               json={"config": groups}), "validation_failed")
+    assert [p["field"] for p in body["error"]["details"]["errors"]] == ["curves.groups"]

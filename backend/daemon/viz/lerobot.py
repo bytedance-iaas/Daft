@@ -23,11 +23,15 @@ import numpy as np
 
 from curation.streams.rangefile import RangeFile
 from curation.viz import annotations as A
+from curation.viz import depth as D
 from curation.viz import lerobot_info as L
-from curation.viz.groups import Group, curve_groups
-from curation.viz.series import clock_problem, episode_times, json_values, read_episode_columns, thin, window
+from curation.viz.groups import Group, Line, curve_groups
+from curation.viz.series import (clock_problem, episode_times, iter_episode_column, json_values, read_episode_columns,
+                                 thin, window)
 
 from ..errors import ApiError
+from . import depth as DEPTH
+from . import display as DISPLAY
 from .source import Access, VizSource
 
 #: the widest per-frame numeric column read for curves (a flattened picture is not a curve)
@@ -76,6 +80,22 @@ class LeRobotMeta:
     annotation_columns: list[str]
     episode_fields: set[str]
     made_at: float = field(default_factory=time.monotonic)
+    depth: dict[str, str] = field(default_factory=dict)          # depth stream key -> feature key (design doc 21 §5)
+
+
+def _episode_table(pd, st, key: str):
+    """One parquet of the v3 episode table; one that does not parse is said what it is (a Git LFS
+    pointer from a clone made without LFS, most often), not a 500."""
+    from curation.cli.lerobot_meta import LFS_POINTER
+
+    data = st.read_bytes(key)
+    try:
+        return pd.read_parquet(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001 - not a parquet: the page says why
+        if data.startswith(LFS_POINTER):
+            raise ApiError("not_found", f"{key} 是 Git LFS 指针文件（{len(data)} 字节的占位），不是数据：数据集是从没装 Git LFS 的 "
+                                        "git clone 上传的，用 git lfs pull 或 hf download 拿到真文件后重新上传") from None
+        raise ApiError("not_found", f"读不出 {key}：{type(exc).__name__}: {str(exc)[:200]}") from None
 
 
 class LeRobotReader:
@@ -146,16 +166,21 @@ class LeRobotReader:
         for s in sources:
             if s.table and s.table not in lookups and s.format in ("subtask_index", "index_table"):
                 lookups[s.table] = self._lookup(st, s.table)
-        groups = curve_groups(info)
+        # a float32 depth picture is no curve: thousands of dim_i (design doc 21 §2)
+        groups = curve_groups(info, exclude=frozenset(L.depth_features(info)))
         curve_cols = sorted({ln.source for g in groups for ln in g.lines})
         curve_cols = [c for c in curve_cols if L.width_of((info.get("features") or {}).get(c) or {}) <= MAX_CURVE_WIDTH]
         ann_cols = sorted({c for s in sources for c in s.columns} | {"quality_index"} & set(info.get("features") or {}))
         fps = info.get("fps") if isinstance(info.get("fps"), (int, float)) else None
+        feats = info.get("features") or {}
+        # depth pictures in the data columns (a depth video, video.is_depth_map, plays as a camera)
+        depth = {_slug(d): d for d in L.depth_features(info)
+                 if (feats.get(d) or {}).get("dtype") != "video" and D.depth_shape(feats.get(d) or {})}
         return LeRobotMeta(info=info, version=version, fps=float(fps) if fps else None, episodes=episodes,
                            by_index={e.index: e for e in episodes}, cameras=cameras,
                            camera_features=camera_features, groups=groups, sources=sources,
                            meta_files=meta_files, tasks=tasks, lookups=lookups, curve_columns=curve_cols,
-                           annotation_columns=ann_cols, episode_fields=ep_fields)
+                           annotation_columns=ann_cols, episode_fields=ep_fields, depth=depth)
 
     def _camera(self, src: VizSource, key: str, c: dict) -> dict:
         transcode = bool(c["needs_transcode"])
@@ -202,7 +227,7 @@ class LeRobotReader:
             import pandas as pd
 
             keys = [k for k in meta_files if k.startswith("meta/episodes/") and k.endswith(".parquet")]
-            frames = [pd.read_parquet(io.BytesIO(st.read_bytes(k))) for k in sorted(keys)]
+            frames = [_episode_table(pd, st, k) for k in sorted(keys)]
             if not frames:
                 raise ApiError("not_found", "meta/episodes/ 下没有 parquet（LeRobot v3 的 episode 表）")
             table = pd.concat(frames, ignore_index=True)
@@ -258,14 +283,23 @@ class LeRobotReader:
         return A.lookup_from_records(A.parse_jsonl(data))
 
     # ------------------------------------------------------------ the dataset model
+    def groups(self, src: VizSource, m: LeRobotMeta) -> list[Group]:
+        """The curve groups drawn: the display configuration's (design doc 21 §6), else the automatic ones."""
+        dims = {(ln.source, ln.dim) for g in m.groups for ln in g.lines}
+        over = DISPLAY.override_groups(src.display, dims, set(m.depth))
+        if over is None:
+            return m.groups
+        return [Group(key=g["key"], name=g["name"], smart=bool(g.get("smart")), unit=g.get("unit"),
+                      lines=[Line(name=ln["name"], role=ln["role"], source=ln["source"], dim=ln["dim"]) for ln in g["lines"]],
+                      sources=list(dict.fromkeys(ln["source"] for ln in g["lines"]))) for g in over]
+
     def dataset_model(self, src: VizSource) -> dict:
         m = self.meta(src)
         info = m.info
-        streams = [g.as_stream() for g in m.groups]
-        for d in L.depth_features(info):
-            streams.append({"key": _slug(d), "kind": "depth", "name": d, "unit": None, "lines": [], "smart": False,
-                            "available": False, "reason": "深度图在第二期渲染（设计 18 §10）", "sources": [d],
-                            "rate_hz": None})
+        streams = [g.as_stream() for g in self.groups(src, m)]
+        feats = info.get("features") or {}
+        for key, d in m.depth.items():
+            streams.append(DEPTH.stream_doc(key, d, feats.get(d) or {}, m.fps, m.camera_features))
         warnings = []
         for s in m.sources:
             if not s.supported:
@@ -282,48 +316,47 @@ class LeRobotReader:
                 "episode_indices": _compact([e.index for e in m.episodes]), "warnings": warnings}
 
     def _field_tree(self, src: VizSource, m: LeRobotMeta) -> list[dict]:
+        """The dataset as its metadata says it (design doc 21 §3, D71): every feature of info.json once,
+        named by its key, its attributes the info.json entry key by key; a numeric feature points at the
+        curve group drawing it, a depth feature at its depth stream (加入播放器)."""
         feats = m.info.get("features") or {}
-        cam_nodes = []
-        for c in m.cameras:
-            detail = {"分辨率": f"{c['width']}×{c['height']}" if c["width"] else None, "编码": c["codec"],
-                      "帧率": c["fps"], "读取方式": {"direct": "直连", "local": "本地", "transcode": "平台转码",
-                                                    "blob": "Lance 表内（Daemon 出字节）", "frames": "帧包",
-                                                    "unsupported": "播不了"}.get(c["access"], c["access"]),
-                      "字段": c["source"]}
-            cam_nodes.append({"id": f"camera:{c['key']}", "name": c["name"], "kind": "camera", "camera": c["key"],
-                              "dtype": "video", "shape": L.shape_of(feats.get(c["source"]) or {}), "detail": detail})
-        stream_nodes = []
-        for g in m.groups:
-            names = [ln.name for ln in g.lines if ln.role != "action"] or [ln.name for ln in g.lines]
-            stream_nodes.append({"id": f"stream:{g.key}", "name": g.name, "kind": "series", "stream": g.key,
-                                 "names": names, "detail": {"来源": "、".join(g.sources), "条数": len(g.lines),
-                                                            "智能布局": g.smart}})
-        for d in L.depth_features(m.info):
-            stream_nodes.append({"id": f"depth:{d}", "name": d, "kind": "depth", "dtype": str((feats.get(d) or {}).get("dtype")),
-                                 "shape": L.shape_of(feats.get(d) or {}), "detail": {"说明": "深度图在第二期渲染"}})
-        for d in L.image_features(m.info):
-            stream_nodes.append({"id": f"image:{d}", "name": d, "kind": "other", "dtype": "image",
-                                 "shape": L.shape_of(feats.get(d) or {}), "detail": {"说明": "图片帧序列本期不显示"}})
-        # the dataset's own names (requester, 2026-10-04): the columns a source reads, not what we call it
-        ann_nodes = [{"id": f"annotation:{s.key}", "name": _raw_source(s), "kind": "table",
-                      "detail": {"来源": s.source, "格式": s.format, "支持": s.supported, "原因": s.reason}}
-                     for s in m.sources]
+
+        def node(key: str, kind: str, **extra) -> dict:
+            f = feats.get(key) or {}
+            return {"id": f"{kind if kind != 'series' else 'feature'}:{key}", "name": key, "kind": kind,
+                    "dtype": str(f.get("dtype")) if f.get("dtype") is not None else None, "shape": L.shape_of(f),
+                    "detail": L.raw_detail(f), **extra}
+
+        cameras = set(m.camera_features.values())
+        cam_nodes = [{**node(c["source"], "camera", camera=c["key"]), "id": f"camera:{c['key']}"} for c in m.cameras]
+        depth = [d for d in m.depth.values() if d not in cameras]
+        depth_nodes = [node(d, "depth", stream=key) for key, d in m.depth.items() if d not in cameras]
+        # the numeric features, each pointing at the group drawing it (a display configuration may leave one out)
+        numeric = {source for g in m.groups for source in g.sources}
+        group_of: dict[str, str] = {}
+        for g in self.groups(src, m):
+            for source in g.sources:
+                group_of.setdefault(source, g.key)
+        series_nodes = [node(k, "series", stream=group_of.get(k)) for k in feats if k in numeric]
+        # an annotation column is listed with its source under 任务与标注, not again under 其他字段
+        listed = cameras | set(depth) | numeric | {c for s in m.sources for c in s.columns}
+        other = [node(k, "other") for k, f in feats.items() if isinstance(f, dict) and k not in listed]
+        ann_nodes = []
         tasks_file = next((f for f in ("meta/tasks.jsonl", "meta/tasks.parquet") if f in m.meta_files), None)
         if tasks_file:
-            ann_nodes.insert(0, {"id": "tasks", "name": tasks_file.rsplit("/", 1)[-1], "kind": "table",
-                                 "file": tasks_file if tasks_file.endswith(".jsonl") else None,
-                                 "detail": {"任务条数": len(m.tasks)}})
-        meta_nodes = []
-        for f in m.meta_files:
-            if f.startswith("meta/episodes/"):           # the episode table's chunks: listed as one
-                continue
-            meta_nodes.append({"id": f"file:{f}", "name": f[len("meta/"):], "kind": "file",
-                               "file": f if f.endswith((".json", ".jsonl", ".md")) else None,
-                               "detail": {"大小": src.size_of(f)}})
-        other = [{"id": f"feature:{k}", "name": k, "kind": "other", "dtype": str(f.get("dtype")),
-                  "shape": L.shape_of(f), "names": L.flat_names(f.get("names")), "detail": {}}
-                 for k, f in feats.items() if isinstance(f, dict) and k not in m.camera_features.values()
-                 and str(f.get("dtype")) not in ("float16", "float32", "float64", "video")]
+            ann_nodes.append({"id": "tasks", "name": tasks_file[len("meta/"):], "kind": "table",
+                              "file": tasks_file if tasks_file.endswith(".jsonl") else None,
+                              "detail": {"size": src.size_of(tasks_file)}})
+        for s in m.sources:
+            detail: dict = {}
+            for c in s.columns:
+                for k, v in L.raw_detail(feats.get(c) or {}).items():
+                    detail[f"{c}.{k}" if len(s.columns) > 1 else k] = v
+            ann_nodes.append({"id": f"annotation:{s.key}", "name": self._source_name(src, s), "kind": "table",
+                              "detail": detail})
+        meta_nodes = [{"id": f"file:{f}", "name": f[len("meta/"):], "kind": "file",
+                       "file": f if f.endswith((".json", ".jsonl", ".md")) else None, "detail": {"size": src.size_of(f)}}
+                      for f in m.meta_files if not f.startswith("meta/episodes/")]   # the episode table's chunks: as one
         files = []
         listing = src.listing()
         if listing:
@@ -331,16 +364,32 @@ class LeRobotReader:
                 objs = [o for k, o in listing.items() if k.startswith(top + "/")]
                 if objs:
                     files.append({"id": f"dir:{top}", "name": f"{top}/", "kind": "group",
-                                  "detail": {"文件数": len(objs), "字节": sum(o.size for o in objs)}})
-        tree = [{"id": "cameras", "name": "相机", "kind": "group", "children": cam_nodes},
-                {"id": "streams", "name": "状态与动作", "kind": "group", "children": stream_nodes},
-                {"id": "annotations", "name": "任务与标注", "kind": "group", "children": ann_nodes},
-                {"id": "meta", "name": "元数据", "kind": "group", "children": meta_nodes}]
+                                  "detail": {"objects": len(objs), "bytes": sum(o.size for o in objs)}})
+        tree = [{"id": "cameras", "name": "相机", "kind": "group", "children": cam_nodes}]
+        if depth_nodes:
+            tree.append({"id": "depth", "name": "深度图", "kind": "group", "children": depth_nodes})
+        tree += [{"id": "streams", "name": "状态与动作", "kind": "group", "children": series_nodes},
+                 {"id": "annotations", "name": "任务与标注", "kind": "group", "children": ann_nodes},
+                 {"id": "meta", "name": "元数据", "kind": "group", "children": meta_nodes}]
         if other:
             tree.append({"id": "other", "name": "其他字段", "kind": "group", "children": other})
         if files:
             tree.append({"id": "files", "name": "文件", "kind": "group", "children": files})
         return _clean_tree(tree)
+
+    def _source_name(self, src: VizSource, s) -> str:
+        """An annotation source by the dataset's own names: its columns, its episode-table field, or the
+        uploaded file's name."""
+        if s.format == "argus" and src.annotations_upload:
+            try:
+                from ..orchestr.service import orchestrator_of
+
+                name = orchestrator_of(self.svc.rt).uploads.get(src.owner, src.annotations_upload).get("name")
+                if name:
+                    return str(name)
+            except Exception:  # noqa: BLE001 - the upload's name is a nicety
+                pass
+        return _raw_source(s)
 
     # ------------------------------------------------------------ the episode list
     def episode_items(self, src: VizSource) -> list[dict]:
@@ -413,9 +462,10 @@ class LeRobotReader:
             cameras.append(urls.camera(src, index, c, rel, frm, to))
         ann = self._annotations(src, m, row, data)
         task = {"text": row.task, "source": "原始标注"} if row.task else None
+        streams = [urls.stream(src, index, key, "depth") for key in m.depth]
         return {"duration_s": round(duration, 3), "frames": int(frames), "fps": m.fps, "task": task,
                 "timeline": {"kind": "frame", "fps": m.fps, "frame_reference": None, "frame_times": None},
-                "cameras": cameras, "annotations": ann, "warnings": warnings,
+                "cameras": cameras, "streams": streams, "annotations": ann, "warnings": warnings,
                 "check_clock": {"offset_s": 0.0, "fps": m.fps} if src.scope == "task" else None}
 
     def _camera_place(self, m: LeRobotMeta, row: EpisodeRow, cam: dict) -> tuple[str | None, float | None, float | None]:
@@ -428,7 +478,7 @@ class LeRobotReader:
         times = [float(x) for x in data["__t__"]]
         cols = {c: (v.tolist() if isinstance(v, np.ndarray) else v) for c, v in data.items()
                 if c in m.annotation_columns}
-        primary = (src.display_config or {}).get("track") if isinstance(src.display_config, dict) else None
+        primary = (src.display or {}).get("track")
         ann = A.episode_annotations([s for s in m.sources if s.format != "argus"], cols, times,
                                     lookups=m.lookups, episode_row=row.fields, tasks=m.tasks, primary=primary)
         if src.annotations_upload:
@@ -445,7 +495,7 @@ class LeRobotReader:
     def series(self, src: VizSource, index: int, stream: str, start: float | None, end: float | None,
                points: int) -> dict:
         m, _ = self.row(src, index)
-        group = next((g for g in m.groups if g.key == stream), None)
+        group = next((g for g in self.groups(src, m) if g.key == stream), None)
         if group is None:
             raise ApiError("not_found", f"没有曲线组 {stream}", details={"reason": "unknown_stream"})
         data = self.frames(src, index)
@@ -461,12 +511,58 @@ class LeRobotReader:
             else:
                 lines.append(np.full(len(t[sl]), np.nan))
         tt, ys, thinned = thin(t[sl], lines, points)
-        return {"stream": stream, "unit": None,
+        return {"stream": stream, "unit": group.unit,
                 "from_s": round(float(t[sl][0]), 4) if len(t[sl]) else float(start or 0.0),
                 "to_s": round(float(t[sl][-1]), 4) if len(t[sl]) else float(end or 0.0),
                 "t": json_values(tt, 4),
                 "lines": [{"name": ln.name, "role": ln.role, "values": json_values(y)} for ln, y in zip(group.lines, ys)],
                 "total_points": int(len(t[sl])), "downsampled": bool(thinned)}
+
+    # ------------------------------------------------------------ depth (design doc 21 §5.3)
+    def depth_batches(self, src: VizSource, m: LeRobotMeta, row: EpisodeRow, feature: str):
+        """The episode's rows of a depth column, a batch at a time (v3: only its row groups)."""
+        if not row.data_key:
+            raise ApiError("not_found", f"episode {row.index} 没有数据文件")
+        access = Access(self.svc.rt, src)
+        with access.storage() as st:
+            size = src.size_of(row.data_key)
+            if size is None:
+                info = st.stat(row.data_key)
+                if info is None:
+                    raise ApiError("not_found", f"数据集里没有 {row.data_key}")
+                size = info.size
+            kw = {"from_index": row.from_index, "to_index": row.to_index,
+                  "episode_index": row.index if m.version == "v3" else None, "batch": DEPTH.BATCH}
+            if st.remote:
+                yield from iter_episode_column(RangeFile(lambda s, n: st.read_range(row.data_key, s, n), size,
+                                                         name=row.data_key), feature, **kw)
+            else:
+                with open(os.path.join(st.root, row.data_key), "rb") as fh:
+                    yield from iter_episode_column(fh, feature, **kw)
+
+    def depth_pack(self, src: VizSource, index: int, key: str):
+        """(job, pack, index file) of a depth stream of an episode: made on the build pool the first time."""
+        from .media import digest
+
+        m, row = self.row(src, index)
+        feature = m.depth.get(key)
+        if feature is None:
+            raise ApiError("not_found", f"没有深度流 {key}", details={"reason": "unknown_stream"})
+        entry = (m.info.get("features") or {}).get(feature) or {}
+        shape, unit = D.depth_shape(entry), D.depth_unit(entry)
+        pack = self.svc.disk.path("depth", digest(src.scope, src.id, src.fingerprint), f"ep{int(index):06d}", f"{key}.frames")
+        doc = pack.with_suffix(".json")
+        if pack.is_file() and not doc.is_file():          # one of the two evicted: make both again
+            pack.unlink(missing_ok=True)
+
+        def build(progress) -> None:
+            times = [float(x) for x in self.frames(src, index)["__t__"]]
+            index_doc = DEPTH.build_pack(pack, key, self.depth_batches(src, m, row, feature), shape, unit, times,
+                                         row.length or len(times), progress)
+            D.write_index(doc, index_doc)
+
+        job = self.svc.builder.ensure(f"depth:{pack}", pack, build, keep=(doc,), message="深度图生成中")
+        return job, pack, doc
 
     # ------------------------------------------------------------ media
     def camera_file(self, src: VizSource, index: int, camera: str) -> tuple[dict, str, float | None, float | None]:
@@ -518,10 +614,11 @@ def _raw_source(s) -> str:
 
 
 def _clean_tree(nodes: list[dict]) -> list[dict]:
-    """Optional references (``file``, ``camera``, ``stream``) are left out rather than null."""
+    """Optional references (``file``, ``camera``, ``stream``) and empty ``dtype`` / ``shape`` are left out
+    rather than null."""
     out = []
     for n in nodes:
-        n = {k: v for k, v in n.items() if not (k in ("file", "camera", "stream") and v is None)}
+        n = {k: v for k, v in n.items() if not (k in ("file", "camera", "stream", "dtype", "shape") and v is None)}
         if "children" in n:
             n["children"] = _clean_tree(n["children"])
         out.append(n)

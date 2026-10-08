@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AdjudicationCard, AdjudicationQuestion, Decision, ReviewLine } from '../api/types';
 import { answerOn, applySummary, clicked, countsAsPending, decisionKey, decisionTitle, keepCard, lineDecisions, lineTitle, offersDiscard, repeats, statusQuery, viewCard } from './adjudication';
 
-/** The one question of a card whose task text the kill guard suspects (LABEL-5 on the verdict). */
+/** The one question of a card whose task text the kill guard suspects (LABEL-4 on the verdict). */
 const conflictQ: AdjudicationQuestion = {
   line: 'task_verdict',
   source_module: 'task_success',

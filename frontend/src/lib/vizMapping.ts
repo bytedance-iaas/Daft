@@ -1,11 +1,12 @@
-// The mcap field mapping (C7 viz-mapping/1.0, design doc 18 §6): what the mapping table shows for a
-// probed topic and the edits it makes. Pure functions over the mapping; the drawer keeps it in state.
+// The mcap field mapping (C7 viz-mapping/1.1, design doc 18 §6; depth topics design doc 21 §5.4): what
+// the mapping table shows for a probed topic and the edits it makes. Pure functions over the mapping; the drawer keeps it in state.
 // The drafting rules mirror the Daemon's (curation/viz/mcap_mapping.py), so a topic turned into a
 // curve by hand gets the fields, role and pairing the Daemon would have drafted.
 import type { McapProbe, McapTopic, VizMapping } from '../api/types';
 import { zh } from '../locales/zh';
 
 export type MappingCamera = VizMapping['cameras'][number];
+export type MappingDepth = NonNullable<VizMapping['depths']>[number];
 export type MappingSeries = VizMapping['series'][number];
 export type SeriesRole = MappingSeries['role'];
 export type TopicUse = McapTopic['use'];
@@ -16,7 +17,11 @@ export type MappingSegments = VizMapping['segments'];
 /** The parts of a probed topic the edits read (a topic only the mapping names has just its name). */
 export type TopicLike = Pick<McapTopic, 'topic'> & Partial<Pick<McapTopic, 'schema' | 'fields' | 'name' | 'image' | 'rate_hz'>>;
 
-export const SCHEMA_VERSION = 'viz-mapping/1.0';
+/** What a new mapping, or one given depth topics, says; a 1.0 mapping (no depths) stays valid as it is. */
+export const SCHEMA_VERSION = 'viz-mapping/1.1';
+export const SCHEMA_VERSIONS: readonly VizMapping['schema_version'][] = ['viz-mapping/1.0', 'viz-mapping/1.1'];
+/** The picture codecs the probe gives a depth topic (rvl: recognised, not read). */
+export const DEPTH_CODECS = ['png16', 'cdepth', 'cdepth32', 'raw16', 'raw32f', 'rvl'];
 /** Above this rate an auxiliary curve (an IMU at 200 Hz) stays out of the smart layout, as the Daemon drafts it. */
 export const HIGH_RATE_HZ = 150;
 /** C7 `path`: field names, list indexes and `*`. */
@@ -33,10 +38,11 @@ function omit<T extends object, K extends keyof T>(obj: T, key: K): Omit<T, K> {
 
 /** An empty mapping (a dataset whose probe drafted nothing). */
 export function emptyMapping(name?: string): VizMapping {
-  return { schema_version: SCHEMA_VERSION, ...(name ? { name } : {}), base: null, timeline: { source: 'log_time', frame_reference: null }, cameras: [], series: [], task: null, segments: null, ignore: [] };
+  return { schema_version: SCHEMA_VERSION, ...(name ? { name } : {}), base: null, timeline: { source: 'log_time', frame_reference: null }, cameras: [], depths: [], series: [], task: null, segments: null, ignore: [] };
 }
 
 export const cameraOf = (m: VizMapping, topic: string): MappingCamera | undefined => m.cameras.find((c) => c.topic === topic);
+export const depthOf = (m: VizMapping, topic: string): MappingDepth | undefined => (m.depths ?? []).find((d) => d.topic === topic);
 export const seriesOf = (m: VizMapping, topic: string): MappingSeries | undefined => m.series.find((s) => s.topic === topic);
 const taskTopic = (m: VizMapping): string | null => (m.task && 'topic' in m.task ? m.task.topic : null);
 const segmentsTopic = (m: VizMapping): string | null => (m.segments && 'topic' in m.segments ? m.segments.topic : null);
@@ -44,6 +50,7 @@ const segmentsTopic = (m: VizMapping): string | null => (m.segments && 'topic' i
 /** What a mapping does with a topic (the probe table's 用途). */
 export function usageOf(m: VizMapping, topic: string): TopicUse {
   if (cameraOf(m, topic)) return 'camera';
+  if (depthOf(m, topic)) return 'depth';
   if (seriesOf(m, topic)) return 'series';
   if (taskTopic(m) === topic) return 'task';
   if (segmentsTopic(m) === topic) return 'segments';
@@ -53,7 +60,7 @@ export function usageOf(m: VizMapping, topic: string): TopicUse {
 
 /** Every topic the mapping names (mapped or ignored), in its order. */
 export function topicsOf(m: VizMapping): string[] {
-  const out = [...m.cameras.map((c) => c.topic), ...m.series.map((s) => s.topic)];
+  const out = [...m.cameras.map((c) => c.topic), ...(m.depths ?? []).map((d) => d.topic), ...m.series.map((s) => s.topic)];
   for (const t of [taskTopic(m), segmentsTopic(m), ...(m.ignore ?? [])]) if (t && !out.includes(t)) out.push(t);
   return out;
 }
@@ -90,9 +97,34 @@ export function partnerTopic(topic: string): string | null {
   return m ? `${m[1]}${m[2]}${m[3] === 'state' ? 'action' : 'state'}` : null;
 }
 
-/** Whether a probed topic can be a camera (an image or video message). */
+const isDepthCodec = (codec: string | null | undefined): boolean => DEPTH_CODECS.includes(codec ?? '');
+
+/** Whether a probed topic can be a camera (an image or video message that is not a depth picture). */
 export function canBeCamera(t: TopicLike): boolean {
-  return Boolean(t.image) || /image|video/i.test(t.schema ?? '');
+  return t.image ? !isDepthCodec(t.image.codec) : /image|video/i.test(t.schema ?? '');
+}
+
+/** Whether a probed topic can be a depth picture (the probe read one; a topic only the mapping names: an image schema). */
+export function canBeDepth(t: TopicLike): boolean {
+  return t.image ? isDepthCodec(t.image.codec) : /image|depth/i.test(t.schema ?? '');
+}
+
+/** The words that say which of a camera and its depth a topic is (the Daemon's ``_STEM_DROP``). */
+const STEM_DROP = new Set(['depth', 'depths', 'camera', 'cam', 'color', 'colour', 'rgb', 'image', 'images', 'img', 'raw', 'compressed', 'compresseddepth', 'aligned', 'to', 'rect', 'sensor']);
+
+/** A camera or depth topic without those words: `/front-depth` and `/front-camera` are both `front`. */
+export function stemOf(topic: string): string {
+  return topic
+    .toLowerCase()
+    .split(/[-/_.]+/)
+    .filter((w) => w && !STEM_DROP.has(w))
+    .join(' ');
+}
+
+/** The camera a depth topic belongs to, as the Daemon drafts it: the one camera of the same stem (none when several). */
+export function pairCamera(m: VizMapping, topic: string): string | null {
+  const hits = m.cameras.filter((c) => stemOf(c.topic) === stemOf(topic));
+  return hits.length === 1 ? hits[0].topic : null;
 }
 
 /** Whether a probed topic has numbers to draw (unknown counts as yes). */
@@ -100,11 +132,12 @@ export function canBeSeries(t: TopicLike): boolean {
   return t.fields == null || t.fields.length > 0;
 }
 
-/** The mapping without the topic anywhere (a partner's pairing and a frame reference to it go too). */
+/** The mapping without the topic anywhere (a partner's pairing, a depth's camera and a frame reference to it go too). */
 export function withoutTopic(m: VizMapping, topic: string): VizMapping {
   return {
     ...m,
     cameras: m.cameras.filter((c) => c.topic !== topic),
+    ...(m.depths ? { depths: m.depths.filter((d) => d.topic !== topic).map((d) => (d.pair_with === topic ? { ...d, pair_with: null } : d)) } : {}),
     series: m.series.filter((s) => s.topic !== topic).map((s) => (s.pair_with === topic ? omit(s, 'pair_with') : s)),
     task: taskTopic(m) === topic ? null : m.task ?? null,
     segments: segmentsTopic(m) === topic ? null : m.segments ?? null,
@@ -136,12 +169,16 @@ function addIgnored(m: VizMapping, topic: string | null): VizMapping {
 export function setUse(m: VizMapping, t: TopicLike, use: TopicUse, role?: SeriesRole): VizMapping {
   const was = seriesOf(m, t.topic);
   if (use === 'series' && was) return role && role !== was.role ? setRole(m, t.topic, role) : m;
-  const name = cameraOf(m, t.topic)?.name || was?.name || t.name || displayName(t.topic);
+  if (use === 'depth' && depthOf(m, t.topic)) return m;
+  const name = cameraOf(m, t.topic)?.name || depthOf(m, t.topic)?.name || was?.name || t.name || displayName(t.topic);
   const schema = t.schema ? { schema: t.schema } : {};
   const out = withoutTopic(m, t.topic);
   switch (use) {
     case 'camera':
       return { ...out, cameras: [...out.cameras, { topic: t.topic, name, ...schema }] };
+    case 'depth':
+      // a mapping with depths is a 1.1 one
+      return { ...out, schema_version: SCHEMA_VERSION, depths: [...(out.depths ?? []), { topic: t.topic, name, ...schema, pair_with: pairCamera(out, t.topic) }] };
     case 'series': {
       const fields = defaultFields(t);
       const r = role ?? roleByName(t.topic);
@@ -196,6 +233,7 @@ export function setName(m: VizMapping, topic: string, name: string): VizMapping 
   return {
     ...m,
     cameras: m.cameras.map((c) => (c.topic === topic ? { ...c, name } : c)),
+    ...(m.depths ? { depths: m.depths.map((d) => (d.topic === topic ? { ...d, name } : d)) } : {}),
     series: m.series.map((s) => (s.topic === topic ? { ...s, name } : s)),
   };
 }
@@ -240,6 +278,11 @@ export function setPair(m: VizMapping, topic: string, other: string | null): Viz
   };
 }
 
+/** The camera a depth topic is drawn over in the player (null: none). */
+export function setDepthPair(m: VizMapping, topic: string, camera: string | null): VizMapping {
+  return { ...m, depths: (m.depths ?? []).map((d) => (d.topic === topic ? { ...d, pair_with: camera } : d)) };
+}
+
 export function setTimeline(m: VizMapping, patch: Partial<MappingTimeline>): VizMapping {
   let t: MappingTimeline = { source: 'log_time', frame_reference: null, ...m.timeline, ...patch };
   if (t.source !== 'message_timestamp') t = omit(t, 'timestamp_field');
@@ -263,6 +306,7 @@ export function setSegments(m: VizMapping, segments: MappingSegments): VizMappin
 
 export interface MappingSummary {
   cameras: number;
+  depths: number;
   series: number;
   action: number;
   state: number;
@@ -279,6 +323,7 @@ export function summarize(m: VizMapping, probe: Pick<McapProbe, 'topics'>): Mapp
   const have = new Set(probe.topics.map((t) => t.topic));
   return {
     cameras: m.cameras.length,
+    depths: (m.depths ?? []).length,
     series: m.series.length,
     action: m.series.filter((s) => s.role === 'action').length,
     state: m.series.filter((s) => s.role === 'state').length,
@@ -351,6 +396,17 @@ function checkCamera(c: unknown, at: string, out: MappingProblem[]): void {
   if ('schema' in c) checkString(c.schema, `${at}.schema`, out, { min: 0, max: 256 });
 }
 
+function checkDepth(d: unknown, at: string, out: MappingProblem[]): void {
+  if (!isObj(d)) return void out.push({ field: at, problem: P.notObject });
+  checkKeys(d, ['topic', 'name', 'schema', 'pair_with', 'unit'], at, out);
+  checkRequired(d, ['topic', 'name'], at, out);
+  if ('topic' in d) checkTopic(d.topic, `${at}.topic`, out);
+  if ('name' in d) checkString(d.name, `${at}.name`, out, { max: 64 });
+  if ('schema' in d) checkString(d.schema, `${at}.schema`, out, { min: 0, max: 256 });
+  if ('pair_with' in d && d.pair_with !== null) checkTopic(d.pair_with, `${at}.pair_with`, out);
+  if ('unit' in d && !['mm', 'm'].includes(d.unit as string)) out.push({ field: `${at}.unit`, problem: P.depthUnit });
+}
+
 function checkSeries(s: unknown, at: string, out: MappingProblem[]): void {
   if (!isObj(s)) return void out.push({ field: at, problem: P.notObject });
   checkKeys(s, ['topic', 'name', 'schema', 'fields', 'labels', 'names_field', 'transforms', 'unit', 'role', 'pair_with', 'smart'], at, out);
@@ -388,9 +444,9 @@ function checkShape(v: unknown, out: MappingProblem[]): v is VizMapping {
     out.push({ field: '<root>', problem: P.notMapping });
     return false;
   }
-  checkKeys(v, ['schema_version', 'name', 'base', 'timeline', 'cameras', 'series', 'task', 'segments', 'ignore'], '', out);
+  checkKeys(v, ['schema_version', 'name', 'base', 'timeline', 'cameras', 'depths', 'series', 'task', 'segments', 'ignore'], '', out);
   checkRequired(v, ['schema_version', 'cameras', 'series'], '', out);
-  if ('schema_version' in v && v.schema_version !== SCHEMA_VERSION) out.push({ field: 'schema_version', problem: P.version(SCHEMA_VERSION) });
+  if ('schema_version' in v && !SCHEMA_VERSIONS.includes(v.schema_version as VizMapping['schema_version'])) out.push({ field: 'schema_version', problem: P.version(SCHEMA_VERSIONS) });
   if ('name' in v) checkString(v.name, 'name', out, { max: 128 });
   if ('base' in v && ![null, 'builtin:foxglove', 'builtin:ros2', 'builtin:umi'].includes(v.base as string | null)) out.push({ field: 'base', problem: P.base });
   if ('timeline' in v) {
@@ -406,6 +462,7 @@ function checkShape(v: unknown, out: MappingProblem[]): v is VizMapping {
   }
   for (const [key, max, check] of [
     ['cameras', 32, checkCamera],
+    ['depths', 32, checkDepth],
     ['series', 128, checkSeries],
   ] as const) {
     if (!(key in v)) continue;
@@ -452,8 +509,9 @@ function checkShape(v: unknown, out: MappingProblem[]): v is VizMapping {
 
 /**
  * Every problem of a mapping, located (empty = fine): the C7 Schema, then what it cannot say - a
- * topic used twice, pairs of one role or a partner that is not a curve, an ignored topic that is
- * also mapped, a frame reference that is not mapped, and (given `topics`) topics the dataset lacks.
+ * topic used twice, a depth's camera that is not a mapped camera, pairs of one role or a partner that
+ * is not a curve, an ignored topic that is also mapped, a frame reference that is not mapped, and
+ * (given `topics`) topics the dataset lacks.
  * The same rules as the Daemon's, so an import fails here the way a save would.
  */
 export function validateMapping(raw: unknown, topics?: ReadonlySet<string>): MappingProblem[] {
@@ -467,6 +525,11 @@ export function validateMapping(raw: unknown, topics?: ReadonlySet<string>): Map
     else uses.set(topic, where);
   };
   m.cameras.forEach((c, i) => use(c.topic, `cameras.${i}`));
+  const cameras = new Set(m.cameras.map((c) => c.topic));
+  (m.depths ?? []).forEach((d, i) => {
+    use(d.topic, `depths.${i}`);
+    if (d.pair_with && !cameras.has(d.pair_with)) out.push({ field: `depths.${i}.pair_with`, problem: P.notCamera(d.pair_with) });
+  });
   const byTopic = new Map(m.series.map((s) => [s.topic, s]));
   m.series.forEach((s, i) => {
     use(s.topic, `series.${i}`);

@@ -192,7 +192,7 @@ class LanceReader(LeRobotReader):
         if tables:
             tree.append({"id": "lance", "name": "Lance 表", "kind": "group", "children": [
                 {"id": f"table:{t['name']}", "name": t["name"], "kind": "table",
-                 "detail": {"行数": t["rows"], "列": "、".join(t["columns"][:24]) + ("…" if len(t["columns"]) > 24 else "")}}
+                 "detail": {"num_rows": t["rows"], "columns": json.dumps(t["columns"], ensure_ascii=False)}}
                 for t in tables]})
         return tree
 
@@ -230,6 +230,25 @@ class LanceReader(LeRobotReader):
         self.svc.frames_cache.put(key, data, size=size)
         return data
 
+    def depth_batches(self, src: VizSource, m: LeRobotMeta, row: EpisodeRow, feature: str):
+        """The episode's rows of a depth column from the frames table (its row window), a batch at a time."""
+        from .depth import BATCH
+
+        ds = self.table(src, m.layout.frames)
+        names = set(ds.schema.names)
+        col = LL.column_of(feature, names, LL.column_map(ds.schema))
+        if not col:
+            raise ApiError("not_found", f"帧表里没有 {feature}")
+        if row.from_index is not None and row.to_index is not None and "index" in names:
+            flt = f"index >= {int(row.from_index)} AND index < {int(row.to_index)}"
+        elif "episode_index" in names:
+            flt = f"episode_index = {int(row.index)}"
+        else:
+            flt = None
+        for rb in ds.to_batches(columns=[col], filter=flt, batch_size=BATCH):
+            if rb.num_rows:
+                yield rb.column(col)
+
     def _camera_place(self, m: LeRobotMeta, row: EpisodeRow, cam: dict):
         if cam["access"] == "frames":
             return f"lance:{m.layout.frames}", None, None
@@ -252,7 +271,12 @@ class LanceReader(LeRobotReader):
         rid = rows.get((feature, where[0], where[1]))
         if rid is None:
             raise ApiError("not_found", f"videos 表里没有 {feature} 的 chunk {where[0]} / file {where[1]}")
-        blob = self.table(src, m.layout.videos).take_blobs(LL.BLOB_COLUMN, ids=[rid])[0]
+        try:
+            blob = self.table(src, m.layout.videos).take_blobs(LL.BLOB_COLUMN, ids=[rid])[0]
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a blob that does not read: the page says so
+            raise ApiError("not_found", f"读不出 {feature} 的视频 blob：{str(exc)[:200]}") from None
         frm, to = row.windows.get(feature, (None, None))
         return cam, blob, frm, to
 

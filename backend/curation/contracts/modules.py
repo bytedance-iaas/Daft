@@ -49,6 +49,10 @@ History: 1.x described modules by their funnel gate (``gate``: hard veto, soft s
 or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
 whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel: the task's
 policy grades a module's findings (design doc 17 §4) and the two blocks hand every episode on (§3).
+2.2 bound taxonomy 1.3: the time-length outlier and the undersampled skill family became the platform's own
+dataset-level readings (no item: the task and skill statistics item was dropped), which motion_quality covered too.
+3.0 binds taxonomy 2.0, which numbers the items of every dimension again without gaps (C6 ``renumbered`` maps
+1.3 ids to 2.0); results of tasks run before keep the ids they were run with.
 """
 from __future__ import annotations
 
@@ -56,9 +60,9 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "3.2"
+REGISTRY_VERSION = "4.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
-TAXONOMY_VERSION = "1.2"
+TAXONOMY_VERSION = "2.0"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
@@ -323,7 +327,7 @@ def _motion_params() -> dict:
             "spike_min": _line("尖刺判定线", "尖刺分低于这个值，报「动作尖刺」（ACT-2）", 0.5, 0.0, 1.0),
             "gripper_jitter_min": _line("夹爪抖动判定线", "夹爪平稳分低于这个值，报「夹爪抖动」（ACT-5）", 0.5, 0.0, 1.0),
             "saturation_min": _line("执行器饱和判定线", "执行响应分低于这个值，报「执行器饱和」（ACT-4）", 0.5, 0.0, 1.0),
-            "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-8）", 0.5, 0.0, 1.0),
+            "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-7）", 0.5, 0.0, 1.0),
             "severe_below": _line("严重判定线", "平滑度、尖刺分低于这个值时，发现的严重度记为高", 0.2, 0.0, 1.0),
             "idle_edge_min_s": _line("起止空转判定线（秒）", "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
                                      1.0, 0.0, 60.0),
@@ -336,7 +340,7 @@ def _timestamp_params() -> dict:
         "properties": {
             "duration_outlier_iqr": _line(
                 "时长离群判定线（四分位距倍数）", "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，"
-                "在报告里报「时长离群」（SET-3，数据集级）", 3.0, 1.0, 10.0),
+                "在报告里报「时长离群」（数据集级的读数）", 3.0, 1.0, 10.0),
         }}
 
 
@@ -469,7 +473,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("out_of_order", "STRM-4", "时间戳倒序或重复"),
                _blocking("fragment", "STRM-5", "残段：短于最短时长"),
                _blocking("single_stamp", "STRM-5", "只有一个时间戳"),
-               _info("duration_outlier", "SET-3", "时长离群", scope_kind="dataset")),
+               _info("duration_outlier", None, "时长离群", scope_kind="dataset")),
         param_schema=_timestamp_params(),
         tables=(TableSpec("timestamp_check", "时间戳异常",
                           ("episode_index", "duration_s", "max_dt")),)),
@@ -500,12 +504,11 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("actuator_saturation", "ACT-4", "执行器饱和", "medium", scope_kind="channel"),
                _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),
                _info("stuck", "ACT-8", "执行器卡死", "medium", scope_kind="channel"),
-               _info("fluency_low", "TASK-8", "操作不流畅"),
+               _info("fluency_low", "TASK-7", "操作不流畅"),
                _info("idle_opening", "TASK-1", "开头空转"),
                _info("idle_closing", "TASK-1", "结尾空转"),
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
                      scope_kind="dataset")),
-        also_covers=("SET-3",),          # the mean active share, a dataset-level reading (P20)
         param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(
@@ -537,10 +540,10 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", needs=frozenset({"video", "vlm", "eef_input"}), block="vlm", stage="vlm",
         depends_on=(),
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
-        codes=(_blocking("inconsistent", "MV-5", "末端投影与画面不符", appealable=True),
-               _review("unsettled", "MV-5", "末端投影与画面是否相符待人工核对", "eef_check"),
-               _info("opinion_mismatch", "MV-5", "模型意见：末端投影与画面不符"),
-               _info("record_mismatch", "MV-5", "上传轨迹与数据集的记录不符")),
+        codes=(_blocking("inconsistent", "MV-4", "末端投影与画面不符", appealable=True),
+               _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check"),
+               _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符"),
+               _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符")),
         param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
@@ -558,11 +561,11 @@ MODULES: tuple[ModuleSpec, ...] = (
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=(),
-        codes=(_blocking("failure", "TASK-5", "任务失败", appealable=True),
-               _review("uncertain", "TASK-5", "任务成败拿不准", "task_verdict"),
-               _info("recovery", "TASK-12", "中途失误后完成"),
-               _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "task_verdict"),
-               _info("task_text_missing", "LABEL-3", "没有任务标注，没有做任务成败判定")),
+        codes=(_blocking("failure", "TASK-4", "任务失败", appealable=True),
+               _review("uncertain", "TASK-4", "任务成败拿不准", "task_verdict"),
+               _info("recovery", "TASK-10", "中途失误后完成"),
+               _review("label_conflict_suspect", "LABEL-4", "标注与画面疑似不符", "task_verdict"),
+               _info("task_text_missing", "LABEL-2", "没有任务标注，没有做任务成败判定")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
@@ -588,6 +591,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_blocking("duplicate", "SET-1", "与另一条完全重复", appealable=True),),
         param_schema=_no_params(),
         tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
+
 )
 
 

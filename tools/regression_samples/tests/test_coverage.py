@@ -26,16 +26,14 @@ def test_the_rules():
                        ("IMG-6", "camera_defects.shake"), ("IMG-7", "camera_defects.contamination")):
         assert (items[item]["platform_status"], items[item]["platform_codes"]) == ("有读数", [code]), item
     # every module that covers it has a precondition
-    assert items["MV-5"]["platform_status"] == "部分"
-    assert items["MV-5"]["platform_conditions"] == ["要上传 trajectory.json"]
+    assert items["MV-4"]["platform_status"] == "部分"
+    assert items["MV-4"]["platform_conditions"] == ["要上传 trajectory.json"]
     assert items["ACT-4"]["platform_conditions"] == ["数据集要有状态量", "机器人型号要在规格库里"]
-    # a reading without a code still covers the item
-    assert items["SET-3"]["platform_status"] == "有读数"
     # nothing covers it: a gap
     assert (items["MV-1"]["platform_status"], items["MV-1"]["platform_codes"]) == ("没有", [])
     # controls are handled, never named by a code; the preflight judges the input format
     assert {i["platform_status"] for i in items.values() if i["kind"] == "control"} == {"能处理"}
-    assert (items["SET-4"]["platform_status"], items["SET-4"]["platform_codes"]) == ("能判", ["preflight"])
+    assert (items["SET-2"]["platform_status"], items["SET-2"]["platform_codes"]) == ("能判", ["preflight"])
     assert all("platform_conditions" not in i for i in items.values() if i["platform_status"] != "部分")
 
 

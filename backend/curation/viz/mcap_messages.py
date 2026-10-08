@@ -278,6 +278,45 @@ def transform_labels(base: str, size: int, name: str | None) -> list[str]:
 
 # ---------------------------------------------------------------- frames
 
+def _attr(node, name: str):
+    return node.get(name) if isinstance(node, dict) else getattr(node, name, None)
+
+
+def raw_kind(schema_name: str | None, decoded) -> str | None:
+    """``pointcloud`` / ``raw`` for messages that carry bytes without being a compressed picture, else
+    None (:func:`as_frame` decides). A point cloud (foxglove ``PointCloud``, ROS ``PointCloud2``) is not a
+    camera; a raw image (foxglove ``RawImage``, ROS ``sensor_msgs/Image``: ``encoding`` + ``step``
+    instead of ``format``) is a picture the browser cannot show as it is (design doc 21 §2)."""
+    short = (schema_name or "").replace("/msg/", "/").rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+    if decoded is None:
+        return None
+    if "PointCloud" in short or _attr(decoded, "point_stride") is not None or (
+            _attr(decoded, "point_step") is not None and _attr(decoded, "row_step") is not None):
+        return "pointcloud"
+    if isinstance(_attr(decoded, "encoding"), str) and _attr(decoded, "step") is not None and (
+            _attr(decoded, "data") is not None) and _attr(decoded, "format") in (None, ""):
+        return "raw"
+    return None
+
+
+def raw_image_bytes(decoded) -> bytes:
+    """The pixel bytes of a raw image message."""
+    return bytes(_attr(decoded, "data") or b"")
+
+
+def raw_image_info(decoded) -> dict:
+    """``{encoding, width, height, step, bigendian}`` of a raw image message."""
+    def num(name):
+        v = _attr(decoded, name)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    return {"encoding": str(_attr(decoded, "encoding") or ""), "width": num("width"), "height": num("height"),
+            "step": num("step"), "bigendian": bool(_attr(decoded, "is_bigendian") or False)}
+
+
 def as_frame(decoded) -> tuple[str, bytes] | None:
     """(format, bytes) of a compressed image / video message (``.format`` + ``.data``)."""
     from ..ingest import mcap_reader as MR

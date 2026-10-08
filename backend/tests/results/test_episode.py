@@ -61,8 +61,8 @@ def test_every_finding_with_the_level_it_has(world):
     ep5 = _view(world, 5)
     # both findings are asked on the task verdict: one card asks one question (registry 3.0)
     assert rows(ep5) == [("visual_quality", "exposure_low", "IMG-2", "info", None, False)] * 2 + [
-        ("task_success", "label_conflict_suspect", "LABEL-5", "review", "task_verdict", False),
-        ("task_success", "uncertain", "TASK-5", "review", "task_verdict", False)]
+        ("task_success", "label_conflict_suspect", "LABEL-4", "review", "task_verdict", False),
+        ("task_success", "uncertain", "TASK-4", "review", "task_verdict", False)]
     assert ep5["findings"][2]["finding"] == ep5["modules"]["task_success"]["findings"][0]   # the record's own
     ep7 = _view(world, 7)
     assert rows(ep7)[-1] == ("dedup", "duplicate", "SET-1", "blocking", None, True)
@@ -85,7 +85,7 @@ def test_a_person_s_conclusion_is_a_finding_of_its_own(world):
     assert ep3["list"] == "reject"
     human = [f for f in ep3["findings"] if f.get("human")]
     assert human == [{"module": "task_success", "level": "blocking", "appealable": False, "human": True,
-                      "finding": {"code": "failure", "item": "TASK-5", "severity": "high",
+                      "finding": {"code": "failure", "item": "TASK-4", "severity": "high",
                                   "message_zh": "人工裁决判失败（任务未完成）"}}]
     assert not any(f["finding"]["code"] == "uncertain" for f in ep3["findings"])
     assert any(f["finding"]["code"] == "uncertain" for f in _view(world, 3, rev=1)["findings"])

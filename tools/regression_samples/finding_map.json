@@ -1,7 +1,7 @@
 {
  "schema_version": "1.0",
- "version": "1.3",
- "taxonomy_version": "1.2",
+ "version": "1.5",
+ "taxonomy_version": "2.0",
  "platform": "curation v2, module registry (C1) 1.14",
  "about": "How a platform result becomes a check item (taxonomy.json). A rule reads one module's per-episode record (checks/<module>/results.jsonl) and yields the items it reports, with the camera when the record names one. An item a rule can yield is 'mapped'; the modules whose rules yield it decide whether an episode was assessed for it. Thresholds are the platform's own where it has one (visual_quality freezes at 95%, the report calls a camera reading below 0.6 low, the funnel's soft threshold is 0.5).",
  "rules": [
@@ -31,17 +31,17 @@
   {"id": "motion.stuck", "module": "motion_quality", "match": {"detail_nonempty": "stuck_joints"}, "items": ["ACT-8"]},
   {"id": "motion.gripper_jitter", "module": "motion_quality", "match": {"subscore": "gripper_jitter", "below": 0.5}, "items": ["ACT-5"]},
   {"id": "motion.saturation", "module": "motion_quality", "match": {"subscore": "actuator_saturation", "below": 0.5}, "items": ["ACT-4"]},
-  {"id": "motion.fluency", "module": "motion_quality", "match": {"subscore": "fluency", "below": 0.5}, "items": ["TASK-8"]},
+  {"id": "motion.fluency", "module": "motion_quality", "match": {"subscore": "fluency", "below": 0.5}, "items": ["TASK-7"]},
   {"id": "visual.frozen", "module": "visual_quality", "match": {"camera_detail": "frozen_ratio", "at_least": 0.95}, "items": ["IMG-1"]},
   {"id": "visual.dead_or_padded", "module": "visual_quality", "match": {"camera_list": "camera_liveness.dead_or_padded"}, "items": ["STRM-1"]},
   {"id": "visual.exposure", "module": "visual_quality", "match": {"camera_detail": "exposure", "below": 0.6}, "items": ["IMG-2"]},
   {"id": "visual.sharpness", "module": "visual_quality", "match": {"camera_detail": "sharpness", "below": 0.6}, "items": ["IMG-4"]},
   {"id": "sync.all_cameras", "module": "video_action_sync", "match": {"detail_verdicts": ["misaligned_all"]}, "items": ["AV-1"]},
   {"id": "sync.one_camera", "module": "video_action_sync", "match": {"camera_codes": ["misaligned"]}, "items": ["AV-1"]},
-  {"id": "eef.reject", "module": "eef_video_consistency", "match": {"passed": [false]}, "items": ["MV-5"]},
-  {"id": "eef.human", "module": "eef_video_consistency", "match": {"detail_outcomes": ["human"]}, "items": ["MV-5"]},
-  {"id": "task.failure", "module": "task_success", "match": {"passed": [false]}, "items": ["TASK-5"]},
-  {"id": "task.label_conflict", "module": "task_success", "match": {"detail_verdicts": ["label_conflict_suspect"]}, "items": ["LABEL-5"]},
+  {"id": "eef.reject", "module": "eef_video_consistency", "match": {"passed": [false]}, "items": ["MV-4"]},
+  {"id": "eef.human", "module": "eef_video_consistency", "match": {"detail_outcomes": ["human"]}, "items": ["MV-4"]},
+  {"id": "task.failure", "module": "task_success", "match": {"passed": [false]}, "items": ["TASK-4"]},
+  {"id": "task.label_conflict", "module": "task_success", "match": {"detail_verdicts": ["label_conflict_suspect"]}, "items": ["LABEL-4"]},
   {"id": "camera_defects.glitch", "module": "camera_defects", "match": {"camera_levels": {"key": "glitch", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.glitch", "values": ["unknown"]}, "items": ["IMG-5"]},
   {"id": "camera_defects.shake", "module": "camera_defects", "match": {"camera_levels": {"key": "shake", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.shake", "values": ["unknown"]}, "items": ["IMG-6"]},
   {"id": "camera_defects.contamination", "module": "camera_defects", "match": {"camera_levels": {"key": "contamination", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.contamination", "values": ["unknown"]}, "items": ["IMG-7"]},
@@ -54,10 +54,8 @@
    "STRM-8": {"not_items": ["STRM-3", "AV-1"], "not_drop": false},
    "IMG-10": {"not_items": ["IMG-1", "IMG-2"], "not_drop": true},
    "IMG-11": {"not_items": ["IMG-2", "IMG-4"], "not_drop": true},
-   "ACT-9": {"not_items": ["ACT-4"], "not_drop": false},
-   "TASK-9": {"not_items": ["TASK-8"], "not_drop": false},
-   "SET-2": {"not_items": ["SET-1"], "not_drop": false}
+   "ACT-9": {"not_items": ["ACT-4"], "not_drop": false}
   }
  },
- "ingestion": {"about": "SET-4 marks an input format the platform should read; a subset counts as handled when its preflight reports the format as supported.", "items": ["SET-4"]}
+ "ingestion": {"about": "SET-2 marks an input format the platform should read; a subset counts as handled when its preflight reports the format as supported.", "items": ["SET-2"]}
 }

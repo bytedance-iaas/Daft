@@ -108,13 +108,12 @@ export function prepareRequest(method: string, headers: Headers): void {
 }
 
 /**
- * The page's language: the one the address names (`?api=en`, or a link into `#zh/...`), else
- * Chinese for a browser that prefers it, else English.
+ * The page's language: the one the address names (`?api=en`, or a link into `#en/...`), else Chinese
+ * whatever the browser prefers (requester 2026-10-07: the reference opens in Chinese).
  */
-export function pageLanguage(languages: readonly string[], loc: { search: string; hash: string } = { search: '', hash: '' }): Lang {
+export function pageLanguage(loc: { search: string; hash: string } = { search: '', hash: '' }): Lang {
   const named = new URLSearchParams(loc.search).get('api') ?? /^#(zh|en)\b/.exec(loc.hash)?.[1];
-  if (named === 'zh' || named === 'en') return named;
-  return /^zh\b/i.test(languages[0] ?? '') ? 'zh' : 'en';
+  return named === 'en' ? 'en' : 'zh';
 }
 
 const COPY = { description: 'x-description-zh', summary: 'x-summary-zh' } as const;

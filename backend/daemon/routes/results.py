@@ -133,7 +133,7 @@ def get_pipeline_episode(request: Request, task_id: str, index: int):
 
 @router.get("/tasks/{task_id}/episodes/{index}/cameras/{camera}.mp4")
 def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
-                       transcode: bool = False):
+                       transcode: bool = False, segment: bool = False):
     """One camera of the task's input served by the Daemon (C4 2.4.0 ``getTaskCameraVideo``):
     LeRobot cameras of a local dataset or that need (or are asked for) a transcode, and Lance
     blobs (2.5.0), go to the visualizer; an mcap episode's camera is muxed from the source in memory as before (the
@@ -150,7 +150,7 @@ def get_episode_camera(request: Request, task_id: str, index: int, camera: str,
     if reader in ("lerobot", "lance") or (reader == "mcap" and (src.mapping or transcode)):
         # tasks with a frozen mcap mapping (C4 2.4.0) get the visualizer's remux / frame packs;
         # older tasks keep the in-memory muxing of the retiring 各机位视频
-        return viz.camera_video(src, index, camera, transcode, request.headers)
+        return viz.camera_video(src, index, camera, transcode, request.headers, segment=segment)
     rt, task, revision = _task_and_revision(request, task_id, None)
     store = store_of(rt)
     if not CL.is_mcap(revision.run_dir, store.docs):

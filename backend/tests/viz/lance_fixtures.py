@@ -148,3 +148,40 @@ def make_lance(root: str, layout: str = "0.3") -> str:
         raise ValueError(layout)
     shutil.rmtree(src)
     return root
+
+
+def make_lance_depth(root: str) -> str:
+    """``make_v3_depth`` converted the 0.3 way (design doc 21 §5.3): the depth columns go into ``frames.lance``
+    as they are (nested lists), the front camera into ``videos.lance``."""
+    import lance
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from .fixtures import make_v3_depth
+
+    camera = "observation.images.front"
+    src = make_v3_depth(root.rstrip("/") + "_src")
+    os.makedirs(root, exist_ok=True)
+    shutil.copytree(os.path.join(src, "meta"), os.path.join(root, "meta"))
+    info_path = os.path.join(root, "meta", "info.json")
+    with open(info_path) as fh:
+        info = json.load(fh)
+    info["storage_format"] = "lance"
+    with open(info_path, "w") as fh:
+        json.dump(info, fh, indent=4)
+    data = pq.read_table(os.path.join(src, "data", "chunk-000", "file-000.parquet"))
+    lance.write_dataset(data.rename_columns([c.replace(".", "_") for c in data.column_names]),
+                        os.path.join(root, "frames.lance"))
+    mp4 = os.path.join(src, "videos", camera, "chunk-000", "file-000.mp4")
+    with open(mp4, "rb") as fh:
+        blob = fh.read()
+    schema = pa.schema([pa.field("video_key", pa.string()), pa.field("chunk_index", pa.int64()),
+                        pa.field("file_index", pa.int64()), pa.field("file_size", pa.int64()),
+                        pa.field("moov_offset", pa.int64()), pa.field("moov_size", pa.int64()),
+                        pa.field("kf_indices", pa.list_(pa.int64())), pa.field("kf_positions", pa.list_(pa.int64())),
+                        lance.blob_field("video_bytes")])
+    row = {"video_key": [camera], "chunk_index": [0], "file_index": [0],
+           **{k: [v] for k, v in _byte_index(mp4).items()}, "video_bytes": lance.blob_array([blob])}
+    lance.write_dataset(pa.table(row, schema=schema), os.path.join(root, "videos.lance"), data_storage_version="2.2")
+    shutil.rmtree(src)
+    return root

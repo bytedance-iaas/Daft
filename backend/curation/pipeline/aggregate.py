@@ -48,7 +48,7 @@ DEDUP = "dedup"
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
 LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "reject_appeal")
-#: The finding that says a task text and the picture disagree (task_success, LABEL-5).
+#: The finding that says a task text and the picture disagree (task_success, LABEL-4).
 LABEL_CONFLICT = "label_conflict_suspect"
 
 

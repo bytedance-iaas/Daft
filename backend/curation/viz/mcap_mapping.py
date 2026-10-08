@@ -18,7 +18,7 @@ from typing import Any
 
 from .mcap_probe import FileProbe, TopicProbe
 
-SCHEMA_VERSION = "viz-mapping/1.0"
+SCHEMA_VERSION = "viz-mapping/1.1"                 # 1.1 adds depths (design doc 21 §5.4); 1.0 stays valid
 MATCH_THRESHOLD = 0.8
 
 BUILTINS = [
@@ -50,12 +50,39 @@ def _short(schema: str | None) -> str:
 def _empty(name: str, base: str | None) -> dict:
     return {"schema_version": SCHEMA_VERSION, "name": name, "base": base,
             "timeline": {"source": "log_time", "frame_reference": None},
-            "cameras": [], "series": [], "task": None, "segments": None, "ignore": []}
+            "cameras": [], "depths": [], "series": [], "task": None, "segments": None, "ignore": []}
 
 
 def _display(topic: str) -> str:
     parts = [p for p in topic.strip("/").split("/") if p not in ("compressed", "image_raw", "sensor", "color")]
     return " ".join(parts) or topic
+
+
+# ---------------------------------------------------------------- depth topics (design doc 21 §5.4)
+
+_STEM_DROP = frozenset({"depth", "depths", "camera", "cam", "color", "colour", "rgb", "image", "images", "img", "raw",
+                        "compressed", "compresseddepth", "aligned", "to", "rect", "sensor"})
+
+
+def _stem(topic: str) -> str:
+    """A camera or depth topic without the words that say which (``/front-depth`` and ``/front-camera``
+    are both ``front``; ``/camera/depth/image_raw`` and ``/camera/color/image_raw`` both empty)."""
+    words = [w for w in re.split(r"[/_\-.]+", topic.lower()) if w]
+    return " ".join(w for w in words if w not in _STEM_DROP)
+
+
+def pair_depths(depths: list[dict], cameras: list[dict]) -> None:
+    """Each depth's camera: the one camera of the same stem, when there is exactly one."""
+    for d in depths:
+        if d.get("pair_with"):
+            continue
+        hits = [c["topic"] for c in cameras if _stem(c["topic"]) == _stem(d["topic"])]
+        d["pair_with"] = hits[0] if len(hits) == 1 else None
+
+
+def _depths_of(probe: FileProbe, taken: set[str]) -> list[dict]:
+    return [{"topic": t, "name": _display(t), **_schema(probe, t), "pair_with": None}
+            for t in sorted(probe.topics) if probe.topics[t].kind == "depth" and t not in taken]
 
 
 # ---------------------------------------------------------------- built-in drafts
@@ -78,7 +105,9 @@ def draft_umi(probe: FileProbe) -> dict | None:
         if enc in probe.topics:
             m["series"].append({"topic": enc, "name": _display(enc), **_schema(probe, enc), "fields": ["value"],
                                 "labels": [f"{r}_gripper"], "unit": None, "role": "action"})
-    used = {c["topic"] for c in m["cameras"]} | {s["topic"] for s in m["series"]}
+    m["depths"] = _depths_of(probe, {c["topic"] for c in m["cameras"]})
+    pair_depths(m["depths"], m["cameras"])
+    used = {c["topic"] for c in m["cameras"]} | {s["topic"] for s in m["series"]} | {d["topic"] for d in m["depths"]}
     m["ignore"] = [t for t in topics if t not in used]
     m["task"] = _metadata_task(probe)       # the check reader reads metadata task keys on its own too
     return m
@@ -90,8 +119,10 @@ def draft_default(probe: FileProbe) -> dict | None:
         return None
     m = _empty("默认约定（/action、/observation.state）", None)
     for t in sorted(probe.topics):
-        if t.startswith(DEFAULT_VIDEO):
+        if t.startswith(DEFAULT_VIDEO) and probe.topics[t].kind != "depth":
             m["cameras"].append({"topic": t, "name": t[len(DEFAULT_VIDEO):] or t, **_schema(probe, t)})
+    m["depths"] = _depths_of(probe, set())
+    pair_depths(m["depths"], m["cameras"])
     state = DEFAULT_STATE in probe.topics
     pair_name = f"{DEFAULT_STATE.strip('/')} / {DEFAULT_ACTION.strip('/')}"            # the topics' own names
     m["series"].append({"topic": DEFAULT_ACTION, "name": DEFAULT_ACTION.strip("/") if not state else pair_name,
@@ -104,7 +135,8 @@ def draft_default(probe: FileProbe) -> dict | None:
         m["task"] = {"topic": DEFAULT_TASK}
     else:
         m["task"] = _metadata_task(probe)
-    used = {c["topic"] for c in m["cameras"]} | {s["topic"] for s in m["series"]} | {DEFAULT_TASK}
+    used = {c["topic"] for c in m["cameras"]} | {s["topic"] for s in m["series"]} | {DEFAULT_TASK} | {
+        d["topic"] for d in m["depths"]}
     m["ignore"] = [t for t in sorted(probe.topics) if t not in used]
     return m
 
@@ -177,6 +209,9 @@ def draft_generic(probe: FileProbe, base: str) -> dict:
         if tp.kind == "camera":
             m["cameras"].append({"topic": t, "name": _display(t), **_schema(probe, t)})
             continue
+        if tp.kind == "depth":
+            m["depths"].append({"topic": t, "name": _display(t), **_schema(probe, t), "pair_with": None})
+            continue
         if any(x in short for x in _IGNORE_SCHEMAS):
             m["ignore"].append(t)
             continue
@@ -221,6 +256,7 @@ def draft_generic(probe: FileProbe, base: str) -> dict:
             continue
         unmapped.append(t)
     _pair_up(m["series"])
+    pair_depths(m["depths"], m["cameras"])
     if m["task"] is None:
         m["task"] = _metadata_task(probe)
     return m
@@ -229,7 +265,8 @@ def draft_generic(probe: FileProbe, base: str) -> dict:
 # ---------------------------------------------------------------- matching
 
 def topics_of(mapping: dict) -> set[str]:
-    out = {c["topic"] for c in mapping.get("cameras") or []} | {s["topic"] for s in mapping.get("series") or []}
+    out = {c["topic"] for c in mapping.get("cameras") or []} | {s["topic"] for s in mapping.get("series") or []} | {
+        d["topic"] for d in mapping.get("depths") or []}
     task = mapping.get("task")
     if isinstance(task, dict) and task.get("topic"):
         out.add(task["topic"])
@@ -249,6 +286,10 @@ def from_template(template: dict, probe: FileProbe) -> dict:
     m = copy.deepcopy(template)
     have = set(probe.topics)
     m["cameras"] = [c for c in m.get("cameras") or [] if c["topic"] in have]
+    if m.get("depths") is not None:
+        cams = {c["topic"] for c in m["cameras"]}
+        m["depths"] = [dict(d, pair_with=d.get("pair_with") if d.get("pair_with") in cams else None)
+                       for d in m["depths"] if d["topic"] in have]
     m["series"] = [s for s in m.get("series") or [] if s["topic"] in have]
     for s in m["series"]:
         if s.get("pair_with") and s["pair_with"] not in {x["topic"] for x in m["series"]}:
@@ -310,6 +351,8 @@ def topic_uses(mapping: dict, probe: FileProbe) -> dict[str, tuple[str, str | No
     out: dict[str, tuple[str, str | None, str]] = {}
     for c in mapping.get("cameras") or []:
         out[c["topic"]] = ("camera", None, c.get("name") or "")
+    for d in mapping.get("depths") or []:
+        out[d["topic"]] = ("depth", None, d.get("name") or "")
     for s in mapping.get("series") or []:
         out[s["topic"]] = ("series", s.get("role"), s.get("name") or "")
     task = mapping.get("task")
@@ -347,6 +390,11 @@ def validate(mapping: Any, topics: set[str] | None = None) -> list[dict]:
 
     for i, c in enumerate(mapping["cameras"]):
         use(c["topic"], f"cameras.{i}")
+    cameras = {c["topic"] for c in mapping["cameras"]}
+    for i, d in enumerate(mapping.get("depths") or []):
+        use(d["topic"], f"depths.{i}")
+        if d.get("pair_with") and d["pair_with"] not in cameras:
+            problems.append({"field": f"depths.{i}.pair_with", "problem": f"{d['pair_with']} 不是映射里的相机"})
     series = {s["topic"]: s for s in mapping["series"]}
     for i, s in enumerate(mapping["series"]):
         use(s["topic"], f"series.{i}")

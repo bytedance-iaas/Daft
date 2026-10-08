@@ -12,6 +12,7 @@ import type {
   Task,
   TaskListItem,
   TimelineEntry,
+  VizDisplayConfig,
   VizMapping,
   VizTemplate,
   VlmBackend,
@@ -71,6 +72,10 @@ export interface MockDb {
   vizTemplates: VizTemplate[];
   /** design doc 18 §4.2: transcodes that were asked for once (the next ask finds them ready). */
   vizTranscodes: Set<string>;
+  /** depth packs asked for once (the first ask answers 202, design doc 21 §5.3) */
+  vizDepthPacks: Set<string>;
+  /** design doc 21 §6: the registrations' display configurations (null config: restored) */
+  vizDisplays: Map<string, { config: VizDisplayConfig | null; version: number; updatedAt: number }>;
   /** POST /uploads: the uploads by id, as the Daemon keeps them. */
   uploads: Map<string, Record<string, unknown>>;
 }
@@ -94,6 +99,8 @@ export const db: MockDb = {
   vizMappings: new Map(),
   vizTemplates: [],
   vizTranscodes: new Set(),
+  vizDepthPacks: new Set(),
+  vizDisplays: new Map(),
   uploads: new Map(),
 };
 
@@ -121,6 +128,8 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.vizMappings = seedVizMappings(now);
   db.vizTemplates = [];
   db.vizTranscodes = new Set();
+  db.vizDepthPacks = new Set();
+  db.vizDisplays = new Map();
   db.uploads = new Map();
   db.seq = 100;
   // Datasets know their tasks (newest first) and their last task.

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.1.0
+  version: 4.2.0
   description: |
     ## Overview
 
@@ -79,6 +79,38 @@ info:
     **2.5.1** (2026-10-05): the first published version of this reference. Every later version lists
     its changes here.
 
+    **2.6.0** (2026-10-06): `GET /tasks/{id}/episodes/{index}/eef-overlay` returns the marks of the
+    end-effector check's video opinion (gripper centre, direction, fingers and recent trail) for drawing
+    over the episode's own camera video. Opinion records no longer carry a marked video or evidence
+    images; each segment still lists its evidence frame numbers.
+
+    **2.7.0** (2026-10-06): in an episode's camera list, `from_ts` / `to_ts` are times in the media `url`
+    serves: a transcoded camera of a file holding several episodes now starts at 0, and `transcode_url`
+    always starts at the episode's start (it used to be placed at the shared file's time, so such a camera
+    showed the wrong moment). The visualizer's field tree (`field_tree` of `GET /datasets/{id}/viz`) names
+    every node and attribute in the dataset's own metadata: a feature's `info.json` entry key by key, an
+    mcap topic's channel, schema and statistics fields. The camera route takes `segment=true`: a LeRobot v3
+    or Lance episode's own slice of the file it shares with other episodes, or a copy of a single-episode
+    mp4 with its index in front; the episode answer asks for it when the deployment turns it on. Depth:
+    a LeRobot or Lance depth column is a `depth` stream the player draws (`VizStream.depth`), an episode
+    lists its packs in `streams`, read from `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames`
+    and `.json` (and the task's) - every frame a 16-bit greyscale PNG, the index with the depth's unit and
+    value range. An mcap dataset's depth topics (a 16-bit PNG, a ROS compressedDepth picture, a 16UC1 / mono16 /
+    32FC1 raw image) are listed under the mapping's `depths` (field mapping 1.1) and drawn the same way. A registered
+    dataset has a display configuration everyone who opens it shares (`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`):
+    the visualizer's default layout, the cameras' order and names and which ones the layout templates leave
+    out (`VizCamera.hidden`), LeRobot and Lance curve groups instead of the automatic ones, the subtitle
+    track, the default speed and looping; the presentation model carries the one in effect (`VizDataset.display`).
+
+    **2.8.0** (2026-10-07): the check-item taxonomy is version 2.0. An item's `kind` is one of `defect`,
+    `phenomenon` and `control` (the depth holes and noise item is now a `defect`); five items are gone (the
+    cross-dataset versions and long-task controls, the dataset statistics, same-source versions and task
+    description forms), and the items of every dimension are numbered again without gaps: MV-5 is now MV-4,
+    TASK-5 to TASK-8 are TASK-4 to TASK-7, TASK-10 to TASK-12 are TASK-8 to TASK-10, LABEL-2 to LABEL-5 are
+    LABEL-1 to LABEL-4, SET-4 and SET-5 are SET-2 and SET-3. Results of tasks run before keep the numbers they
+    were run with. The time-length outlier and the undersampled skill family are still reported as
+    dataset-level findings, without an item.
+
     **3.0.0** (2026-10-06): the skill profile is gone, and with it the module `skill_profile`, the
     `profile_vlm` stage and the `profile` plan stage. One adjudication card now asks one question: the
     `label` review line is gone, and a suspected conflict between a task text and the picture is part
@@ -99,6 +131,11 @@ info:
     segment of the CPU block like the other checks, so a task's `progress.stages` no longer carries
     `full_set` (a task planned before this still does, and the field stays in the contract), and the
     module registry's `full_set_stages` is empty.
+
+    **4.2.0** (2026-10-08): the two lines above meet - every 2.6.0-2.8.0 addition (EEF overlay,
+    viz segments, depth and display configuration, taxonomy 2.0) and every 3.0.0-4.1.0 removal are in
+    the one API; the task_success items are the taxonomy 2.0 numbers (TASK-4, TASK-10, LABEL-2, LABEL-4).
+
   x-description-zh: |
     ## 概览
 
@@ -146,6 +183,24 @@ info:
 
     **2.5.1**（2026-10-05）：本文档首次发布。之后每个版本的改动都记在这里。
 
+    **2.6.0**（2026-10-06）：新增 `GET /tasks/{id}/episodes/{index}/eef-overlay`，返回末端执行器检查中模型意见的标记（夹爪中心、朝向、手指连线与最近一段轨迹），
+    供叠加在该 episode 的原始相机视频上显示。模型意见的记录不再附带标记视频和证据图片，各片段仍给出证据帧号。
+
+    **2.7.0**（2026-10-06）：episode 的相机列表里，`from_ts` / `to_ts` 指 `url` 所给媒体里的时间：一个文件装多条 episode 时，经平台转码的相机从 0 开始，
+    `transcode_url` 也总是从这条 episode 的起点开始（原先按共用文件里的时间定位，这类相机显示的时刻不对）。可视化的字段树（`GET /datasets/{id}/viz` 的 `field_tree`）
+    的节点名与属性一律是数据集元数据的原文：特征在 `info.json` 里的条目逐键列出，mcap 的 topic 列出 channel、schema 与统计的字段。相机接口新增 `segment=true`：
+    LeRobot v3 或 Lance 的一条 episode 从它与别的 episode 共用的文件里切出的那一段，或把索引挪到文件开头的单条 mp4；部署打开这项时，episode 记录里的地址就带着它。
+    深度：LeRobot 或 Lance 的深度列是播放器能画的 `depth` 流（`VizStream.depth`），episode 在 `streams` 里列出各自的深度帧包，从
+    `GET /datasets/{id}/episodes/{index}/streams/{stream}.frames` 与 `.json`（任务级同样一对）读取——每帧一张 16 位灰度 PNG，索引里带深度的单位与取值范围。
+    mcap 数据集的深度 topic（16 位 PNG、ROS compressedDepth、16UC1 / mono16 / 32FC1 原始图）列在字段映射的 `depths` 里（字段映射 1.1），同样能画。
+    登记的数据集有一份所有人共用的展示配置（`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`）：可视化的缺省布局、相机的顺序与显示名以及哪几路不进布局模版
+    （`VizCamera.hidden`）、LeRobot 与 Lance 取代自动分组的曲线分组、字幕轨、缺省倍速与循环；展示模型带着生效的那一份（`VizDataset.display`）。
+
+    **2.8.0**（2026-10-07）：检测项分类表升到 2.0。检测项的 `kind` 只有 `defect`、`phenomenon`、`control` 三种（深度空洞、噪声一项改为 `defect`）；
+    删掉了五项（跨数据集的同源版本、长时任务两个对照项，数据集统计、同源派生、任务描述的形态），各维度重新编号、去掉空号：MV-5 改为 MV-4，
+    TASK-5 到 TASK-8 改为 TASK-4 到 TASK-7，TASK-10 到 TASK-12 改为 TASK-8 到 TASK-10，LABEL-2 到 LABEL-5 改为 LABEL-1 到 LABEL-4，SET-4、SET-5 改为 SET-2、SET-3。
+    这一版之前跑的任务，结果里仍是原来的编号。时长离群、样本偏少的技能族仍作为数据集级的发现报出，不挂检测项。
+
     **3.0.0**（2026-10-06）：技能画像下线，模块 `skill_profile`、`profile_vlm` 档与 `profile` 阶段一并移除。
     裁决改成一张卡片只问一个问题：`label` 这条问题线去掉，「标注与画面疑似不符」并入 `task_verdict` 的问题；
     判成败时可以顺带带上 `new_label`，就是人改写的任务描述，原来的 `adopt_suggestion`、`custom_label`、
@@ -160,6 +215,10 @@ info:
     **4.1.0**（2026-10-07）：没有「等全集」的档了。精确去重和别的检查一样是 CPU 块里逐条跑的一段，
     所以任务 `progress.stages` 里不再出现 `full_set`（这之前排好计划的任务仍带着它，字段保留在契约里），
     模块注册表的 `full_set_stages` 是空数组。
+
+    **4.2.0**（2026-10-08）：两条线合到一起——2.6.0 到 2.8.0 的新增（EEF 叠加、可视化切片 / 深度 / 展示配置、分类表 2.0）
+    与 3.0.0 到 4.1.0 的删减都在这一份接口里；任务成败判定的检测项用分类表 2.0 的编号（TASK-4、TASK-10、LABEL-2、LABEL-4）。
+
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -961,6 +1020,63 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/VizMetaFile"}
         default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/viz/display:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetVizDisplay
+      summary: The dataset's display configuration - default layout, cameras, curve groups, subtitle track, playback - and the defaults an editor starts from (2.7.0, design doc 21 §6)
+      description: |
+        One configuration per registration, shared by everyone who opens the dataset; `config` is
+        null until one is saved. `defaults` are what the visualizer does without one: the cameras in
+        their own order, the automatic curve groups and the dimensions they are made of (LeRobot and
+        Lance; an mcap dataset's curves come from its field mapping), the annotation sources a
+        subtitle track can come from.
+      responses:
+        "200":
+          description: the configuration
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      tags: [viz]
+      operationId: putDatasetVizDisplay
+      summary: Replace the display configuration, checked against the dataset's current model (2.7.0)
+      description: |
+        The whole configuration is replaced and its version goes up by one. What it names must be in
+        the dataset's current model - cameras, curve dimensions (a feature and its dimension), the
+        annotation source of the track, the layout's cells - or it fails with `validation_failed` and
+        `details.errors` per item; an mcap dataset takes no curve groups. A configuration saved before
+        the dataset changed is not refused when read: what no longer matches is left out.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VizDisplayPut"}
+      responses:
+        "200":
+          description: saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [viz]
+      operationId: deleteDatasetVizDisplay
+      summary: Restore the defaults - the whole configuration is removed; its version still goes up (2.7.0)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: restored
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizDisplay"}
+        default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/episodes/{index}/viz:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -1008,9 +1124,10 @@ paths:
     get:
       tags: [viz]
       operationId: getDatasetCameraVideo
-      summary: A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range
+      summary: A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux, an episode's slice (2.7.0) or an H.264 transcode - with Range
       parameters:
         - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/VizSegment"
         - $ref: "#/components/parameters/RangeHeader"
       responses:
         "200":
@@ -1052,6 +1169,45 @@ paths:
       tags: [viz]
       operationId: getDatasetCameraFrameIndex
       summary: The index of a camera's frame pack - time, offset and size of every frame (and, for a sample pack, its keyframes and codec string)
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/streams/{stream}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getDatasetStreamFrames
+      summary: The frame pack of a depth stream - one 16-bit greyscale PNG a frame back to back, read by Range with the index; 202 with progress while the Daemon makes it the first time (2.7.0, design doc 21 §5)
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/streams/{stream}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getDatasetStreamFrameIndex
+      summary: The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0)
       responses:
         "200":
           description: the index
@@ -2176,7 +2332,7 @@ paths:
                         counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
                         pass_rate: 0.82
                         reject_reasons:
-                          - {module: task_success, kind: finding, code: failure, item: TASK-5, count: 5}
+                          - {module: task_success, kind: finding, code: failure, item: TASK-4, count: 5}
                           - {module: timestamp_check, kind: finding, code: fragment, item: STRM-5, count: 1}
                           - {module: dedup, kind: duplicate, code: duplicate, item: SET-1, count: 1}
                         token_usage:
@@ -2188,17 +2344,17 @@ paths:
                           requests_unknown_usage: 41
                         duration_s: null
                         reject_items:
-                          - {item: TASK-5, count: 5}
+                          - {item: TASK-4, count: 5}
                           - {item: SET-1, count: 1}
                           - {item: STRM-5, count: 1}
                         policy: {preset: default, version: '1'}
                         coverage:
-                          taxonomy_version: '1.2'
+                          taxonomy_version: '1.3'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
-                            ACT-8, AV-1, AV-3, TASK-1, TASK-5, TASK-8, LABEL-2, LABEL-3, LABEL-5, SET-1, SET-3, TASK-12]
+                            ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-1, LABEL-2, LABEL-4, SET-1, TASK-10]
                           not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
-                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-5, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-6,
-                            TASK-7, LABEL-1, LABEL-4, SET-4, SET-5, STRM-9, IMG-12, IMG-13, IMG-14, TASK-10, TASK-11, SET-6]
+                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-5,
+                            TASK-6, LABEL-3, SET-2, SET-3, STRM-9, IMG-12, IMG-13, IMG-14, TASK-8, TASK-9]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:
@@ -2208,8 +2364,8 @@ paths:
                           - {item: AV-1, episodes: 2, blocking: 0, review: 0, info: 2}
                           - {item: AV-3, episodes: 4, blocking: 0, review: 0, info: 4}
                           - {item: TASK-1, episodes: 17, blocking: 0, review: 0, info: 17}
-                          - {item: TASK-5, episodes: 11, blocking: 5, review: 6, info: 0}
-                          - {item: LABEL-5, episodes: 5, blocking: 0, review: 5, info: 0}
+                          - {item: TASK-4, episodes: 11, blocking: 5, review: 6, info: 0}
+                          - {item: LABEL-4, episodes: 5, blocking: 0, review: 5, info: 0}
                           - {item: SET-1, episodes: 1, blocking: 1, review: 0, info: 0}
                       modules:
                         - id: timestamp_check
@@ -2245,7 +2401,7 @@ paths:
                             unassessable: []
                             dataset_findings:
                               - code: duration_outlier
-                                item: SET-3
+                                item: null
                                 severity: low
                                 message_zh: 3 条时长远离全库四分位（ep 6、ep 23、ep 45）
                                 unit: dataset
@@ -2291,8 +2447,8 @@ paths:
                             flagged_episodes: 11
                             levels: {blocking: 5, review: 6, info: 0}
                             items:
-                              - {item: TASK-5, code: failure, level: blocking, episodes: 5, share: 0.104}
-                              - {item: TASK-5, code: uncertain, level: review, episodes: 6, share: 0.125}
+                              - {item: TASK-4, code: failure, level: blocking, episodes: 5, share: 0.104}
+                              - {item: TASK-4, code: uncertain, level: review, episodes: 6, share: 0.125}
                             unassessable: []
                       skipped_modules:
                         - {id: kinematic_limits, reason: 预检没读到机器人型号（robot_type 为 unknown），创建任务时选择跳过；其余模块照常}
@@ -2643,6 +2799,29 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/VizSeries"}
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/eef-overlay:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getTaskEpisodeEefOverlay
+      summary: The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
+      description: |
+        Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
+        plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+        `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
+        bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
+        own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
+        past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
+        bundle has no such episode.
+      responses:
+        "200":
+          description: one entry per camera of the bundle's sample
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EefOverlay"}
+        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}/cameras/{camera}.mp4:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -2658,6 +2837,7 @@ paths:
         memory as before 2.4.0.
       parameters:
         - $ref: "#/components/parameters/VizTranscode"
+        - $ref: "#/components/parameters/VizSegment"
         - $ref: "#/components/parameters/RangeHeader"
       responses:
         "200":
@@ -2668,6 +2848,45 @@ paths:
           $ref: "#/components/responses/VizPending"
         "416":
           description: the range is outside the file
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/streams/{stream}.frames:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getTaskStreamFrames
+      summary: The frame pack of a depth stream of the task's input (as getDatasetStreamFrames)
+      parameters:
+        - $ref: "#/components/parameters/RangeHeader"
+      responses:
+        "200":
+          $ref: "#/components/responses/VizFrames"
+        "206":
+          $ref: "#/components/responses/VizFramesRange"
+        "202":
+          $ref: "#/components/responses/VizPending"
+        "416":
+          description: the range is outside the pack
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/streams/{stream}.json:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+      - $ref: "#/components/parameters/PathStream"
+    get:
+      tags: [viz]
+      operationId: getTaskStreamFrameIndex
+      summary: The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0)
+      responses:
+        "200":
+          description: the index
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VizFrameIndex"}
+        "202":
+          $ref: "#/components/responses/VizPending"
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}/cameras/{camera}.frames:
     parameters:
@@ -2779,6 +2998,7 @@ paths:
                       - episode_index: 29
                         status: pending
                         questions:
+
                           - line: task_verdict
                             source_module: task_success
                             reason: 证据不足，弃权：画面看不出米有没有倒进杯子里
@@ -2788,7 +3008,7 @@ paths:
                             priority: null
                             latest_decision: null
                             codes: [uncertain]
-                            items: [TASK-5]
+                            items: [TASK-4]
                       - episode_index: 4
                         status: pending
                         questions:
@@ -2801,7 +3021,7 @@ paths:
                             priority: 高置信
                             latest_decision: null
                             codes: [label_conflict_suspect]
-                            items: [LABEL-5]
+                            items: [LABEL-4]
                     next_cursor: null
                     has_more: false
                     counts: {decided: 0, pending: 10, unapplied: 0}
@@ -3066,11 +3286,27 @@ components:
       required: true
       description: the camera's `key` in the presentation model
       schema: {$ref: "#/components/schemas/VizCameraKey"}
+    PathStream:
+      name: stream
+      in: path
+      required: true
+      description: the stream's `key` in the presentation model (a depth stream, 2.7.0)
+      schema: {type: string, pattern: "^[0-9A-Za-z_-]{1,96}$"}
     RangeHeader:
       name: Range
       in: header
       description: one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`)
       schema: {type: string}
+    VizSegment:
+      name: segment
+      in: query
+      description: >-
+        true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding;
+        its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a
+        single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's
+        url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason
+        segment_disabled when it is off, not_segmented when the camera is read as it is
+      schema: {type: boolean, default: false}
     VizTranscode:
       name: transcode
       in: query
@@ -3525,7 +3761,7 @@ components:
                   dimension: {type: string}
                   name_zh: {type: string}
                   explain_zh: {type: string}
-                  kind: {enum: [defect, phenomenon, reference, control], description: "control: a legal case that must not be reported"}
+                  kind: {enum: [defect, phenomenon, control], description: "control: a legal case that must not be reported"}
                   level: {enum: [episode, dataset]}
         modules:
           type: array
@@ -3583,7 +3819,7 @@ components:
     TaxonomyItemId:
       type: string
       pattern: "^[A-Z]+-[0-9]+$"
-      description: an item of the taxonomy (C6), e.g. FILE-3, MV-5
+      description: an item of the taxonomy (C6), e.g. FILE-3, MV-4
     FindingCode:
       type: object
       additionalProperties: false
@@ -4875,7 +5111,8 @@ components:
       description: |
         How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
         public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
-        Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+        Daemon rewraps the stream into mp4 without re-encoding (an mcap camera, or with CURATOR_VIZ_SEGMENT
+        a LeRobot v3 / Lance episode's slice and a moov-at-end file put in front, 2.7.0); frames: a JPEG frame pack
         drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
         player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
         blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.
@@ -4886,10 +5123,10 @@ components:
     VizCamera:
       type: object
       additionalProperties: false
-      required: [key, name, source, kind, access, codec, codec_string, width, height, fps, transcoded, reason]
+      required: [key, name, source, kind, access, codec, codec_string, width, height, fps, transcoded, reason, hidden]
       properties:
         key: {$ref: "#/components/schemas/VizCameraKey"}
-        name: {type: string}
+        name: {type: string, description: "the display configuration's name for it, else its own"}
         source: {type: string, description: "the LeRobot feature key or the mcap topic"}
         kind: {enum: [video, frames], description: "video: an mp4 for <video>; frames: a JPEG frame pack"}
         access: {$ref: "#/components/schemas/VizAccess"}
@@ -4901,6 +5138,7 @@ components:
         pix_fmt: {type: [string, "null"]}
         transcoded: {type: boolean, description: "the Daemon re-encodes it (access transcode)"}
         reason: {type: [string, "null"], description: "why transcode or unsupported, in Chinese"}
+        hidden: {type: boolean, description: "the display configuration leaves it out of the layout templates; it is still offered in the + / 更换 menus (2.7.0)"}
     VizLine:
       type: object
       additionalProperties: false
@@ -4922,10 +5160,40 @@ components:
         unit: {type: [string, "null"]}
         lines: {type: array, items: {$ref: "#/components/schemas/VizLine"}, description: "series: one per drawn number, state and action of the same name together"}
         smart: {type: boolean, description: "placed by the smart layout"}
-        available: {type: boolean, description: "false: listed (field tree, + menu) but not drawable in this phase"}
+        available: {type: boolean, description: "false: listed (field tree, + menu) but not drawable; depth streams are drawable since 2.7.0"}
         reason: {type: [string, "null"]}
         sources: {type: array, items: {type: string}, description: "feature keys or topics it is read from"}
         rate_hz: {type: [number, "null"]}
+        depth:
+          description: a depth stream's picture (2.7.0, design doc 21 §5)
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDepthStream"
+    VizDepthStream:
+      type: object
+      additionalProperties: false
+      required: [width, height, unit, pair_camera]
+      properties:
+        width: {type: [integer, "null"]}
+        height: {type: [integer, "null"]}
+        unit: {type: string, description: "the unit of the pack's values: mm"}
+        pair_camera:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizCameraKey"
+          description: the camera the depth belongs to (by name; the player can draw the depth over it when their aspect ratios agree)
+    VizEpisodeStream:
+      type: object
+      additionalProperties: false
+      required: [key, kind, url, index_url, offset_s, reason]
+      description: a stream whose pictures an episode reads from its own pack (depth, 2.7.0)
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_-]{1,96}$"}
+        kind: {enum: [depth]}
+        url: {type: [string, "null"], description: "the frame pack (getDatasetStreamFrames / getTaskStreamFrames); null when unsupported"}
+        index_url: {type: [string, "null"], description: "its index (VizFrameIndex with codec png16 and depth)"}
+        offset_s: {type: number, description: "episode time of the stream's first frame"}
+        reason: {type: [string, "null"]}
     VizAnnotationSource:
       type: object
       additionalProperties: false
@@ -4957,7 +5225,11 @@ components:
         names: {type: [array, "null"], items: {type: string}}
         detail:
           type: object
-          description: attributes shown in the detail pane
+          description: >-
+            the node's attributes as the dataset's own metadata writes them (2.7.0, design doc 21 §3, D71):
+            a LeRobot / Lance feature's info.json entry key by key, a file's size, an mcap topic's channel,
+            schema and statistics fields, a Lance table's num_rows and columns; nested objects have their
+            keys joined with dots (info.video.codec), lists are JSON text
           additionalProperties: {type: [string, number, boolean, "null"]}
         camera: {$ref: "#/components/schemas/VizCameraKey"}
         stream: {type: string, description: "the VizStream it is drawn as"}
@@ -4984,7 +5256,7 @@ components:
       type: object
       additionalProperties: false
       required: [scope, id, dataset_id, name, format, fps, episode_count, episode_indices, total_frames,
-                 robot_type, cameras, streams, annotation_sources, field_tree, mapping, transcode, warnings, fingerprint]
+                 robot_type, cameras, streams, annotation_sources, field_tree, mapping, transcode, warnings, fingerprint, display]
       properties:
         scope: {enum: [dataset, task]}
         id: {type: string, description: "the dataset id, or the task id for scope task"}
@@ -5010,6 +5282,156 @@ components:
             enabled: {type: boolean, description: "CURATOR_VIZ_TRANSCODE"}
         warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
         fingerprint: {type: string, description: "the metadata fingerprint the model and its caches belong to"}
+        display:
+          description: >-
+            the display configuration in effect (2.7.0): cameras, curve groups and the track are already
+            applied to this model; the layout, hidden lines and playback are the player's. For scope task
+            the registration's cameras, curve groups and track only
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayConfig"
+    VizDepthView:
+      type: object
+      additionalProperties: false
+      required: [cmap, lo, hi, overlay, opacity]
+      description: how a depth cell draws (2.7.0, design doc 21 §5.5)
+      properties:
+        cmap: {enum: [turbo, gray]}
+        lo: {type: [number, "null"], minimum: 0, description: "the colour scale's near end in millimetres; null: the episode's 2 %"}
+        hi: {type: [number, "null"], minimum: 0, description: "the far end; null: the episode's 98 %"}
+        overlay: {type: boolean, description: "drawn over the camera it is paired with"}
+        opacity: {type: number, minimum: 0.05, maximum: 1}
+    VizDisplayCell:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {enum: [video, curve, depth, empty]}
+        key: {type: string, minLength: 1, maxLength: 256, description: "a camera's key (video), a curve group's (curve) or a depth stream's (depth); absent for empty"}
+        view: {$ref: "#/components/schemas/VizDepthView"}
+    VizDisplayLayout:
+      type: object
+      additionalProperties: false
+      required: [template]
+      properties:
+        template: {enum: [smart, video, curve, custom], description: "custom: the cells as saved; the others are laid out anew for the window"}
+        cols: {type: integer, minimum: 1, maximum: 4, description: "custom only"}
+        rows: {type: integer, minimum: 1, maximum: 4, description: "custom only"}
+        cells: {type: array, maxItems: 16, items: {$ref: "#/components/schemas/VizDisplayCell"}, description: "custom only: cols × rows cells, row by row"}
+    VizDisplayCamera:
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key: {$ref: "#/components/schemas/VizCameraKey"}
+        name: {type: [string, "null"], minLength: 1, maxLength: 64, description: "shown instead of the camera's own name; null: its own"}
+        hidden: {type: boolean, description: "left out of the layout templates; still offered in the + / 更换 menus"}
+    VizDisplayLine:
+      type: object
+      additionalProperties: false
+      required: [source, dim, name, role]
+      properties:
+        source: {type: string, minLength: 1, maxLength: 256, description: "the feature key"}
+        dim: {type: integer, minimum: 0, description: "the dimension within the feature"}
+        name: {type: string, minLength: 1, maxLength: 128}
+        role: {enum: [state, action, other], description: "state solid, action dashed"}
+    VizDisplayGroup:
+      type: object
+      additionalProperties: false
+      required: [key, name, smart, lines]
+      properties:
+        key: {type: string, pattern: "^[0-9A-Za-z_.-]{1,96}$", description: "the stream key the group is drawn and asked for by"}
+        name: {type: string, minLength: 1, maxLength: 128}
+        unit: {type: [string, "null"], maxLength: 32}
+        smart: {type: boolean, description: "shown by the smart layout"}
+        lines: {type: array, minItems: 1, maxItems: 64, items: {$ref: "#/components/schemas/VizDisplayLine"}}
+    VizDisplayConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        How a registered dataset is shown by default (2.7.0, design doc 21 §6); every part may be
+        absent or null - the platform's default
+      properties:
+        layout:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayLayout"
+        cameras:
+          type: [array, "null"]
+          maxItems: 64
+          items: {$ref: "#/components/schemas/VizDisplayCamera"}
+          description: in display order; cameras not named follow in their own order
+        curves:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            groups:
+              type: [array, "null"]
+              maxItems: 64
+              items: {$ref: "#/components/schemas/VizDisplayGroup"}
+              description: LeRobot and Lance - the curve groups instead of the automatic ones; null - automatic
+            hidden:
+              type: object
+              description: per curve group key, the names of the lines not drawn
+              additionalProperties:
+                type: array
+                maxItems: 64
+                items: {type: string, minLength: 1, maxLength: 128}
+        track: {type: [string, "null"], maxLength: 96, description: "the annotation source (a key of annotation_sources) shown as the subtitle track"}
+        playback:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            speed: {enum: [1, 1.5, 2]}
+            loop: {type: boolean}
+    VizDisplay:
+      type: object
+      additionalProperties: false
+      required: [dataset_id, config, version, updated_at, defaults]
+      properties:
+        dataset_id: {type: string}
+        config:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/VizDisplayConfig"
+        version: {type: integer, minimum: 0, description: "goes up by one with every save and every restore; 0 - never saved"}
+        updated_at: {type: [integer, "null"]}
+        defaults:
+          type: object
+          additionalProperties: false
+          required: [cameras, groups, dimensions, tracks, groups_editable]
+          description: what the visualizer does without a configuration
+          properties:
+            cameras:
+              type: array
+              description: in the dataset's own order
+              items:
+                type: object
+                additionalProperties: false
+                required: [key, name, source]
+                properties:
+                  key: {$ref: "#/components/schemas/VizCameraKey"}
+                  name: {type: string}
+                  source: {type: string}
+            groups: {type: array, items: {$ref: "#/components/schemas/VizDisplayGroup"}, description: "the automatic curve groups (empty for mcap)"}
+            dimensions: {type: array, items: {$ref: "#/components/schemas/VizDisplayLine"}, description: "every dimension a group may draw, with its automatic name and role"}
+            tracks:
+              type: array
+              description: the annotation sources a subtitle track can come from
+              items:
+                type: object
+                additionalProperties: false
+                required: [key, name]
+                properties:
+                  key: {type: string}
+                  name: {type: string}
+            groups_editable: {type: boolean, description: "false for mcap: its curves come from the field mapping"}
+    VizDisplayPut:
+      type: object
+      additionalProperties: false
+      required: [config]
+      properties:
+        config: {$ref: "#/components/schemas/VizDisplayConfig"}
     VizEpisodeItem:
       type: object
       additionalProperties: false
@@ -5074,9 +5496,9 @@ components:
             itself (WebCodecs); it falls back to `url`. Null when CURATOR_VIZ_CLIENT_DECODE is off,
             for any other camera, or a stream without a keyframe, without parameter sets or with B
             slices.
-        transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one"}
-        from_ts: {type: [number, "null"], description: "LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts)"}
-        to_ts: {type: [number, "null"]}
+        transcode_url: {type: [string, "null"], description: "the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one. Its time 0 is the episode's start: played instead of url it runs from 0 to to_ts - from_ts (2.7.0, design doc 21 §4.5)"}
+        from_ts: {type: [number, "null"], description: "where the episode starts in the media url serves (LeRobot v3 and Lance: a time in the file holding several episodes; 0 for a transcode, which starts at the episode's start); media time = t - offset_s + from_ts (2.7.0, design doc 21 §4.5)"}
+        to_ts: {type: [number, "null"], description: "where the episode ends in the media url serves (the next episode's first frame in a shared file)"}
         offset_s: {type: number, description: "episode time of the camera's first frame (video time 0 after from_ts)"}
         transcoded: {type: boolean}
         expires_at: {type: [integer, "null"], description: "epoch ms when a presigned url stops working"}
@@ -5133,7 +5555,7 @@ components:
     VizEpisode:
       type: object
       additionalProperties: false
-      required: [scope, id, index, duration_s, frames, fps, task, timeline, cameras, annotations, check_clock, warnings]
+      required: [scope, id, index, duration_s, frames, fps, task, timeline, cameras, streams, annotations, check_clock, warnings]
       properties:
         scope: {enum: [dataset, task]}
         id: {type: string}
@@ -5152,6 +5574,7 @@ components:
                 source: {type: string, description: "原始标注 / 人工改标 / 自产描述"}
         timeline: {$ref: "#/components/schemas/VizTimeline"}
         cameras: {type: array, items: {$ref: "#/components/schemas/VizEpisodeCamera"}}
+        streams: {type: array, items: {$ref: "#/components/schemas/VizEpisodeStream"}, description: "depth streams and their packs (2.7.0)"}
         annotations: {$ref: "#/components/schemas/VizAnnotations"}
         check_clock:
           oneOf:
@@ -5180,13 +5603,69 @@ components:
               values: {type: array, items: {type: [number, "null"]}}
         total_points: {type: integer, minimum: 0, description: "raw samples in the window"}
         downsampled: {type: boolean}
+    EefOverlay:
+      type: object
+      additionalProperties: false
+      required: [task_id, episode_index, cameras]
+      properties:
+        task_id: {type: string}
+        episode_index: {type: integer, minimum: 0}
+        cameras:
+          type: array
+          items: {$ref: "#/components/schemas/EefOverlayCamera"}
+    EefOverlayCamera:
+      type: object
+      additionalProperties: false
+      required: [camera_id, viz_camera, image_size_wh, fps, media_frames, skipped, layers]
+      properties:
+        camera_id: {type: string, description: "the bundle's camera id, as in the opinion record's `cameras`"}
+        viz_camera:
+          type: [string, "null"]
+          description: "key of the `VizEpisodeCamera` playing the same file (LeRobot) or topic (mcap); null when none does"
+        image_size_wh:
+          type: array
+          items: {type: integer, minimum: 1}
+          minItems: 2
+          maxItems: 2
+          description: "the source video's size; every coordinate is a pixel of it"
+        fps: {type: [number, "null"], description: "the camera clip's frame rate"}
+        media_frames:
+          type: array
+          items: {type: [integer, "null"], minimum: 0}
+          description: >-
+            per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a
+            LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps.
+        skipped: {type: [string, "null"], description: "why the opinion skipped this camera; its layers are then empty"}
+        layers:
+          type: array
+          description: drawn in order, later on top
+          items: {$ref: "#/components/schemas/EefOverlayLayer"}
+    EefOverlayLayer:
+      type: object
+      additionalProperties: false
+      required: [kind, label, color, width, frames]
+      properties:
+        kind:
+          enum: [point, segment, arrow, polyline]
+          description: >-
+            point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end);
+            polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+        label: {type: [string, "null"], description: "text by the mark (P, A, B, a UMI hand)"}
+        color: {type: string, pattern: "^#[0-9a-f]{6}$"}
+        width: {type: number, minimum: 0, description: "line width in source pixels at full size"}
+        frames:
+          type: array
+          description: one entry per sample frame; null where nothing is drawn
+          items:
+            type: [array, "null"]
+            items: {type: [number, "null"]}
     VizFrameIndex:
       type: object
       additionalProperties: false
       required: [camera, codec, width, height, count, t, offset, size, bytes]
       properties:
-        camera: {$ref: "#/components/schemas/VizCameraKey"}
-        codec: {enum: [jpeg, png, h264, h265], description: "h264 / h265: a sample pack (2.5.0)"}
+        camera: {$ref: "#/components/schemas/VizCameraKey", description: "the camera's key, or a depth stream's (2.7.0)"}
+        codec: {enum: [jpeg, png, h264, h265, png16], description: "h264 / h265: a sample pack (2.5.0); png16: a depth pack, every frame a 16-bit greyscale PNG (2.7.0)"}
         width: {type: [integer, "null"]}
         height: {type: [integer, "null"]}
         count: {type: integer, minimum: 0}
@@ -5197,6 +5676,17 @@ components:
         offset: {type: array, items: {type: integer}, description: "byte offset of every frame in the pack"}
         size: {type: array, items: {type: integer}}
         bytes: {type: integer, minimum: 0, description: "the pack's size"}
+        depth:
+          type: object
+          additionalProperties: false
+          required: [unit, scale, invalid, lo, hi]
+          description: a depth pack's values (2.7.0, design doc 21 §5.2) - a pixel's value times scale is a depth in unit
+          properties:
+            unit: {type: string, description: "mm"}
+            scale: {type: number}
+            invalid: {type: integer, description: "the value of a hole (no depth): 0"}
+            lo: {type: [integer, "null"], description: "the episode's 2 % value of its valid pixels (the colour scale's default low end)"}
+            hi: {type: [integer, "null"], description: "its 98 % value"}
     VizMediaPending:
       type: object
       additionalProperties: false
@@ -5290,13 +5780,14 @@ components:
         start_s: {type: [number, "null"], description: "first message, seconds after the file's first message"}
         end_s: {type: [number, "null"]}
         image:
+          description: a camera's or a depth topic's picture (depth since 2.7.0)
           oneOf:
             - type: "null"
             - type: object
               additionalProperties: false
               required: [codec, width, height]
               properties:
-                codec: {type: string}
+                codec: {type: string, description: "jpeg, png, h264, h265, raw ...; a depth topic: png16, cdepth, cdepth32, raw16, raw32f, rvl"}
                 width: {type: [integer, "null"]}
                 height: {type: [integer, "null"]}
         fields:
@@ -5309,7 +5800,7 @@ components:
             properties:
               path: {type: string}
               size: {type: integer, minimum: 1}
-        use: {enum: [camera, series, task, segments, ignore, unmapped], description: "what the draft does with it"}
+        use: {enum: [camera, depth, series, task, segments, ignore, unmapped], description: "what the draft does with it; depth: a depth picture (2.7.0, design doc 21 §5.4)"}
         role: {enum: [state, action, other, null]}
         name: {type: string}
         notes: {type: array, items: {type: string}, description: "Chinese: high rate, unsupported encoding ..."}

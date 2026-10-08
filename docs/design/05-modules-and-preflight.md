@@ -136,6 +136,11 @@ curation preflight --input ...
 mcap 录制中断（文件尾没有结束标识）、mcap 摘要区 CRC（摘要区的字节本来就在读）。它们只进 `warnings`，不改变模块可用性。
 要读数据的完整性检查（结构、零填充、CRC、v1 的逐条结构校验、可选的逐帧解码）由质检最前面的「数据完整性」模块做（D50、D51）。
 
+2026-10-05 起，认出 LeRobot / mcap / Lance 之后先看有没有 **Git LFS 指针文件**：从没装 Git LFS 的 git clone 上传的数据集（HuggingFace 的仓库把数据放在 LFS 里），
+数据文件都是一百多字节的占位文本。文件清单里不到 1 KiB 的数据文件（parquet、mp4、mcap、lance、blob、arrow、json / jsonl）取前 5 个读开头几十字节，
+是指针就 `metadata_invalid`，原因写明是 LFS 指针、举出文件名、让用 `git lfs pull` 或 `hf download` 拿到真文件再上传（控制台显示为中文）；
+没有这么小的数据文件的数据集不多读一个字节。以前这种数据集报的是「Parquet magic bytes not found」之类，看不出原因。
+
 **mcap 与 Lance**（D44）的 ③④ 换一种读法，⑤⑥ 不变：
 
 | | mcap | Lance（lerobot-lance-convert 0.3.0 起） |

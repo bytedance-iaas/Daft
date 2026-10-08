@@ -29,11 +29,11 @@ describe('records of either format read as 1.0 (design doc 17 §1: what the modu
   it('follows the backend rules (records.legacy_verdict): error, blocking, review, score, nothing assessed, pass', () => {
     expect(recordVerdict(v2('timestamp_check', { status: 'error', assessed: [] }), reg)).toBe('error');
     expect(recordVerdict(v2('timestamp_check', { findings: [finding('gap', 'STRM-3')] }), reg)).toBe('fail');
-    expect(recordVerdict(v2('task_success', { findings: [finding('uncertain', 'TASK-5')] }), reg)).toBe('abstain');
+    expect(recordVerdict(v2('task_success', { findings: [finding('uncertain', 'TASK-4')] }), reg)).toBe('abstain');
     expect(recordVerdict(v2('motion_quality', { readings: { score: 0.1 } }), reg)).toBe('scored');   // P18: never a reject
     expect(recordVerdict(v2('visual_quality', { assessed: [] }), reg)).toBe('abstain');
     // only the dataset-level items: nothing of its own per episode was assessed
-    expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-6', 'SET-3'] }), reg)).toBe('abstain');
+    expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-6'] }), reg)).toBe('abstain');
     expect(recordVerdict(v2('motion_quality', { assessed: ['ACT-1', 'ACT-6'] }), reg)).toBe('pass');
     // an item the module rejects on that it could not assess: an abstention, as 1.0's passed=None
     expect(recordVerdict(v2('kinematic_limits', { assessed: ['ACT-3'], unassessable: [{ item: 'ACT-4', reason: 'not_applicable', message_zh: '算不出来' }] }), reg)).toBe('abstain');
@@ -47,7 +47,7 @@ describe('records of either format read as 1.0 (design doc 17 §1: what the modu
     const legacy = asLegacyRecord(v2('timestamp_check', { findings: [finding('gap', 'STRM-3')] }), reg);
     expect(legacy).toMatchObject({ episode_index: 3, module: 'timestamp_check', verdict: 'fail', passed: false, score: null, gate: 'none' });   // no gate in registry 2.0
     expect(legacy.details).toEqual({ reason: 'kept as v1 wrote it' });
-    expect(asLegacyRecord(v2('task_success', { findings: [finding('uncertain', 'TASK-5')] }), reg).passed).toBeNull();
+    expect(asLegacyRecord(v2('task_success', { findings: [finding('uncertain', 'TASK-4')] }), reg).passed).toBeNull();
   });
 });
 

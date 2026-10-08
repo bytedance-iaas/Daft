@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import depth as D
 from . import mcap_messages as M
 
 #: messages of a video topic read at most to find its picture size (a recording that starts mid-GOP
@@ -30,11 +31,14 @@ class TopicProbe:
     message_encoding: str | None
     count: int | None
     first_ns: int | None = None
-    kind: str = "unknown"                     # camera | series | text | other | unknown
+    kind: str = "unknown"                     # camera | depth | series | text | other | unknown
     codec: str | None = None
+    format: str | None = None                 # the first picture message's own format string
     width: int | None = None
     height: int | None = None
     fields: list[dict] | None = None          # [{path, size}] of the first message
+    leaves: list[str] | None = None           # the first message's numeric leaf paths (at most 512)
+    image: dict | None = None                 # a raw image's encoding, size and row stride
     names: list[str] | None = None            # a name list (JointState.name)
     strings: list[str] | None = None          # paths of the first message's text fields
     text: str | None = None
@@ -131,10 +135,26 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
             tp.decodable = channel.message_encoding not in ("protobuf", "cdr", "json")
             tp.kind = "unknown"
             return True
+        raw = M.raw_kind(getattr(schema, "name", None), decoded)
+        if raw == "pointcloud":                    # 3-D points: no picture, no curve (design doc 21 §2)
+            tp.kind = "other"
+            return True
+        if raw == "raw":
+            tp.image = M.raw_image_info(decoded)
+            depth = D.raw_depth_codec(tp.image["encoding"])       # 16UC1 / mono16 / 32FC1: depth (design doc 21 §5.4)
+            tp.kind, tp.codec = ("depth", depth) if depth else ("camera", "raw")
+            tp.width, tp.height = tp.image["width"], tp.image["height"]
+            return True
         frame = M.as_frame(decoded)
         if frame is not None:
             fmt, data = frame
+            depth = D.frame_depth_codec(fmt, data)
+            if depth:                                  # a 16-bit PNG, a ROS compressedDepth picture
+                tp.kind, tp.codec, tp.format = "depth", depth, fmt or None
+                tp.width, tp.height = D.depth_size(depth, data)
+                return True
             tp.kind = "camera"
+            tp.format = fmt or None
             tp.codec = M.frame_codec(fmt, data)
             if tp.codec in ("jpeg", "png"):
                 tp.width, tp.height = M.picture_size(tp.codec, data)
@@ -153,6 +173,7 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
         if fields:
             tp.kind = "series"
             tp.fields = fields
+            tp.leaves = [path for path, _ in M.leaves(decoded, limit=512)]
             tp.names = M.names_at(decoded, "name") or None
             tp.check_fields, tp.check_whole = _check_reads(decoded, fields)
         elif text:

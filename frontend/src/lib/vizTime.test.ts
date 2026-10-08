@@ -11,6 +11,7 @@ import {
   firstEpisode,
   frameStep,
   hasEpisode,
+  mediaBinding,
   mediaTime,
   segmentAt,
   stepFrom,
@@ -104,5 +105,21 @@ describe('vizTime', () => {
     expect(evidenceRange({ frames: [30, 59] }, FPS30, 90, null)).toEqual([1, 2]);
     expect(evidenceRange({ frames: [null, 4] }, FPS30, 90, null)).toBeNull();
     expect(evidenceRange({}, FPS30, 90, null)).toBeNull();
+  });
+});
+
+describe('mediaBinding (design doc 21 §4.5)', () => {
+  const v3 = { url: '/d/top.mp4', transcode_url: '/d/top.mp4?transcode=1', offset_s: 0, from_ts: 3, to_ts: 5.4 };
+  it('binds url at from_ts / to_ts: times in what url serves', () => {
+    expect(mediaBinding(v3, v3.url)).toEqual({ offset: 0, from: 3, end: 5.4 });
+  });
+  it('starts the transcode played instead of url at the episode', () => {
+    const b = mediaBinding(v3, v3.transcode_url);
+    expect(b.from).toBe(0);
+    expect(b.end).toBeCloseTo(2.4);
+  });
+  it('a transcode url (access transcode) is bound as given, and whole files have no end', () => {
+    expect(mediaBinding({ ...v3, url: '/d/t.mp4', transcode_url: null, from_ts: 0, to_ts: 2.4 }, '/d/t.mp4')).toEqual({ offset: 0, from: 0, end: 2.4 });
+    expect(mediaBinding({ url: '/m.mp4', transcode_url: '/m.mp4?transcode=1', offset_s: 0.5, from_ts: null, to_ts: null }, '/m.mp4?transcode=1')).toEqual({ offset: 0.5, from: 0, end: null });
   });
 });

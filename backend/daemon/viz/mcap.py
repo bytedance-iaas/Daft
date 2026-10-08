@@ -22,7 +22,7 @@ import numpy as np
 from curation.streams.rangefile import RangeFile
 from curation.viz import mcap_messages as MM
 from curation.viz import mcap_probe as MP
-from curation.viz.mcap_episode import camera_keys, remux_samples, scan
+from curation.viz.mcap_episode import camera_keys, depth_keys, remux_samples, scan
 from curation.viz.series import json_values, thin, window
 
 from ..errors import ApiError
@@ -39,6 +39,16 @@ def _slug(text: str) -> str:
     import re
 
     return re.sub(r"[^0-9A-Za-z_.-]+", "_", text.lstrip("/")).strip("_.")[:120] or "x"
+
+
+def _leaves_at(tp: MP.TopicProbe | None, path: str) -> int:
+    """How many numbers the first message holds at ``path`` (``poses.0.position``: 3; ``*`` fans out)."""
+    import re
+
+    if tp is None or not tp.leaves:
+        return 0
+    pat = re.compile("^" + r"\.".join("[^.]+" if part == "*" else re.escape(part) for part in path.split(".")) + r"(\.|$)")
+    return sum(1 for leaf in tp.leaves if pat.match(leaf))
 
 
 class McapReader:
@@ -145,6 +155,7 @@ class McapReader:
             tp = probe.topics.get(c["topic"])
             cameras.append(self._camera(keys[c["topic"]], c, tp, probe))
         streams = self._streams(mapping, probe)
+        streams += self._depth_streams(mapping, probe, keys)
         sources = []
         seg = mapping.get("segments")
         if isinstance(seg, dict):
@@ -174,8 +185,12 @@ class McapReader:
             kind, access, reason = "video", "remux", None
         elif tp is None:
             kind, access, reason = "video", "unsupported", f"第一条 episode 里没有 topic {c['topic']}"
+        elif tp.kind == "depth":                       # a mapping made before depths were (design doc 21 §5.4)
+            kind, access, reason = "video", "unsupported", "这是深度图：到「mcap 配置」把它的用途改成「深度图」"
+        elif codec == "raw":
+            kind, access, reason = "video", "unsupported", "原始图像（raw）本期不支持"
         else:
-            kind, access, reason = "video", "unsupported", f"编码 {codec or '未知'} 本期不支持（RawImage / 未知编码）"
+            kind, access, reason = "video", "unsupported", f"编码 {codec or '未知'} 本期不支持"
         from curation.viz.lerobot_info import codec_string
 
         return {"key": key, "name": c.get("name") or key, "source": c["topic"], "kind": kind, "access": access,
@@ -196,7 +211,7 @@ class McapReader:
             labels = names or [f"dim_{i}" for i in range(total)]
         else:
             for f in fields:
-                n = sizes.get(f) or sum(v for k, v in sizes.items() if k.startswith(f + ".")) or 1
+                n = sizes.get(f) or sum(v for k, v in sizes.items() if k.startswith(f + ".")) or _leaves_at(tp, f) or 1
                 labels += MM.transform_labels(f, n, transforms.get(f)) if transforms.get(f) else (
                     [f] if n == 1 else [f"{f}.{i}" for i in range(n)])
         given = entry.get("labels")
@@ -231,23 +246,40 @@ class McapReader:
                         "rate_hz": tp.rate_hz(probe.end_ns) if tp else None})
         return [x for x in out if x["smart"]] + [x for x in out if not x["smart"]]
 
-    def _field_tree(self, mapping: dict, probe: MP.FileProbe, keys: dict[str, str]) -> list[dict]:
-        from curation.viz.mcap_mapping import topic_uses
+    def _depth_streams(self, mapping: dict, probe: MP.FileProbe, keys: dict[str, str]) -> list[dict]:
+        """C4 ``VizStream`` of the mapping's depth topics (design doc 21 §5.4)."""
+        out = []
+        dkeys = depth_keys(mapping)
+        for d in mapping.get("depths") or []:
+            tp = probe.topics.get(d["topic"])
+            ok = tp is not None and tp.kind == "depth" and tp.codec != "rvl"
+            reason = None if ok else (f"第一条 episode 里没有 topic {d['topic']}" if tp is None else
+                                      "RVL 编码的压缩深度本期不支持" if tp.codec == "rvl" else
+                                      "这个 topic 不是深度图（16 位 PNG、compressedDepth、16UC1 / 32FC1）")
+            out.append({"key": dkeys[d["topic"]], "kind": "depth", "name": d.get("name") or d["topic"], "unit": "mm",
+                        "lines": [], "smart": False, "available": ok, "reason": reason, "sources": [d["topic"]],
+                        "rate_hz": tp.rate_hz(probe.end_ns) if tp else None,
+                        "depth": {"width": tp.width if tp else None, "height": tp.height if tp else None, "unit": "mm",
+                                  "pair_camera": keys.get(d.get("pair_with") or "")}})
+        return out
 
-        uses = topic_uses(mapping, probe)
-        names = {"camera": "相机", "series": "曲线", "task": "任务描述", "segments": "分段标注", "ignore": "忽略",
-                 "unmapped": "未映射"}
-        streams = {t: _slug(s["topic"]) for s in mapping.get("series") or [] for t in (s["topic"],)}
+    def _field_tree(self, mapping: dict, probe: MP.FileProbe, keys: dict[str, str]) -> list[dict]:
+        """Topics, metadata records and attachments as the file's summary and first messages say (design
+        doc 21 §3, D71): the channel's, schema's and statistics' own fields; a picture topic adds the first
+        message's format and size, a numeric one its fields."""
+        streams = {s["topic"]: _slug(s["topic"]) for s in mapping.get("series") or []}
+        streams.update(depth_keys(mapping))
         topic_nodes = []
         for t in sorted(probe.topics):
             tp = probe.topics[t]
-            use = uses.get(t, ("unmapped", None, ""))[0]
-            node: dict[str, Any] = {"id": f"topic:{t}", "name": t, "kind": "topic",
-                                    "detail": {"schema": tp.schema, "编码": tp.message_encoding, "消息数": tp.count,
-                                               "频率": f"{tp.rate_hz(probe.end_ns)} Hz" if tp.rate_hz(probe.end_ns) else None,
-                                               "用途": names.get(use, use),
-                                               "画面": f"{tp.codec} {tp.width}×{tp.height}" if tp.kind == "camera" else None,
-                                               "字段": "、".join(f"{f['path']}[{f['size']}]" for f in tp.fields or [])[:300] or None}}
+            detail: dict[str, Any] = {"schema.name": tp.schema, "schema.encoding": tp.schema_encoding,
+                                      "message_encoding": tp.message_encoding, "message_count": tp.count}
+            if tp.kind in ("camera", "depth"):
+                detail.update({"format": tp.format or (tp.image or {}).get("encoding"), "width": tp.width,
+                               "height": tp.height})
+            if tp.fields:
+                detail["fields"] = json.dumps({f["path"]: f["size"] for f in tp.fields}, ensure_ascii=False)
+            node: dict[str, Any] = {"id": f"topic:{t}", "name": t, "kind": "topic", "detail": detail}
             if t in keys:
                 node["camera"] = keys[t]
             if t in streams:
@@ -256,7 +288,7 @@ class McapReader:
         meta_nodes = [{"id": f"metadata:{name}", "name": name, "kind": "metadata", "detail": dict(list(rec.items())[:40])}
                       for name, rec in probe.metadata.items()]
         att_nodes = [{"id": f"attachment:{a['name']}", "name": a["name"], "kind": "attachment",
-                      "detail": {"类型": a["media_type"], "字节": a["size"]}} for a in probe.attachments]
+                      "detail": {"media_type": a["media_type"], "data_size": a["size"]}} for a in probe.attachments]
         return [{"id": "topics", "name": "Topic", "kind": "group", "children": topic_nodes},
                 {"id": "metadata", "name": "Metadata", "kind": "group", "children": meta_nodes},
                 {"id": "attachments", "name": "Attachments", "kind": "group", "children": att_nodes}]
@@ -278,11 +310,17 @@ class McapReader:
         return out
 
     # ------------------------------------------------------------ one episode
-    def _dir(self, src: VizSource, index: int) -> pathlib.Path:
+    def _digest(self, src: VizSource, client_decode: bool) -> str:
         # the client-decode switch is part of the name: its products differ (sample packs, no mp4 yet)
-        fp = digest(src.scope, src.id, src.fingerprint, src.mapping_version or 0,
-                    json.dumps(src.mapping or {}, sort_keys=True), bool(self.svc.client_decode))
-        return self.svc.disk.root / "mcap" / fp / f"ep{int(index):06d}"
+        return digest(src.scope, src.id, src.fingerprint, src.mapping_version or 0,
+                      json.dumps(src.mapping or {}, sort_keys=True), bool(client_decode))
+
+    def _dir(self, src: VizSource, index: int) -> pathlib.Path:
+        return self.svc.disk.root / "mcap" / self._digest(src, self.svc.client_decode) / f"ep{int(index):06d}"
+
+    def dirs_of(self, src: VizSource) -> list[pathlib.Path]:
+        """Where the source's scans live (either client-decode state): what deleting a registration drops."""
+        return [self.svc.disk.root / "mcap" / self._digest(src, cd) for cd in (True, False)]
 
     def _cached_doc(self, src: VizSource, index: int) -> dict | None:
         """The scan of an episode while all its products are still there: the cache drops files one at a
@@ -294,12 +332,17 @@ class McapReader:
                 doc = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return None
+            wanted = [path, d / "series.npz"]
             for key, cd in (doc.get("cameras") or {}).items():
-                wanted = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
-                          else f"{key}.annexb" if cd.get("samples") else f"{key}.mp4" if cd.get("mp4") else None)
-                if wanted and not (d / wanted).is_file():
-                    return None
-            if not (d / "series.npz").is_file():
+                name = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
+                        else f"{key}.annexb" if cd.get("samples") else f"{key}.mp4" if cd.get("mp4") else None)
+                if name:
+                    wanted.append(d / name)
+            for key, dd in (doc.get("depths") or {}).items():
+                if dd.get("count"):
+                    wanted += [d / f"depth-{key}.frames", d / f"depth-{key}.json"]
+            # a hit is a use: the cache's least-recently-used order must not rest on the file system's atime
+            if any(self.svc.disk.get(p) is None for p in wanted):
                 return None
             return doc
         return None
@@ -362,10 +405,17 @@ class McapReader:
                 ann["events"] += ext.events
                 ann["labels"] += ext.labels
         task = {"text": doc["task"], "source": "原始标注"} if doc.get("task") else None
+        streams = []
+        for st in model["streams"]:
+            if st["kind"] != "depth":
+                continue
+            dd = (doc.get("depths") or {}).get(st["key"]) or {}
+            reason = st["reason"] or (None if dd.get("count") else dd.get("error") or "这条 episode 里没有这一路深度图")
+            streams.append(urls.stream(src, index, st["key"], "depth", reason=reason, offset_s=float(dd.get("offset_s") or 0.0)))
         return {"duration_s": round(float(doc["duration_s"]), 3), "frames": len(doc["frame_times"]), "fps": None,
                 "task": task, "timeline": {"kind": "timestamp", "fps": None, "frame_reference": doc.get("frame_reference"),
                                            "frame_times": doc["frame_times"]},
-                "cameras": cameras, "annotations": ann, "warnings": doc.get("warnings") or [],
+                "cameras": cameras, "streams": streams, "annotations": ann, "warnings": doc.get("warnings") or [],
                 "check_clock": doc["check_clock"] if src.scope == "task" else None}
 
     # ------------------------------------------------------------ curves
@@ -412,6 +462,21 @@ class McapReader:
                 "lines": [{"name": ln["name"], "role": ln["role"], "values": json_values(y)} for ln, y in zip(st["lines"], ys)],
                 "total_points": int(len(t[sl])), "downsampled": bool(thinned)}
 
+    # ------------------------------------------------------------ depth (design doc 21 §5.4)
+    def depth_pack(self, src: VizSource, index: int, key: str):
+        """(job, pack, index file) of a depth topic of an episode: the scan made them (done, or never)."""
+        from .media import Job
+
+        doc, d = self.episode_doc(src, index)
+        dd = (doc.get("depths") or {}).get(key)
+        if dd is None:
+            raise ApiError("not_found", f"没有深度流 {key}", details={"reason": "unknown_stream"})
+        pack, idx = d / f"depth-{key}.frames", d / f"depth-{key}.json"
+        if not dd.get("count") or not pack.is_file():
+            raise ApiError("not_found", dd.get("error") or "这条 episode 里没有这一路深度图", details={"reason": "no_messages"})
+        self.svc.disk.get(pack)
+        return Job(f"mcap-depth:{pack}", pack, state="done", progress=1.0, message="完成"), pack, idx
+
     # ------------------------------------------------------------ media
     def camera(self, src: VizSource, index: int, key: str) -> tuple[dict, pathlib.Path]:
         doc, d = self.episode_doc(src, index)
@@ -450,7 +515,7 @@ class McapReader:
         the browser to decode is remuxed now, the first time a ``<video>`` asks."""
         cd, d = self.camera(src, index, key)
         path = d / f"{key}.mp4"
-        if cd.get("mp4") and path.is_file():
+        if cd.get("mp4") and self.svc.disk.get(path) is not None:
             return path
         if not (cd.get("samples") and (d / f"{key}.annexb").is_file()):
             return None

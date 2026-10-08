@@ -49,7 +49,7 @@
 |---|---|---|
 | P18 | 默认策略 | 今天的硬门判废 → blocking；今天的可疑、弃权、转人工、标注分歧 → review（各自的裁决线）；其余 → info，包括原来软分模块的各子项。这是默认策略与今天唯一不同的一处：软分拒绝消失。看过报告再决定要不要把哪些子项提到 blocking，或者再做加权 |
 | P19 | 区间输出 | 发现的 `frames` / `time_s` 可选；第一阶段只填现成的：完整性的坏位置、时间戳的跳变帧、视觉质量的冻结段、画面缺陷的时间段、任务成败的证据时间段、运动质量的空闲段与卡死段。不另写定位算法 |
-| P20 | 只补映射就有的项 | 第一阶段一并补上：LABEL-3（任务文本来源是自产描述）、IMG-3（信息死亡帧比例）、TASK-1（开头 / 结尾空闲段）、AV-3（同步测不准）、MV-3（各相机滞后不一致）、LABEL-2（多份描述不一致）、SET-3（族分布、活动占比、时长离群）、ACT-6（动作语义预检结论） |
+| P20 | 只补映射就有的项 | 第一阶段一并补上：LABEL-2（任务文本来源是自产描述）、IMG-3（信息死亡帧比例）、TASK-1（开头 / 结尾空闲段）、AV-3（同步测不准）、MV-3（各相机滞后不一致）、LABEL-1（多份描述不一致）、数据集统计（族分布、活动占比、时长离群；分类表 1.3 删了这一项，这几样照样报，改为不挂检测项的数据集级读数）、ACT-6（动作语义预检结论） |
 
 ### 0.3 现状与改动对照
 
@@ -117,7 +117,7 @@
   摘要区 CRC），一个细码分不清两个项时拆成两个细码。
 - **一项可以被多个模块报**。发现按模块留出处；episode 级的「有没有这个问题」取并集；评估既算并集的指标，也算每个模块单独的指标（§6.1）。
 - **分类表是契约 C6**：`docs/contracts/taxonomy.json`，内容就是 `tools/regression_samples/taxonomy.json` 的 `items`（编号、名称、`explain_zh`、
-  kind、level、dimension、guards）加 `taxonomy_version`。编号只增不改，与样本集一致；平台绑定 1.1。注册表测试：每个细码的 `item`
+  kind、level、dimension、guards）加 `taxonomy_version`。编号与样本集一致；v1 定稿前可以调整（分类表 2.0 各维度重新编号过一次，新旧对照在 `renumbered`），平台现在绑定 2.0（注册表 3.0）。注册表测试：每个细码的 `item`
   在分类表里；每个模块的 `covers` 是分类表编号；对照项（kind=control）不能是任何细码的 `item`。
 - **分类表升版**：平台改绑新版本时只加编号；样本集 v1 冻结的分类表不动（它在 TOS 上）。仓库里 `tools/regression_samples/taxonomy.json`
   的 `platform_status` 一列是平台侧的注记，由注册表的覆盖声明生成（§6.2），不算改分类表。
@@ -136,7 +136,7 @@
 | `no_video` / `no_action` | 缺这一路输入 | 只有动作没有视频的数据集 |
 | `format_unsupported_by_module` | 模块不支持这种格式 | mcap 上的 EEF |
 | `model_no_answer` | 模型没回答这一项 | 画面缺陷的 unknown |
-| `single_description` | 只有一份描述，无从比较 | LABEL-2 |
+| `single_description` | 只有一份描述，无从比较 | LABEL-1 |
 | `not_applicable` | 别的原因，`message_zh` 写明 | 运动质量某子项对本数据集不适用 |
 
 - 整个模块对这一条 `status = error` 时，assessed 为空，不写 unassessable；评估记「执行出错」，与 D33 一致。
@@ -149,9 +149,9 @@
 |---|---|
 | 硬门 `passed=False` | 一条 severity high 的发现，默认 blocking |
 | 完整性「可疑」`passed=None` | 可疑码的发现（severity low / medium），默认 review，裁决线 `integrity_check` |
-| 任务成败弃权 `uncertain` | `uncertain`（TASK-5，medium），默认 review，裁决线 `task_verdict` |
-| EEF 转人工 | `unsettled`（MV-5，medium），默认 review，裁决线 `eef_check` |
-| 标注分歧 | `label_disagreement`（LABEL-5，medium），默认 review，裁决线 `label` |
+| 任务成败弃权 `uncertain` | `uncertain`（TASK-4，medium），默认 review，裁决线 `task_verdict` |
+| EEF 转人工 | `unsettled`（MV-4，medium），默认 review，裁决线 `eef_check` |
+| 标注分歧 | `label_disagreement`（LABEL-4，medium），默认 review，裁决线 `label` |
 | 软分模块的分数 | 各子项的读数；低于子项阈值出发现，默认 info |
 | 建议项（画面缺陷、EEF 模型意见） | 发现，默认 info |
 
@@ -239,7 +239,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `jitter` | STRM-3 | medium | blocking | `jitter_ratio` |
 | `out_of_order` | STRM-4 | high | blocking | `ts` / `frame` |
 | `fragment`、`single_stamp` | STRM-5 | high | blocking | 短于 `min_duration_s`、只有一个时间戳 |
-| `duration_outlier`（数据集级） | SET-3 | low | info | 时长离群（P20） |
+| `duration_outlier`（数据集级） | —（分类表 1.3 起不挂项） | low | info | 时长离群（P20） |
 
 **运动学极限**
 
@@ -258,10 +258,10 @@ A 类算法不动，壳里读 `details` 生成。
 | `gripper_jitter` | ACT-5 | medium | info | `gripper_jitter` |
 | `actuator_saturation` | ACT-4 | medium | info | `actuator_saturation` |
 | `stuck` | ACT-8 | medium | info | `stuck_joints`；区间 = 卡死段 |
-| `fluency_low` | TASK-8 | low | info | `fluency` |
+| `fluency_low` | TASK-7 | low | info | `fluency` |
 | `idle_opening`、`idle_closing` | TASK-1 | low | info | 开头 / 结尾空闲秒数，区间（P20） |
 | `action_semantics_undetermined`（数据集级） | ACT-6 | medium | info | 运行期动作语义预检「无法判断」（P20）；命中 profile 或推断成功只记读数 |
-| `active_ratio`（数据集级读数） | SET-3 | — | 读数 | 活动占比均值（P20） |
+| `active_ratio`（数据集级读数） | —（分类表 1.3 起不挂项） | — | 读数 | 活动占比均值（P20） |
 | 没有状态量 | — | — | unassessable `no_state_columns` | 原「不适用」 |
 
 **视觉质量**（阈值进参数：冻结 0.95、曝光 0.6、清晰度 0.6、信息死亡 0.6）
@@ -288,21 +288,21 @@ A 类算法不动，壳里读 `details` 生成。
 
 | 细码 | 项 | 严重度 | 默认级别 | 来源 |
 |---|---|---|---|---|
-| `inconsistent` | MV-5 | high | blocking，可复议 | 判废 |
-| `unsettled` | MV-5 | medium | review（eef_check） | 转人工 |
-| `opinion_mismatch` | MV-5 | low | info | 没有夹爪参考时的模型意见 |
-| `record_mismatch` | MV-5 | low | info | 与数据集记录的比对 |
+| `inconsistent` | MV-4 | high | blocking，可复议 | 判废 |
+| `unsettled` | MV-4 | medium | review（eef_check） | 转人工 |
+| `opinion_mismatch` | MV-4 | low | info | 没有夹爪参考时的模型意见 |
+| `record_mismatch` | MV-4 | low | info | 与数据集记录的比对 |
 
 **任务成败判定**
 
 | 细码 | 项 | 严重度 | 默认级别 | 来源 |
 |---|---|---|---|---|
-| `failure` | TASK-5 | high | blocking，可复议 | 判失败；区间 = `evidence` 的时间段（P19） |
-| `uncertain` | TASK-5 | medium | review（task_verdict） | 弃权 |
-| `recovery` | TASK-12 | low | info | 中途回落后完成 |
-| `label_conflict_suspect` | LABEL-5 | medium | review（label） | 判废护栏（D73 起不再产生，细码留给旧记录） |
-| `task_text_missing` | LABEL-3 | low | info | 没有任务标注：D72 起这条不判成败（记录 `no_task_text`）；更早的任务里是「用了自产caption」（P20） |
-| `completion`（读数） | TASK-5 | — | 读数 | 完成度估计 |
+| `failure` | TASK-4 | high | blocking，可复议 | 判失败；区间 = `evidence` 的时间段（P19） |
+| `uncertain` | TASK-4 | medium | review（task_verdict） | 弃权 |
+| `recovery` | TASK-10 | low | info | 中途回落后完成 |
+| `label_conflict_suspect` | LABEL-4 | medium | review（label） | 判废护栏（D73 起不再产生，细码留给旧记录） |
+| `task_text_missing` | LABEL-2 | low | info | 没有任务标注：D72 起这条不判成败（记录 `no_task_text`）；更早的任务里是「用了自产caption」（P20） |
+| `completion`（读数） | TASK-4 | — | 读数 | 完成度估计 |
 
 **镜头画面缺陷**（随任务成败）
 
@@ -319,10 +319,10 @@ A 类算法不动，壳里读 `details` 生成。
 |---|---|---|---|---|
 | `duplicate` | SET-1 | high | blocking，可复议 | 重复组；哪条留下由 aggregate 定（§4.5），模块只报组 |
 
-**技能画像**（整节随技能画像下线，D68。LABEL-5 由任务成败判定的判废护栏报，细码 `label_conflict_suspect`，问在
-`task_verdict` 那一条线上；LABEL-2、SET-3 暂时没有模块覆盖）
+**技能画像**（整节随技能画像下线，D68。LABEL-4 由任务成败判定的判废护栏报，细码 `label_conflict_suspect`，问在
+`task_verdict` 那一条线上；LABEL-1 暂时没有模块覆盖；SET-3 随分类表 1.3 删除）
 
-对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9、TASK-9、SET-2 不是任何细码的 `item`，评估按它们守的项看误报。
+对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9 不是任何细码的 `item`，评估按它们守的项看误报（长时任务、跨数据集同源版本两个对照项在分类表 1.3 删了）。
 分类表其余没有细码的项是检测缺口，清单在设计 16 §3.10，归 F11.7。
 
 ### 2.3 覆盖声明
@@ -507,7 +507,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.2 报告页
 
-- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 73 项（分类表 1.2），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
+- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 68 项（分类表 1.3），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
 - 模块小节与勾选模块一一对应（需求硬要求，不变）。每个小节：关键数字（评估条数、检出条数、按级别计数）+ 通用图「检出项 → 条数与占比」
   （按级别分色，相机范围的项再按相机分组）+ 有读数的子项分数分布 + 数据集级发现。已有专用视图的模块保留专用图，通用图放在前面。
 - 质检总览的「判废原因分布」改按检测项。
@@ -545,7 +545,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 - 新格式的运行目录：直接读 `findings[].item`、`scope`、`assessed`、`unassessable`；不再需要规则表。TP / FN / FP / TN 的定义不变（设计 16 §8.4）；
   `not_assessed` 来自记录（项不在任何已跑模块的 `assessed` 里），`error` 来自 `status`，不再靠「模块有没有记录」推断。
 - 多模块报同一项：并集进总指标；另出每个模块单独的 precision / recall，用来判断该调谁。
-- 对照项仍按分类表的 `guards` 看误报；SET-4 仍看预检；数据集级按子集计一次（读 `dataset.json`）。
+- 对照项仍按分类表的 `guards` 看误报；SET-2 仍看预检；数据集级按子集计一次（读 `dataset.json`）。
 - `finding_map.json` 只为旧格式的运行目录保留（基线 `1b30fb224` 还是旧格式，要拿来对比），新格式不读它；两种格式由脚本自动识别。
 - `--by-lineage`、`--baseline --max-drop --min-support` 不变。
 
@@ -587,7 +587,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **前端在 F12.5 之前把 C2 文档按 1.0 读**（`src/api/types.ts` 的 `Report`、`ReportModuleSection`、`ResultRecord`、`EpisodeView`）；
   新建任务页的门标签照过渡期的 gate 显示。
 - **分类表的平台注记**：`tools/regression_samples/coverage_from_registry.py` 生成 `platform_status`（能判 / 有读数 / 部分 / 没有 / 能处理）、
-  `platform_codes`、`platform_conditions`（覆盖它的模块都要的前提：本体在规格库、有状态量、上传 trajectory.json）；预检判的 SET-4 记 `preflight`。
+  `platform_codes`、`platform_conditions`（覆盖它的模块都要的前提：本体在规格库、有状态量、上传 trajectory.json）；预检判的 SET-2 记 `preflight`。
   测试要求仓库里的分类表与注册表一致。
 
 **F12.2 落地时的细化**（2026-10-01，三个模块字段梳理之后）：
@@ -601,11 +601,11 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
   它们标了 `x-advanced`：新建任务表单先不显示、按缺省值走，API 可以设；需求方 2026-10-01 定 F12.5 开放到新建任务表单。
   运动学加细码 `data_invalid`（FILE-6）：维度对不上、有无效值时 v1 判不通过却没有越限明细，没有它默认策略复刻不了今天的判废。
   技能画像去掉 `task_text_missing`：它读的 `grouping_text_source` 从 2026-09-24 起优先用画面描述，「自产caption」是常态、不代表缺标注；
-  LABEL-3 只由任务成败报（`task_desc_source` 是「自产caption」或「无」）。
+  LABEL-2 只由任务成败报（`task_desc_source` 是「自产caption」或「无」）。
 - **区间（P19）实际能填的**：完整性的坏位置（文件时间轴，LeRobot v3 共用文件减去本条窗口；截断到文件末尾的只记起点读数）、时间戳第一处跳变的帧、
   运动质量卡死段的帧与开头空转的秒、任务成败判失败时主判定答复里第一段证据、画面缺陷每路每项第一段、EEF 模型意见里最有把握的一段。
   视觉质量的冻结**没有现成的段**（v1 只给比例），结尾空转没有时间段（运动质量的 details 不知道整条多长），这两处不填。
-- **几项的实际来源**：TASK-12 只有旧的抽帧协议报「中途回落后完成」，线上的视频协议不报失误，记 unassessable；LABEL-2 没有来源——读取器每条只留一份
+- **几项的实际来源**：TASK-10 只有旧的抽帧协议报「中途回落后完成」，线上的视频协议不报失误，记 unassessable；LABEL-1 没有来源——读取器每条只留一份
   描述，画像记录一律 unassessable `single_description`，细码 `descriptions_conflict` 等来源；ACT-6 的动作语义 v2 原来哪里都没存，check 的数值档
   现在把读取器定下的语义作为运动质量记录的读数带上（`action_semantics`），报告据此出数据集级发现。
 - **判废护栏扣下的条目**同时出 `label_conflict_suspect`（标注线）与 `uncertain`（成败线）：今天它就有这两张卡片。

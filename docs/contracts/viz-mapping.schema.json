@@ -1,12 +1,12 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "title": "viz-mapping/1.0 - the field mapping of an mcap dataset (C7, design doc 18 §6)",
- "description": "Which topics of an mcap dataset are cameras, which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.",
+ "title": "viz-mapping/1.1 - the field mapping of an mcap dataset (C7, design doc 18 §6, design doc 21 §5.4)",
+ "description": "Which topics of an mcap dataset are cameras, which are depth pictures (1.1), which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.",
  "type": "object",
  "additionalProperties": false,
  "required": ["schema_version", "cameras", "series"],
  "properties": {
-  "schema_version": {"const": "viz-mapping/1.0"},
+  "schema_version": {"enum": ["viz-mapping/1.0", "viz-mapping/1.1"], "description": "1.1 adds depths; a 1.0 mapping stays valid as it is"},
   "name": {"type": "string", "minLength": 1, "maxLength": 128, "description": "shown in the template picker and on the dataset page"},
   "base": {
    "enum": ["builtin:foxglove", "builtin:ros2", "builtin:umi", null],
@@ -35,6 +35,12 @@
    "maxItems": 32,
    "items": {"$ref": "#/$defs/camera"},
    "description": "in display order; compressed images (JPEG, PNG) and compressed video (H.264, H.265)"
+  },
+  "depths": {
+   "type": "array",
+   "maxItems": 32,
+   "items": {"$ref": "#/$defs/depth"},
+   "description": "depth pictures in display order (1.1, design doc 21 §5.4): a 16-bit PNG CompressedImage, a ROS compressedDepth CompressedImage, a 16UC1 / mono16 / 32FC1 raw image. The visualizer draws them; the check reader does not read them"
   },
   "series": {
    "type": "array",
@@ -91,6 +97,21 @@
     "topic": {"$ref": "#/$defs/topic"},
     "name": {"type": "string", "minLength": 1, "maxLength": 64},
     "schema": {"type": "string", "maxLength": 256, "description": "the schema name seen when it was mapped (informational; encoding and picture size come from probing)"}
+   }
+  },
+  "depth": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name"],
+   "properties": {
+    "topic": {"$ref": "#/$defs/topic"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema": {"type": "string", "maxLength": 256},
+    "pair_with": {
+     "oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}],
+     "description": "the camera topic (one of cameras) the depth belongs to: the player can draw the depth over it"
+    },
+    "unit": {"enum": ["mm", "m"], "description": "the unit of the topic's numbers: 16-bit pictures are millimetres, 32-bit floats metres, unless said otherwise"}
    }
   },
   "series": {

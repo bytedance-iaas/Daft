@@ -113,7 +113,7 @@
 | LeRobot v3 的 `dtype: language` 列（HIW-500 等） | `language_persistent` / `language_events`：每帧一个列表，元素 `{role, content, style('subtask'…), timestamp, camera, tool_calls}`；persistent 从 `timestamp` 起持续有效，events 是瞬时的 | persistent 的 `style=subtask` → 片段（下一条起点为终点）；events → 事件 |
 | Galaxea（LeRobot v2.1） | 逐帧 `task_index` 在一条 episode 里变化（7 个步骤文本在 `tasks.jsonl` 里，中英文用 `@` 连接）；`coarse_task_index` 是整条的任务；`quality_index` / `coarse_quality_index` 指向 `tasks.jsonl` 里的 `qualified` / `unqualified` | 片段：`task_index` 的连续段；片段质量取同一段的 `quality_index`；条目任务取 `coarse_task_index` |
 | HABIT（LeRobot v2.0） | 逐帧 `low_level_task_index` + `meta/subtasks.jsonl`，`human_role_subtask_index` + `meta/human_subtasks.jsonl`；布尔段列 `is_intervention_segment` / `is_high_jerk_segment` / `is_error_segment`；episodes 行里有 `low_level_tasks[]`、`task_status`（如 `recovered`） | 片段（两套：机器人分步、人的分步）；布尔列 → 带标志的片段；条目标签 `task_status` |
-| RSS 2026（LeRobot v2.1） | 逐帧字符串列 `subtask`（这个数据集全是 `TODO` 占位） | 字符串连续段 → 片段；全是占位时不显示（预检已有 FILE-8 / LABEL-3 的提示） |
+| RSS 2026（LeRobot v2.1） | 逐帧字符串列 `subtask`（这个数据集全是 `TODO` 占位） | 字符串连续段 → 片段；全是占位时不显示（预检已有 FILE-8 / LABEL-2 的提示） |
 | Pantheon Argus（外部标注，开源） | 每条 episode 一个 JSON：`timeline[]`（`t_s`, `end_s`, `arm`, `verb_class`, `object`, `carry_phase`, `contribution` = advancing / wasteful / idle, `progress`）、`key_events[]`、`completion{outcome, goal frame}`、`operator_mistakes`、`recovery`、`data_issues`、`state_changes`、`scene_graph`；已发布的 `labels-2026-09-28` 用的是 `event_labels[]` 同一套字段 | `timeline` → 片段（名称 `verb_class`，部位 `arm`，贡献 `contribution`）；`key_events` → 事件；`completion` → 条目标签。h200-14 上有本地副本 `raw/pantheon_labels/published_labels_2026-09-28`，可作外部标注文件的接入样本 |
 | mcap | 没有约定；映射里指定 `segments` 的 topic 与字段，或附件 JSON | 片段 / 事件 |
 
@@ -156,7 +156,7 @@ flowchart LR
 ### 4.1 原则
 
 - 沿用 D16：**浏览器能直接播的媒体直连 TOS**（预签名，D55 的签名接口与现有续签逻辑）；Daemon 不中转能直连的字节。
-- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`——集群上是可丢的临时盘 `/scratch`，不占数据库所在的数据盘；按 `<范围>/<编号>/<指纹>/ep<N>/…` 存，指纹变了即作废，总量按 `CURATOR_VIZ_CACHE_GB` LRU 淘汰）。缓存与转码产物只放本地盘，不上 TOS（需求方 2026-10-03）。
+- Daemon 只做三类事：**浏览器播不了的相机的转封装 / 帧包 / 转码**，**本地挂载数据集的字节**（没有 TOS 可签，Daemon 自己带 Range 出文件；旧的 ReRun 入口不支持本地数据集，新入口支持——需求方 2026-10-03），以及**小体积的派生数据**（曲线、标注、索引）。全部按 `episode × 相机` 或 `episode × 数据流` 粒度，带 Range，先内存 LRU、再磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，缺省 `<CURATOR_SCRATCH_DIR>/viz-cache`——集群上是可丢的临时盘 `/scratch`，不占数据库所在的数据盘；按 `<产物类别>/<摘要>/ep<N>/…` 存，摘要由范围、编号、指纹（mcap 另加映射版本与内容）算出，2026-10-06 按实际写法更正；指纹变了即作废，总量按 `CURATOR_VIZ_CACHE_GB` LRU 淘汰）。缓存与转码产物只放本地盘，不上 TOS（需求方 2026-10-03）。
 - 一切都是**按需、首次打开时生成**；可选的「预生成」放第二期（登记后后台跑一遍，给大数据集）。
 
 ### 4.2 相机供给矩阵（D60）
@@ -164,7 +164,7 @@ flowchart LR
 | 来源 | 编码 | 浏览器能否直接播 | 供给方式 | 格子上的标签 |
 |---|---|---|---|---|
 | LeRobot v2 | av1 / h264 | 能 | 预签名直连整个 mp4 | — |
-| LeRobot v3 | av1 / h264 | 能 | 预签名直连 + `#t=from,to`（现有 `withFragment`），播放器按 `from_ts` 对齐；大文件可选由 Daemon 按 GOP 切出该 episode（第二期） | — |
+| LeRobot v3 | av1 / h264 | 能 | 预签名直连整个分块文件，播放器按 `from_ts` 定位（`currentTime = t − offset + from_ts`；`#t=` 片段在 F13 验收后已不用，2026-10-06 更正）；由 Daemon 按 GOP 切出该 episode 见设计 21 §4（转码一律以切片为输入，切片播放是开关） | — |
 | LeRobot | mpeg4 part 2、其他浏览器不支持的编码 | 不能 | Daemon 转码为 H.264 fMP4（首次慢，磁盘缓存；预检时就标出「需要转码」） | 「平台转码」 |
 | mcap `CompressedImage`（JPEG） | — | 不能当 `<video>` | **JPEG 帧包**：Daemon 输出 `<相机>.frames`（正文 = 各帧原 JPEG 字节首尾相接）与它的索引（`.json`：每帧时刻 / 偏移 / 长度），播放器用 `createImageBitmap` + canvas 逐帧绘；随机访问靠 Range，不转码。单路 1280×720 30 Hz 约 2 MB/s | — |
 | mcap `CompressedVideo` h264 | h264 | 能（要 fMP4） | Daemon 转封装为 fMP4（无重编码；现有 `_mux_annexb` 做成流式、带 Range） | — |
@@ -192,7 +192,7 @@ flowchart LR
 - **显示一律从 1 数**（需求方 2026-10-04 定）：数据里的帧序号（LeRobot 的 `frame_index`、发现的 `frames`、时间轴的下标、EEF 的帧号）照旧从 0 存，凡是给人看的帧号都 +1——播放器的帧号框（`1 / 帧数`，输入第 N 帧跳到下标 N − 1）、格子角标与进度条悬停、信息侧栏、报告与裁决里的帧段、模块写进发现的句子、上传校验的报错，以及 EEF 复核印在帧上给模型看的帧号（模型按印的数作答，答复换回数据帧号再存）。A 类读取器（`ingest/`）报数据错误时的原文保持 v1 原样，不在此列。
 - 质检的时钟与之对齐：mcap 的质检以第一条动作消息为零点、以动作速率为 fps（`ingest.mcap_reader`、`streams/clip.py`），所以任务级的 episode 记录给出 `check_clock{offset_s, fps}`（LeRobot 为 `{0, 数据集 fps}`），迷你版用它把发现的 `time_s` / `frames` 换到 episode 时间。
 - 相机帧率与数据 fps 不同（或 mcap 各 topic 各有节奏）时，每路按自己的时间戳取 ≤ t 的最近一帧；曲线按自己的采样时刻画，不插值。
-- v3 的 `from_ts`：直连视频的 `currentTime = t + from_ts`（现有 `SyncController` 的做法）。
+- v3 的 `from_ts`：`url` 所给媒体里这条 episode 的起点，视频的 `currentTime = t − offset_s + from_ts`；平台转码与切片以自己的起点为 0（设计 21 §4.5，D69）。
 
 ### 4.5 任务文本与标注（D64）
 
@@ -277,6 +277,7 @@ flowchart LR
 
 - 左树右详情。树：相机（每路：分辨率 · 编码，转码的带标签）、状态与动作（数值流与 shape）、任务与标注（任务文本、分段标注的各条轨与来源、episodes 表）、元数据（`info.json`、`stats.json`、`README.md`）、文件（`data/`、`videos/`，来自登记时的指纹清单，不再逐个访问 TOS）；mcap 换成 topic / schema / metadata / attachments。详情：属性表、JSON 预览、「加入播放器」。
 - 树就是统一展示模型里的 `FieldTree`，和格式无关。
+- 2026-10-06 起（需求方，D71，设计 21 §3）：节点名与属性一律是数据集元数据的原文（特征在 `info.json` 里的条目逐键列出，mcap 列 channel / schema / 统计字段），不再是「分辨率 · 编码」这类我们起的中文属性；每个特征只出现一次，「状态与动作」列数值特征、深度另成一组。
 
 ### 5.8 错误与空态
 
@@ -290,7 +291,7 @@ flowchart LR
 
 ### 6.1 定位
 
-数据集级配置，可视化与质检共用；**内置模版自动起草，用户在表格里确认**，可另存为模版给同一套采集系统的其他数据集复用，也可以直接导入自带的 JSON。契约 C7：`docs/contracts/viz-mapping.schema.json`（`schema_version: viz-mapping/1.0`）。它就是 mcap 读取器的配置。
+数据集级配置，可视化与质检共用；**内置模版自动起草，用户在表格里确认**，可另存为模版给同一套采集系统的其他数据集复用，也可以直接导入自带的 JSON。契约 C7：`docs/contracts/viz-mapping.schema.json`（`schema_version: viz-mapping/1.0`；`1.1` 只加了深度图 `depths`，见设计 21 §5.4）。它就是 mcap 读取器的配置。
 
 ### 6.2 数据模型
 
@@ -366,6 +367,8 @@ episode 文件的编号不进映射：沿用 v1 的规则（`episode_<N>.mcap` �
 ### 6.5 对 LeRobot 的「展示配置」
 
 LeRobot 不需要字段映射（`info.json` 已经够），但完整版允许保存一份轻量的「展示配置」（缺省布局、曲线分组覆盖、分段轨选择、相机顺序），同样挂在数据集上；本期只做分段轨选择与相机顺序，其余第二期。
+
+> 更正（2026-10-06）：本期实际只留了库里的 `display_config` 列与 Daemon 读它的 `track`，没有接口写它；字幕轨的切换只是播放器里的临时状态，相机顺序没有界面。整套展示配置在设计 21 §6（D70）。
 
 ## 7. 契约与接口改动
 
@@ -607,19 +610,19 @@ mcap 记录 19–25 s）反映的是这条链路，不是部署环境（Daemon �
 
 ## 10. 第二期（另立阶段，先记在这里）
 
-需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。需求方 2026-10-04 指定其中三项先做（相机多于 9 路、浏览器内解码、Lance 读取器），见设计 19（阶段 14）。同日又加了「数据集文件夹」一项（方案 A，需求见 §10.1）。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
+需求方 2026-10-03 定：下面这些不在本阶段（F13.x）做，等 F13.8 验收后另开设计篇与账本阶段。需求方 2026-10-04 指定其中三项先做（相机多于 9 路、浏览器内解码、Lance 读取器），见设计 19（阶段 14）。同日又加了「数据集文件夹」一项（方案 A，需求见 §10.1）。2026-10-06 需求方又定了深度图、v3 片段切分、moov 在尾、LeRobot 展示配置其余项四行，见设计 21（阶段 15）；三维场景、预生成仍在这里。本阶段只保证统一展示模型与读取器接口给它们留好位（§4.0 的 `depth` / `pointcloud` / `transform` 流、`Annotations.tracks`、`FieldTree`）。
 
 | 项 | 内容 | 本阶段预留 |
 |---|---|---|
 | Lance 读取器 | 对应 lerobot-lancedb 版本的读取器（今天的 `lance_reader` 只支持 ≥ 0.3 的三表布局、TOS 上整表拷贝），产出同一个展示模型（2026-10-04 起：设计 19 §4，阶段 14 先行） | 读取器接口；格式矩阵的 Lance 行 |
 | 三维场景 | 末端轨迹（`observation.eef_pose`、mcap `PoseInFrame`）、点云、URDF 本体；新的视图类型「三维」 | `transform` / `pointcloud` 流进字段树，「+」菜单里置灰 |
-| 深度图 | `uint16` 深度列与 mcap 深度流的渲染（伪彩、与 RGB 叠放） | `depth` 流进字段树 |
+| 深度图 | `uint16` 深度列与 mcap 深度流的渲染（伪彩、与 RGB 叠放）（2026-10-06 起：设计 21 §5，阶段 15） | `depth` 流进字段树 |
 | 我们自己的标注标准 | 统一标注模型的序列化格式（片段 / 事件 / 条目标签 / 多轨），把质检产出的区间（TASK-1 动作起止、ACT-7 人工接管…）并进去，可导出、可回写数据集；外部标注的更多格式与在线编辑 | `Annotations` 模型；外部标注上传件 |
 | 预生成 | 登记后后台生成可视化索引、帧包与转码产物（大数据集首次打开不等待；F13.8 实测 mcap 首开要等整条扫描，ABC-130k 一条冷开 29 s，HEVC 转码回退一路 64 s）；2026-10-04 先做了一小步：可视化页看一条时后台预取列表里的下一条 | 缓存目录与指纹规则 |
-| moov 在尾的 mp4 | LeRobot v2 编码器不加 faststart（样本集 72 个 LeRobot 子集里 52 个），直连 TOS 时第一帧前多一次往返；可由预生成写 faststart 副本，或 Daemon 先读尾部的 `moov` 给浏览器 | `access` 可加 Daemon 代读 |
+| moov 在尾的 mp4 | LeRobot v2 编码器不加 faststart（样本集 72 个 LeRobot 子集里 52 个），直连 TOS 时第一帧前多一次往返；可由预生成写 faststart 副本，或 Daemon 先读尾部的 `moov` 给浏览器（2026-10-06 起：设计 21 §4.4，挂在切片播放开关下，阶段 15） | `access` 可加 Daemon 代读 |
 | 相机多于 9 路 | 网格最大 3×3，RH20T 有 10 路放不全；4×3 网格或相机墙视图（2026-10-04 起：设计 19 §2，阶段 14 先行） | 格子数由 `GRID_SIZES` 决定 |
-| v3 片段切分 | 按 GOP 切出单条 episode 的 mp4，替代 `#t=from,to` 直连整个分块文件 | `access: remux` |
-| LeRobot 展示配置其余项 | 缺省布局、曲线分组覆盖、相机顺序之外的个性化 | `display_config` |
+| v3 片段切分 | 按 GOP 切出单条 episode 的 mp4，替代 `#t=from,to` 直连整个分块文件（2026-10-06 起：设计 21 §4，转码一律以切片为输入，切片播放是开关；阶段 15） | `access: remux` |
+| LeRobot 展示配置其余项 | 缺省布局、曲线分组覆盖、相机顺序之外的个性化（2026-10-06 起：设计 21 §6，整套展示配置，阶段 15） | `display_config` |
 | 多 episode 连播与并排对比 | 自动下一条；两条 episode 同屏对比 | 播放器以 episode 时间为时钟，可扩展为两个时钟 |
 | ReRun 入口下线 | 「可视化（旧）」下线，设计 15 的代签链路随之评估去留 | D63 |
 | 浏览器内解码（备选） | WebCodecs 直读 mcap 的 H.264 / H.265 裸流，省掉 Daemon 转封装（2026-10-04 起：设计 19 §3，阶段 14 先行） | `access` 枚举可加 `client_decode` |

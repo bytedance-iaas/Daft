@@ -6,7 +6,7 @@ import { apiDocsConfiguration, localizeServers, pageLanguage, requireJsonOnBodyl
 import { apiDocsText } from './locales/apiDocs';
 
 const root = document.getElementById('api-docs')!;
-const lang = pageLanguage(navigator.languages?.length ? navigator.languages : [navigator.language], window.location);
+const lang = pageLanguage(window.location);
 document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
 
 fetch('./openapi.json')

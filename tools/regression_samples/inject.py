@@ -529,7 +529,7 @@ def fault_label_swap(b, ctx, sev, rnd):
     def fn(d):
         d["task_index"] = other
     rewrite(pq_path, fn)
-    return {"item": "LABEL-5", "scope": {"field": "task_index"}, "frames": [0, n - 1], "params": {"was": cur, "now": other, "text_now": next(t["task"] for t in b.tasks if t["task_index"] == other)}}
+    return {"item": "LABEL-4", "scope": {"field": "task_index"}, "frames": [0, n - 1], "params": {"was": cur, "now": other, "text_now": next(t["task"] for t in b.tasks if t["task_index"] == other)}}
 
 
 CURRENT_OUT: "Out | None" = None  # set by main(); the duplicate fault needs the previous output episode

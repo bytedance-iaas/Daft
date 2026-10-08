@@ -1,6 +1,6 @@
 {
- "registry_version": "3.2",
- "taxonomy_version": "1.2",
+ "registry_version": "4.0",
+ "taxonomy_version": "2.0",
  "blocks": [
   {
    "id": "cpu",
@@ -270,7 +270,7 @@
     "id": "FILE-8",
     "dimension": "FILE",
     "name_zh": "元数据自相矛盾、和实际不符",
-    "explain_zh": "机器读的元数据前后打架，或者和实际数据对不上（比如写 30 fps、实际 20 fps，写 300 帧、实际 280 帧）。描述类文字字段里的占位符（如 TODO）不在这里，归 LABEL-3。",
+    "explain_zh": "机器读的元数据前后打架，或者和实际数据对不上（比如写 30 fps、实际 20 fps，写 300 帧、实际 280 帧）。描述类文字字段里的占位符（如 TODO）不在这里，归 LABEL-2。",
     "kind": "defect",
     "level": "dataset"
    },
@@ -355,6 +355,14 @@
     "level": "dataset"
    },
    {
+    "id": "STRM-9",
+    "dimension": "STRM",
+    "name_zh": "时间比例错误（快进 / 慢放）",
+    "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
     "id": "IMG-1",
     "dimension": "IMG",
     "name_zh": "画面冻结",
@@ -422,8 +430,8 @@
     "id": "IMG-9",
     "dimension": "IMG",
     "name_zh": "Depth 空洞、噪声",
-    "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。本版只记读数（空洞占比），不判对错。",
-    "kind": "reference",
+    "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。样本集里目前只记了读数（空洞占比），该报的线还没定。",
+    "kind": "defect",
     "level": "episode"
    },
    {
@@ -440,6 +448,30 @@
     "name_zh": "对照：特殊画面",
     "explain_zh": "对照项：鱼眼、超宽画幅等不常见但正常的画面，不该报。",
     "kind": "control",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-12",
+    "dimension": "IMG",
+    "name_zh": "相机移位、安装状态改变",
+    "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-13",
+    "dimension": "IMG",
+    "name_zh": "任务物体或末端出画",
+    "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-14",
+    "dimension": "IMG",
+    "name_zh": "脱敏模糊遮住任务物体",
+    "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
+    "kind": "defect",
     "level": "episode"
    },
    {
@@ -467,7 +499,7 @@
     "level": "episode"
    },
    {
-    "id": "MV-5",
+    "id": "MV-4",
     "dimension": "MV",
     "name_zh": "相机标定、末端投影与画面不符",
     "explain_zh": "用标定参数把机械臂末端的位置投到画面上，应当正好落在夹爪上；投偏了说明标定或坐标系有错。",
@@ -611,15 +643,15 @@
     "level": "episode"
    },
    {
-    "id": "TASK-5",
+    "id": "TASK-4",
     "dimension": "TASK",
     "name_zh": "任务完成度",
-    "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-12；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
+    "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-10；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
     "kind": "defect",
     "level": "episode"
    },
    {
-    "id": "TASK-6",
+    "id": "TASK-5",
     "dimension": "TASK",
     "name_zh": "完成质量不合格",
     "explain_zh": "任务算是做完了，但做得不好：数据集自带的「不合格」标签或低评分。例：Galaxea 分步里标了 unqualified 的段。",
@@ -627,7 +659,7 @@
     "level": "episode"
    },
    {
-    "id": "TASK-7",
+    "id": "TASK-6",
     "dimension": "TASK",
     "name_zh": "多余动作",
     "explain_zh": "做了不必要的动作，比如本可以直接放下，却先在两只手之间交接一次。例：G17。",
@@ -635,7 +667,7 @@
     "level": "episode"
    },
    {
-    "id": "TASK-8",
+    "id": "TASK-7",
     "dimension": "TASK",
     "name_zh": "动作极慢",
     "explain_zh": "动作慢得不正常，或者长时间发呆不动（空转），把数据拖长了。",
@@ -643,23 +675,31 @@
     "level": "episode"
    },
    {
+    "id": "TASK-8",
+    "dimension": "TASK",
+    "name_zh": "达成后被撤销",
+    "explain_zh": "任务一度完成了，后来又被拆掉或复位，最后的状态不对。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
     "id": "TASK-9",
     "dimension": "TASK",
-    "name_zh": "对照：长时任务",
-    "explain_zh": "对照项：本来就很长的任务（几分钟），长本身不是问题，不应该被当成异常。",
-    "kind": "control",
+    "name_zh": "未记录的外部干预、场景重置",
+    "explain_zh": "有人（或别的东西）在录制中伸手改了场景，但数据里没有记录。和 ACT-7 的区别：ACT-7 是数据集声明过的人工接管。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-10",
+    "dimension": "TASK",
+    "name_zh": "执行失误（抓取失败、掉落、碰撞、反复尝试）",
+    "explain_zh": "抓空、掉东西、碰倒、放偏、反复尝试等操作失误。它本身不算数据坏了（失败示范也有用），是要检出并标出位置的现象。例：G1 数据集逐帧标出的碰撞、滑落、抓空、放偏、朝向不对。",
+    "kind": "phenomenon",
     "level": "episode"
    },
    {
     "id": "LABEL-1",
-    "dimension": "LABEL",
-    "name_zh": "任务描述的形态",
-    "explain_zh": "任务描述写成了什么形式：一句话指令、分步说明，还是只有一个类别名。要能识别，本身不一定是问题。",
-    "kind": "phenomenon",
-    "level": "dataset"
-   },
-   {
-    "id": "LABEL-2",
     "dimension": "LABEL",
     "name_zh": "一条有多份描述，彼此不一致",
     "explain_zh": "同一条数据有好几份描述（比如总指令和子任务），说的却不是一回事。",
@@ -667,7 +707,7 @@
     "level": "episode"
    },
    {
-    "id": "LABEL-3",
+    "id": "LABEL-2",
     "dimension": "LABEL",
     "name_zh": "没有标注、只有类别名、占位没填",
     "explain_zh": "任务描述是空的、只有一个类别名（如 task 1），或者描述类字段里填的是占位符。例：droid200 里有 94 条没有指令；RSS 挑战赛数据的 subtask 列全是 TODO。",
@@ -675,7 +715,7 @@
     "level": "episode"
    },
    {
-    "id": "LABEL-4",
+    "id": "LABEL-3",
     "dimension": "LABEL",
     "name_zh": "纯中文、中英混排、混进元数据",
     "explain_zh": "描述是纯中文、中英混写，或者把质量标签等元数据混进了描述里。平台要能正确处理，本身不一定是问题。例：Galaxea。",
@@ -683,7 +723,7 @@
     "level": "dataset"
    },
    {
-    "id": "LABEL-5",
+    "id": "LABEL-4",
     "dimension": "LABEL",
     "name_zh": "标注与画面不符",
     "explain_zh": "描述说的和视频里做的不是一回事。例：指令让叠裤子，视频里叠的是 T 恤。",
@@ -701,97 +741,17 @@
    {
     "id": "SET-2",
     "dimension": "SET",
-    "name_zh": "对照：跨数据集的同源版本",
-    "explain_zh": "对照项：同一段录像在不同数据集里各有一个版本（发布版和修正版、不同格式或编码的转换），这是合法的，单个数据集内不该报成重复。",
-    "kind": "control",
-    "level": "dataset"
-   },
-   {
-    "id": "SET-3",
-    "dimension": "SET",
-    "name_zh": "任务与技能分布、空转占比、长度离群",
-    "explain_zh": "整个数据集层面的统计：各任务占比是否失衡、空转时间占多少、有没有长得或短得离谱的条目。",
-    "kind": "reference",
-    "level": "dataset"
-   },
-   {
-    "id": "SET-4",
-    "dimension": "SET",
     "name_zh": "输入格式",
     "explain_zh": "数据集用了不常见的格式或写法（比如动作列拆成多列、mcap 的 topic 命名不标准），平台要能读进来。这是测接入能力的样本。",
     "kind": "phenomenon",
     "level": "dataset"
    },
    {
-    "id": "SET-5",
+    "id": "SET-3",
     "dimension": "SET",
     "name_zh": "隐私与安全",
     "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
     "kind": "defect",
-    "level": "dataset"
-   },
-   {
-    "id": "STRM-9",
-    "dimension": "STRM",
-    "name_zh": "时间比例错误（快进 / 慢放）",
-    "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "IMG-12",
-    "dimension": "IMG",
-    "name_zh": "相机移位、安装状态改变",
-    "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "IMG-13",
-    "dimension": "IMG",
-    "name_zh": "任务物体或末端出画",
-    "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "IMG-14",
-    "dimension": "IMG",
-    "name_zh": "脱敏模糊遮住任务物体",
-    "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "TASK-10",
-    "dimension": "TASK",
-    "name_zh": "达成后被撤销",
-    "explain_zh": "任务一度完成了，后来又被拆掉或复位，最后的状态不对。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "TASK-11",
-    "dimension": "TASK",
-    "name_zh": "未记录的外部干预、场景重置",
-    "explain_zh": "有人（或别的东西）在录制中伸手改了场景，但数据里没有记录。和 ACT-7 的区别：ACT-7 是数据集声明过的人工接管。",
-    "kind": "defect",
-    "level": "episode"
-   },
-   {
-    "id": "TASK-12",
-    "dimension": "TASK",
-    "name_zh": "执行失误（抓取失败、掉落、碰撞、反复尝试）",
-    "explain_zh": "抓空、掉东西、碰倒、放偏、反复尝试等操作失误。它本身不算数据坏了（失败示范也有用），是要检出并标出位置的现象。例：G1 数据集逐帧标出的碰撞、滑落、抓空、放偏、朝向不对。",
-    "kind": "phenomenon",
-    "level": "episode"
-   },
-   {
-    "id": "SET-6",
-    "dimension": "SET",
-    "name_zh": "同源派生（同一原始条目的多个版本）",
-    "explain_zh": "同一段原始录像的多个版本（修正版、裁剪版、注入了故障的版本）同时在集合里；算指标时要按来源去重，别重复计数。",
-    "kind": "phenomenon",
     "level": "dataset"
    }
   ]
@@ -1124,7 +1084,7 @@
     },
     {
      "code": "duration_outlier",
-     "item": "SET-3",
+     "item": null,
      "name_zh": "时长离群",
      "severity": "low",
      "level": "info",
@@ -1135,8 +1095,7 @@
    "covers": [
     "STRM-3",
     "STRM-4",
-    "STRM-5",
-    "SET-3"
+    "STRM-5"
    ],
    "param_schema": {
     "type": "object",
@@ -1145,7 +1104,7 @@
      "duration_outlier_iqr": {
       "type": "number",
       "title": "时长离群判定线（四分位距倍数）",
-      "description": "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，在报告里报「时长离群」（SET-3，数据集级）",
+      "description": "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，在报告里报「时长离群」（数据集级的读数）",
       "default": 3.0,
       "minimum": 1.0,
       "maximum": 10.0,
@@ -1318,7 +1277,7 @@
     },
     {
      "code": "fluency_low",
-     "item": "TASK-8",
+     "item": "TASK-7",
      "name_zh": "操作不流畅",
      "severity": "low",
      "level": "info",
@@ -1359,10 +1318,9 @@
     "ACT-4",
     "ACT-5",
     "ACT-8",
-    "TASK-8",
+    "TASK-7",
     "TASK-1",
-    "ACT-6",
-    "SET-3"
+    "ACT-6"
    ],
    "param_schema": {
     "type": "object",
@@ -1407,7 +1365,7 @@
      "fluency_min": {
       "type": "number",
       "title": "流畅度判定线",
-      "description": "流畅度分低于这个值，报「操作不流畅」（TASK-8）",
+      "description": "流畅度分低于这个值，报「操作不流畅」（TASK-7）",
       "default": 0.5,
       "minimum": 0.0,
       "maximum": 1.0,
@@ -1695,7 +1653,7 @@
    "codes": [
     {
      "code": "inconsistent",
-     "item": "MV-5",
+     "item": "MV-4",
      "name_zh": "末端投影与画面不符",
      "severity": "high",
      "level": "blocking",
@@ -1704,7 +1662,7 @@
     },
     {
      "code": "unsettled",
-     "item": "MV-5",
+     "item": "MV-4",
      "name_zh": "末端投影与画面是否相符待人工核对",
      "severity": "medium",
      "level": "review",
@@ -1714,7 +1672,7 @@
     },
     {
      "code": "opinion_mismatch",
-     "item": "MV-5",
+     "item": "MV-4",
      "name_zh": "模型意见：末端投影与画面不符",
      "severity": "low",
      "level": "info",
@@ -1723,7 +1681,7 @@
     },
     {
      "code": "record_mismatch",
-     "item": "MV-5",
+     "item": "MV-4",
      "name_zh": "上传轨迹与数据集的记录不符",
      "severity": "low",
      "level": "info",
@@ -1732,7 +1690,7 @@
     }
    ],
    "covers": [
-    "MV-5"
+    "MV-4"
    ],
    "param_schema": {
     "type": "object",
@@ -1960,7 +1918,7 @@
    "codes": [
     {
      "code": "failure",
-     "item": "TASK-5",
+     "item": "TASK-4",
      "name_zh": "任务失败",
      "severity": "high",
      "level": "blocking",
@@ -1969,7 +1927,7 @@
     },
     {
      "code": "uncertain",
-     "item": "TASK-5",
+     "item": "TASK-4",
      "name_zh": "任务成败拿不准",
      "severity": "medium",
      "level": "review",
@@ -1979,7 +1937,7 @@
     },
     {
      "code": "recovery",
-     "item": "TASK-12",
+     "item": "TASK-10",
      "name_zh": "中途失误后完成",
      "severity": "low",
      "level": "info",
@@ -1988,7 +1946,7 @@
     },
     {
      "code": "label_conflict_suspect",
-     "item": "LABEL-5",
+     "item": "LABEL-4",
      "name_zh": "标注与画面疑似不符",
      "severity": "medium",
      "level": "review",
@@ -1998,7 +1956,7 @@
     },
     {
      "code": "task_text_missing",
-     "item": "LABEL-3",
+     "item": "LABEL-2",
      "name_zh": "没有任务标注，没有做任务成败判定",
      "severity": "low",
      "level": "info",
@@ -2007,10 +1965,10 @@
     }
    ],
    "covers": [
-    "TASK-5",
-    "TASK-12",
-    "LABEL-5",
-    "LABEL-3"
+    "TASK-4",
+    "TASK-10",
+    "LABEL-4",
+    "LABEL-2"
    ],
    "param_schema": {
     "type": "object",

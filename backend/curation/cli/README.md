@@ -147,6 +147,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 另有三条完整性警告（D52，设计 14 §1），都不多读数据、不改变模块可用性：数据与视频文件为空或小到放不下该格式的固定字节
   （parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节）；mcap 录制中断（文件尾没有结束标识）；mcap 摘要区的 CRC
   不符（摘要区的字节读摘要时本来就取回了）。要读数据的检查归质检最前面的「数据完整性」模块。
+- Git LFS 指针（2026-10-05）：认出格式后，清单里不到 1 KiB 的数据文件取前 5 个读开头；是 LFS 指针（没装 Git LFS 的 clone 传上来的）就判
+  `metadata_invalid`，原因 `Git LFS pointer files instead of the data: <文件> … fetch the files (git lfs pull …, or hf download) and upload them again`。
+  手动验证：`printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%064d\nsize 2265\n' 0 > <数据集副本>/meta/tasks.parquet` 后预检，`format.detail` 里是这句。
 
 **plan**：`curation plan --preflight pf.json --modules a,b,… [--episodes 表达式] [--unlabeled 表达式] [--vlm-parallelism N] [--backend-parallelism N] [--task-vlm-parallelism N] [--task-cpu-concurrency N] [--cpu-cores N] [--running-tasks N] [--site-config 文件] [--out plan.json] --json`
 
@@ -165,7 +168,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 **没有任务标注的条目**（D72 / D73）：不补描述、不判成败，但画面照看。`check --modules task_success` 给它发一次只问画面缺陷的请求
 （`CAMERAS_ONLY_PROMPT`：同样的机位、同样的三项缺陷定义，不问成败），写一条 `status: ok` 的记录：`details.skipped = "no_task_text"`，
-`cameras` 里是每路相机的 `camera_check`（镜头画面缺陷模块由此出记录），发现只有 LABEL-3 的 `task_text_missing`（仅报告），TASK-5 / LABEL-5 记为无法评估（`no_task_text`）；
+`cameras` 里是每路相机的 `camera_check`（镜头画面缺陷模块由此出记录），发现只有 LABEL-2 的 `task_text_missing`（仅报告），TASK-4 / LABEL-4 记为无法评估（`no_task_text`）；
 不转人工、不 held，`--resume` 不重做；请求失败按执行错误记，held 等重试。这条的去留由其余模块决定，通过时清单里 `task_text` 为 null。
 
 **判废护栏**（D73 起没有）：模型判失败就是判废（可复议），不再多发请求去核对标注；每条恰好 1 次模型请求。

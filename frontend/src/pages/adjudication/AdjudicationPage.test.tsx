@@ -306,7 +306,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const cand = within(ev).getByTestId('eef-window-ext-0');
     expect(cand).toHaveTextContent('候选段 · 位置');
     expect(cand).toHaveTextContent('帧 121–151（3 帧）');                  // frames counted from 1
-    expect(cand).toHaveTextContent('点 block_center · 方向 gripper_x');
+    expect(cand).toHaveTextContent('标记点 block_center · 朝向 gripper_x');
     expect(cand).toHaveTextContent('位置：支持');
     expect(cand).toHaveTextContent('与 CPU 冲突：位置 CPU 可疑，模型支持');
     expect(cand).toHaveTextContent('「红圈压在夹爪指尖中间」');

@@ -23,7 +23,7 @@ C2 2.0（设计 17）改了结果记录、报告和计划，契约里两种写�
 | `src/mocks/` | MSW 模拟：内存里的一套「模拟世界」，每个 C4 接口都有处理器，数字和静态稿一致；`findings.ts` 是两块并行、策略判决的那个任务（报告 2.0），主任务是旧任务（报告 1.0） |
 | `src/test/` | 测试环境：jsdom 补丁、契约校验器、渲染与 Arco 操作的小工具 |
 | `scripts/` | 类型生成与校验、`serve-dist.mjs`（按 Daemon 的方式托管构建产物） |
-| `api-docs.html`、`src/apiDocs.ts` | 接口文档页（Scalar），配置在 `src/lib/apiDocs.ts`，页面自己的中英文案在 `src/locales/apiDocs.ts`；发布前去内部编号在 `src/lib/publicText.ts`；`public/llms.txt`、`public/llms-zh.txt` 是给 agent 的导读（英 / 中） |
+| `api-docs.html`、`src/apiDocs.ts` | API 文档页（Scalar），配置在 `src/lib/apiDocs.ts`，页面自己的中英文案在 `src/locales/apiDocs.ts`；发布前去内部编号在 `src/lib/publicText.ts`；`public/llms.txt`、`public/llms-zh.txt` 是给 agent 的导读（英 / 中） |
 
 ## 本地环境
 
@@ -53,14 +53,14 @@ npm ci
 ## 开发
 
 - **默认用模拟数据**：`npm run dev` 启动后浏览器里由 Service Worker 应答所有接口，SSE 也有模拟。打不开 Service Worker 的环境（一些内嵌浏览器、无痕模式）自动改成在页面里拦截 fetch，此时 SSE 不可用，页面会自己降级成 5 秒轮询 —— 这条路径本身也值得看。模拟世界里的子任务（重试、继续运行、执行裁决、重新导出）会自己跑：排队 3 秒、运行 30 秒，结束后按结果重算任务状态（`src/mocks/subtaskSim.ts`；测试里关着，用 `finishSubtask()` 手动结束）。刷新页面会重置模拟世界，所以跟着步骤走时在页面里点链接，不要直接改地址栏。
-- **帮助**：侧边栏「帮助」下两项的地址只写在 `src/components/AppLayout.tsx` 的 `HELP_LINKS`，都在新标签页打开（完整网址原样开，路径按挂载前缀拼）。「使用文档」（`docs`）现在留空：点了只提示「使用文档还没配置」，填上地址后就能打开；「接口文档」（`api`）指向构建产出的 `api-docs.html`。
-- **接口文档**：独立页面 `api-docs.html`（入口脚本 `src/apiDocs.ts`，配置与纯逻辑在 `src/lib/apiDocs.ts`），用 Scalar（`@scalar/api-reference`，Vue 写的，只在这一页加载）渲染 `{前缀}/openapi.json`。`openapi.json` 由 `vite.config.ts` 的插件从 `../docs/contracts/openapi.yaml` 生成（外部 `$ref` 用 `@redocly/openapi-core` 收进 `components`，一份文件自成一体）：`npm run build` 写进 `dist/`，`npm run dev` 现场生成；生成时说明文字里的内部编号（C4、D36、设计 18 §4.0……）被去掉（`src/lib/publicText.ts`），契约原文不动。页面给客户看：契约里的文案有中英两版（`description` / `summary` 是英文，`x-description-zh` / `x-summary-zh` 是中文），页面把它拆成「中文」「English」两份文档，左上角切换，缺省跟浏览器语言；接口自身的说明两份都是英文。Scalar 停在 1.46.4：之后的版本要求 Node 22，而镜像与 CI 还要在 Node 20 上构建。它的 3 MB 大包会让构建打出「Some chunks are larger than 1200 kB」，说的就是 `api-docs-*.js`，控制台自己的包不受影响。
+- **帮助**：侧边栏「帮助」下两项的地址只写在 `src/components/AppLayout.tsx` 的 `HELP_LINKS`，都在新标签页打开（完整网址原样开，路径按挂载前缀拼）。「使用文档」（`docs`）现在留空：点了只提示「使用文档还没配置」，填上地址后就能打开；「API 文档」（`api`）指向构建产出的 `api-docs.html`。
+- **API 文档**：独立页面 `api-docs.html`（入口脚本 `src/apiDocs.ts`，配置与纯逻辑在 `src/lib/apiDocs.ts`），用 Scalar（`@scalar/api-reference`，Vue 写的，只在这一页加载）渲染 `{前缀}/openapi.json`。`openapi.json` 由 `vite.config.ts` 的插件从 `../docs/contracts/openapi.yaml` 生成（外部 `$ref` 用 `@redocly/openapi-core` 收进 `components`，一份文件自成一体）：`npm run build` 写进 `dist/`，`npm run dev` 现场生成；生成时说明文字里的内部编号（C4、D36、设计 18 §4.0……）被去掉（`src/lib/publicText.ts`），契约原文不动。页面给客户看：契约里的文案有中英两版（`description` / `summary` 是英文，`x-description-zh` / `x-summary-zh` 是中文），页面把它拆成「中文」「English」两份文档，左上角切换，缺省中文（不看浏览器语言，`?api=en` 打开英文）；接口自身的说明两份都是英文。Scalar 停在 1.46.4：之后的版本要求 Node 22，而镜像与 CI 还要在 Node 20 上构建。它的 3 MB 大包会让构建打出「Some chunks are larger than 1200 kB」，说的就是 `api-docs-*.js`，控制台自己的包不受影响。
 - **接真的 Daemon**：`VITE_API_TARGET=http://127.0.0.1:8080 npm run dev`，开发服务器把 `{前缀}/api` 和 `{前缀}/events` 代理过去，模拟数据关闭。
 - **挂载前缀**：`CURATOR_BASE=/curation npm run dev`，然后打开 http://localhost:5173/curation/ 。开发服务器在 `index.html` 里做和 Daemon 一样的注入。
 
 ## 构建与部署：Daemon 要做的事
 
-`npm run build` 的产物在 `frontend/dist/`：`index.html`、`favicon.svg`、`assets/*`（文件名带内容哈希），以及接口文档的 `api-docs.html`、`openapi.json`（契约原文转成的 JSON）和给 agent 的导读 `llms.txt`（英文）、`llms-zh.txt`（中文）（`public/` 下的原样拷过去）。资源路径全部是相对的，同一份产物能挂在任何前缀下。Daemon 托管时要做三件事：
+`npm run build` 的产物在 `frontend/dist/`：`index.html`、`favicon.svg`、`assets/*`（文件名带内容哈希），以及 API 文档的 `api-docs.html`、`openapi.json`（契约原文转成的 JSON）和给 agent 的导读 `llms.txt`（英文）、`llms-zh.txt`（中文）（`public/` 下的原样拷过去）。资源路径全部是相对的，同一份产物能挂在任何前缀下。Daemon 托管时要做三件事：
 
 1. **静态文件**：`{base}/` 下按路径返回 `dist/` 里的文件。`assets/*` 可以长缓存（`Cache-Control: public, max-age=31536000, immutable`），`index.html` 用 `no-cache`。
 2. **SPA 回退**：`{base}/` 下不是文件、也不在 `{base}/api/`、`{base}/events/` 下的 GET 请求，一律返回 `index.html`（刷新 `/curation/tasks/<id>/report` 不能 404）。`assets/` 下找不到的文件返回 404，不要回退。
@@ -94,7 +94,15 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
 
 ## 手动验证（模拟数据）
 
-`npm run dev`，打开 http://localhost:5173/ 。模拟世界讲的是静态稿里那套故事：主角是任务「droid 前 50 条质检」。侧边栏依次是概览、质检（默认展开，下面是「质检任务」「人工裁决」）、数据集（默认展开，下面是「数据集列表」「可视化」）、系统和资源配置，下面是「帮助」分组：「使用文档」（点了提示「使用文档还没配置」）和「接口文档」（新标签页打开 `/api-docs.html`；模拟数据下接口没有后端，「试调用」要接真 Daemon，见「手动验证：接口文档」）；每页面包屑的「数据质检平台」都能点回概览。任务的裁决页高亮「人工裁决」，报告页高亮「质检任务」。
+UMI 真数据：按 EEF extension README 的 `export-umi` 步骤生成数据并跑一条 EEF 任务。
+在报告的 Episode 明细中确认两路模型意见、动作合理性分类和「动作投影视频」播放器；播放器在各相机文字解释前，放的是原始相机视频，
+标记画在上面的 canvas 上（网络面板里有一次 `GET /tasks/{id}/episodes/{index}/eef-overlay`，视频地址与迷你播放器相同）。
+播放、拖动时标记跟着帧走；点片段下的证据帧号，视频暂停并跳到该帧，左下角印的帧号与按钮一致。
+运行目录下 `checks/eef_video_consistency/` 里没有 `opinion/` 目录（不落盘）。断开媒体访问，重取地址仍失败后应显示「动作投影视频加载失败」。
+每路只显示所属手的轨迹、几何：右手蓝色，左手紫色。当前几何与历史轨迹的含义见设计 20。
+模拟数据下（`npm run dev`）没有 EEF 任务，报告页的这一块由测试注入记录，`src/mocks/eef.ts` 的 `eefOverlay` 给出一路画圆的标记。
+
+`npm run dev`，打开 http://localhost:5173/ 。模拟世界讲的是静态稿里那套故事：主角是任务「droid 前 50 条质检」。侧边栏依次是概览、质检（默认展开，下面是「质检任务」「人工裁决」）、数据集（默认展开，下面是「数据集列表」「可视化」）、系统和资源配置，下面是「帮助」分组：「使用文档」（点了提示「使用文档还没配置」）和「API 文档」（新标签页打开 `/api-docs.html`，缺省中文版；模拟数据下接口没有后端，「试调用」要接真 Daemon，见「手动验证：API 文档」）；每页面包屑的「数据质检平台」都能点回概览。任务的裁决页高亮「人工裁决」，报告页高亮「质检任务」。二级导航的文字与一级导航的文字左边缘对齐。点侧边栏左下角的按钮收起成图标栏，悬停「质检」「数据集」图标弹出二级导航，刷新后仍是收起状态；再点一次展开。
 
 1. **概览**：标题下没有说明文字；左边「运行情况」的三个数字铺满卡片，只有数字能点；右边卡片的四个数字（完成的任务、质检的 episode、平均通过率、Token）排在一行。只有并排、等高的两张卡片，没有「待处理」和「数据集」。Token 柱状图的纵轴是 `0 / 5M / 10M / 15M` 这样的 K / M 单位，只有三四个刻度。左边「运行情况」：运行中 1、排队中 1、已暂停 2，点数字进筛好的任务列表；下面是「umi_640 全量质检」和它的进度条。右边卡片的标题是时间范围下拉：默认「近 7 天」，柱状图每天一根（`MM-DD`）；换成「近 1 月」是 30 根；「近 3 月」按周，13 根，标签是周一的日期加「周」；「近 1 年」按月，12 根（`2026-09`），图上方的小标题跟着变成「每周 / 每月的 Token 消耗」，完成的任务、episode 数、通过率、Token 一起变。刷新页面，停在上次选的范围。两张卡片始终一样高（高度由右边那张定）；正在跑的任务多到左边放不下时，列表出现「1 / N」的简洁分页，每页条数按卡片高度算。模拟世界里只有一条在跑，看不到分页，这一条由 `OverviewPage.test.tsx` 覆盖；接真的 Daemon、把 `CURATOR_MAX_RUNNING_TASKS` 调大并同时跑几个任务时可以看到。
 2. **数据集**：页头只有标题，没有说明文字。每行一行：长地址（如 `tos://pai-kit-datasets/raw/warehouse_mcap`）、机器人型号、最近一次质检的任务名截断成省略号，鼠标移上去显示全文；最近一次质检只有任务名链接，没有状态标签（第五轮）。5 个已登记的数据集；「指纹状态」是窄列，droid-200 显示「有变化」，悬停提示「有变化，待重新预检」。每行的操作只有「可视化」「新建任务」「更多」；「更多」里是「可视化（旧）」、mcap 数据集的「mcap 配置」（格式下面写「映射：…」，第 14 步）和红色的「删除」：「可视化」在新窗口打开 `/visualize?dataset=<编号>`（第 13 步；mcap 映射待确认的置灰，悬停说原因）；「更多 → 可视化（旧）」在新标签页打开同域 ReRun，地址是 `<挂载前缀的上一级>/?url=<编码后的 tos://…/数据集名/?region=地域&curator_dataset=数据集编号>`（droid_100 是 `/?url=tos%3A%2F%2Fpai-kit-datasets%2Flerobot%2Fdroid_100%2F%3Fregion%3Dcn-beijing%26curator_dataset%3Dds_droid100`，编号让 ReRun 向 Daemon 要预签名地址，链接里没有任何密钥，设计 15；开发服务器挂在根路径，打开的正是本控制台的深链，会跳到新建页 —— 根路径部署就是这样，`CURATOR_BASE=/curation npm run dev` 时指向 `/`）；HuggingFace 缓存桶的 libero_10 不带地域，也不带编号（公开桶，ReRun 匿名读）。进 droid-200 详情点「重新检查」→ 弹出指纹变化对话框（新增 12 个文件）→「重新预检」后变成「一致」。「添加数据集」：抽屉顶部没有「填好来源和地址会自动预检…」的说明（第六轮）；访问密钥先选默认的那把（在「系统和资源配置」里设），没有默认的而只有一把时选它；必填项有红 *，填 `tos://pai-kit-datasets/lerobot/brand_new` 和访问密钥后自动预检，保存时按钮保持「保存」只转圈，保存后进详情；同一地址再添加会打开已有的那条。「更多 → 删除」umi_640_notask 会被拒（有未结束的任务在用）。详情页有基本信息、「可视化配置」（mcap 的字段映射与外部标注文件，第 14 步）、预检结果、模块可用性、指纹变化记录、跑过的任务，页头有「新建质检任务」（带着数据集进新建页）、「可视化」和「可视化（旧）」。模块可用性里「EEF–视频一致性」这样长的模块名不折行；要模型的模块（任务成败判定、技能画像）写「可用」，不再是「还没选 VLM 后端」：详情页看的是 VLM 后端，有一个验证通过的就算可用；在「系统和资源配置」里把后端都弄成验证失败（或删掉）后再看，写「需要补充 · 没有可用的 VLM 后端…」。预检没过的数据集（如登记了一个只有 `.rrd` 文件的目录，接真 Daemon；模拟世界里没有这样的数据集，由 `DatasetPages.test.tsx` 覆盖），详情页「预检结果」里只有一条红色的报错原文，没有「格式」这个键，也没有「模块可用性」（2026-10-05）。
@@ -146,14 +154,14 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     任务详情：分档进度是「CPU 块」「VLM 块」两张并排卡片（数值档、帧档的流水线小卡片，「全量步骤」一行是去重；VLM 块最上面是「补任务描述」），
     下面「判决与交付」和「Token 消耗」并排；「模块」是每模块一行：所在块（如「CPU 块 · 数值档」）、状态、「评估 50 / 选中 50 条」、「检出 N 条」和判废 / 待人工复核 /
     仅报告的条数、任务成败判定的「2 条待补跑 ▾」与「重试」、右边「去报告」；点左边箭头展开，是检出项条图和读数分布；没有运行的运动学极限一行写原因。主任务仍是旧的模块表和分档进度。
-    报告页：质检总览多「判决策略：默认（今天的判废规则）」，判废原因分布按检测项（TASK-5 5、SET-1 1、STRM-5 1）；本次质检范围的列是「所在块」「检出 / 评估」，
-    下面是覆盖矩阵「本次覆盖分类表 26 / 64 项」，九个维度各一行，ACT-4 是橙色（运动质量对它不适用，悬停写原因和 50 条，不再重复「部分条目评估不了」），点 TASK-5 滚到任务成败判定一节；
+    报告页：质检总览多「判决策略：默认（今天的判废规则）」，判废原因分布按检测项（TASK-4 5、SET-1 1、STRM-5 1）；本次质检范围的列是「所在块」「检出 / 评估」，
+    下面是覆盖矩阵「本次覆盖分类表 26 / 64 项」，九个维度各一行，ACT-4 是橙色（运动质量对它不适用，悬停写原因和 50 条，不再重复「部分条目评估不了」），点 TASK-4 滚到任务成败判定一节；
     每个小节先是评估 / 检出 / 按级别的数字、按级别着色的检出项条图（下面写图例和每个细码的条数、占比），再是原来的专用视图，综合分的分布只有一张；
     时间戳检查一节有「数据集级发现」；从任务详情点「去报告」（`?section=dedup` 之类）打开就停在那一节。
-    Episode 明细：顶部多「任意级别」「任意检测项」两个下拉，选「判废」只剩被拒的几条，检测项选「TASK-5」再缩小；ep 6 的判决概要是「全部发现」：判废一条
+    Episode 明细：顶部多「任意级别」「任意检测项」两个下拉，选「判废」只剩被拒的几条，检测项选「TASK-4」再缩小；ep 6 的判决概要是「全部发现」：判废一条
     （任务成败判定，带「可复议」、可点的「9.5–13 秒」和「去复议」），仅报告的开头空转；点「9.5–13 秒」页面滚到视频、三路一起从这一刻缓冲播放；
     每个模块一块的标题是「判废 1 条」「无发现」这样的发现计数，运动质量块里写「评估不了 ACT-4：…不适用」。ep 29 的待人工复核有「去裁决」。
-    人工裁决：问题标题下面一行灰字写细码与检测项（「标注与画面不符（LABEL-5 …）」「拿不准（TASK-5 …）」）。
+    人工裁决：问题标题下面一行灰字写细码与检测项（「标注与画面不符（LABEL-4 …）」「拿不准（TASK-4 …）」）。
     新建任务（复制这个任务）：模块卡片的标签是「可判废 / 可转人工 / 只报告」，质检范围下面有「判决策略」，切到「只报不拒」卡片变「只报告」，只有数据完整性仍是「可判废」（文件坏了后面的模块都用不了，2026-10-05）；
     第二屏时间戳检查、运动质量、视觉质量各有一块折起的「判定线（高级）」，展开是带缺省值的判定线，改了才随请求发送（`modules[].params`），策略随 `params.policy` 发送。
 12. **数据集自己的编号（F12.8，要真 Daemon）**：按 CLI README 手动验证第 13 步做一份 `numbered`（mcap，编号 5、9、12、20），
@@ -169,6 +177,7 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     格子右上角的「更换」「放大」「×」只在鼠标停在格子上时出现，曲线格与视频格一样大小；在一个格子上点「×」清空，布局变「自定义」，点「+ 选择要看的内容」选 `observation.state / action · gripper` 放进去。「详细信息」打开右侧栏（每行很紧凑，上下各 3px），点相机格显示键名、分辨率、编码（wrist 写「mpeg4 → 播放用 h264（平台转码）」）、
     读取方式；点曲线格列出每条序列的勾选框与当前值。帧号从 1 数：刚打开时帧号框是「1 / 帧数」；点播放器后按 → 帧号加一，Shift + → 跳一秒；帧号框输入 42 回车跳到第 42 帧；格子左下角的时间帧号跟着变。
     下半页「数据集信息」：左边是相机 / 状态与动作 / 任务与标注 / 元数据的树，点 info.json 右边显示文件内容；选一路相机点「加入播放器」，提示「已加到空格子」（没有空格子就换掉最后一个）。
+    节点名与属性都是数据集原文（设计 21 §3）：相机节点名是 `observation.images.…` 全键，右边是 `dtype`、`shape`、`names`、`info.video.codec`… 逐键，没有「分辨率」「读取方式」这类中文属性名。
     接真 Daemon（`VITE_API_TARGET=http://127.0.0.1:8080 CURATOR_BASE=/curation npm run dev`，数据见 `backend/daemon/viz/README.md` 的手动验证）：画面、曲线、字幕栏同一条进度条推进；
     开发构建的控制台里 `__vizClock.drift()` 给出每路视频与时钟的偏差（秒），播放中应远小于一帧。
 14. **mcap 配置（设计 18 §6.4，F13.7）**：「添加数据集」填 `tos://pai-kit-datasets/raw/genrobot_drawer`、选访问密钥：预检识别为 mcap 后抽屉加宽，
@@ -182,6 +191,9 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     换成 `tos://pai-kit-datasets/raw/abc130k_arrange_flowers`（ABC-130k 一类自定义 schema）：预检说不支持（找不到 /action），下面蓝色提示「按站点缺省的 topic，质检读不了这个数据集…保存时按下面确认的映射重新预检」；
     映射写「没有模版对得上这些 topic，按「Foxglove 通用」起草」，`-state` / `-action` 两两叠画，摘要下面两条橙字是质检读取器的已知差距（repeated 字段、H.265）；`/left-arm-state` 的字段下拉列出
     `position ×6`、`velocity ×6`、`torque ×6`，勾上 velocity 后 JSON 跟着变；「任务描述来源」可以从 /instruction 改成「metadata 键：task_name（arrange the flowers…）」，/instruction 随之变「忽略」。
+    换成 `tos://pai-kit-datasets/raw/robomind_ur`（RoboMIND 一类 RGB-D，设计 21 §5.4）：摘要写「相机 1 路 · 深度图 1 路 · 曲线 3 组…」，`/top-depth` 的用途是「深度图」
+    （下拉里「相机」置灰；`/top-camera` 反过来「深度图」置灰），字段 / 说明写「png16 · 640×480」，下面「叠放的相机」是 `/top-camera`；清掉再选回、改显示名，
+    「映射 JSON」的 `depths[0]` 跟着变，`schema_version` 是 `viz-mapping/1.1`。
     「外部标注文件」选一个 Argus JSON（如 `episode_3.json`：`{"timeline":[{"start":0,"end":1,"label":"reach"}],"key_events":[{"t":0.5,"label":"grasp"}]}`）：写「episode_3.json · 1 条 episode · 1 段 · 1 个事件」，
     任何格式的数据集都能带；认不出的格式写「标注格式不支持…」。已登记的：warehouse_mcap 详情页头点「mcap 配置」（或列表行「更多」里的同名操作），抽屉写「已确认第 1 版「warehouse（Foxglove 通用）」」、
     表格从这一版开始（「下表是已确认的第 1 版…」），底下折叠着「质检读取用的映射（由已确认的版本派生，只读）」；改个显示名点「确认为第 2 版」，详情变「第 2 版」。
@@ -197,7 +209,9 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
 16. **Lance（设计 19 §4，F14.3，要真 Daemon）**：按 `backend/daemon/viz/README.md` 第 18 步造三份 Lance 数据集并登记。可视化页的数据集下拉里三份都能选：
     顶栏与左栏摘要的格式分别写「Lance（lerobot-lancedb 0.3 三表）」「Lance（lerobot-lancedb 0.2 视频表）」「Lance（lerobot-lancedb 0.2 逐帧图片）」；
     前两份的相机格是视频，「详细信息」侧栏的读取方式写「Daemon 出 Lance 表里的视频字节」，「打开原始视频」能下载到这一路的 mp4；第三份的相机格是逐帧画布（读取方式「帧包」）。
-    三份播放、跳帧、曲线与同一份 LeRobot 原始数据一致；下半页「数据集信息」最后一组「Lance 表」列出各表的行数与列。模拟世界里 pusht_lance 不在数据集列表里（测试里临时加），逻辑见 `Player.test.tsx`。
+    三份播放、跳帧、曲线与同一份 LeRobot 原始数据一致；下半页「数据集信息」最后一组「Lance 表」列出各表的 `num_rows` 与 `columns`。模拟世界里 pusht_lance 不在数据集列表里（测试里临时加），逻辑见 `Player.test.tsx`。
+    再登记一份数据文件是 Git LFS 指针的副本（做法见 `backend/daemon/viz/README.md` 第 18 步末尾）：详情页「预检结果」写「这些文件是 Git LFS 指针（一百多字节的占位），不是数据：…用 git lfs pull 或 hf download 拿到真文件后重新上传」；
+    可视化页选它，主区写「可视化读不出来：…是 Git LFS 指针文件…」，开发者工具里 `/viz` 只请求一次、之后不再请求（2026-10-05 以前会反复请求、主区空白；`VisualizePage.test.tsx` 覆盖）。
 17. **浏览器内解码（设计 19 §3，F14.2，要真 Daemon）**：可视化页选一份 mcap 数据集（H.264 / H.265 相机，如 `backend/daemon/viz/README.md` 第 14 步的 `viz_abc`）：
     支持 WebCodecs 的浏览器（Chrome / Edge / Safari 新版）里相机格是画布不是 `<video>`（开发者工具里 `canvas[data-testid^="vz-samples-"]`），点相机格开「详细信息」，读取方式写
     「浏览器解码（WebCodecs）」；播放、逐帧（→）、帧号框跳帧、向后拖进度条、2x、循环，画面与曲线同一条进度条走；网络面板里样本包按 GOP 区间取（`Range: bytes=…`），没有 `.mp4` 请求。
@@ -206,13 +220,31 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
     多条的 mcap（如 `viz_umi`）打开第 0 条，网络面板里紧跟着有 `episodes/1/viz`（后台预取下一条），再点「下一条」不用等扫描。
     预缓存（2026-10-05）：点播放后顶栏先写「缓冲中…」，每路攒够约 5 秒才开始走（本机几乎立刻）；开发者工具网络面板选「Slow 3G」再播，
     会多等一会儿才开播，播放中快用完时先停下补，不再一卡一卡；等满 8 秒还不够也会按已有的开播。
+18. **转码与同一路相机两格（设计 21 §2，F15.1，要真 Daemon）**：按 `backend/daemon/viz/README.md` 第 21 步登记 `viz_v3_mpeg4`，可视化页打开第 1、2 条：
+    「平台转码」那一路的画面与时钟对齐（白竖线随帧右移，第 1 条的第 1 帧在 x = 26），不是共用文件里别的时刻；原样的 `viz_v3` 在控制台里
+    `MediaSource.isTypeSupported = () => false; HTMLMediaElement.prototype.canPlayType = () => ''` 后换一条 episode（不要刷新；相机退到 `transcode_url`）同样对齐。「自定义」布局里把同一路相机放进两个格子，播放、拖动、逐帧时两格一起走。
 
-## 手动验证：接口文档（真 Daemon）
+19. **深度图（设计 21 §5，F15.4）**：模拟世界里 droid_100 的 wrist 相机带一路深度（64 × 36）。可视化页选 droid_100，任一格子「更换」→「深度图」组里
+    `observation.images.wrist_image_left.depth`：格子先写「深度图生成中 50%」，一秒多后出伪彩画面（近蓝远红，左上角一小块空洞透明），右下角色标写
+    `560–1450 mm`，鼠标停在画面上顶部显示「(x, y) · N mm」；播放时深度与相机同一条进度条走。格子右上角「设置」：改「灰度」立即变黑白；
+    取消「自动」后近 / 远两个框带着 560、1450，改成 800 / 1000 画面对比变强；开「叠在 RGB 上」后下层出现 wrist 相机，深度按透明度叠在上面，拖滑杆变化。
+    点深度格子开「详细信息」：键名、分辨率、单位「mm，0 为空洞」、本条范围、配对的相机「wrist_image_left」、读取方式「16 位深度帧包（Daemon 生成）」。
+    真 Daemon：按 `backend/daemon/viz/README.md` 第 23 步造 `viz_depth`，同样能看，且画面与 parquet 里的值一致（悬停读数与第 23 步的 Python 打印对得上）。
+    mcap 的深度（设计 21 §5.4，F15.5）按同一份 README 第 24 步：合成的 `viz_rgbd` 四种写法都能看；RoboMIND 真数据在「mcap 配置」确认后，`top-depth` 叠在 `top-camera` 上。
+
+20. **展示配置（设计 21 §6，F15.6）**：可视化页选 droid-200，模版改「仅视频」、倍速改 2x，顶栏「布局 → 保存为缺省布局」，确认后提示「已保存，所有人打开这个数据集都是这个布局」；
+    刷新页面仍是仅视频、2x。点左栏别的 episode：格子、隐藏的线（在曲线图例里点掉一条）、倍速都不变，上一条留在屏幕上直到下一条读好。「布局 → 恢复默认布局」确认后回到智能布局、1x。
+    页头「展示配置」打开抽屉：把 wrist 上移两次、显示名填「腕部」、exterior_2 勾「不进布局」、缺省倍速 1.5x，保存后智能布局只放两路相机、第一路叫「腕部」，exterior_2 在「+」里仍可选；
+    数据集详情的「可视化配置」里「展示配置」一行写「已保存第 N 版」。抽屉的「曲线分组」：「新建分组」后把两条 gripper 线的「所属分组」改成它、把 `action` 第 0 维改「不画」，
+    保存后曲线组跟着变；「恢复自动分组」再保存回到自动分组；「恢复默认」确认后整份清空。warehouse_mcap 的抽屉里曲线分组只写「由字段映射决定」。
+    接真 Daemon：`backend/daemon/viz/README.md` 第 25 步。
+
+## 手动验证：API 文档（真 Daemon）
 
 1. `npm run build`：`dist/` 下有 `api-docs.html`、`openapi.json`、`llms.txt`、`llms-zh.txt`。
 2. 用 `.claude/launch.json` 的 `curator-daemon-dev` 起 Daemon（`/curation` 前缀、不鉴权、端口 8080、托管 `frontend/dist`）。
-3. 打开 http://127.0.0.1:8080/curation/ ，点侧栏「帮助」下的「接口文档」：新标签页打开 `/curation/api-docs.html`，标题「Curator v2 API」，
-   右侧 Server 是 `http://127.0.0.1:8080/curation/api/v1`。浏览器语言是中文时缺省是中文版：左侧目录先是首页说明的「概览 / 约定 / 变更记录」，
+3. 打开 http://127.0.0.1:8080/curation/ ，点侧栏「帮助」下的「API 文档」：新标签页打开 `/curation/api-docs.html`（标签页标题「API 文档 · API Reference」），标题「Curator v2 API」，
+   右侧 Server 是 `http://127.0.0.1:8080/curation/api/v1`。缺省是中文版（浏览器语言是英文也一样）：左侧目录先是首页说明的「概览 / 约定 / 变更记录」，
    变更记录只有 2.5.1 一条；再是 9 个 tag（credentials、vlm、datasets、overview、tasks、report、system、uploads、viz）下的 85 个操作，tag 的
    说明是中文，最后是 Models。左上角的文档选择器切到「English」：首页变成「Overview / Conventions / Changelog」，tag 说明与示例标题变成英文；
    接口标题与参数说明两边都是英文。地址加 `?api=en` 直接打开英文版。常用接口（新建任务、任务详情、任务列表、报告、裁决、预检、错误体等）
@@ -227,7 +259,7 @@ npm run build && npm run serve:dist -- --base /curation --api http://127.0.0.1:8
 6. `curl -s http://127.0.0.1:8080/curation/openapi.json | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])"`
    打出的版本与 `docs/contracts/openapi.yaml` 的 `info.version` 一致；`curl -s http://127.0.0.1:8080/curation/openapi.json | grep -c '(D21)'` 是 0
    （发布的版本去掉了内部编号）。`curl -s http://127.0.0.1:8080/curation/llms.txt` 是英文导读、`llms-zh.txt` 是中文导读（都是 `text/plain`）。
-7. 开了鉴权的 Daemon（`CURATOR_AUTH_MODE=basic` 加 `CURATOR_AUTH_USER` / `CURATOR_AUTH_PASSWORD`）：浏览器登录控制台后打开接口文档，
+7. 开了鉴权的 Daemon（`CURATOR_AUTH_MODE=basic` 加 `CURATOR_AUTH_USER` / `CURATOR_AUTH_PASSWORD`）：浏览器登录控制台后打开 API 文档，
    鉴权框留空直接试调用 `GET /overview`，返回 200（请求带的是浏览器登录的凭据）；在鉴权框里填别的账号，就按填的发。
 
 ## 契约缺口（C4 1.9.0）与前端的做法

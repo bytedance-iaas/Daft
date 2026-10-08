@@ -7,7 +7,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 3.2（D68–D72）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 4.0（D68–D73 与分类表 2.0 合流，2026-10-08）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；检测项编号按分类表 2.0；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -263,7 +263,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 契约先行：这一版把注册表、C2、C3、C4 改到设计 17 的终态，代码的切换按 F12.2（发现）→ F12.3（策略判决）→ F12.4（两块并行）→ F12.5（前端）
 逐步落地，每一步都能单独上线。
 
-- **C6 分类表（新）** `taxonomy.json` + `taxonomy.schema.json`（1.1，71 项；1.2 加 IMG-13、IMG-14，73 项，2026-10-02，F11.11）：检测项的编号、名称、通俗解释、种类（问题 / 现象 / 读数 / 对照）、
+- **C6 分类表（新）** `taxonomy.json` + `taxonomy.schema.json`（1.1，71 项；1.2 加 IMG-13、IMG-14，73 项，2026-10-02，F11.11；1.3 删五项并去掉「读数」种类，68 项；2.0 各维度重新编号、去掉空号（新旧对照在 `renumbered`），2026-10-07，F11.18）：检测项的编号、名称、通俗解释、种类（问题 / 现象 / 对照）、
   逐条还是数据集级、对照项守的项。与回归样本集的分类表同一份条目（契约测试逐项比编号、名称、种类、级别、guards），平台侧的注记不在里面。
 - **C1 2.0**：模块写明 `block`（cpu / vlm）与块内的段 `stage`（`integrity`、`numeric`、`frame`、`dedup`；`autolabel`、`vlm`、`profile`），
   `depends_on` 只剩 `autolabel`；`codes` 是细码目录（每个细码：分类表的项、缺省严重度、默认级别 blocking / review / info、review 级的裁决线、
@@ -289,7 +289,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **设计 17 原文的两处细化**：C2 只升改了形状的六份（原写 common 的 `schema_version` 整体升 2.0）；策略放任务参数、不加列。
 - **C1 2.1（同日，F12.2）**：判定线成为模块参数——视觉质量 4 条、运动质量 7 条、时间戳 1 条、同步 1 条，缺省值取 v1 现成的判定线；都标 `x-advanced`
   （新建任务表单先不显示，API 可设）。运动学加细码 `data_invalid`（FILE-6，维度不对或有无效值时的判不通过）；技能画像去掉 `task_text_missing`
-  （它的来源字段不表示缺标注，LABEL-3 只由任务成败报）。只增参数、调整两个尚无产出方的细码，C4 形状不变。
+  （它的来源字段不表示缺标注，LABEL-2 只由任务成败报）。只增参数、调整两个尚无产出方的细码，C4 形状不变。
 - **F12.3（同日）**：C4 2.1.0——Episode 明细的理由（`EpisodeNote`）多可选的 `code`、`item`、`appealable`，2.0 清单里的理由原样透传；其余契约不动。
   check 起写记录 2.0，aggregate 按任务策略判决——Daemon 在 `run.json` 冻结 `c2: "2.0"`、`registry_version` 与完整策略，
   每个结果版本另存 `policy.json`；`run.json` 没有 `c2: "2.0"` 的旧任务不再运行（`legacy_task`），aggregate / adjudicate-apply 遇到 1.0 记录退出码 2。
@@ -382,7 +382,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   `task_success.task_text_missing` 的说明改为「没有任务标注，没有做任务成败判定」。
 - **C2**：`cli/autolabel.schema.json`、`cli/autolabel-line.schema.json` 与它们的示例删除；计划（`plan.schema.json` 2.0）不再生成 `autolabel` 段，
   枚举里的 `autolabel` 保留给旧计划；`task_success` 对无标注条目的记录：`status: ok`、`details.skipped = "no_task_text"`、`task_desc_source = "无"`，
-  发现只有 `task_text_missing`，TASK-5 / LABEL-5 列在 `unassessable`（`no_task_text`）；交付清单里这种条目的 `task_text` 为 null。
+  发现只有 `task_text_missing`，TASK-4 / LABEL-4 列在 `unassessable`（`no_task_text`）；交付清单里这种条目的 `task_text` 为 null。
 - **C3 / C4**：stage id 枚举不变（旧任务的进度里仍有 `autolabel`）；新任务的进度没有这一行；`usage` 的模块里不再出现 `autolabel`。
 
 ### 补充（同日，D73）：判废护栏去掉，无标注条目只看画面缺陷
@@ -391,4 +391,11 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   `verdict` 为 `unavail`），`camera_defects` 的记录由此产生，和有标注的条目一样；计划里 vlm 段的 `gates` 不再有 `guard_caption`；
   `estimates.vlm_requests` 每条 1 次。有标注条目的记录不再出现 `label_check`；`label_conflict_suspect` 只在 D73 之前的记录里。
 - **C1 / C4 不变**。
+
+### 合流（2026-10-08）：与分类表 2.0 那条线合并
+
+`feat/curator-v2` 上同期有分类表 1.3 → 2.0（删五项、各维度重新编号，F11.18 / F11.19）、EEF 叠加、可视化切片 / 深度 / 展示配置几刀，
+两条线各自把注册表记作 3.x、C4 记作 2.x 与 3.x–4.x。合流后：**C1 4.0**（上面 3.0–3.2 的全部删减 + 分类表 2.0 的编号：任务成败判定的项是
+TASK-4 / TASK-10 / LABEL-2 / LABEL-4，`motion_quality` 不再覆盖已删的 SET-3）、**C4 4.2.0**（2.6.0–2.8.0 的新增与 3.0.0–4.1.0 的删减都在，
+changelog 两边的条目按版本号排在一起）。这之前跑的任务，记录里是各自当时的编号，读方按当时的注册表显示。
 

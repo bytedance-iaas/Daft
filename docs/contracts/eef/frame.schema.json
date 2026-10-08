@@ -67,6 +67,41 @@
       "additionalProperties": {
         "$ref": "#/$defs/camera_frame"
       }
+    },
+    "hands": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pose",
+              "opening_m"
+            ],
+            "properties": {
+              "pose": {
+                "$ref": "#/$defs/pose"
+              },
+              "opening_m": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
     }
   },
   "required": [

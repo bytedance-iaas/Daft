@@ -8,6 +8,12 @@ type Args = Record<string, unknown>;
 const S = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
 const L = (v: unknown): string => (Array.isArray(v) ? join(v.map(String)) : S(v));
 
+// EEF trajectory point / axis ids, spelled out where the convention is known; other ids are shown as given
+const EEF_POINTS: Record<string, string> = { tcp: '工具中心点（TCP）' };
+const EEF_AXES: Record<string, string> = { x: 'X 轴', y: 'Y 轴', z: 'Z 轴（接近方向）', finger_line: '手指连线' };
+const eefPointName = (id: string) => EEF_POINTS[id] ?? `标记点 ${id}`;
+const eefAxisName = (id: string) => EEF_AXES[id] ?? id;
+
 export const zh = {
   app: {
     product: 'Physical AI Kit · 数据质检平台',
@@ -31,8 +37,8 @@ export const zh = {
     groupHelp: '帮助',
     docs: '使用文档',
     docsMissing: '使用文档还没配置',
-    apiDocs: '接口文档',
-    apiDocsMissing: '接口文档还没配置',
+    apiDocs: 'API 文档',
+    apiDocsMissing: 'API 文档还没配置',
   },
 
   common: {
@@ -212,7 +218,16 @@ export const zh = {
     format_disabled: (a: { format?: unknown }) =>
       `本实例关闭了 ${String(a.format ?? '')} 格式的质检（站点配置 ingest.${String(a.format ?? '')}_enabled），请联系管理员`,
     format_unsupported_by_module: (a: { format?: unknown }) => `该模块只能读 LeRobot 与 mcap 数据集，不支持 ${String(a.format ?? '')}`,
-    metadata_invalid: (a: { problem?: unknown }) => `数据集的元数据有问题：${String(a.problem ?? '')}`,
+    metadata_invalid: (a: { problem?: unknown }) => {
+      const problem = String(a.problem ?? '');
+      // a git clone made without Git LFS (the CLI's lfs_problem): said in full, it is the user's to fix
+      const lfs = /^Git LFS pointer files instead of the data: (.*?)(?: \(and up to (\d+) more data files of pointer size\))? - /.exec(problem);
+      if (lfs) {
+        const more = lfs[2] ? ` 等（另有至多 ${lfs[2]} 个同样大小的数据文件）` : '';
+        return `这些文件是 Git LFS 指针（一百多字节的占位），不是数据：${lfs[1]}${more}。数据集是从没装 Git LFS 的 git clone 上传的，用 git lfs pull 或 hf download 拿到真文件后重新上传`;
+      }
+      return `数据集的元数据有问题：${problem}`;
+    },
     missing_input: (a: { missing?: unknown; video_cause?: unknown }) => {
       const names: Record<string, string> = {
         timestamps: '时间戳列',
@@ -1568,7 +1583,7 @@ export const zh = {
         failed: '没问成',
         confidenceChart: '不匹配片段的置信度',
         aspectChart: '不匹配的方面',
-        aspect: { position: '中心', orientation: '朝向', both: '中心与朝向' } as Record<string, string>,
+        aspect: { position: '中心', orientation: '朝向', both: '中心与朝向', action: '动作合理性' } as Record<string, string>,
       },
       humanPending: (pending: number, human: number) => (pending === human ? `都在人工裁决里待裁` : `人工裁决里待裁 ${pending} 条，其余已裁或已被别的检查判废`),
       humanChart: '转人工的原因',
@@ -1627,7 +1642,7 @@ export const zh = {
     onCamera: (camera: string) => `（相机 ${camera}）`,
     kind: { uniform: '均匀抽样', candidate: '候选段' } as Record<string, string>,
     frames: (from: number, to: number, n: number) => (from === to ? `帧 ${from + 1}` : `帧 ${from + 1}–${to + 1}（${n} 帧）`),
-    target: (point: string, axis: string | null) => (axis ? `点 ${point} · 方向 ${axis}` : `点 ${point}`),
+    target: (point: string, axis: string | null) => (axis ? `${eefPointName(point)} · 朝向 ${eefAxisName(axis)}` : eefPointName(point)),
     vote: { position: '位置', orientation: '朝向', tracking: '绿十字跟对了' } as Record<string, string>,
     offset: (direction: string, magnitude: string) => `偏移：${direction}${magnitude ? `，${magnitude}` : ''}`,
     offsetDirection: { up: '偏上', down: '偏下', left: '偏左', right: '偏右', toward_fingers: '偏向指尖', away_from_fingers: '偏离指尖', unclear: '方向不明' } as Record<string, string>,
@@ -1637,6 +1652,7 @@ export const zh = {
       timeout: '模型超时',
       malformed_json: '答复不是合法 JSON',
       schema_violation: '答复不合格式',
+      bad_frame: '答复的帧号超出范围或证据帧不在片段内',
       unknown_frame: '答复引用了请求里没有的帧',
       measured_value: '答复里给了测量值',
       frames_unreadable: '画面解码失败',
@@ -1648,16 +1664,22 @@ export const zh = {
     opinion: {
       title: '模型意见',
       advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P、接近方向红箭头 A 和手指连线橙线 B），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
-      finger: (axis: string) => ` · 手指连线 ${axis}`,
+      finger: (axis: string) => (axis === 'finger_line' ? ' · 手指连线' : ` · 手指连线沿 ${eefAxisName(axis)}`),
       failed: (why: string) => `没问成：${why}`,
       skipped: '没有问',
       unseen: '模型说这一段看不清夹爪',
       none: '模型认为全程一致',
       segment: (i: number) => `片段 ${i}`,
       seconds: (from: number, to: number) => `${from.toFixed(1)}–${to.toFixed(1)} 秒`,
-      aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对' } as Record<string, string>,
+      aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对', action: '动作与画面不符' } as Record<string, string>,
+      video: '动作投影视频',
+      videoLoading: '正在加载动作投影视频…',
+      videoFailed: '动作投影视频加载失败',
+      noSource: (why: string | null) => `原始视频放不了${why ? `（${why}）` : ''}，没法叠加标记`,
       confidence: (pct: number) => `不匹配置信度 ${pct}%`,
-      evidenceFrames: (frames: string) => `证据帧 ${frames}（没存图）`,
+      evidenceFrames: '证据帧',
+      repaired: (frames: string, why: string) => `${frames}：第 1 次答复不合格（${why}），已让模型修正后采用第 2 次答复`,
+      seekFrame: (frame: number) => `跳到第 ${frame} 帧`,
       summary: '模型总结',
     },
     // the upload against the dataset's own record (design doc 12 §8.7, D-E16)
@@ -2112,6 +2134,45 @@ export const zh = {
       lines: (n: number) => `${n} 条`,
       size: (w: number | null, h: number | null, codec: string | null) => [w && h ? `${w}×${h}` : '', codec ?? ''].filter(Boolean).join(' · '),
       unavailable: '本期不支持',
+      depth: '深度图',
+    },
+    /** depth cells (design doc 21 §5.5) */
+    depth: {
+      tag: '深度',
+      generating: (p: number | null) => (p === null ? '深度图生成中…' : `深度图生成中 ${Math.round(p * 100)}%`),
+      loading: '深度图加载中…',
+      failed: '深度图读不出来',
+      unsupported: '这一路深度图没法显示',
+      range: (lo: number, hi: number) => `${lo}–${hi} mm`,
+      at: (x: number, y: number, v: number) => `(${x}, ${y}) · ${v} mm`,
+      hole: (x: number, y: number) => `(${x}, ${y}) · 空洞`,
+      settings: '设置',
+      settingsTitle: '深度图的配色、范围与叠放',
+      cmap: '配色',
+      turbo: '彩色',
+      gray: '灰度',
+      rangeLabel: '范围（mm）',
+      auto: '自动（本条 2%–98%）',
+      lo: '近',
+      hi: '远',
+      overlay: '叠在 RGB 上',
+      opacity: '透明度',
+      noPair: '没有与它配对的相机',
+      aspect: '与相机的宽高比不一致，不能叠放',
+      close: '收起',
+    },
+    /** the player's 布局 menu (design doc 21 §6.4) */
+    display: {
+      menu: '布局',
+      menuTitle: '把当前布局存成这个数据集的缺省布局，或恢复平台缺省',
+      save: '保存为缺省布局',
+      restore: '恢复默认布局',
+      saveTitle: '保存为缺省布局？',
+      saveContent: '所有人打开这个数据集都会用当前的布局：模版或格子与每格内容（含深度图的上色与叠放）、隐藏的线、字幕轨、倍速与循环。相机与曲线分组在「展示配置」里改。',
+      saved: '已保存，所有人打开这个数据集都是这个布局',
+      restoreTitle: '恢复默认布局？',
+      restoreContent: '去掉保存的缺省布局，回到平台缺省：智能布局、全部线、主轨、1 倍速、不循环。相机与曲线分组的设置不变。',
+      restored: '已恢复默认布局',
     },
     curve: {
       tip: '实线是状态，虚线是动作',
@@ -2180,6 +2241,15 @@ export const zh = {
       curveNote: '实线是记录到的状态，虚线是下发的动作；两者同名维度叠在一起画。点图可以跳到那一刻。',
       annotations: '标注',
       track: '字幕显示',
+      depthTitle: (name: string) => `深度图 · ${name}`,
+      depthStream: '深度流',
+      depthUnit: (unit: string) => `${unit}，0 为空洞`,
+      depthRange: '本条范围（2%–98%）',
+      depthShown: '当前配色范围',
+      depthPair: '配对的相机',
+      depthPairNone: '无',
+      depthAccess: '16 位深度帧包（Daemon 生成）',
+      depthNote: '近处偏蓝、远处偏红（灰度：近黑远白）；空洞透明。鼠标停在画面上可读该点的深度。',
     },
     access: {
       direct: '预签名地址直连',
@@ -2248,10 +2318,65 @@ export const zh = {
     preview: '内容预览',
     previewTruncated: (kb: number) => `（只显示前 ${kb} KB）`,
     previewFailed: '读不出这个文件',
-    attrs: { dtype: 'dtype', shape: 'shape', names: 'names', file: '文件' } as Record<string, string>,
   },
 
   /** The mcap field mapping (design doc 18 §6, F13.7): the add drawer's section and the dataset's drawer. */
+  /** 展示配置 (design doc 21 §6.5): a registration's default look in the visualizer */
+  displayCfg: {
+    entry: '展示配置',
+    title: (name: string) => `展示配置 · ${name}`,
+    none: '平台缺省（还没有保存过）',
+    current: (v: number) => `已保存第 ${v} 版`,
+    cameras: '相机',
+    camerasNone: '这个数据集没有相机',
+    colCamera: '相机（原文）',
+    colName: '显示名',
+    colHidden: '不进布局',
+    hiddenTip: '布局模版不放这一路；「+」与「更换」里仍可选',
+    up: '上移',
+    down: '下移',
+    nameAria: (key: string) => `${key} 的显示名`,
+    hiddenAria: (key: string) => `${key} 不进布局`,
+    groups: '曲线分组',
+    groupsMcap: 'mcap 数据集的曲线分组由字段映射决定，到「mcap 配置」里改',
+    groupsNone: '这个数据集没有可画的数值维度',
+    colGroup: '分组',
+    colUnit: '单位',
+    colSmart: '进智能布局',
+    colLines: '线',
+    addGroup: '新建分组',
+    newGroup: '新分组',
+    removeGroup: '删除分组',
+    emptyGroup: '没有线：保存时去掉',
+    groupAria: (key: string) => `分组 ${key} 的名字`,
+    unitAria: (key: string) => `分组 ${key} 的单位`,
+    dims: '各维度',
+    colFeature: '特征（原文）',
+    colDim: '维度',
+    colLine: '线名',
+    colRole: '角色',
+    colIn: '所属分组',
+    notDrawn: '不画',
+    roles: { state: '状态（实线）', action: '动作（虚线）', other: '其他' } as Record<string, string>,
+    lineAria: (id: string) => `${id} 的线名`,
+    roleAria: (id: string) => `${id} 的角色`,
+    inAria: (id: string) => `${id} 所属分组`,
+    autoGroups: '恢复自动分组',
+    track: '字幕轨',
+    trackAuto: '自动（数据集的主轨）',
+    tracksNone: '这个数据集没有分段标注',
+    playback: '播放',
+    speed: '缺省倍速',
+    loop: '循环',
+    save: '保存',
+    saved: '已保存展示配置',
+    unchanged: '没有改动',
+    restore: '恢复默认',
+    restoreTitle: '恢复默认展示配置？',
+    restoreContent: '清空这个数据集的整份展示配置（缺省布局、相机、曲线分组、字幕轨、播放），所有人打开都回到平台缺省。',
+    restored: '已恢复默认展示配置',
+    problems: (n: number) => `有 ${n} 处对不上这个数据集，没有保存：`,
+  },
   mcap: {
     section: 'mcap 配置（字段映射）',
     onlyMcap: '仅 mcap 格式',
@@ -2279,6 +2404,7 @@ export const zh = {
     importNotJson: (file: string) => `${file} 不是合法的 JSON，没有导入`,
     moreProblems: (n: number) => `…另有 ${n} 处`,
     sumCameras: (n: number) => `相机 ${n} 路`,
+    sumDepths: (n: number) => `深度图 ${n} 路`,
     sumSeries: (n: number, a: number, s: number, o: number) => `曲线 ${n} 组${n ? `（动作 ${a}、状态 ${s}、其他 ${o}）` : ''}`,
     sumTask: (yes: boolean) => `任务描述${yes ? '有' : '无'}`,
     sumSegments: (yes: boolean) => `分段标注${yes ? '有' : '无'}`,
@@ -2296,7 +2422,7 @@ export const zh = {
     colName: '显示名',
     colFields: '字段 / 说明',
     rate: (hz: number | null, count: number | null) => [hz !== null ? `${hz} Hz` : '', count !== null ? `${count.toLocaleString('zh-CN')} 条` : ''].filter(Boolean).join(' · ') || '—',
-    use: { camera: '相机', action: '曲线 · 动作', state: '曲线 · 状态', other: '曲线 · 其他', task: '任务描述', segments: '分段标注', ignore: '忽略', unmapped: '未映射' } as Record<string, string>,
+    use: { camera: '相机', depth: '深度图', action: '曲线 · 动作', state: '曲线 · 状态', other: '曲线 · 其他', task: '任务描述', segments: '分段标注', ignore: '忽略', unmapped: '未映射' } as Record<string, string>,
     useAria: (topic: string) => `${topic} 的用途`,
     nameAria: (topic: string) => `${topic} 的显示名`,
     fieldsAria: (topic: string) => `${topic} 的字段`,
@@ -2309,6 +2435,9 @@ export const zh = {
     pairNone: '不成对',
     pairAria: (topic: string) => `${topic} 与哪组叠画`,
     smart: '进智能布局',
+    depthPair: '叠放的相机',
+    depthPairNone: '不叠放',
+    depthPairAria: (topic: string) => `${topic} 叠放的相机`,
     image: (codec: string, w: number | null, h: number | null) => `${codec}${w && h ? ` · ${w}×${h}` : ''}`,
     taskField: '文本字段（不填：整条消息就是文本）',
     segStart: '开始字段',
@@ -2354,7 +2483,7 @@ export const zh = {
       transform: (names: readonly string[]) => `只能是 ${names.join('、')}`,
       notBool: '应为 true 或 false',
       notMapping: '映射应为一个 JSON 对象',
-      version: (v: string) => `应为 ${v}`,
+      version: (vs: readonly string[]) => `应为 ${vs.join(' 或 ')}`,
       base: '只能是 builtin:foxglove、builtin:ros2、builtin:umi 或 null',
       timelineSource: '只能是 log_time、publish_time 或 message_timestamp',
       needTimestamp: '按消息里的时间戳时要写 timestamp_field',
@@ -2366,6 +2495,8 @@ export const zh = {
       duplicateTopics: '有重复的 topic',
       usedTwice: (topic: string, a: string, b: string) => `topic ${topic} 同时出现在 ${a} 与 ${b}`,
       notSeries: (t: string) => `${t} 不是映射里的曲线`,
+      notCamera: (t: string) => `${t} 不是映射里的相机`,
+      depthUnit: '只能是 mm 或 m',
       pairRoles: '成对的两组要一组状态、一组动作',
       pairTaken: (t: string) => `${t} 已经和别的曲线成对`,
       ignoredMapped: (t: string) => `topic ${t} 已经映射，不能同时忽略`,

@@ -57,7 +57,7 @@ describe('the EEF record for a person (F5.11, F5.12)', () => {
     const [a, b, c] = eefWindowRows(details);
     expect(a.title).toBe('候选段 · 位置');
     expect(a.frames).toBe('帧 41');                       // frame 40 of the data, counted from 1
-    expect(a.target).toBe('点 tcp');
+    expect(a.target).toBe('工具中心点（TCP）');
     expect(a.votes.map((v) => `${v.label}：${v.value}:${v.tone}`)).toEqual(['位置：反驳:bad', '朝向：拿不准:none', '绿十字跟对了：支持:good']);
     expect(a.offset).toBe('偏移：偏左，一到两指宽');
     expect([a.explanation, a.cached, a.failure]).toEqual(['红圈在夹爪左边', true, null]);
@@ -75,7 +75,7 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(op).toMatchObject({ status: 'answered', flagged: true, maxConfidence: 0.85, failure: null });
     const [ext, wrist] = op.cameras;
     expect(ext).toMatchObject({ camera: 'ext', status: 'answered', point: 'tcp', axis: 'z', fingerAxis: 'y', summaries: ['前半段中心偏得明显'], failures: [], unseen: false });
-    expect(ext.segments.map((g) => [g.startFrame, g.confidence, g.evidence.length])).toEqual([[40, 0.85, 2], [180, 0.4, 0]]);
+    expect(ext.segments.map((g) => [g.startFrame, g.confidence, g.evidenceFrames.length])).toEqual([[40, 0.85, 2], [180, 0.4, 1]]);
     expect(wrist).toMatchObject({ camera: 'wrist', status: 'skipped', segments: [] });
     expect(eefOpinion(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
   });

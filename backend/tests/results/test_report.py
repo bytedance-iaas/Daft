@@ -71,7 +71,7 @@ def test_findings_per_module_and_rejects_per_item(world):
     assert s["visual_quality"]["levels"] == {"blocking": 0, "review": 0, "info": 9}
     assert s["kinematic_limits"]["flagged_episodes"] == 0
     assert report["overview"]["reject_items"] == [{"item": "SET-1", "count": 1}, {"item": "STRM-5", "count": 1},
-                                                  {"item": "TASK-5", "count": 1}]
+                                                  {"item": "TASK-4", "count": 1}]
 
 
 def test_links_are_absolute_with_a_public_base_url(client_for, tmp_path):

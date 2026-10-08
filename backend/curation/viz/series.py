@@ -31,15 +31,7 @@ def read_episode_columns(fileobj, columns: list[str], *, from_index: int | None 
     pf = pq.ParquetFile(fileobj)
     names = set(pf.schema_arrow.names)
     wanted = [c for c in dict.fromkeys(columns) if c in names]
-    by_window = from_index is not None and to_index is not None and "index" in names
-    by_episode = episode_index is not None and "episode_index" in names
-    groups = list(range(pf.metadata.num_row_groups))
-    if by_window or by_episode:
-        # a row group is read when the episode table's window or the rows' own episode index say so:
-        # a wrong window in the table (an injected or broken one) still finds the episode's rows
-        groups = [g for g in groups
-                  if (by_window and _overlaps(pf, g, "index", from_index, to_index, None))
-                  or (by_episode and _overlaps(pf, g, "episode_index", None, None, episode_index))]
+    by_window, by_episode, groups = _episode_groups(pf, names, from_index, to_index, episode_index)
     read_cols = list(dict.fromkeys(wanted + (["episode_index"] if by_episode else [])
                                    + (["index"] if by_window and not by_episode else [])))
     if not groups or not read_cols:
@@ -51,6 +43,46 @@ def read_episode_columns(fileobj, columns: list[str], *, from_index: int | None 
         idx = table.column("index")
         table = table.filter(pc.and_(pc.greater_equal(idx, from_index), pc.less(idx, to_index)))
     return {c: column_values(table.column(c)) for c in wanted}
+
+
+def _episode_groups(pf, names: set, from_index, to_index, episode_index) -> tuple[bool, bool, list[int]]:
+    """(select by window, select by episode, the row groups to read) of one episode in a parquet."""
+    by_window = from_index is not None and to_index is not None and "index" in names
+    by_episode = episode_index is not None and "episode_index" in names
+    groups = list(range(pf.metadata.num_row_groups))
+    if by_window or by_episode:
+        # a row group is read when the episode table's window or the rows' own episode index say so:
+        # a wrong window in the table (an injected or broken one) still finds the episode's rows
+        groups = [g for g in groups
+                  if (by_window and _overlaps(pf, g, "index", from_index, to_index, None))
+                  or (by_episode and _overlaps(pf, g, "episode_index", None, None, episode_index))]
+    return by_window, by_episode, groups
+
+
+def iter_episode_column(fileobj, column: str, *, from_index: int | None = None, to_index: int | None = None,
+                        episode_index: int | None = None, batch: int = 32):
+    """One episode's rows of ``column`` as Arrow arrays of at most ``batch`` rows, in file order (a depth
+    picture column, design doc 21 §5.3: an episode of them is hundreds of MB, read a batch at a time)."""
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(fileobj)
+    names = set(pf.schema_arrow.names)
+    if column not in names:
+        return
+    by_window, by_episode, groups = _episode_groups(pf, names, from_index, to_index, episode_index)
+    if not groups:
+        return
+    cols = list(dict.fromkeys([column] + (["episode_index"] if by_episode else [])
+                              + (["index"] if by_window and not by_episode else [])))
+    for rb in pf.iter_batches(batch_size=batch, row_groups=groups, columns=cols):
+        if by_episode:
+            rb = rb.filter(pc.equal(rb.column("episode_index"), episode_index))
+        elif by_window:
+            idx = rb.column("index")
+            rb = rb.filter(pc.and_(pc.greater_equal(idx, from_index), pc.less(idx, to_index)))
+        if rb.num_rows:
+            yield rb.column(column)
 
 
 def _overlaps(pf, group: int, column: str, lo, hi, episode) -> bool:
@@ -74,10 +106,12 @@ def column_values(col):
     import pyarrow as pa
 
     t = col.type
-    if pa.types.is_fixed_size_list(t) or pa.types.is_list(t) or pa.types.is_large_list(t):
+    if _is_list(t):
         inner = t.value_type
+        while _is_list(inner):                   # [2, 7] poses: each row flattened, row-major
+            inner = inner.value_type
         if pa.types.is_floating(inner) or pa.types.is_integer(inner) or pa.types.is_boolean(inner):
-            rows = col.to_pylist()
+            rows = [_flat(r) for r in col.to_pylist()]
             width = max((len(r) for r in rows if r is not None), default=0)
             out = np.full((len(rows), width), np.nan, dtype=np.float64)
             for i, r in enumerate(rows):
@@ -88,6 +122,25 @@ def column_values(col):
     if pa.types.is_floating(t) or pa.types.is_integer(t) or pa.types.is_boolean(t):
         return np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float64)
     return col.to_pylist()
+
+
+def _is_list(t) -> bool:
+    import pyarrow as pa
+
+    return pa.types.is_fixed_size_list(t) or pa.types.is_list(t) or pa.types.is_large_list(t)
+
+
+def _flat(row):
+    """A row of nested lists as one flat list (None stays None)."""
+    if row is None or not isinstance(row, list) or not any(isinstance(x, list) for x in row):
+        return row
+    out: list = []
+    for x in row:
+        if isinstance(x, list):
+            out += _flat(x) or []
+        else:
+            out.append(x)
+    return out
 
 
 def episode_times(columns: dict[str, Any], fps: float | None, n: int) -> np.ndarray:

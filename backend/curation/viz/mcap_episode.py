@@ -9,6 +9,9 @@ What the pass leaves behind, in ``out_dir`` (the Daemon's disk cache):
   camera's access units as they were written, kept for the browser to decode itself: the index starts
   at the first keyframe and carries the stream's parameter sets (``config``) and codec string. The
   remux then waits until a ``<video>`` asks for it (:func:`remux_samples`);
+* ``depth-<key>.frames`` + ``depth-<key>.json`` (design doc 21 §5.4) - a depth topic's pictures as 16-bit PNGs
+  back to back (a recording's own 16-bit PNGs as they are, the rest decoded and encoded) and their index
+  (``VizFrameIndex`` with the 2 % / 98 % range);
 * ``series.npz`` - every curve topic's message times and numbers;
 * ``episode.json`` - the clock (zero, the frame reference's times, the checks' anchor and rate), the
   cameras' indexes, the task text, the segments, the warnings.
@@ -35,6 +38,7 @@ import numpy as np
 
 from . import annexb as AB
 from . import annotations as A
+from . import depth as D
 from . import mcap_messages as M
 from .mcap_mapping import check_mapping
 
@@ -82,6 +86,53 @@ def _camera_key(topic: str) -> str:
     return re.sub(r"[^0-9A-Za-z_-]+", "_", topic.lstrip("/")).strip("_")[:96] or "camera"
 
 
+def depth_keys(mapping: dict) -> dict[str, str]:
+    """``{topic: URL-safe key}`` of the mapping's depth topics (``/front-depth`` -> ``front-depth``)."""
+    out, used = {}, set()
+    for d in mapping.get("depths") or []:
+        base = _camera_key(d["topic"])
+        key, n = base, 2
+        while key in used:
+            key, n = f"{base}_{n}", n + 1
+        used.add(key)
+        out[d["topic"]] = key
+    return out
+
+
+#: depth pictures encoded at once while scanning (zlib lets go of the GIL), and queued at most
+DEPTH_THREADS = 4
+DEPTH_QUEUE = 16
+
+
+class _DepthTopic:
+    """One depth topic in the scan: its pack being written, its index, a few pictures for its range."""
+
+    def __init__(self, topic: str, key: str, entry: dict, out: pathlib.Path, stride: int):
+        self.topic, self.key, self.unit = topic, key, entry.get("unit")
+        self.path = out / f"depth-{key}.frames"
+        self.fh = None
+        self.codec: str | None = None
+        self.t: list[int] = []
+        self.offset: list[int] = []
+        self.size: list[int] = []
+        self.pos = 0
+        self.width = self.height = None
+        self.samples: list = []
+        self.stride = max(1, stride)
+        self.seen = 0
+        self.error: str | None = None
+        self.pending: list = []                 # (t_ns, future of the PNG bytes), in message order
+
+    def write(self, t_ns: int, png: bytes) -> None:
+        if self.fh is None:
+            self.fh = open(str(self.path) + ".part", "wb")
+        self.t.append(t_ns)
+        self.offset.append(self.pos)
+        self.size.append(len(png))
+        self.fh.write(png)
+        self.pos += len(png)
+
+
 def camera_keys(mapping: dict) -> dict[str, str]:
     """``{topic: URL-safe key}`` of the mapping's cameras (``/robot0/sensor/camera0/compressed`` ->
     ``robot0_sensor_camera0_compressed``, as the check reader names the videos)."""
@@ -121,20 +172,23 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
     out.mkdir(parents=True, exist_ok=True)
     reader = make_reader(stream)
     try:
-        reader.get_summary()
+        summary = reader.get_summary()
     except Exception:  # noqa: BLE001 - no valid footer (a truncated recording): read it from the top
         from mcap.reader import NonSeekingReader
 
         stream.seek(0)
-        reader = NonSeekingReader(stream)
+        reader = NonSeekingReader(stream)        # one pass only: it takes no second query
+        summary = None
     timeline = mapping.get("timeline") or {}
     tsource = timeline.get("source") or "log_time"
     tfield = timeline.get("timestamp_field")
     keys = camera_keys(mapping)
+    dkeys = depth_keys(mapping)
+    depth_entries = {d["topic"]: d for d in mapping.get("depths") or []}
     series_entries = {s["topic"]: s for s in mapping.get("series") or []}
     task_spec = mapping.get("task") if isinstance(mapping.get("task"), dict) else None
     seg_spec = mapping.get("segments") if isinstance(mapping.get("segments"), dict) else None
-    topics = set(keys) | set(series_entries)
+    topics = set(keys) | set(series_entries) | set(depth_entries)
     if task_spec and task_spec.get("topic"):
         topics.add(task_spec["topic"])
     if seg_spec and seg_spec.get("topic"):
@@ -147,6 +201,13 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
                                  "kf": [], "sets": {}, "first_key": None, "config": None, "b": False,
                                  "pps_bits": {}, "key_head": []} for t, k in keys.items()}
     files: dict[str, Any] = {}                   # topic -> the open .frames.part / .annexb.part
+    counts = _counts(summary)
+    depths = {t: _DepthTopic(t, k, depth_entries[t], out, (counts.get(t) or 300) // 30) for t, k in dkeys.items()}
+    pool = None
+    if depths:
+        import concurrent.futures as cf
+
+        pool = cf.ThreadPoolExecutor(DEPTH_THREADS, thread_name_prefix="viz-depth")
     series = {t: SeriesData(t) for t in series_entries}
     task_text = ""
     segments: list[dict] = []
@@ -173,7 +234,14 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
                 continue
             t_ns = M.message_time(message, channel, decoded, tsource, tfield)
             if topic in cams:
-                frame = M.as_frame(decoded)
+                if M.raw_kind(getattr(schema, "name", None), decoded) is not None:
+                    # a raw image or a point cloud mapped as a camera: nothing the browser can show, and its
+                    # bytes must not be sniffed for a codec (zero pixels look like an Annex-B start code)
+                    cams[topic]["codec"] = cams[topic]["codec"] or "raw"
+                    cams[topic]["t"].append(t_ns)
+                    frame = None
+                else:
+                    frame = M.as_frame(decoded)
                 if frame is None:
                     continue
                 fmt, data = frame
@@ -195,6 +263,8 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
                     if codec in ("h264", "h265") and client_decode:
                         _note_sample(cam, codec, data)
                 cam["t"].append(t_ns)
+            if topic in depths:
+                _depth_message(depths[topic], decoded, getattr(schema, "name", None), t_ns, pool)
             if topic in series:
                 values, labels = _row(decoded, series_entries[topic])
                 sd = series[topic]
@@ -220,6 +290,12 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
     finally:
         for fh in files.values():
             fh.close()
+        for dt in depths.values():
+            _drain(dt, 0)
+            if dt.fh is not None:
+                dt.fh.close()
+        if pool is not None:
+            pool.shutdown(wait=True)
     if task_spec and task_spec.get("metadata_key") and not task_text:
         try:
             for rec in reader.iter_metadata():
@@ -242,8 +318,10 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
         if broke is None:
             warnings.append({"code": "topic_missing", "message": f"这条 episode 里没有 topic {t} 的消息"})
     curves = {topic: sd.matrix() for topic, sd in series.items() if len(sd.times_ns)}
-    firsts = [min(c["t"]) for c in cams.values() if c["t"]] + [int(t[0]) for t, _ in curves.values()]
-    lasts = [max(c["t"]) for c in cams.values() if c["t"]] + [int(t[-1]) for t, _ in curves.values()]
+    firsts = [min(c["t"]) for c in cams.values() if c["t"]] + [int(t[0]) for t, _ in curves.values()] + [
+        min(dt.t) for dt in depths.values() if dt.t]
+    lasts = [max(c["t"]) for c in cams.values() if c["t"]] + [int(t[-1]) for t, _ in curves.values()] + [
+        max(dt.t) for dt in depths.values() if dt.t]
     if not firsts:
         if broke is not None:
             raise ValueError(f"文件读不出映射里的消息（{broke}）")
@@ -307,8 +385,27 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
             finally:
                 annexb.unlink(missing_ok=True)
         elif cam["t"]:
-            doc["error"] = f"编码 {cam['codec']} 本期不支持"
+            doc["error"] = "原始图像（raw）本期不支持" if cam["codec"] == "raw" else f"编码 {cam['codec']} 本期不支持"
         cam_docs[key] = doc
+    depth_docs = {}
+    for topic, dt in depths.items():
+        doc = {"topic": topic, "key": dt.key, "codec": dt.codec, "count": len(dt.t), "width": dt.width,
+               "height": dt.height, "offset_s": 0.0, "error": dt.error}
+        if dt.t:
+            os.replace(str(dt.path) + ".part", dt.path)
+            order = sorted(range(len(dt.t)), key=dt.t.__getitem__)          # the index in time order
+            lo, hi = D.value_range(dt.samples)
+            index = {"camera": dt.key, "codec": "png16", "width": dt.width, "height": dt.height, "count": len(order),
+                     "t": [rel(dt.t[i]) for i in order], "offset": [dt.offset[i] for i in order],
+                     "size": [dt.size[i] for i in order], "bytes": dt.pos,
+                     "depth": {"unit": "mm", "scale": 1.0, "invalid": 0, "lo": lo, "hi": hi}}
+            D.write_index(out / f"depth-{dt.key}.json", index)
+            doc["offset_s"] = index["t"][0]
+        elif dt.error is None and topic in seen:
+            doc["error"] = "这一路深度图没有能解开的消息"
+        if dt.error:
+            warnings.append({"code": "depth_unreadable", "message": f"深度图 {topic}：{dt.error}"})
+        depth_docs[dt.key] = doc
     arrays = {}
     series_docs = {}
     for topic, (t, mat) in curves.items():
@@ -350,12 +447,83 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
         segs.sort(key=lambda x: x["start_s"])
     doc = {"zero_ns": zero, "duration_s": rel(end) + (1.0 / check_clock["fps"] if check_clock["fps"] else 0.0),
            "frame_reference": ref, "frame_times": [rel(x) for x in ref_times], "check_clock": check_clock,
-           "cameras": cam_docs, "series": series_docs, "task": task_text, "segments": segs,
+           "cameras": cam_docs, "depths": depth_docs, "series": series_docs, "task": task_text, "segments": segs,
            "segments_source": (f"附件 {seg_spec['attachment']}" if seg_spec and seg_spec.get("attachment")
                                else f"topic {seg_spec['topic']}" if seg_spec else None),
            "warnings": warnings}
     (out / "episode.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     return doc
+
+
+def _counts(summary) -> dict[str, int]:
+    """Messages per topic from the file's summary (empty when it has none)."""
+    if summary is None or summary.statistics is None:
+        return {}
+    out: dict[str, int] = {}
+    for cid, n in (summary.statistics.channel_message_counts or {}).items():
+        ch = (summary.channels or {}).get(cid)
+        if ch is not None:
+            out[ch.topic] = out.get(ch.topic, 0) + int(n)
+    return out
+
+
+def _drain(dt: _DepthTopic, keep: int) -> None:
+    """Write the encoded pictures in message order until at most ``keep`` are still being encoded."""
+    while len(dt.pending) > keep:
+        t_ns, fut = dt.pending.pop(0)
+        try:
+            dt.write(t_ns, fut.result())
+        except Exception as exc:  # noqa: BLE001 - the picture is left out, the topic says why once
+            dt.error = dt.error or f"{type(exc).__name__}: {exc}"[:200]
+
+
+def _depth_message(dt: _DepthTopic, decoded, schema_name: str | None, t_ns: int, pool) -> None:
+    """One message of a depth topic: its picture as a 16-bit PNG (its own when it already is one), on the
+    pool; every ``stride``-th decoded for the range."""
+    try:
+        if M.raw_kind(schema_name, decoded) == "raw":
+            info = M.raw_image_info(decoded)
+            data = M.raw_image_bytes(decoded)
+            codec = dt.codec or D.raw_depth_codec(info["encoding"])
+        else:
+            frame = M.as_frame(decoded)
+            if frame is None:
+                return
+            fmt, data = frame
+            info = None
+            codec = dt.codec or D.frame_depth_codec(fmt, data)
+        if codec is None or codec == "rvl":
+            dt.error = dt.error or ("RVL 编码的压缩深度本期不支持" if codec == "rvl" else "不是深度图（16 位 PNG、compressedDepth、16UC1 / 32FC1）")
+            return
+        dt.codec = codec
+        sample = dt.seen % dt.stride == 0
+        dt.seen += 1
+        own = None if dt.unit else D.passthrough_png(codec, data)
+        if dt.width is None:
+            dt.width, dt.height = D.depth_size(codec, data, info)
+        if own is not None:
+            if sample:
+                dt.samples.append(D.decode_png(own))
+            dt.pending.append((t_ns, _done(own)))
+        else:
+            def encode(data=data, info=info, codec=codec, sample=sample):
+                pic = D.depth_message(codec, data, info, dt.unit)
+                if sample:
+                    dt.samples.append(pic)
+                return D.encode_png16(pic)
+
+            dt.pending.append((t_ns, pool.submit(encode)))
+        _drain(dt, DEPTH_QUEUE)
+    except Exception as exc:  # noqa: BLE001 - a message that does not decode is left out
+        dt.error = dt.error or f"{type(exc).__name__}: {exc}"[:200]
+
+
+def _done(value):
+    import concurrent.futures as cf
+
+    f = cf.Future()
+    f.set_result(value)
+    return f
 
 
 def _note_sample(cam: dict, codec: str, data: bytes) -> None:

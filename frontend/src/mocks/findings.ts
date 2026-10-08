@@ -76,7 +76,7 @@ function findingsOf(module: string, ep: number, rec: ResultRecord | undefined): 
     case 'task_success': {
       if (TS_REJECTS.includes(ep)) return [finding(module, 'failure', String(details.reason ?? '复核一致判未完成'), { time_s: [9.5, 13], evidence: [`details/evidence/task_success/ep${String(ep).padStart(6, '0')}_0.jpg`] })];
       const out: Finding[] = [];
-      // the kill guard's suspicion (LABEL-5) is task_success's finding too, asked on the task verdict
+      // the kill guard's suspicion (LABEL-4) is task_success's finding too, asked on the task verdict
       if (LABEL_REVIEW.includes(ep)) out.push(finding(module, 'label_conflict_suspect', '标注与画面描述不是同一任务，疑似标注错'));
       if (VERDICT_REVIEW.includes(ep)) out.push(finding(module, 'uncertain', '证据不足，弃权：末态物证在灰区'));
       return out;
@@ -225,12 +225,12 @@ export function findingsReport(): ReportV2 {
       pass_rate: 0.82,
       run: { ...r1.overview.run, revision: 1 },
       reject_reasons: [
-        { module: 'task_success', kind: 'finding', code: 'failure', item: 'TASK-5', count: 5 },
+        { module: 'task_success', kind: 'finding', code: 'failure', item: 'TASK-4', count: 5 },
         { module: 'timestamp_check', kind: 'finding', code: 'fragment', item: 'STRM-5', count: 1 },
         { module: 'dedup', kind: 'duplicate', code: 'duplicate', item: 'SET-1', count: 1 },
       ],
       reject_items: [
-        { item: 'TASK-5', count: 5 },
+        { item: 'TASK-4', count: 5 },
         { item: 'SET-1', count: 1 },
         { item: 'STRM-5', count: 1 },
       ],
@@ -251,19 +251,20 @@ export function findingsReport(): ReportV2 {
 
 /** The questions of the findings task: the main task's, each naming the finding codes it asks about (C4 2.3.0). */
 export function withCodes(questions: Map<number, AdjudicationCard['questions']>): Map<number, AdjudicationCard['questions']> {
+
   const out = new Map<number, AdjudicationCard['questions']>();
   for (const [ep, qs] of questions) {
     out.set(
       ep,
       qs.map((q) => {
         if (q.line === 'reject_appeal') {
-          const pair = q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-5'];
+          const pair = q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-4'];
           return { ...q, codes: [pair[0]], items: [pair[1]] };
         }
         if (q.line !== 'task_verdict') return q;
         // one question, both findings: the suspected label conflict and the abstention
         const codes = LABEL_REVIEW.includes(ep) ? ['label_conflict_suspect', 'uncertain'] : ['uncertain'];
-        const items = LABEL_REVIEW.includes(ep) ? ['LABEL-5', 'TASK-5'] : ['TASK-5'];
+        const items = LABEL_REVIEW.includes(ep) ? ['LABEL-4', 'TASK-4'] : ['TASK-4'];
         return { ...q, codes, items };
       }),
     );

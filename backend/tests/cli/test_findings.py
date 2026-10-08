@@ -183,9 +183,9 @@ CASES = [
     ("video_action_sync", True, None, SYNC_WEAK, {"undecidable"}, set()),
     ("video_action_sync", True, None, SYNC_SUSPECT, {"suspect"}, set()),
     ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3"}),
-    ("task_success", False, None, TASK_FAIL, {"failure"}, {"TASK-12"}),
-    ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-12"}),
-    ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-12"}),
+    ("task_success", False, None, TASK_FAIL, {"failure"}, {"TASK-10"}),
+    ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-10"}),
+    ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-10"}),
     ("task_success", True, None, TASK_OK_FRAMES, {"recovery", "task_text_missing"}, set()),
     ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
     ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
@@ -195,6 +195,7 @@ CASES = [
     ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, set()),
     ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
     ("dedup", True, None, {}, set(), set()),
+
 ] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
      for f, code in INTEG_CASES]
 
@@ -229,6 +230,7 @@ def test_every_code_is_drawn_from_a_real_answer():
     seen = {(m, f["code"]) for m, passed, score, d, *_ in CASES for f in _record(m, passed, score, d)["findings"]}
     wanted = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind != "dataset"}
     assert wanted - seen == NO_SOURCE_YET
+
 
 
 def test_intervals_scopes_and_readings():
@@ -309,7 +311,7 @@ def test_dataset_level_findings():
     recs[10] = _record("timestamp_check", True, None, {**TS_PASS, "duration_s": 95.0})
     found, readings = F.dataset_level("timestamp_check", recs)
     assert [f["code"] for f in found] == ["duration_outlier"] and found[0]["readings"]["episodes"] == [10]
-    assert found[0]["unit"] == "dataset" and found[0]["item"] == "SET-3"
+    assert found[0]["unit"] == "dataset" and found[0]["item"] is None     # the platform's own reading (taxonomy 1.3)
     sem = {"source": "preflight_unknown", "action_space": "unknown", "control_mode": "unknown", "undetermined": True}
     recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
     found, readings = F.dataset_level("motion_quality", recs)
@@ -332,12 +334,12 @@ def test_dataset_level_findings():
 def test_p20_items_have_fixtures():
     """P20: the items that needed only a mapping.
 
-    LABEL-2 (several descriptions of one episode that disagree) left the list with the skill
+    LABEL-1 (several descriptions of one episode that disagree) left the list with the skill
     profile - it was the only module that compared them - and nothing covers it now."""
     items = set()
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
     items |= {"SET-3", "ACT-6"}                       # dataset level, test_dataset_level_findings
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= items
-    assert "LABEL-2" not in items
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= items
+    assert "LABEL-1" not in items

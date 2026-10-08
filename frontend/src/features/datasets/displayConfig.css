@@ -1,0 +1,33 @@
+/* 「展示配置」 (design doc 21 §6.5): a registration's default look in the visualizer. */
+.dispcfg-current {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--c-text-1);
+}
+.dispcfg-h {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text-1);
+}
+.dispcfg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dispcfg-row h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dispcfg-small {
+  font-size: 12px;
+}
+.dispcfg-warn {
+  font-size: 12px;
+  color: var(--c-warning);
+}
+.dispcfg .arco-table-td {
+  vertical-align: top;
+}

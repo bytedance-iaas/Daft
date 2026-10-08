@@ -92,6 +92,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；取代了逐档漏斗的执行短路与硬门 / 软分判决，§7 末尾是各 feature 落地时的细化） |
 | 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——独立的「可视化」页（完整版）与报告 / 裁决 / 任务详情里的迷你版、读取器与统一展示模型、mcap 字段映射模版 C7；决策 D60–D64；首节是开工指引，§9 是各 feature 落地时的细化与样本集实测，§10 是第二期清单；静态稿在 `frontend/mockups/`（`visualize.html`、`episode-visualize-mini.html`、`dataset-add-mcap.html`）） |
 | 19 | 可视化第二期先行三项（`19-visualizer-phase-two.md`：相机多于 9 路、浏览器内解码（WebCodecs）、Lance 读取器；决策 D65–D67；首节是开工指引） |
+| 21 | 可视化第二期其余几项（`21-visualizer-phase-two-rest.md`：深度图、v3 切片与转码对齐（含 moov 在尾）、展示配置、数据集信息原文与小修；决策 D68–D71；首节是开工指引） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：
@@ -108,7 +109,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 
 改契约：改文件，不兼容的改动升版本号（`registry_version` / `schema_version` / `info.version`）；在 `examples/` 补合法与不合法示例；
-C4 的文案（`info.description`、tag 说明、示例标题）是接口文档页给客户看的：中英两版（中文在 `x-description-zh` / `x-summary-zh`）、
+C4 的文案（`info.description`、tag 说明、示例标题）是 API 文档页给客户看的：中英两版（中文在 `x-description-zh` / `x-summary-zh`）、
 不写内部编号，变更记录从 2.5.1 起只记客户可见的改动（`docs/contracts/README.md`「改契约的流程」）；
 `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）再 `… lock`；改了 C4 在 `frontend/` 跑
 `npm run gen:api`。`CONTRACTS.lock` 没刷新、生成的类型没更新，CI 都会红。

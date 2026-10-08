@@ -110,7 +110,7 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     assert [i["line"] for i in review[7]["review"]] == ["task_verdict"]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
     assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human", "code": "failure",
-                                     "item": "TASK-5", "appealable": False,
+                                     "item": "TASK-4", "appealable": False,
                                      "text": "人工裁决判失败（任务未完成）"}]
     judged = {r["episode_index"]: r for r in read_jsonl(flow.path("checks", "task_success", "results.jsonl"))}
     assert (judged[4]["details"]["task_desc"], judged[4]["details"]["task_desc_source"]) == (NEW_LABEL, "人工改标")

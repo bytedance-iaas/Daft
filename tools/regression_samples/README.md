@@ -1,4 +1,4 @@
-# 回归样本集的工具：合成注入与打分
+# 回归样本集的工具：合成注入、打分与登记
 
 设计见 `docs/design/16-regression-samples.md`（注入 §7.5，期望 §8，打分 §8.4）。样本集本身不在仓库里（在 `tos://curation-robo-anchor/`），
 这里放可复现的工具：
@@ -10,13 +10,15 @@
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；2.0 直接读发现，旧运行目录照旧用对照表，自动识别 |
 | `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
-| `taxonomy.json` | 检测项分类 1.2（73 项；TASK-12 的子类、LABEL-5 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
+| `taxonomy.json` | 检测项分类 1.3（68 项；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
+| `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
+| `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
 
 ## `coverage_from_registry.py`
 
 `platform_status` 一列不再手写，跟着注册表走：默认策略下判废或转人工的项「能判」，只报告或只有读数的「有读数」，覆盖它的模块都有前提
-（本体在规格库、有状态量、上传 trajectory.json）的「部分」并写明前提，没有模块覆盖的「没有」，对照项「能处理」；预检判的 SET-4 记 `preflight`。
+（本体在规格库、有状态量、上传 trajectory.json）的「部分」并写明前提，没有模块覆盖的「没有」，对照项「能处理」；预检判的 SET-2 记 `preflight`。
 `platform` 一列（样本实测看到的）照旧手写。注册表改了细码或覆盖，`tests/test_coverage.py` 会失败，重新生成：
 
 ```bash
@@ -42,7 +44,7 @@ score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果�
 - 期望 present 且平台报了 = TP，没报 = FN；期望 absent（在 `clean` 里）而平台报了 = FP，没报 = TN；没有期望的项不算。
 - 相机限定的期望只和同一路相机的结果比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
 - 这条 episode 上能报这一项的模块都没跑（漏斗短路、没选、预检不支持）记 `not_assessed`，都执行出错记 `error`，两者都不进 precision / recall。
-- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-4 看预检能不能读进来。
+- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-2 看预检能不能读进来。
 - `recall` 只算评估到的；`recall_end_to_end` 把没评估、执行出错、没有规则的都留在分母里。
 - 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。
 - episode 级：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
@@ -101,7 +103,7 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 | `timestamps` | STRM-4 | 倒退 0.5 s 三行 / 重复一行 |
 | `spike`、`sawtooth`、`constant_channel`、`stale_state` | ACT-2、ACT-1、ACT-3、ACT-8 | 状态量单点跳变 12 / 4 倍 p95 步长；锯齿 20% / 5% 量程；夹爪通道全程 / 后半段恒定；状态量沿用旧值 |
 | `duplicate` | SET-1 | 字节级副本 / 重编码副本 |
-| `label_swap` | LABEL-5 | 换成另一条的任务描述（需要多任务的基底） |
+| `label_swap` | LABEL-4 | 换成另一条的任务描述（需要多任务的基底） |
 | `drift`、`clock_reset` | AV-5 | 画面越来越落后，到最后一帧落后 0.6 / 0.2 s；中段起整体落后 0.6 / 0.2 s（`--plan droid_sync`） |
 | `--dataset-fault meta_fps`、`meta_totals` | FILE-8 | `meta/info.json` 的 fps 写成两倍；总条数、总帧数多写（整个子集一处，`--plan none` 时只生成原样对照） |
 
@@ -112,13 +114,30 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 .venv/bin/python tools/regression_samples/inject_v3.py --base <v3 数据集> --out <新目录> --plan offset:0:6,offset:1:1,video_range:2:1.0,dangling_task:25,frame_index:38
 ```
 
+## `register.py`
+
+质检台的接口要登录（HTTP Basic，设计 08 §5）：账号密码从 `CURATOR_USER` / `CURATOR_PASSWORD` 读，没设就在终端问，只发给 Daemon，不打印、不落盘。
+`--kube 命名空间/pod` 由脚本自己开 `kubectl port-forward`、用完关掉；能直接访问 Daemon 时用 `--api`。不给 `--credential` 时用 Daemon 的缺省访问密钥
+（或唯一的一把）；登记前先用它列一次第一个子集的上级目录，钥匙或桶不对就停在这里，一个都不登记。
+
+```bash
+# 看 Daemon 里有哪些访问密钥（只有名字、区域、末 4 位）
+.venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 --list-credentials
+# 登记 console_picks.json 里的 20 个子集，每个一行结果；--out 另存一份 JSON Lines
+.venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 \
+    --picks tools/regression_samples/console_picks.json [--credential <访问密钥名>] [--out registered.jsonl]
+```
+
+每行是 `[i/20] 新登记|已登记 <ds-id> <名字> | <格式> <条数> 条 | 预检通过|预检有问题：… | 映射 …`；同一地址再登记返回原来那条（名字、备注变了就改过来）。
+退出码：0 全部登记；1 有失败的（其余照常登记）；2 登录被拒、钥匙不对、输入有误或连不上（中途断开时前面的已登记，重跑即可）。
+
 ## 手动验证步骤
 
 打分：
 
 1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests`，全部通过。
 2. 从 `tos://curation-robo-anchor/` 取 `anchor/v1/expectation.json` 与 `baseline/1b30fb224/`（含 `runs.json`），按上面的命令打分：
-   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.2, map 1.3)`，写明 475 条全部打分、63 个子集都有运行目录。
+   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.3, map 1.4)`，写明 475 条全部打分、63 个子集都有运行目录。
 3. 再加 `--baseline baseline/1b30fb224/score/anchor.json` 跑一遍：退出码 0，`score.md` 末尾写「Against the baseline: no regression」。
 
 注入：
@@ -132,3 +151,13 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
    `resolution` 那一路的宽高与 `injection.json` 里的 `actual` 一致。
 5. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒；
    `duplicate` 记为可疑。
+
+登记：
+
+1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests/test_register.py`：对着桩 Daemon，登录头、写请求的
+   `Content-Type` 与 `Idempotency-Key`、请求体、缺省钥匙、mcap 映射确认、重跑只改备注、登录被拒时一个不登记都对。
+2. 本机起一个不鉴权的 Daemon（`.claude/launch.json` 的 `curator-daemon-local`，本地根目录放一份 LeRobot、一份 GenRobot mcap、一份 ABC-130k mcap），
+   `register.py --api http://127.0.0.1:<端口>/curation/api/v1 --no-auth <三个目录>`：三行都是「新登记」，LeRobot「预检通过」，GenRobot「映射 已确认（UMI 手持夹爪（内置），第 1 版）」，
+   ABC-130k「预检有问题：mcap 里找不到必需的动作 topic（/action）…」且映射已确认（只能可视化，不能质检）；再跑一遍三行都是「已登记」。
+3. 集群：`--kube dataverse/dataverse-curation-0 --list-credentials` 列出钥匙；带 `--picks console_picks.json` 跑完，控制台「数据集」里搜 `anchor` 能看到 20 条，
+   名字、备注、条数与 `console_picks.json` 一致。

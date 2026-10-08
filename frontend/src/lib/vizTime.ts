@@ -93,6 +93,23 @@ export function mediaTime(cam: Pick<VizEpisodeCamera, 'offset_s' | 'from_ts'>, t
   return t - (cam.offset_s ?? 0) + (cam.from_ts ?? 0);
 }
 
+/**
+ * Where the media a cell plays sits on the clock (design doc 21 §4.5): `from_ts` / `to_ts` are times in
+ * what `url` serves, while the platform's transcode (`transcode_url`) always starts at the episode's
+ * start - played instead of `url`, it runs from 0 to `to_ts - from_ts`.
+ */
+export function mediaBinding(
+  ep: Pick<VizEpisodeCamera, 'url' | 'transcode_url' | 'offset_s' | 'from_ts' | 'to_ts'>,
+  src: string | null,
+): { offset: number; from: number; end: number | null } {
+  const offset = ep.offset_s ?? 0;
+  if (src !== null && src !== ep.url && src === ep.transcode_url) {
+    const span = ep.from_ts !== null && ep.from_ts !== undefined && ep.to_ts !== null && ep.to_ts !== undefined ? ep.to_ts - ep.from_ts : null;
+    return { offset, from: 0, end: span };
+  }
+  return { offset, from: ep.from_ts ?? 0, end: ep.to_ts ?? null };
+}
+
 /** Episode time of a camera's media time (the inverse of mediaTime). */
 export function episodeTimeOfMedia(cam: Pick<VizEpisodeCamera, 'offset_s' | 'from_ts'>, m: number): number {
   return m + (cam.offset_s ?? 0) - (cam.from_ts ?? 0);

@@ -59,6 +59,24 @@
 .vz-cell.kind-empty .plus:hover { color: var(--c-primary); }
 .vz-cell.kind-empty .plus:hover .ring { border-color: var(--c-primary); color: var(--c-primary); }
 
+/* 深度格（设计 21 §5.5）：伪彩深度图，可叠在它的相机上 */
+.vz-cell.kind-depth { background: #0f141b; }
+.vz-cell.kind-depth video, .vz-cell.kind-depth canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: contain; background: #0f141b; }
+.vz-cell.kind-depth canvas.vz-depth { z-index: 1; cursor: crosshair; }
+.vz-cell.kind-depth canvas.vz-depth.over { background: transparent; }
+.vz-cell.kind-depth .vz-stamp { position: absolute; left: 10px; bottom: 8px; font: 11px/1 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: rgba(255, 255, 255, 0.85); background: rgba(0, 0, 0, 0.35); padding: 4px 6px; border-radius: 2px; z-index: 2; }
+.vz-cell .vz-cap .vz-dp { margin-left: 4px; padding: 0 5px; border-radius: 2px; font-size: 11px; line-height: 16px; background: rgba(var(--arcoblue-6), 0.85); color: #fff; }
+.vz-cell .vz-depth-scale { position: absolute; right: 10px; bottom: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 2px; background: rgba(0, 0, 0, 0.35); color: rgba(255, 255, 255, 0.85); font: 11px/1 "SF Mono", ui-monospace, Menlo, monospace; pointer-events: none; }
+.vz-cell .vz-depth-scale i { width: 64px; height: 8px; border-radius: 1px; display: block; }
+.vz-grid.is-narrow .vz-depth-scale i { display: none; }
+.vz-cell .vz-depth-scale.at { background: rgba(0, 0, 0, 0.6); color: #fff; }
+.vz-cell .vz-depth-scale.at i { display: none; }
+.vz-depth-set { position: absolute; z-index: 50; width: 268px; padding: 10px 12px; border-radius: 4px; background: var(--color-bg-2); border: 1px solid var(--c-border); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); color: var(--c-text-1); font-size: 12px; display: grid; gap: 8px; }
+.vz-depth-set .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vz-depth-set .row.end { justify-content: flex-end; }
+.vz-depth-set .k { color: var(--c-text-3); min-width: 64px; }
+.vz-depth-set .why { color: var(--c-text-3); font-size: 11px; }
+
 /* 曲线格 */
 .vz-cell.kind-curve { background: var(--color-bg-2); }
 .vz-cell.kind-curve .plot { position: absolute; left: 0; right: 0; top: 0; cursor: crosshair; }

@@ -336,9 +336,9 @@ D39 的两种改标重判口径（`v1` / `full`）在单次判决下没有区别
 | D72 | **没有任务标注的条目不判成败，补描述这一步整个去掉**（2026-10-08）。
 起因：VLM 块原来是 `autolabel → vlm` 两条命令串着跑，`autolabel` 把所选里全部无标注条目补完描述 `vlm` 才开始，DROID 2000 条里 953 条无标注，
 判定要等 7 小时才开始。现在 `check task_success` 碰到没有任务文本的条目就写一条「没判」的记录（`details.skipped = no_task_text`，
-LABEL-3 的 `task_text_missing` 仅报告，TASK-5 / LABEL-5 记为 `no_task_text` 无法评估），不发模型请求、不转人工、不 held；
+LABEL-2 的 `task_text_missing` 仅报告，TASK-4 / LABEL-4 记为 `no_task_text` 无法评估；编号按分类表 2.0），不发模型请求、不转人工、不 held；
 这条 episode 按其余检查的结果判通过与否，通过时交付清单里 `task_text` 为空。`curation autolabel` 命令、`autolabel/captions.jsonl`、
-`dataset_stages.py` 与 C2 的两份 autolabel schema 删除；注册表 3.2（VLM 块只剩 `vlm`，`depends_on` 清空，新增无法评估原因 `no_task_text`）；
+`dataset_stages.py` 与 C2 的两份 autolabel schema 删除；注册表 3.2（VLM 块只剩 `vlm`，`depends_on` 清空，新增无法评估原因 `no_task_text`；与分类表 2.0 合流后记作 4.0）；
 计划不再出 `autolabel` 段，估算把无标注条目从判定次数里扣掉；D72 之前排好的计划里的 `autolabel` 段 Daemon 直接记 skipped。
 同一轮清出来的还有：每档 worker 启动时重新列一遍 TOS 对象清单、同一条 episode 的视频每档各读一次——前者下一刀用 `source_manifest.json` 顶替，后者记账待量化 |
 | D73 | **判废护栏去掉；没有标注的条目也发一次请求，只看画面缺陷**（2026-10-08）。
@@ -364,6 +364,10 @@ C2 的 `export` 与 `export-manifest` 两份文档、Daemon 的导出档与 `ree
 取代 D9；P13 的「已导出且核验通过」改为「核验通过」。v1 的流水线仍能判定与出报告，它自己的导出调到 `export/retired.py` 明确报错 |
 | D68 | **技能画像下线、一张裁决卡片一个问题**（2026-10-06 需求方定，注册表 3.0 / C4 3.0.0）：技能画像整个模块去掉——`skill_profile` 模块、`profile_vlm` 档与 `profile` 阶段、技能归纳与标注核对的算法（`dataset_level/profile.py`、`taxonomy.py`、`reassign.py`，A 类按「已采纳的删除」登记）、v1 的 `reprofile`、报告与前端的画像小节，一并移除；取代 D41、P11 里关于画像的部分。人工裁决简化为**一张卡片一个问题**：`label`（标注分歧）这条问题线和它的三个决定（采纳建议 / 自己改写 / 维持原标注）去掉，「标注与画面疑似不符」（LABEL-5）并入 `task_verdict` 的问题，判成败时可以顺带带上 `new_label`（人改写的任务描述）；追加问题机制（C1 的 `follow_ups`、C4 的 `follow_up_of`）去掉。改标后的重判口径不变（D39）：带着判决给的改标直接采用，只给改标、成败留「拿不准」的按新描述重判。LABEL-2（一条有多份互相矛盾的描述）暂时失去唯一覆盖 |
 | D67 | **Lance 读取器**（2026-10-04，设计 19 §4）：认 lerobot-lancedb 的三种布局（0.3 三表、0.1–0.2 视频两表、0.1–0.2 逐帧 JPEG），元数据照 LeRobot 读；视频由 Daemon 从 blob 列按区间出（没有可签名的独立对象，`access: blob`），逐帧 JPEG 落成帧包；TOS 上经地区的 S3 兼容端点原地按区间读，不整表拷贝。质检的 Lance 读取器（A 类）不动 |
+| D68 | **深度图**（2026-10-06，设计 21 §5）：深度数组列（LeRobot / Lance）与 mcap 的深度图（16 位 PNG、16UC1 / 32FC1 原始图、ROS compressedDepth）由 Daemon 打成每帧一张 16 位灰度 PNG 的帧包（mcap 里本来是 16 位 PNG 的原样转发），浏览器自己解码上色（缺省 turbo，范围取本条 2%–98%、可调，0 为空洞），悬停读毫米数；按名字与相机配对，宽高比一致时可叠放；不进智能布局。mcap 的深度 topic 写进映射的 `depths`（C7 `viz-mapping/1.1`）。深度视频（`video.is_depth_map`）仍按普通相机播 |
+| D69 | **v3 切片与时间口径**（2026-10-06，设计 21 §4）：平台转码一律以按 GOP 切出的单条为输入（PyAV 流拷贝，只按区间读这一条），不再整块下载；`from_ts` / `to_ts` 指 `url` 自己的时间，`transcode_url` 的 0 是这条 episode 的起点。直连播放维持 D16；`CURATOR_VIZ_SEGMENT=1` 时 v3 / Lance 的相机由 Daemon 出单条切片、`moov` 在尾的单条 mp4 由 Daemon 出 `moov` 在头的版本，缺省关 |
+| D70 | **展示配置**（2026-10-06，设计 21 §6）：存在登记上、所有人共用一份（版本号与更新时间）：缺省布局、曲线分组覆盖（LeRobot / Lance）、相机顺序 / 隐藏 / 显示名、缺省字幕轨、缺省倍速与循环；播放器里「保存为缺省布局」与「恢复默认布局」，展示配置抽屉里「恢复默认」清空整份；迷你版只用相机、分组与字幕轨；同一数据集换 episode 保留当前布局 |
+| D71 | **数据集信息原文**（2026-10-06，需求方；设计 21 §3）：「数据集信息」树的节点名与属性一律是数据集元数据的原文键值（info.json 的特征条目、mcap 的 channel / schema / 统计字段、Lance 表的行数与列名），嵌套的键用点连接、列表写成 JSON；分组标题是页面结构，保留中文 |
 
 ### 7.1 评审中提出、需求方已确认的取值
 
@@ -390,7 +394,7 @@ C2 的 `export` 与 `export-manifest` 两份文档、Daemon 的导出档与 `ree
 | P17 | 任务启动时固化 VLM 的有效配置 | 模型名、思考强度、超时、并行度写进任务快照，之后改后端或模型的配置不影响已有任务的重试；只有 API Key 实时取 | 01 §2.3 |
 | P18 | 默认策略（设计 17） | 今天的硬门判废 → blocking；可疑、弃权、转人工、标注分歧 → review；其余 → info，含原软分模块的各子项（软分拒绝消失，看过报告再定） | 17 §4.2 |
 | P19 | 区间输出 | 发现的 `frames` / `time_s` 可选；第一阶段只填现成的（完整性坏位置、时间戳跳变帧、冻结段、画面缺陷时间段、成败证据时间段、空闲 / 卡死段），不另写定位算法 | 17 §1.2 |
-| P20 | 只补映射就有的项 | 第一阶段一并补上 LABEL-3、IMG-3、TASK-1、AV-3、MV-3、LABEL-2、SET-3、ACT-6 | 17 §2.2 |
+| P20 | 只补映射就有的项 | 第一阶段一并补上 LABEL-2、IMG-3、TASK-1、AV-3、MV-3、LABEL-1、数据集统计、ACT-6（分类表 1.3 删了数据集统计这一项，它的几样读数仍报、不挂检测项） | 17 §2.2 |
 
 ## 8. 本册索引
 
@@ -412,7 +416,7 @@ C2 的 `export` 与 `export-manifest` 两份文档、Daemon 的导出档与 `ree
 | 13 | Curation 提速计划（10 万条量级：流式执行、断点续跑、帧复用、VLM 请求预算；实施记录在 `13-speedup/implementation.md`） | 后端 |
 | 14 | 数据完整性检查（预检三项警告；质检新档 `integrity` 的数据完整性模块：结构、零填充、CRC、逐条结构校验、可选逐帧解码） | 后端、前端 |
 | 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（D55；涉及 rerun 仓库） | 后端、ReRun |
-| 16 | 回归测试样本集（检测项分类表 73 项、评测集 anchor / anchor-nc、期望值与打分） | 全员 |
+| 16 | 回归测试样本集（检测项分类表 68 项、评测集 anchor / anchor-nc、期望值与打分） | 全员 |
 | 17 | 发现、策略判决与并行两块（D56–D59：模块按检测项编号出发现、CPU / VLM 两块并行不过滤、策略表判决；首节是开工指引） | 后端、前端 |
 | — | `review-2026-09-20.md` 设计评审记录（问题清单与结论） | 想知道「为什么改」时读 |
 

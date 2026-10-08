@@ -20,6 +20,7 @@ from ..errors import ApiError
 from ..orchestr.service import orchestrator_of
 from ..pagination import keyset_page
 from ..repo.extras import dataset_format
+from ..viz import display as DISPLAY
 from ..viz import service as S
 from ..viz.service import viz_of
 from . import datasets as _datasets  # noqa: F401 - registers the ds_id path convertor
@@ -99,6 +100,39 @@ async def get_dataset_viz_meta(request: Request, dataset_id: str, path: str = Qu
     return await in_thread(lambda: svc.meta_file(svc.dataset_source(dataset_id, owner), path))
 
 
+@router.get("/datasets/{dataset_id:ds_id}/viz/display")
+async def get_dataset_viz_display(request: Request, dataset_id: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    return await in_thread(lambda: DISPLAY.doc(svc, rt.repo.get_dataset(dataset_id, owner=owner), owner))
+
+
+@router.put("/datasets/{dataset_id:ds_id}/viz/display")
+async def put_dataset_viz_display(request: Request, dataset_id: str):
+    body = await read_json_body(request, required=True)
+    validate("VizDisplayPut", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        return JSONResponse(DISPLAY.save(svc, dataset_id, who, body["config"]))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="putDatasetVizDisplay",
+                           owner=who.owner_id, method="PUT", path=request.url.path, body=body, handler=handler)
+
+
+@router.delete("/datasets/{dataset_id:ds_id}/viz/display")
+async def delete_dataset_viz_display(request: Request, dataset_id: str):
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        return JSONResponse(DISPLAY.save(svc, dataset_id, who, None))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="deleteDatasetVizDisplay",
+                           owner=who.owner_id, method="DELETE", path=request.url.path, body=None, handler=handler)
+
+
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/viz")
 async def get_dataset_episode_viz(request: Request, dataset_id: str, index: int):
     rt, owner = runtime(request), principal(request).owner_id
@@ -121,13 +155,13 @@ async def get_dataset_episode_series(request: Request, dataset_id: str, index: i
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.mp4")
 async def get_dataset_camera_video(request: Request, dataset_id: str, index: int, camera: str,
-                                   transcode: bool = False):
+                                   transcode: bool = False, segment: bool = False):
     rt, owner = runtime(request), principal(request).owner_id
     svc = viz_of(rt)
     _index(index)
     _camera(camera)
     return await in_thread(lambda: svc.camera_video(svc.dataset_source(dataset_id, owner), index, camera,
-                                                    transcode, request.headers))
+                                                    transcode, request.headers, segment=segment))
 
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/cameras/{camera}.frames")
@@ -147,6 +181,25 @@ async def get_dataset_camera_frame_index(request: Request, dataset_id: str, inde
     _index(index)
     _camera(camera)
     return await in_thread(lambda: svc.camera_frame_index(svc.dataset_source(dataset_id, owner), index, camera))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/streams/{stream}.frames")
+async def get_dataset_stream_frames(request: Request, dataset_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frames(svc.dataset_source(dataset_id, owner), index, stream,
+                                                     request.headers))
+
+
+@router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/streams/{stream}.json")
+async def get_dataset_stream_frame_index(request: Request, dataset_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frame_index(svc.dataset_source(dataset_id, owner), index, stream))
 
 
 @router.get("/datasets/{dataset_id:ds_id}/mapping")
@@ -300,6 +353,24 @@ async def get_task_camera_frame_index(request: Request, task_id: str, index: int
     return await in_thread(lambda: svc.camera_frame_index(svc.task_source(task_id, owner), index, camera))
 
 
+@router.get("/tasks/{task_id}/episodes/{index}/streams/{stream}.frames")
+async def get_task_stream_frames(request: Request, task_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frames(svc.task_source(task_id, owner), index, stream, request.headers))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/streams/{stream}.json")
+async def get_task_stream_frame_index(request: Request, task_id: str, index: int, stream: str):
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    _camera(stream)
+    return await in_thread(lambda: svc.stream_frame_index(svc.task_source(task_id, owner), index, stream))
+
+
 @router.get("/tasks/{task_id}/episodes/{index}/series")
 async def get_task_episode_series(request: Request, task_id: str, index: int, stream: str = Query(..., min_length=1, max_length=128),
                                   start: float | None = Query(None, alias="from", ge=0),
@@ -310,3 +381,14 @@ async def get_task_episode_series(request: Request, task_id: str, index: int, st
     _index(index)
     _window(start, end)
     return await in_thread(lambda: svc.series(svc.task_source(task_id, owner), index, stream, start, end, points))
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/eef-overlay")
+async def get_task_episode_eef_overlay(request: Request, task_id: str, index: int):
+    """The EEF opinion's marks, computed from the task's trajectory bundle (design doc 20)."""
+    from ..viz.eef_overlay import episode_overlay
+
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    _index(index)
+    return await in_thread(lambda: episode_overlay(rt, svc, task_id, owner, index))

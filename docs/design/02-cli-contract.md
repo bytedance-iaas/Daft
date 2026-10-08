@@ -173,7 +173,7 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 ### 3.4 ~~`curation autolabel`~~ — 已删除（D72）
 
 没有任务标注的条目不再由模型补描述：`check --modules task_success` 碰到这样的条目写一条「没判」的记录
-（`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-3 的 `task_text_missing` 仅报告），不发模型请求；
+（`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-2 的 `task_text_missing` 仅报告），不发模型请求；
 这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。v1 的 `pipeline/run.py` 仍有漏斗前补 caption 的兜底，那是 v1 的事。
 
 ### 3.5 `curation check` — 跑检查

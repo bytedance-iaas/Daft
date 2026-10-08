@@ -342,6 +342,23 @@ def test_v3_without_tasks_column_warns(cli, tmp_path):
     assert any("no tasks column" in w for w in doc["warnings"])
 
 
+
+LFS_POINTER = (b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"a" * 64 + b"\nsize 106584\n")
+
+
+def test_git_lfs_pointers_are_named(cli, tmp_path):
+    """A dataset uploaded from a git clone made without Git LFS (a HuggingFace repository, 2026-10-05)
+    has ~130-byte pointer files for its data: preflight says so, not "Parquet magic bytes not found"."""
+    root = make_v3(tmp_path / "v3")
+    with open(os.path.join(root, "meta", "episodes", "chunk-000", "file-000.parquet"), "wb") as fh:
+        fh.write(LFS_POINTER)
+    doc = _valid(cli("preflight", "--input", root).doc)
+    assert doc["format"]["kind"] == "lerobot" and doc["format"]["supported"] is False
+    assert doc["validation"][0].startswith(
+        "Git LFS pointer files instead of the data: meta/episodes/chunk-000/file-000.parquet - ")
+    assert "git lfs pull" in doc["validation"][0] and "hf download" in doc["validation"][0]
+    assert {m["reason_code"] for m in doc["modules"]} == {"metadata_invalid"}
+
 # ---------------------------------------------------------------- inputs and credentials
 
 

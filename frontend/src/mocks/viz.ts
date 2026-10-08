@@ -2,15 +2,20 @@
 // page), the task scope (the mini player), mcap mappings, templates, and the cameras the Daemon
 // serves (mp4 / JPEG frame pack, Range, 202 while a transcode runs).
 import { HttpResponse, http } from 'msw';
-import type { DatasetDetail, McapProbeRequest, Task, VizMapping, VizTemplate } from '../api/types';
+import type { DatasetDetail, McapProbeRequest, Task, VizDisplayConfig, VizMapping, VizTemplate } from '../api/types';
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
+import { eefOverlay } from './eef';
 import { API, body, cursorPage, err, idempotent } from './plumbing';
 import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
 import {
   annotationsInfo,
+  baseModel,
   BUILTIN_TEMPLATES,
+  checkDisplay,
   checkMappingOf,
+  depthPack,
+  displayDefaults,
   episodeItems,
   fakeVideo,
   frameIndex,
@@ -62,7 +67,16 @@ function taskSource(id: string): Source | Response {
 }
 
 function modelOf(s: Source) {
-  return vizDataset(s.scope, s.id, s.dataset, s.mapping, s.mappingVersion);
+  const display = s.dataset.id ? (db.vizDisplays.get(s.dataset.id)?.config ?? null) : null;
+  return vizDataset(s.scope, s.id, s.dataset, s.mapping, s.mappingVersion, display);
+}
+
+/** ``VizDisplay`` of a registration (design doc 21 §6). */
+function displayDoc(d: DatasetDetail) {
+  const stored = db.vizDisplays.get(d.id);
+  const mapping = db.vizMappings.get(d.id);
+  const base = baseModel('dataset', d.id, d, mapping?.mapping ?? null, mapping?.version ?? null);
+  return { dataset_id: d.id, config: stored?.config ?? null, version: stored?.version ?? 0, updated_at: stored?.updatedAt ?? null, defaults: displayDefaults(base) };
 }
 
 function profileOf(d: DatasetDetail) {
@@ -84,6 +98,7 @@ function urlsFor(s: Source, index: number) {
     direct: (key: string) => `https://${host}.tos-cn-beijing.volces.com/${prefix}/${key}?X-Tos-Expires=1800&X-Tos-Signature=mock`,
     daemon: (camera: string, suffix: 'mp4' | 'frames' | 'json', transcode = false) =>
       `${apiBaseUrl()}/${scopePath}/episodes/${index}/cameras/${camera}.${suffix}${transcode ? '?transcode=1' : ''}`,
+    stream: (key: string, suffix: 'frames' | 'json') => `${apiBaseUrl()}/${scopePath}/episodes/${index}/streams/${key}.${suffix}`,
   };
 }
 
@@ -148,6 +163,23 @@ function cameraBytes(s: Source, request: Request, index: number, file: string): 
   return ranged(request, fakeVideo(), 'video/mp4');
 }
 
+/** A depth stream's pack (design doc 21 §5.3): the first ask of its index answers 202, as the Daemon does while it makes it. */
+async function streamBytes(s: Source, request: Request, index: number, file: string): Promise<Response> {
+  const m = /^([0-9A-Za-z_-]+)\.(frames|json)$/.exec(file);
+  if (!m) return err(404, 'not_found', `没有 ${file}`);
+  const [, key, suffix] = m;
+  const stream = modelOf(s).streams.find((x) => x.key === key && x.kind === 'depth');
+  if (!stream) return err(404, 'not_found', `没有深度流 ${key}`, { reason: 'unknown_stream' });
+  const job = `${s.scope}:${s.id}:${index}:${key}`;
+  if (!db.vizDepthPacks.has(job)) {
+    db.vizDepthPacks.add(job);
+    return HttpResponse.json({ state: 'pending', progress: 0.5, message: '深度图生成中' }, { status: 202 });
+  }
+  const p = profileOf(s.dataset);
+  const pack = await depthPack(key, framesOf(p, index), p.fps ?? 30);
+  return suffix === 'json' ? HttpResponse.json(pack.index) : ranged(request, pack.bytes, 'application/octet-stream');
+}
+
 // ------------------------------------------------------------------ handlers
 
 function withSource(make: (id: string) => Source | Response, run: (s: Source, request: Request, params: Record<string, unknown>) => Response | Promise<Response>) {
@@ -166,7 +198,12 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
       if (index instanceof Response) return index;
       const blocked = needsMapping(s);
       if (blocked) return blocked;
-      return HttpResponse.json(vizEpisode(s.scope, s.id, modelOf(s), index, s.dataset, urlsFor(s, index), clock()));
+      const model = modelOf(s);
+      const ep = vizEpisode(s.scope, s.id, model, index, s.dataset, urlsFor(s, index), clock());
+      // the configured track is the primary one (the Daemon's apply_episode)
+      const track = model.display?.track;
+      if (track && ep.annotations.tracks.some((t) => t.key === track)) ep.annotations.tracks = ep.annotations.tracks.map((t) => ({ ...t, primary: t.key === track }));
+      return HttpResponse.json(ep);
     })),
     http.get(`${API}/${prefix}/:id/episodes/:index/series`, withSource(make, (s, request, params) => {
       const index = episodeOf(s, params.index);
@@ -186,12 +223,23 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
       if (index instanceof Response) return index;
       return cameraBytes(s, request, index, String(params.file));
     })),
+    http.get(`${API}/${prefix}/:id/episodes/:index/streams/:file`, withSource(make, (s, request, params) => {
+      const index = episodeOf(s, params.index);
+      if (index instanceof Response) return index;
+      return streamBytes(s, request, index, String(params.file));
+    })),
   ];
 }
 
 export const vizHandlers = [
   ...scoped('datasets', datasetSource),
   ...scoped('tasks', taskSource),
+  // the EEF opinion's marks (design doc 20): the opinion record's camera `ext` over the input's first camera
+  http.get(`${API}/tasks/:id/episodes/:index/eef-overlay`, withSource(taskSource, (s, _request, params) => {
+    const index = episodeOf(s, params.index);
+    if (index instanceof Response) return index;
+    return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null));
+  })),
   http.get(`${API}/datasets/:id/viz/episodes`, ({ request, params }) => {
     const s = datasetSource(String(params.id));
     if (s instanceof Response) return s;
@@ -239,8 +287,8 @@ export const vizHandlers = [
       if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const b = await body<{ mapping: VizMapping }>(request, 'putDatasetMapping');
       if (vizFormatOf(d) !== 'mcap') return err(400, 'validation_failed', '只有 mcap 数据集有字段映射');
-      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...mcapProbe('x', 1, null).topics.map((t) => t.topic), ...mcapProbe('x', 1, null, 'abc').topics.map((t) => t.topic)]);
-      const unknown = [...b.mapping.cameras, ...b.mapping.series].map((x) => x.topic).filter((t) => !known.has(t));
+      const known = new Set(['/observation.images.front', '/observation.images.wrist', '/observation.state', '/action', '/imu', '/tf', '/camera_info', ...(['umi', 'abc', 'robomind'] as const).flatMap((f) => mcapProbe('x', 1, null, f).topics.map((t) => t.topic))]);
+      const unknown = [...b.mapping.cameras, ...(b.mapping.depths ?? []), ...b.mapping.series].map((x) => x.topic).filter((t) => !known.has(t));
       if (unknown.length) {
         return err(400, 'validation_failed', `映射里有数据集没有的 topic：${unknown.join('、')}`, { errors: unknown.map((t) => ({ field: 'mapping', problem: `unknown topic ${t}` })) });
       }
@@ -251,6 +299,31 @@ export const vizHandlers = [
       d.viz = vizStatusOf('mcap', true);
       d.viz_mapping = mappingInfoOf('mcap', next);
       return HttpResponse.json({ dataset_id: d.id, state: 'confirmed', mapping: next.mapping, version: next.version, updated_at: now, check_mapping: checkMappingOf(next.mapping), warnings: [] });
+    }),
+  ),
+  http.get(`${API}/datasets/:id/viz/display`, ({ params }) => {
+    const d = db.datasets.find((x) => x.id === params.id);
+    if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    return HttpResponse.json(displayDoc(d));
+  }),
+  http.put(`${API}/datasets/:id/viz/display`, async ({ request, params }) =>
+    idempotent(request, async () => {
+      const d = db.datasets.find((x) => x.id === params.id);
+      if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+      const b = await body<{ config: VizDisplayConfig }>(request, 'putDatasetVizDisplay');
+      const mapping = db.vizMappings.get(d.id);
+      const problems = checkDisplay(b.config, baseModel('dataset', d.id, d, mapping?.mapping ?? null, mapping?.version ?? null));
+      if (problems.length) return err(400, 'validation_failed', `展示配置有 ${problems.length} 处对不上这个数据集`, { errors: problems });
+      db.vizDisplays.set(d.id, { config: b.config, version: (db.vizDisplays.get(d.id)?.version ?? 0) + 1, updatedAt: clock() });
+      return HttpResponse.json(displayDoc(d));
+    }),
+  ),
+  http.delete(`${API}/datasets/:id/viz/display`, async ({ request, params }) =>
+    idempotent(request, () => {
+      const d = db.datasets.find((x) => x.id === params.id);
+      if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+      db.vizDisplays.set(d.id, { config: null, version: (db.vizDisplays.get(d.id)?.version ?? 0) + 1, updatedAt: clock() });
+      return HttpResponse.json(displayDoc(d));
     }),
   ),
   http.put(`${API}/datasets/:id/annotations`, async ({ request, params }) =>
@@ -273,7 +346,7 @@ export const vizHandlers = [
       if ('dataset_id' in input && !ds) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
       const uri = ds ? ds.uri : 'uri' in input ? input.uri : '';
       if (ds ? vizFormatOf(ds) !== 'mcap' : !MCAP_URI.test(uri)) return err(400, 'validation_failed', '这不是 mcap 数据集：没有 episode_N.mcap', { reason: 'not_mcap' });
-      const flavor = /abc/i.test(uri) ? 'abc' : /warehouse/i.test(uri) ? 'warehouse' : 'umi';
+      const flavor = /abc/i.test(uri) ? 'abc' : /warehouse/i.test(uri) ? 'warehouse' : /robomind/i.test(uri) ? 'robomind' : 'umi';
       const team = b.template && !b.template.startsWith('builtin:') ? db.vizTemplates.find((t) => t.id === b.template) : undefined;
       if (b.template && !b.template.startsWith('builtin:') && !team) return err(404, 'not_found', '没有这个模版');
       const first = flavor === 'umi' ? 'episode_100110.mcap' : 'episode_0.mcap';

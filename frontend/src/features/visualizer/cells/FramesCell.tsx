@@ -28,19 +28,22 @@ export function drawFrame(canvas: HTMLCanvasElement, img: Drawable | undefined):
 }
 
 /**
- * A frame-pack cell (an mcap JPEG / PNG camera, design doc 18 §4.2): the frame under the clock,
- * drawn on a canvas at the picture's aspect ratio; the frames ahead are fetched while it plays.
+ * Draws a frame pack on a canvas by the clock (D64: the frame at or before t; before the first frame the
+ * first one, as a <video> parked at its start shows): asks the pack for the frames ahead while playing,
+ * tells the clock how far its fetched frames reach (`attachSource`), redraws on resize. Shared by the JPEG
+ * frame-pack cell and the depth cell (design doc 21 §5.5). Returns whether nothing could be drawn yet.
  */
-export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock }) {
-  const canvas = useRef<HTMLCanvasElement | null>(null);
-  const index = useFrameIndex(ep.index_url);
-  const sourceId = `${cam.key}:${useId()}`;
-  // nothing to draw yet: the frame is on its way
+export function usePackPainter(
+  canvas: React.RefObject<HTMLCanvasElement | null>,
+  pack: FramePack | null,
+  clock: PlayerClock,
+  sourceId: string,
+  draw: (el: HTMLCanvasElement, img: Drawable | undefined) => void = drawFrame,
+  onShown?: (img: Drawable | undefined) => void,
+  /** frames decoded ahead of the one shown while playing (fewer than the pack keeps decoded) */
+  ahead: number = AHEAD,
+): boolean {
   const [waiting, setWaiting] = useState(true);
-  const pack = useMemo(() => (ep.url && index.data ? new FramePack(ep.url, index.data) : null), [ep.url, index.data]);
-  // the cleanup only drops the frames: StrictMode runs it and then reuses the same pack
-  useEffect(() => () => pack?.clear(), [pack]);
-
   useEffect(() => {
     const el = canvas.current;
     if (!el || !pack) return undefined;
@@ -49,14 +52,16 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
     const times = pack.index.t;
     // playing, the bytes of about readyAheadS more come too (fetched in batches): what the clock waits for
     const prefetch = framesIn(times, CLOCK_CONFIG.readyAheadS + 1);
-    // before the camera's first frame it shows that frame, as a <video> parked at its start does
     const at = () => Math.max(0, bisectRight(times, clock.getSnapshot().t + 1e-6));
     const paint = () => {
       const s = clock.getSnapshot();
       const k = at();
-      void pack.want(k, s.playing ? AHEAD : 2, s.playing ? prefetch : 0);
+      void pack.want(k, s.playing ? ahead : 2, s.playing ? prefetch : 0);
       const img = pack.get(k) ?? pack.nearest(k);
-      if (k !== shown || img) drawFrame(el, img);
+      if (k !== shown || img) {
+        draw(el, img);
+        onShown?.(img);
+      }
       if (pack.get(k)) shown = k;
       setWaiting(!img);
     };
@@ -91,7 +96,22 @@ export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeC
       ro?.disconnect();
       pack.onFrame = null;
     };
-  }, [pack, clock, sourceId]);
+  }, [canvas, pack, clock, sourceId, draw, onShown, ahead]);
+  return waiting;
+}
+
+/**
+ * A frame-pack cell (an mcap JPEG / PNG camera, design doc 18 §4.2): the frame under the clock,
+ * drawn on a canvas at the picture's aspect ratio; the frames ahead are fetched while it plays.
+ */
+export function FramesCell({ cam, ep, clock }: { cam: VizCamera; ep: VizEpisodeCamera; clock: PlayerClock }) {
+  const canvas = useRef<HTMLCanvasElement | null>(null);
+  const index = useFrameIndex(ep.index_url);
+  const sourceId = `${cam.key}:${useId()}`;
+  const pack = useMemo(() => (ep.url && index.data ? new FramePack(ep.url, index.data) : null), [ep.url, index.data]);
+  // the cleanup only drops the frames: StrictMode runs it and then reuses the same pack
+  useEffect(() => () => pack?.clear(), [pack]);
+  const waiting = usePackPainter(canvas, pack, clock, sourceId);
 
   const failed = index.isError || (!ep.url && ep.access !== 'unsupported');
   return (

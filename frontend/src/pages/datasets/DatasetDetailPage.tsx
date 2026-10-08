@@ -12,7 +12,9 @@ import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { StateTag } from '../../components/StateTag';
 import { DatasetAnnotations } from '../../features/datasets/Annotations';
+import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer';
 import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
+import { useVizDisplay } from '../../features/visualizer/data';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
 import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { bytes, grouped } from '../../lib/format';
@@ -29,6 +31,7 @@ export function DatasetDetailPage() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const [mapping, setMapping] = useState(params.get('mcap') === '1');
+  const [display, setDisplay] = useState(false);
   const closeMapping = () => {
     setMapping(false);
     if (params.has('mcap')) {
@@ -155,6 +158,7 @@ export function DatasetDetailPage() {
                     },
                   ]
                 : []),
+              ...(d.viz?.state !== 'unsupported' ? [{ label: zh.displayCfg.entry, value: <DisplayRow id={d.id} onOpen={() => setDisplay(true)} /> }] : []),
               { label: zh.annotations.label, value: <DatasetAnnotations d={d} /> },
             ]}
           />
@@ -234,6 +238,22 @@ export function DatasetDetailPage() {
       </div>
       {actions.dialogs}
       <McapConfigDrawer dataset={mapping && d.viz_mapping ? d : null} onClose={closeMapping} />
+      <DisplayConfigDrawer dataset={display ? d : null} onClose={() => setDisplay(false)} />
     </div>
+  );
+}
+
+/** 展示配置: saved (its version) or the platform's defaults, and the drawer's button (design doc 21 §6.5). */
+function DisplayRow({ id, onOpen }: { id: string; onOpen: () => void }) {
+  const doc = useVizDisplay(id);
+  const d = doc.data;
+  return (
+    <Space data-testid="dataset-display">
+      {/* always there: Space keys its items by position, a text arriving in front would remount the button */}
+      <span className={d?.config ? undefined : 'muted'}>{d ? (d.config ? zh.displayCfg.current(d.version) : zh.displayCfg.none) : ''}</span>
+      <Button size="mini" onClick={onOpen}>
+        {zh.displayCfg.entry}
+      </Button>
+    </Space>
   );
 }

@@ -443,6 +443,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/viz/display": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The dataset's display configuration - default layout, cameras, curve groups, subtitle track, playback - and the defaults an editor starts from (2.7.0, design doc 21 §6)
+         * @description One configuration per registration, shared by everyone who opens the dataset; `config` is
+         *     null until one is saved. `defaults` are what the visualizer does without one: the cameras in
+         *     their own order, the automatic curve groups and the dimensions they are made of (LeRobot and
+         *     Lance; an mcap dataset's curves come from its field mapping), the annotation sources a
+         *     subtitle track can come from.
+         */
+        get: operations["getDatasetVizDisplay"];
+        /**
+         * Replace the display configuration, checked against the dataset's current model (2.7.0)
+         * @description The whole configuration is replaced and its version goes up by one. What it names must be in
+         *     the dataset's current model - cameras, curve dimensions (a feature and its dimension), the
+         *     annotation source of the track, the layout's cells - or it fails with `validation_failed` and
+         *     `details.errors` per item; an mcap dataset takes no curve groups. A configuration saved before
+         *     the dataset changed is not refused when read: what no longer matches is left out.
+         */
+        put: operations["putDatasetVizDisplay"];
+        post?: never;
+        /** Restore the defaults - the whole configuration is removed; its version still goes up (2.7.0) */
+        delete: operations["deleteDatasetVizDisplay"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/datasets/{id}/episodes/{index}/viz": {
         parameters: {
             query?: never;
@@ -503,7 +538,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux or an H.264 transcode - with Range */
+        /** A camera served by the Daemon - a local dataset's file, a Lance table's blob (2.5.0), a fragmented-mp4 remux, an episode's slice (2.7.0) or an H.264 transcode - with Range */
         get: operations["getDatasetCameraVideo"];
         put?: never;
         post?: never;
@@ -551,6 +586,52 @@ export interface paths {
         };
         /** The index of a camera's frame pack - time, offset and size of every frame (and, for a sample pack, its keyframes and codec string) */
         get: operations["getDatasetCameraFrameIndex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/streams/{stream}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The frame pack of a depth stream - one 16-bit greyscale PNG a frame back to back, read by Range with the index; 202 with progress while the Daemon makes it the first time (2.7.0, design doc 21 §5) */
+        get: operations["getDatasetStreamFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/episodes/{index}/streams/{stream}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0) */
+        get: operations["getDatasetStreamFrameIndex"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1291,6 +1372,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/episodes/{index}/eef-overlay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
+         * @description Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
+         *     plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+         *     `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
+         *     bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
+         *     own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
+         *     past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
+         *     bundle has no such episode.
+         */
+        get: operations["getTaskEpisodeEefOverlay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/episodes/{index}/cameras/{camera}.mp4": {
         parameters: {
             query?: never;
@@ -1311,6 +1422,52 @@ export interface paths {
          *     memory as before 2.4.0.
          */
         get: operations["getTaskCameraVideo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/streams/{stream}.frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The frame pack of a depth stream of the task's input (as getDatasetStreamFrames) */
+        get: operations["getTaskStreamFrames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/streams/{stream}.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        /** The index of a depth stream's frame pack - time, offset and size of every frame, and the depth's unit and value range (2.7.0) */
+        get: operations["getTaskStreamFrameIndex"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1729,7 +1886,7 @@ export interface components {
                      * @description control: a legal case that must not be reported
                      * @enum {unknown}
                      */
-                    kind: "defect" | "phenomenon" | "reference" | "control";
+                    kind: "defect" | "phenomenon" | "control";
                     /** @enum {unknown} */
                     level: "episode" | "dataset";
                 }[];
@@ -1769,7 +1926,7 @@ export interface components {
         RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "autolabel" | "vlm" | "profile";
         /** @enum {unknown} */
         FindingLevel: "blocking" | "review" | "info";
-        /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-5 */
+        /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-4 */
         TaxonomyItemId: string;
         FindingCode: {
             /** @description unique within its module */
@@ -2760,7 +2917,8 @@ export interface components {
         /**
          * @description How a camera reaches the browser (design doc 18 §4.2, D60). direct: a presigned (or the
          *     public bucket's) TOS URL; local: the Daemon serves the file of a local dataset; remux: the
-         *     Daemon rewraps the stream into fragmented mp4 without re-encoding; frames: a JPEG frame pack
+         *     Daemon rewraps the stream into mp4 without re-encoding (an mcap camera, or with CURATOR_VIZ_SEGMENT
+         *     a LeRobot v3 / Lance episode's slice and a moov-at-end file put in front, 2.7.0); frames: a JPEG frame pack
          *     drawn on a canvas; transcode: the Daemon re-encodes to H.264 (CURATOR_VIZ_TRANSCODE, the
          *     player tags it 平台转码); blob: the Daemon serves, by Range, the mp4 kept in a Lance table's
          *     blob column (2.5.0, design doc 19 §4.3); unsupported: cannot be shown, `reason` says why.
@@ -2771,6 +2929,7 @@ export interface components {
         VizCameraKey: string;
         VizCamera: {
             key: components["schemas"]["VizCameraKey"];
+            /** @description the display configuration's name for it, else its own */
             name: string;
             /** @description the LeRobot feature key or the mcap topic */
             source: string;
@@ -2792,6 +2951,8 @@ export interface components {
             transcoded: boolean;
             /** @description why transcode or unsupported, in Chinese */
             reason: string | null;
+            /** @description the display configuration leaves it out of the layout templates; it is still offered in the + / 更换 menus (2.7.0) */
+            hidden: boolean;
         };
         VizLine: {
             name: string;
@@ -2816,12 +2977,35 @@ export interface components {
             lines: components["schemas"]["VizLine"][];
             /** @description placed by the smart layout */
             smart: boolean;
-            /** @description false: listed (field tree, + menu) but not drawable in this phase */
+            /** @description false: listed (field tree, + menu) but not drawable; depth streams are drawable since 2.7.0 */
             available: boolean;
             reason: string | null;
             /** @description feature keys or topics it is read from */
             sources: string[];
             rate_hz?: number | null;
+            /** @description a depth stream's picture (2.7.0, design doc 21 §5) */
+            depth?: null | components["schemas"]["VizDepthStream"];
+        };
+        VizDepthStream: {
+            width: number | null;
+            height: number | null;
+            /** @description the unit of the pack's values: mm */
+            unit: string;
+            /** @description the camera the depth belongs to (by name; the player can draw the depth over it when their aspect ratios agree) */
+            pair_camera: null | components["schemas"]["VizCameraKey"];
+        };
+        /** @description a stream whose pictures an episode reads from its own pack (depth, 2.7.0) */
+        VizEpisodeStream: {
+            key: string;
+            /** @enum {unknown} */
+            kind: "depth";
+            /** @description the frame pack (getDatasetStreamFrames / getTaskStreamFrames); null when unsupported */
+            url: string | null;
+            /** @description its index (VizFrameIndex with codec png16 and depth) */
+            index_url: string | null;
+            /** @description episode time of the stream's first frame */
+            offset_s: number;
+            reason: string | null;
         };
         VizAnnotationSource: {
             key: string;
@@ -2847,7 +3031,7 @@ export interface components {
             dtype?: string | null;
             shape?: number[] | null;
             names?: string[] | null;
-            /** @description attributes shown in the detail pane */
+            /** @description the node's attributes as the dataset's own metadata writes them (2.7.0, design doc 21 §3, D71): a LeRobot / Lance feature's info.json entry key by key, a file's size, an mcap topic's channel, schema and statistics fields, a Lance table's num_rows and columns; nested objects have their keys joined with dots (info.video.codec), lists are JSON text */
             detail?: {
                 [key: string]: string | number | boolean | null;
             };
@@ -2901,6 +3085,119 @@ export interface components {
             warnings: components["schemas"]["VizWarning"][];
             /** @description the metadata fingerprint the model and its caches belong to */
             fingerprint: string;
+            /** @description the display configuration in effect (2.7.0): cameras, curve groups and the track are already applied to this model; the layout, hidden lines and playback are the player's. For scope task the registration's cameras, curve groups and track only */
+            display: null | components["schemas"]["VizDisplayConfig"];
+        };
+        /** @description how a depth cell draws (2.7.0, design doc 21 §5.5) */
+        VizDepthView: {
+            /** @enum {unknown} */
+            cmap: "turbo" | "gray";
+            /** @description the colour scale's near end in millimetres; null: the episode's 2 % */
+            lo: number | null;
+            /** @description the far end; null: the episode's 98 % */
+            hi: number | null;
+            /** @description drawn over the camera it is paired with */
+            overlay: boolean;
+            opacity: number;
+        };
+        VizDisplayCell: {
+            /** @enum {unknown} */
+            kind: "video" | "curve" | "depth" | "empty";
+            /** @description a camera's key (video), a curve group's (curve) or a depth stream's (depth); absent for empty */
+            key?: string;
+            view?: components["schemas"]["VizDepthView"];
+        };
+        VizDisplayLayout: {
+            /**
+             * @description custom: the cells as saved; the others are laid out anew for the window
+             * @enum {unknown}
+             */
+            template: "smart" | "video" | "curve" | "custom";
+            /** @description custom only */
+            cols?: number;
+            /** @description custom only */
+            rows?: number;
+            /** @description custom only: cols × rows cells, row by row */
+            cells?: components["schemas"]["VizDisplayCell"][];
+        };
+        VizDisplayCamera: {
+            key: components["schemas"]["VizCameraKey"];
+            /** @description shown instead of the camera's own name; null: its own */
+            name?: string | null;
+            /** @description left out of the layout templates; still offered in the + / 更换 menus */
+            hidden?: boolean;
+        };
+        VizDisplayLine: {
+            /** @description the feature key */
+            source: string;
+            /** @description the dimension within the feature */
+            dim: number;
+            name: string;
+            /**
+             * @description state solid, action dashed
+             * @enum {unknown}
+             */
+            role: "state" | "action" | "other";
+        };
+        VizDisplayGroup: {
+            /** @description the stream key the group is drawn and asked for by */
+            key: string;
+            name: string;
+            unit?: string | null;
+            /** @description shown by the smart layout */
+            smart: boolean;
+            lines: components["schemas"]["VizDisplayLine"][];
+        };
+        /** @description How a registered dataset is shown by default (2.7.0, design doc 21 §6); every part may be absent or null - the platform's default */
+        VizDisplayConfig: {
+            layout?: null | components["schemas"]["VizDisplayLayout"];
+            /** @description in display order; cameras not named follow in their own order */
+            cameras?: components["schemas"]["VizDisplayCamera"][] | null;
+            curves?: {
+                /** @description LeRobot and Lance - the curve groups instead of the automatic ones; null - automatic */
+                groups?: components["schemas"]["VizDisplayGroup"][] | null;
+                /** @description per curve group key, the names of the lines not drawn */
+                hidden?: {
+                    [key: string]: string[];
+                };
+            } | null;
+            /** @description the annotation source (a key of annotation_sources) shown as the subtitle track */
+            track?: string | null;
+            playback?: {
+                /** @enum {unknown} */
+                speed?: 1 | 1.5 | 2;
+                loop?: boolean;
+            } | null;
+        };
+        VizDisplay: {
+            dataset_id: string;
+            config: null | components["schemas"]["VizDisplayConfig"];
+            /** @description goes up by one with every save and every restore; 0 - never saved */
+            version: number;
+            updated_at: number | null;
+            /** @description what the visualizer does without a configuration */
+            defaults: {
+                /** @description in the dataset's own order */
+                cameras: {
+                    key: components["schemas"]["VizCameraKey"];
+                    name: string;
+                    source: string;
+                }[];
+                /** @description the automatic curve groups (empty for mcap) */
+                groups: components["schemas"]["VizDisplayGroup"][];
+                /** @description every dimension a group may draw, with its automatic name and role */
+                dimensions: components["schemas"]["VizDisplayLine"][];
+                /** @description the annotation sources a subtitle track can come from */
+                tracks: {
+                    key: string;
+                    name: string;
+                }[];
+                /** @description false for mcap: its curves come from the field mapping */
+                groups_editable: boolean;
+            };
+        };
+        VizDisplayPut: {
+            config: components["schemas"]["VizDisplayConfig"];
         };
         VizEpisodeItem: {
             index: number;
@@ -2955,10 +3252,11 @@ export interface components {
              *     slices.
              */
             samples_url: string | null;
-            /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one */
+            /** @description the H.264 transcode to fall back to when the browser cannot decode url; null when transcoding is off or url already is one. Its time 0 is the episode's start: played instead of url it runs from 0 to to_ts - from_ts (2.7.0, design doc 21 §4.5) */
             transcode_url: string | null;
-            /** @description LeRobot v3: where the episode starts in the file (play url#t=from_ts,to_ts) */
+            /** @description where the episode starts in the media url serves (LeRobot v3 and Lance: a time in the file holding several episodes; 0 for a transcode, which starts at the episode's start); media time = t - offset_s + from_ts (2.7.0, design doc 21 §4.5) */
             from_ts: number | null;
+            /** @description where the episode ends in the media url serves (the next episode's first frame in a shared file) */
             to_ts: number | null;
             /** @description episode time of the camera's first frame (video time 0 after from_ts) */
             offset_s: number;
@@ -3020,6 +3318,8 @@ export interface components {
             };
             timeline: components["schemas"]["VizTimeline"];
             cameras: components["schemas"]["VizEpisodeCamera"][];
+            /** @description depth streams and their packs (2.7.0) */
+            streams: components["schemas"]["VizEpisodeStream"][];
             annotations: components["schemas"]["VizAnnotations"];
             check_clock: null | components["schemas"]["VizCheckClock"];
             warnings: components["schemas"]["VizWarning"][];
@@ -3041,13 +3341,49 @@ export interface components {
             total_points: number;
             downsampled: boolean;
         };
-        VizFrameIndex: {
-            camera: components["schemas"]["VizCameraKey"];
+        EefOverlay: {
+            task_id: string;
+            episode_index: number;
+            cameras: components["schemas"]["EefOverlayCamera"][];
+        };
+        EefOverlayCamera: {
+            /** @description the bundle's camera id, as in the opinion record's `cameras` */
+            camera_id: string;
+            /** @description key of the `VizEpisodeCamera` playing the same file (LeRobot) or topic (mcap); null when none does */
+            viz_camera: string | null;
+            /** @description the source video's size; every coordinate is a pixel of it */
+            image_size_wh: number[];
+            /** @description the camera clip's frame rate */
+            fps: number | null;
+            /** @description per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps. */
+            media_frames: (number | null)[];
+            /** @description why the opinion skipped this camera; its layers are then empty */
+            skipped: string | null;
+            /** @description drawn in order, later on top */
+            layers: components["schemas"]["EefOverlayLayer"][];
+        };
+        EefOverlayLayer: {
             /**
-             * @description h264 / h265: a sample pack (2.5.0)
+             * @description point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end); polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
              * @enum {unknown}
              */
-            codec: "jpeg" | "png" | "h264" | "h265";
+            kind: "point" | "segment" | "arrow" | "polyline";
+            /** @description text by the mark (P, A, B, a UMI hand) */
+            label: string | null;
+            color: string;
+            /** @description line width in source pixels at full size */
+            width: number;
+            /** @description one entry per sample frame; null where nothing is drawn */
+            frames: ((number | null)[] | null)[];
+        };
+        VizFrameIndex: {
+            /** @description the camera's key, or a depth stream's (2.7.0) */
+            camera: components["schemas"]["VizCameraKey"];
+            /**
+             * @description h264 / h265: a sample pack (2.5.0); png16: a depth pack, every frame a 16-bit greyscale PNG (2.7.0)
+             * @enum {unknown}
+             */
+            codec: "jpeg" | "png" | "h264" | "h265" | "png16";
             width: number | null;
             height: number | null;
             count: number;
@@ -3064,6 +3400,18 @@ export interface components {
             size: number[];
             /** @description the pack's size */
             bytes: number;
+            /** @description a depth pack's values (2.7.0, design doc 21 §5.2) - a pixel's value times scale is a depth in unit */
+            depth?: {
+                /** @description mm */
+                unit: string;
+                scale: number;
+                /** @description the value of a hole (no depth): 0 */
+                invalid: number;
+                /** @description the episode's 2 % value of its valid pixels (the colour scale's default low end) */
+                lo: number | null;
+                /** @description its 98 % value */
+                hi: number | null;
+            };
         };
         VizMediaPending: {
             /** @enum {unknown} */
@@ -3129,7 +3477,9 @@ export interface components {
             /** @description first message, seconds after the file's first message */
             start_s: number | null;
             end_s: number | null;
+            /** @description a camera's or a depth topic's picture (depth since 2.7.0) */
             image: null | {
+                /** @description jpeg, png, h264, h265, raw ...; a depth topic: png16, cdepth, cdepth32, raw16, raw32f, rvl */
                 codec: string;
                 width: number | null;
                 height: number | null;
@@ -3140,10 +3490,10 @@ export interface components {
                 size: number;
             }[] | null;
             /**
-             * @description what the draft does with it
+             * @description what the draft does with it; depth: a depth picture (2.7.0, design doc 21 §5.4)
              * @enum {unknown}
              */
-            use: "camera" | "series" | "task" | "segments" | "ignore" | "unmapped";
+            use: "camera" | "depth" | "series" | "task" | "segments" | "ignore" | "unmapped";
             /** @enum {unknown} */
             role: "state" | "action" | "other" | null;
             name: string;
@@ -3199,6 +3549,18 @@ export interface components {
             /** @description the schema name seen when it was mapped (informational; encoding and picture size come from probing) */
             schema?: string;
         };
+        depth: {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+            /** @description the camera topic (one of cameras) the depth belongs to: the player can draw the depth over it */
+            pair_with?: null | components["schemas"]["topic"];
+            /**
+             * @description the unit of the topic's numbers: 16-bit pictures are millimetres, 32-bit floats metres, unless said otherwise
+             * @enum {unknown}
+             */
+            unit?: "mm" | "m";
+        };
         series: {
             topic: components["schemas"]["topic"];
             name: string;
@@ -3229,12 +3591,15 @@ export interface components {
             smart?: boolean;
         };
         /**
-         * viz-mapping/1.0 - the field mapping of an mcap dataset (C7, design doc 18 §6)
-         * @description Which topics of an mcap dataset are cameras, which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.
+         * viz-mapping/1.1 - the field mapping of an mcap dataset (C7, design doc 18 §6, design doc 21 §5.4)
+         * @description Which topics of an mcap dataset are cameras, which are depth pictures (1.1), which are curves and what they are (state / action / other), where the task text and the segment annotations are, and what numbers the frames. It is the configuration of the mcap reader of the data visualizer and, frozen into run.json when a task starts, the source of the check reader's ingest.mcap_mapping (design doc 18 §6.2: role=action series -> action, role=state -> state, cameras -> video_topics; transforms are for display only). A dataset keeps one (Dataset.viz_mapping, versioned); the built-in templates draft it from a probe and a person confirms it; it can also be imported, exported and saved as a site template. Topics not named anywhere are 'unmapped' and only reported. Episode files are numbered by v1's rule (episode_<N>.mcap, otherwise by sorted name), not by the mapping.
          */
         "viz-mapping.schema": {
-            /** @constant */
-            schema_version: "viz-mapping/1.0";
+            /**
+             * @description 1.1 adds depths; a 1.0 mapping stays valid as it is
+             * @enum {unknown}
+             */
+            schema_version: "viz-mapping/1.0" | "viz-mapping/1.1";
             /** @description shown in the template picker and on the dataset page */
             name?: string;
             /**
@@ -3256,6 +3621,8 @@ export interface components {
             };
             /** @description in display order; compressed images (JPEG, PNG) and compressed video (H.264, H.265) */
             cameras: components["schemas"]["camera"][];
+            /** @description depth pictures in display order (1.1, design doc 21 §5.4): a 16-bit PNG CompressedImage, a ROS compressedDepth CompressedImage, a 16UC1 / mono16 / 32FC1 raw image. The visualizer draws them; the check reader does not read them */
+            depths?: components["schemas"]["depth"][];
             /** @description curve groups, in display order; a state and an action topic of the same thing are paired with pair_with and drawn in one group */
             series: components["schemas"]["series"][];
             /** @description where the episode's task text is; null = none (the player shows 无任务描述) */
@@ -3932,8 +4299,12 @@ export interface components {
         PathIndex: number;
         /** @description the camera's `key` in the presentation model */
         PathCamera: components["schemas"]["VizCameraKey"];
+        /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+        PathStream: string;
         /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
         RangeHeader: string;
+        /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+        VizSegment: boolean;
         /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
         VizTranscode: boolean;
         /** @description the curve group's `key` (VizStream.key) */
@@ -4753,6 +5124,85 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VizDisplayPut"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteDatasetVizDisplay: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description restored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizDisplay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getDatasetEpisodeViz: {
         parameters: {
             query?: never;
@@ -4817,6 +5267,8 @@ export interface operations {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                segment?: components["parameters"]["VizSegment"];
             };
             header?: {
                 /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
@@ -4887,6 +5339,65 @@ export interface operations {
                 index: components["parameters"]["PathIndex"];
                 /** @description the camera's `key` in the presentation model */
                 camera: components["parameters"]["PathCamera"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetStreamFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetStreamFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
             };
             cookie?: never;
         };
@@ -6025,11 +6536,38 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getTaskEpisodeEefOverlay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one entry per camera of the bundle's sample */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EefOverlay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getTaskCameraVideo: {
         parameters: {
             query?: {
                 /** @description true: the H.264 transcode of the camera, for a browser that cannot decode the original (AV1 without hardware decoding, HEVC); 404 with details.reason transcode_disabled when CURATOR_VIZ_TRANSCODE is off */
                 transcode?: components["parameters"]["VizTranscode"];
+                /** @description true: the episode's slice of a LeRobot v3 / Lance camera (cut at GOP boundaries without re-encoding; its time 0 is the slice's first packet, the episode answer's from_ts / to_ts are times in it), or a single-episode mp4 whose moov was at its end as a copy with it in front - what the episode answer's url asks for when CURATOR_VIZ_SEGMENT is on (2.7.0, design doc 21 §4.3, §4.4); 404 with details.reason segment_disabled when it is off, not_segmented when the camera is read as it is */
+                segment?: components["parameters"]["VizSegment"];
             };
             header?: {
                 /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
@@ -6056,6 +6594,65 @@ export interface operations {
                 };
                 content?: never;
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskStreamFrames: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description one byte range (`bytes=a-b`, `bytes=a-`, `bytes=-n`) */
+                Range?: components["parameters"]["RangeHeader"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["VizFrames"];
+            202: components["responses"]["VizPending"];
+            206: components["responses"]["VizFramesRange"];
+            /** @description the range is outside the pack */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskStreamFrameIndex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+                /** @description the stream's `key` in the presentation model (a depth stream, 2.7.0) */
+                stream: components["parameters"]["PathStream"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VizFrameIndex"];
+                };
+            };
+            202: components["responses"]["VizPending"];
             default: components["responses"]["Error"];
         };
     };

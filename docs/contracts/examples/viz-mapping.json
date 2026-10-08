@@ -66,6 +66,21 @@
    "cameras": [],
    "series": [],
    "segments": {"attachment": "labels.json"}
+  },
+  {
+   "schema_version": "viz-mapping/1.1",
+   "name": "RoboMIND（彩色加深度）",
+   "base": "builtin:foxglove",
+   "timeline": {"source": "log_time", "frame_reference": null},
+   "cameras": [{"topic": "/front-camera", "name": "front-camera", "schema": "foxglove.CompressedImage"}],
+   "depths": [
+    {"topic": "/front-depth", "name": "front-depth", "schema": "foxglove.CompressedImage", "pair_with": "/front-camera"},
+    {"topic": "/wrist/depth/image_raw", "name": "wrist depth", "schema": "sensor_msgs/msg/Image", "pair_with": null, "unit": "m"}
+   ],
+   "series": [{"topic": "/puppet-joint-position-left", "name": "左臂关节", "role": "state", "fields": ["position"]}],
+   "task": {"topic": "/instruction"},
+   "segments": null,
+   "ignore": []
   }
  ],
  "invalid": [
@@ -81,6 +96,8 @@
   {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "segments": {"topic": "/subtask", "start_field": "start"}},
   {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "base": "builtin:rerun"},
   {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "episode_files": "episode_{index}.mcap"},
-  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "ignore": ["/imu", "/imu"]}
+  {"schema_version": "viz-mapping/1.0", "cameras": [], "series": [], "ignore": ["/imu", "/imu"]},
+  {"schema_version": "viz-mapping/1.1", "cameras": [], "series": [], "depths": [{"topic": "/front-depth"}]},
+  {"schema_version": "viz-mapping/1.1", "cameras": [], "series": [], "depths": [{"topic": "/front-depth", "name": "d", "unit": "cm"}]}
  ]
 }

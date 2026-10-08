@@ -53,10 +53,11 @@ class Group:
     lines: list[Line]
     smart: bool
     sources: list[str] = field(default_factory=list)
+    unit: str | None = None       # a display configuration's (design doc 21 §6)
 
     def as_stream(self) -> dict:
         """C4 ``VizStream`` (kind series)."""
-        return {"key": self.key, "kind": "series", "name": self.name, "unit": None,
+        return {"key": self.key, "kind": "series", "name": self.name, "unit": self.unit,
                 "lines": [ln.as_dict() for ln in self.lines], "smart": self.smart,
                 "available": True, "reason": None, "sources": list(self.sources), "rate_hz": None}
 

@@ -319,7 +319,7 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == first["result_rev"] + 1, json.dumps(done)[:2000]
     assert d.api("GET", f"/tasks/{task_id}/episodes/{drop}").json()["reasons"] == [
-        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
+        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-4", "appealable": False,
          "text": "人工裁决判为 EEF 与视频不一致"}]
     if keep != drop:
         assert d.api("GET", f"/tasks/{task_id}/episodes/{keep}").json()["list"] == "passed"

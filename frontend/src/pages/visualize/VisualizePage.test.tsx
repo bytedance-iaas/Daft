@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
@@ -41,6 +42,25 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     await waitFor(() => expect(asked.some((p) => p.endsWith('/datasets/ds_droid200/episodes/4/viz'))).toBe(true));
   });
 
+  it('says why a dataset does not read, once, instead of asking again and again', async () => {
+    // the requester's pusht-lance (2026-10-05): its model answered an error; the page mounted a Player to
+    // show it, whose own observer re-fetched the failed model - back to pending, unmounted, failed again
+    const message = 'meta/episodes/chunk-000/file-000.parquet 是 Git LFS 指针文件（131 字节的占位），不是数据';
+    let asked = 0;
+    server.use(
+      http.get('*/api/v1/datasets/:id/viz', () => {
+        asked += 1;
+        return HttpResponse.json({ error: { code: 'not_found', message } }, { status: 404 });
+      }),
+    );
+    renderApp('/visualize?dataset=ds_droid200');
+    await screen.findByText(`${zh.viz.modelFailed}：${message}`);
+    await new Promise((r) => setTimeout(r, 300));
+    // still on screen, in an alert, and the model was not asked for again and again
+    expect(screen.getAllByRole('alert').some((a) => a.textContent === `${zh.viz.modelFailed}：${message}`)).toBe(true);
+    expect(asked).toBeLessThanOrEqual(2);
+  });
+
   it('falls back to the first episode when the address names one the dataset does not have', async () => {
     renderApp('/visualize?dataset=ds_droid200&ep=99999');
     const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
@@ -77,11 +97,34 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(within(info).getByText('相机')).toBeInTheDocument();
     // the first leaf is shown: a camera, with its attributes and 加入播放器
     await user.click(within(info).getAllByRole('button', { name: /wrist_image_left/ })[0]);
+    // the feature's info.json entry as the dataset writes it, nothing translated (design doc 21 §3)
+    expect(within(info).getByRole('heading', { name: 'observation.images.wrist_image_left' })).toBeInTheDocument();
+    expect(within(info).getByText('info.video.codec')).toBeInTheDocument();
+    expect(within(info).queryByText('分辨率')).toBeNull();
+    expect(within(info).queryByText('读取方式')).toBeNull();
     await user.click(within(info).getByRole('button', { name: zh.vizPage.addToPlayer }));
     expect(await screen.findByText(/已加到空格子|替换了最后一个格子/)).toBeInTheDocument();
     // a metadata file previews its text
     await user.click(within(info).getByRole('button', { name: /info\.json/ }));
     expect(await within(info).findByTestId('vz-meta')).toBeInTheDocument();
+  });
+
+  it('opens the dataset’s 展示配置 from the header; a camera hidden there leaves the smart layout (design doc 21 §6)', async () => {
+    const { user } = renderApp('/visualize?dataset=ds_droid200');
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(3));
+    await user.click(screen.getByRole('button', { name: zh.displayCfg.entry }));
+    const drawer = await waitFor(() => {
+      const d = [...document.querySelectorAll('.arco-drawer')].find((x) => x.textContent?.includes(zh.displayCfg.title('droid-200')));
+      if (!(d instanceof HTMLElement)) throw new Error('no drawer');
+      return d;
+    });
+    await user.click(await within(drawer).findByRole('checkbox', { name: zh.displayCfg.hiddenAria('exterior_2') }));
+    await user.click(within(drawer).getByRole('button', { name: zh.displayCfg.save }));
+    expect(await screen.findByText(zh.displayCfg.saved)).toBeInTheDocument();
+    // the model is asked for again: two cameras in the smart layout, the third still in 「+」
+    await waitFor(() => expect(player.querySelectorAll('.vz-cell.kind-video')).toHaveLength(2));
+    expect(db.vizDisplays.get('ds_droid200')?.config?.cameras).toEqual([{ key: 'exterior_1' }, { key: 'exterior_2', hidden: true }, { key: 'wrist' }]);
   });
 
   it('says an mcap dataset needs its mapping confirmed first', async () => {
