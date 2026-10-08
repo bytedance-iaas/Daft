@@ -183,9 +183,9 @@ CASES = [
     ("video_action_sync", True, None, SYNC_WEAK, {"undecidable"}, set()),
     ("video_action_sync", True, None, SYNC_SUSPECT, {"suspect"}, set()),
     ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3"}),
-    ("task_success", False, None, TASK_FAIL, {"failure"}, {"TASK-12"}),
-    ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-12"}),
-    ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-12"}),
+    ("task_success", False, None, TASK_FAIL, {"failure"}, {"TASK-10"}),
+    ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-10"}),
+    ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-10"}),
     ("task_success", True, None, TASK_OK_FRAMES, {"recovery", "task_text_missing"}, set()),
     ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
     ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
@@ -196,8 +196,8 @@ CASES = [
     ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
     ("dedup", True, None, {}, set(), set()),
     ("skill_profile", None, None, {"family": "放置", "subskill": "放进容器", "grouping_text_source": "原始标注"},
-     {"label_disagreement"}, {"LABEL-2"}),
-    ("skill_profile", True, None, {"family": "放置", "subskill": "放进容器"}, set(), {"LABEL-2"}),
+     {"label_disagreement"}, {"LABEL-1"}),
+    ("skill_profile", True, None, {"family": "放置", "subskill": "放进容器"}, set(), {"LABEL-1"}),
 ] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
      for f, code in INTEG_CASES]
 
@@ -224,7 +224,7 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
 
 
 #: codes no answer can raise yet: the readers keep one description per episode, so the skill profile has
-#: nothing to compare (LABEL-2 is declared unassessable on every record until a reader keeps more)
+#: nothing to compare (LABEL-1 is declared unassessable on every record until a reader keeps more)
 NO_SOURCE_YET = {("skill_profile", "descriptions_conflict")}
 
 
@@ -235,7 +235,7 @@ def test_every_code_is_drawn_from_a_real_answer():
     assert wanted - seen == NO_SOURCE_YET
     for m, passed, score, d, *_ in CASES:
         if m == "skill_profile":
-            assert "LABEL-2" in {u["item"] for u in _record(m, passed, score, d)["unassessable"]}
+            assert "LABEL-1" in {u["item"] for u in _record(m, passed, score, d)["unassessable"]}
 
 
 def test_intervals_scopes_and_readings():
@@ -341,12 +341,12 @@ def test_dataset_level_findings():
 
 
 def test_p20_items_have_fixtures():
-    """P20: the items that needed only a mapping (LABEL-2 can only be declared unassessable: datasets
-    keep one description per episode; SET-3, the eighth, went with taxonomy 1.3)."""
+    """P20: the items that needed only a mapping (LABEL-1 can only be declared unassessable: datasets
+    keep one description per episode; the eighth, the task and skill statistics item, went with taxonomy 1.3)."""
     items = set()
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
-        items |= {u["item"] for u in rec["unassessable"] if u["item"] == "LABEL-2"}
+        items |= {u["item"] for u in rec["unassessable"] if u["item"] == "LABEL-1"}
     items |= {"ACT-6"}                                # dataset level, test_dataset_level_findings
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "ACT-6"} <= items
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-1", "ACT-6"} <= items

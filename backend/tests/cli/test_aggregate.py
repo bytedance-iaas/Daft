@@ -174,7 +174,7 @@ def test_funnel_gates_errors_and_d35(tmp_path):
         assert lines[ep]["blocking"] == [] and lines[ep]["reason"].startswith("待补跑")
     assert "没有结果" in lines[5]["reason"]
     assert lines[6]["verdict"] == "keep" and lines[6]["review"] == [
-        {"module": "task_success", "code": "uncertain", "item": "TASK-5", "line": "task_verdict"}]
+        {"module": "task_success", "code": "uncertain", "item": "TASK-4", "line": "task_verdict"}]
     assert lines[7]["verdict"] == "held" and lines[7]["error_modules"] == [
         "motion_quality", "visual_quality", "video_action_sync", "task_success"]
     assert lines[8]["verdict"] == "drop" and modules_of(lines[8]["blocking"]) == ["task_success"]
@@ -360,7 +360,7 @@ def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
     assert sorted(lists["passed"]) == [0, 5, 7]
     assert sorted(lists["reject"]) == [3]
     assert lists["reject"][3]["reasons"] == [{
-        "module": "task_success", "kind": "human", "code": "failure", "item": "TASK-5",
+        "module": "task_success", "kind": "human", "code": "failure", "item": "TASK-4",
         "appealable": False, "text": "人工裁决判失败（任务未完成）"}]
     assert [r["module"] for r in lists["held"][6]["reasons"]] == ["dedup"]
 
@@ -737,15 +737,15 @@ def test_every_entry_lists_its_findings_with_the_level_they_have(tmp_path):
 
     first = final(run_dir, "0-5")
     assert graded(first, 1) == [("timestamp_check", "gap", "STRM-3", "blocking", None, 0, False, False)]
-    assert graded(first, 2) == [("task_success", "failure", "TASK-5", "blocking", None, 0, False, True)]
-    assert graded(first, 3) == [("task_success", "uncertain", "TASK-5", "review", "task_verdict", 0, False, False)]
+    assert graded(first, 2) == [("task_success", "failure", "TASK-4", "blocking", None, 0, False, True)]
+    assert graded(first, 3) == [("task_success", "uncertain", "TASK-4", "review", "task_verdict", 0, False, False)]
     assert sorted(first["passed"]) == [3, 4, 5] and graded(first, 5) == []      # the keeper: no duplicate
     assert all(isinstance(e["findings"], list) for n in ("passed", "reject", "held") for e in first[n].values())
 
     apply(run_dir, decisions(str(tmp_path / "d.json"), (2, "reject_appeal", "restore", None),
                              (3, "task_verdict", "failure", None), (4, "task_verdict", "success", None)))
     after = final(run_dir, "0-5", revision=2)
-    assert graded(after, 2) == [("task_success", "failure", "TASK-5", "info", None, 0, False, True)]
-    assert graded(after, 3) == [("task_success", "failure", "TASK-5", "blocking", None, None, True, False)]
+    assert graded(after, 2) == [("task_success", "failure", "TASK-4", "info", None, 0, False, True)]
+    assert graded(after, 3) == [("task_success", "failure", "TASK-4", "blocking", None, None, True, False)]
     assert after["reject"][3]["findings"][0]["message_zh"] == "人工裁决判失败（任务未完成）"
     assert graded(after, 4) == []                                              # its abstention is settled

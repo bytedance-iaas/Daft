@@ -19,7 +19,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(screen.getByText('判废原因分布（按检测项）')).toBeInTheDocument();
     await waitFor(() => {
       const charts = screen.getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
-      expect(charts.find((l) => l.startsWith('判废原因分布（按检测项）'))).toMatch(/TASK-5 .+ 5，SET-1 .+ 1，STRM-5 .+ 1/);
+      expect(charts.find((l) => l.startsWith('判废原因分布（按检测项）'))).toMatch(/TASK-4 .+ 5，SET-1 .+ 1，STRM-5 .+ 1/);
     });
   });
 
@@ -35,8 +35,8 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     const matrix = screen.getByTestId('coverage-matrix');
     expect(within(matrix).getByTestId('coverage-head')).toHaveTextContent(/本次覆盖分类表 \d+ \/ \d+ 项/);
     expect(within(matrix).getByTestId('coverage-ACT-4')).toHaveAttribute('data-status', 'unassessable');
-    expect(within(matrix).getByTestId('coverage-TASK-5')).toHaveAttribute('data-status', 'covered');
-    expect(within(matrix).getByTestId('coverage-TASK-5')).toHaveTextContent('TASK-5');
+    expect(within(matrix).getByTestId('coverage-TASK-4')).toHaveAttribute('data-status', 'covered');
+    expect(within(matrix).getByTestId('coverage-TASK-4')).toHaveTextContent('TASK-4');
     // the tip says what the colour cannot: the item and why some episodes were not assessed (2026-10-05)
     await user.hover(within(matrix).getByTestId('coverage-ACT-4'));
     const tip = await screen.findByText(/^ACT-4 /);
@@ -44,7 +44,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(tip).not.toHaveTextContent('部分条目评估不了');
     expect(tip).not.toHaveTextContent(/^ACT-4 \S+ 覆盖/);
     // a covered item opens the section of the module that reports it
-    await user.click(within(matrix).getByTestId('coverage-TASK-5'));
+    await user.click(within(matrix).getByTestId('coverage-TASK-4'));
     await waitFor(() => expect(document.getElementById('module-task_success')).not.toBeNull());
   });
 
@@ -89,7 +89,7 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     const findings = await screen.findByTestId('episode-findings');
     const blocking = within(findings).getByTestId('findings-blocking');
     await waitFor(() => expect(blocking).toHaveTextContent('任务成败判定'));   // module names are the registry's
-    expect(blocking).toHaveTextContent('TASK-5');
+    expect(blocking).toHaveTextContent('TASK-4');
     expect(within(blocking).getByText('可复议')).toBeInTheDocument();
     expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/adjudication?tab=appeals&source=task_success`);
     // the moment opens the mini player on that finding (design doc 18 §4.6): its chip is the focused one
@@ -98,7 +98,7 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     const mini = await screen.findByTestId('vz-mini');
     await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/6/viz`)).toBe(true));
     const focused = await within(mini).findByText((_, el) => !!el?.classList.contains('chip') && el.classList.contains('on'));
-    expect(focused).toHaveTextContent('TASK-5');
+    expect(focused).toHaveTextContent('TASK-4');
     await user.click(within(mini).getAllByRole('button', { name: '关闭' }).pop()!);
     await waitFor(() => expect(screen.queryByTestId('vz-mini')).toBeNull());
     // the module block says what it found, not a verdict
@@ -120,8 +120,8 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     await screen.findByTestId('episode-findings');
     await pick(user, '级别', '判废');
     await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('level') === 'blocking')).toBe(true));
-    await pick(user, '检测项', /^TASK-5/);
-    await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('item') === 'TASK-5' && r.query.get('level') === 'blocking')).toBe(true));
+    await pick(user, '检测项', /^TASK-4/);
+    await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('item') === 'TASK-4' && r.query.get('level') === 'blocking')).toBe(true));
   });
 
   it('a task made before has no finding filters and keeps its 1.0 blocks (D59)', async () => {
@@ -188,7 +188,7 @@ describe('人工裁决 of a task of the policy verdicts', () => {
   it('each question names the findings it asks about by code and item (C4 2.3.0)', async () => {
     renderApp(`/tasks/${FINDINGS_TASK}/adjudication?status=all`);
     const codes = await screen.findAllByTestId('question-codes');
-    expect(codes.map((c) => c.textContent).join(' ')).toMatch(/TASK-5/);
-    expect(codes.map((c) => c.textContent).join(' ')).toMatch(/LABEL-5/);
+    expect(codes.map((c) => c.textContent).join(' ')).toMatch(/TASK-4/);
+    expect(codes.map((c) => c.textContent).join(' ')).toMatch(/LABEL-4/);
   });
 });

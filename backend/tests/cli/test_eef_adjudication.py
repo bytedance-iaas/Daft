@@ -95,11 +95,11 @@ def test_the_answers_act_as_the_gates_result(tmp_path):
     assert sorted(after["passed"]) == [0, 1, 2, 4] and sorted(after["reject"]) == [3, 5, 6, 7, 8]
     assert _asked(after) == {4: [("eef_check", "eef_consistency", EEF)],          # unsure: still asked
                              8: [("reject_appeal", "reject_appeal", EEF)]}
-    human = {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
+    human = {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-4", "appealable": False,
              "text": "人工裁决判为 EEF 与视频不一致"}
     assert after["reject"][3]["reasons"] == [human] and after["reject"][6]["reasons"] == [human]
     assert after["reject"][7]["reasons"] == [{"module": "task_success", "kind": "human", "code": "failure",
-                                             "item": "TASK-5", "appealable": False,
+                                             "item": "TASK-4", "appealable": False,
                                              "text": "人工裁决判失败（任务未完成）"}]
     with open(os.path.join(run_dir, "revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
         assert [int(x) for x in fh.read().split()] == [0, 1, 2, 4]

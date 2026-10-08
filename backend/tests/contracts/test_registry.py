@@ -136,10 +136,10 @@ def test_the_default_policy_reproduces_todays_gates():
 
 
 def test_p20_items_have_codes():
-    """P20: the items that needed only a mapping are covered from the first stage on (SET-3 was the eighth;
-    taxonomy 1.3 dropped it and its readings stay as the platform's own dataset-level findings)."""
+    """P20: the items that needed only a mapping are covered from the first stage on (the eighth, the task and
+    skill statistics item, was dropped in taxonomy 1.3; its readings stay as the platform's own dataset-level findings)."""
     covered = {item for m in M.MODULES for item in m.covers}
-    assert {"LABEL-3", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-2", "ACT-6"} <= covered
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-1", "ACT-6"} <= covered
     assert {M.get("timestamp_check").code("duration_outlier").item,
             M.get("skill_profile").code("undersampled_family").item} == {None}
 
@@ -161,7 +161,7 @@ def test_the_eef_module_takes_part_in_the_verdict():
     for gone in ("gate", "input_scope", "affects_dataset_verdict", "produces_adjudication", "review_lines",
                  "appealable"):
         assert gone not in exported["eef_video_consistency"], gone
-    assert exported["eef_video_consistency"]["covers"] == ["MV-5"]
+    assert exported["eef_video_consistency"]["covers"] == ["MV-4"]
 
 
 def test_the_data_integrity_module_is_the_first_stage():

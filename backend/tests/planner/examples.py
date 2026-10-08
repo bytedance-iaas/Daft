@@ -58,7 +58,7 @@ def _spec(module_id: str, name_zh: str, prompt: str) -> ModuleSpec:
     return ModuleSpec(
         id=module_id, name_zh=name_zh, summary_zh="测试用示例模块：抽 8 帧、问一次",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm", depends_on=(),
-        codes=(FindingCode("vote_no", "TASK-5", "示例：模型答否", "high", "blocking"),),
+        codes=(FindingCode("vote_no", "TASK-4", "示例：模型答否", "high", "blocking"),),
         param_schema={"type": "object", "properties": {}, "additionalProperties": False},
         merge_units=_declare(module_id, prompt))
 

@@ -11,7 +11,7 @@ export, ``docs/contracts/modules.json``, so they follow the platform and nobody 
 * 没有 - no module covers it: a gap (design doc 16 §3.10);
 * 能处理 - a control item, which no code may name.
 
-The preflight is not a module but judges one item itself: SET-4, the input format (design doc 17 §6.1); its
+The preflight is not a module but judges one item itself: SET-2, the input format (design doc 17 §6.1); its
 code is ``preflight``. ``platform_codes`` lists ``module.code`` of every code mapped to the item. The free-text ``platform`` column
 (what the samples showed) is left alone.
 
@@ -36,7 +36,7 @@ CONDITIONS = {"embodiment_profile": "机器人型号要在规格库里",
               "eef_input": "要上传 trajectory.json"}
 JUDGED_LEVELS = ("blocking", "review")
 #: items the preflight judges, outside the registry
-PREFLIGHT_ITEMS = ("SET-4",)
+PREFLIGHT_ITEMS = ("SET-2",)
 NOTE = ("平台侧的注记，不属于分类表：由模块注册表生成（coverage_from_registry.py，设计 17 §6.2）。"
         "能判 = 默认策略下判废或转人工；有读数 = 只报告或只有读数；部分 = 覆盖它的模块都有前提；没有 = 缺口；能处理 = 对照项")
 

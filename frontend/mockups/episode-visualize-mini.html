@@ -566,7 +566,7 @@ select.select { appearance: none;
     <div class="toolbar">
       <select class="select" style="width:150px"><option>全部判决</option><option>拒绝</option><option>通过</option><option>待补跑</option></select>
       <select class="select" style="width:150px"><option>全部级别</option><option>blocking</option><option>review</option><option>info</option></select>
-      <select class="select" style="width:190px"><option>全部检测项</option><option>TASK-5 任务未完成</option><option>AV-3 画面与动作不同步</option><option>IMG-2 画面静止</option></select>
+      <select class="select" style="width:190px"><option>全部检测项</option><option>TASK-4 任务未完成</option><option>AV-3 画面与动作不同步</option><option>IMG-2 画面静止</option></select>
       <div class="spacer"></div>
       <span class="hint">点 ep 编号看这一条的全部发现；「可视化」直接弹出播放器</span>
     </div>
@@ -1200,7 +1200,7 @@ window.Viz = (function () {
   const DS = Viz.SAMPLE, el = Viz.el; const ep = Viz.makeEpisode(DS, 12);
   // 这一条的发现（记录 2.0 的 findings：item / severity / scope / frames / time_s）→ 播放器的证据区间
   const EV = [
-    { id: 'e1', level: 'blocking', item: 'TASK-5', itemName: '任务未完成', module: 'task_success', moduleName: '任务成败判定', label: '苹果最终未入碗', camera: 'head', time: [15.0, 21.4], text: '三机位连续视频判定：抓取与搬运正常，放下后苹果落在碗外，直至结束未纠正。' },
+    { id: 'e1', level: 'blocking', item: 'TASK-4', itemName: '任务未完成', module: 'task_success', moduleName: '任务成败判定', label: '苹果最终未入碗', camera: 'head', time: [15.0, 21.4], text: '三机位连续视频判定：抓取与搬运正常，放下后苹果落在碗外，直至结束未纠正。' },
     { id: 'e2', level: 'review', item: 'AV-3', itemName: '画面与动作不同步', module: 'video_action_sync', moduleName: '视频-动作同步', label: '画面滞后动作约 0.4 s', camera: 'left_wrist', time: [6.0, 12.0], text: '左腕相机画面动量与关节速度的互相关峰值在 +0.40 s（阈值 0.25 s）。' },
     { id: 'e3', level: 'info', item: 'IMG-2', itemName: '画面静止', module: 'visual_quality', moduleName: '视觉质量', label: '右腕相机 4 秒静止画面', camera: 'right_wrist', frames: [300, 420], text: '连续 121 帧帧间差接近 0；右臂此时本就静止，仅记录。' },
   ];
@@ -1219,14 +1219,14 @@ window.Viz = (function () {
 
   // ---- list ----
   const ROWS = [
-    { i: 12, v: 'drop', b: 1, r: 1, n: 1, main: 'TASK-5 任务未完成 · AV-3 画面滞后 0.4 s · IMG-2 右腕静止画面' },
-    { i: 3, v: 'keep', b: 0, r: 0, n: 1, main: 'LABEL-4 中英混排标注' },
+    { i: 12, v: 'drop', b: 1, r: 1, n: 1, main: 'TASK-4 任务未完成 · AV-3 画面滞后 0.4 s · IMG-2 右腕静止画面' },
+    { i: 3, v: 'keep', b: 0, r: 0, n: 1, main: 'LABEL-3 中英混排标注' },
     { i: 7, v: 'held', b: 0, r: 0, n: 0, main: '任务成败判定执行出错（模型超时），待补跑' },
     { i: 18, v: 'drop', b: 1, r: 0, n: 2, main: 'STRM-5 时间戳残段 · ACT-2 动作单点跳变' },
-    { i: 23, v: 'keep', b: 0, r: 2, n: 0, main: 'TASK-6 分步「放入碗中」不合格 · TASK-12 反复尝试' },
-    { i: 29, v: 'keep', b: 0, r: 1, n: 1, main: 'LABEL-2 标注与画面不一致（待裁决）' },
+    { i: 23, v: 'keep', b: 0, r: 2, n: 0, main: 'TASK-5 分步「放入碗中」不合格 · TASK-10 反复尝试' },
+    { i: 29, v: 'keep', b: 0, r: 1, n: 1, main: 'LABEL-1 标注与画面不一致（待裁决）' },
     { i: 31, v: 'held', b: 0, r: 0, n: 0, main: '任务成败判定执行出错（模型超时），待补跑' },
-    { i: 38, v: 'drop', b: 1, r: 0, n: 0, main: 'TASK-5 任务未完成' },
+    { i: 38, v: 'drop', b: 1, r: 0, n: 0, main: 'TASK-4 任务未完成' },
     { i: 44, v: 'drop', b: 1, r: 0, n: 0, main: 'SET-1 与 ep 43 精确重复' },
     { i: 45, v: 'keep', b: 0, r: 0, n: 0, main: '—' },
   ];

@@ -79,7 +79,7 @@
        "module": "task_success",
        "kind": "human",
        "code": "failure",
-       "item": "TASK-5",
+       "item": "TASK-4",
        "appealable": false,
        "text": "人工裁决判失败（任务未完成）"
       }
@@ -96,7 +96,7 @@
       {
        "module": "task_success",
        "code": "failure",
-       "item": "TASK-5",
+       "item": "TASK-4",
        "level": "blocking",
        "human": true,
        "message_zh": "人工裁决判失败（任务未完成）",
@@ -124,7 +124,7 @@
         "uncertain"
        ],
        "items": [
-        "TASK-5"
+        "TASK-4"
        ],
        "reason": "模型拿不准：杯子最后是否在水槽里"
       }
@@ -520,7 +520,7 @@
       {
        "module": "task_success",
        "code": "failure",
-       "item": "TASK-5",
+       "item": "TASK-4",
        "level": "blocking",
        "human": true,
        "message_zh": "人工裁决判失败（任务未完成）",

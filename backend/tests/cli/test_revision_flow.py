@@ -126,7 +126,7 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     assert [i["line"] for i in review[7]["review"]] == ["task_verdict"]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
     assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human", "code": "failure",
-                                     "item": "TASK-5", "appealable": False,
+                                     "item": "TASK-4", "appealable": False,
                                      "text": "人工裁决判失败（任务未完成）"}]
     passed = {e["episode_index"]: e for e in _json(r2, "passed.json")["episodes"]}
     assert passed[4]["task_text"] == {"text": NEW_LABEL, "source": "人工改标"}

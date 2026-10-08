@@ -30,6 +30,9 @@ subset``) counts once per subset, not once per episode it is repeated on.
         --runs-root <runs> --runs-map <runs>/runs.json --out score.json --markdown score.md \\
         [--baseline previous.json --max-drop 0.05 --min-support 5]
 
+An expectation exported with an older taxonomy (sample set v1 on TOS is still 1.3; 2.0 numbered every dimension
+again) is scored with the taxonomy in this directory: its item ids go through that taxonomy's ``renumbered`` table.
+
 Exit codes: 0 scored; 2 bad input (or --require-all-runs and a subset has no run); 3 a metric fell against
 the baseline by more than --max-drop.
 """
@@ -89,6 +92,40 @@ def load_json(path):
             return json.load(fh)
     except (OSError, ValueError) as ex:
         raise InputError(f"cannot read {path}: {ex}") from None
+
+
+def _version_key(v):
+    return tuple(int(x) for x in str(v).split("."))
+
+
+def expectation_taxonomy(exp, tax):
+    """The taxonomy an expectation was exported with: its header names it (``taxonomy.json v1.3 (...)``), else the
+    taxonomy file read with it."""
+    m = re.search(r"taxonomy\.json v(\d+\.\d+)", str(exp.get("taxonomy") or ""))
+    return m.group(1) if m else tax.get("taxonomy_version")
+
+
+def upgrade_expectation(exp, tax, current):
+    """Score a set exported with an older taxonomy against the current one: sample set v1 on TOS is still 1.3,
+    taxonomy 2.0 numbered every dimension again (design doc 16 §3). Its item ids go through the current
+    taxonomy's ``renumbered`` table (exact ids only, dict keys too) and the current taxonomy is used."""
+    have, want = expectation_taxonomy(exp, tax), current.get("taxonomy_version")
+    if not have or have == want:
+        return exp, tax
+    ren = current.get("renumbered") or {}
+    if not ren or _version_key(have) > _version_key(ren.get("from_version", "0")):
+        raise InputError(f"the expectation is for taxonomy {have}; taxonomy {want} has no table to map it")
+    ids = ren["ids"]
+
+    def walk(o):
+        if isinstance(o, str):
+            return ids.get(o, o)
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        if isinstance(o, dict):
+            return {ids.get(k, k): walk(v) for k, v in o.items()}
+        return o
+    return {**exp, "episodes": [walk(e) for e in exp.get("episodes") or []]}, current
 
 
 def read_jsonl(path):
@@ -758,7 +795,7 @@ def markdown(doc, regressions=None):
             L.append(f"- {iid} {r['name']}: pass {c['pass']}, fail {c['fail']}" + (f" ({', '.join(c['failed'])})" if c["failed"] else ""))
     if doc["ingestion"]:
         bad = [s for s, v in doc["ingestion"].items() if not v["handled"]]
-        L.append(f"\n**Ingestion** (SET-4): {len(doc['ingestion']) - len(bad)} of {len(doc['ingestion'])} subsets read" + (f"; not read: {', '.join(bad)}" if bad else ""))
+        L.append(f"\n**Ingestion** (SET-2): {len(doc['ingestion']) - len(bad)} of {len(doc['ingestion'])} subsets read" + (f"; not read: {', '.join(bad)}" if bad else ""))
     if gaps:
         why = {"1.0": "no rule maps to them", "2.0": "no module covers them"}
         fmts = sorted(set((doc.get("formats") or {}).values())) or ["1.0"]
@@ -823,6 +860,7 @@ def main(argv=None):
         if not tax_path:
             raise InputError("no taxonomy.json found; pass --taxonomy")
         tax = load_json(tax_path)
+        exp, tax = upgrade_expectation(exp, tax, load_json(os.path.join(HERE, "taxonomy.json")))
         fmap = load_json(a.map)
         if fmap.get("taxonomy_version") != tax.get("taxonomy_version"):
             raise InputError(f"finding map is for taxonomy {fmap.get('taxonomy_version')}, the taxonomy is {tax.get('taxonomy_version')}")

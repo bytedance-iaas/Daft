@@ -252,7 +252,7 @@ const calls = (): Call[] => [
   // the findings task (C2 2.0, C4 2.3.0): a report 2.0, the finding filters, an episode's findings, the live counts
   { op: 'getReport', method: 'GET', path: `/tasks/${FINDINGS_TASK}/report` },
   { op: 'getTaskPlan', method: 'GET', path: `/tasks/${FINDINGS_TASK}/plan` },
-  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?level=review&item=TASK-5` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?level=review&item=TASK-4` },
   { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?item=strm-5` },
   { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?level=blocking` },
   { op: 'getEpisode', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes/18` },

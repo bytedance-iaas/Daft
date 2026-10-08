@@ -1,6 +1,6 @@
 {
  "schema_version": "1.0",
- "source": "docs/design/16-regression-samples.md §3 (2026-09-30); while sample set v1 is a draft a version may drop items; an id is never reused for another item",
+ "source": "docs/design/16-regression-samples.md §3 (2026-09-30); while sample set v1 is a draft its ids may change (2.0 renumbered every dimension, see renumbered); ids of different versions are not comparable",
  "dimensions": [
   {
    "id": "FILE",
@@ -255,7 +255,7 @@
     ],
     "pantheon": []
    },
-   "explain_zh": "机器读的元数据前后打架，或者和实际数据对不上（比如写 30 fps、实际 20 fps，写 300 帧、实际 280 帧）。描述类文字字段里的占位符（如 TODO）不在这里，归 LABEL-3。",
+   "explain_zh": "机器读的元数据前后打架，或者和实际数据对不上（比如写 30 fps、实际 20 fps，写 300 帧、实际 280 帧）。描述类文字字段里的占位符（如 TODO）不在这里，归 LABEL-2。",
    "origin_codes": [
     "tools"
    ]
@@ -536,6 +536,36 @@
    "guards": [
     "STRM-3",
     "AV-1"
+   ]
+  },
+  {
+   "id": "STRM-9",
+   "dimension": "STRM",
+   "dimension_name": "传感器流与时间",
+   "name": "时间比例错误（快进 / 慢放）",
+   "origin": "具",
+   "samples": "真实：Pantheon 第二批标注里 MolmoAct2 294 条 `sped_up_recording`（第二批）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "录制的时间轴与真实时间不成比例：画面按时间戳播放比实际快或慢（跳帧、时间戳压缩）；不同流各自采样率不同不算",
+   "aliases": {
+    "astra6_v1": [
+     "T06"
+    ],
+    "pantheon": [
+     "timebase.sped_up_recording",
+     "sped-up"
+    ],
+    "argus": [
+     "Recording plays faster than real time"
+    ]
+   },
+   "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
+   "origin_codes": [
+    "tools"
    ]
   },
   {
@@ -851,6 +881,98 @@
    ]
   },
   {
+   "id": "IMG-12",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "相机移位、安装状态改变",
+   "origin": "具",
+   "samples": "真实：第二批标注 `setup_change` / `camera_adjustment`（RealOmin 4 条）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "一条里相机被碰动、取下或视角未经声明地改变；有意的运镜和移动底盘不算",
+   "aliases": {
+    "astra6_v1": [
+     "V07"
+    ],
+    "pantheon": [
+     "setup_change",
+     "camera_adjustment"
+    ],
+    "argus": [
+     "Setup changes mid-episode",
+     "Camera turned away or covered（转开、取下的部分）"
+    ]
+   },
+   "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "IMG-13",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "任务物体或末端出画",
+   "origin": "具",
+   "samples": "真实：第二批标注 `out_of_view` / `unintended_out_of_view`（MolmoAct2 10 条、Galaxea 1 条，待入库）；S6 的 DROID 末端出画（第二批）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "任务物体或执行末端有一段时间不在任何机位的画面里（所有相机都看不到），不是被挡住；按任务设计移出画面的不算",
+   "aliases": {
+    "pantheon": [
+     "out_of_view",
+     "unintended_out_of_view"
+    ],
+    "argus": [
+     "Task object leaves every camera"
+    ]
+   },
+   "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "IMG-14",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "脱敏模糊遮住任务物体",
+   "origin": "具",
+   "samples": "真实：HABIT 12 条（Argus 标注，待入库）；G10 HiFi-UMI 的大块马赛克像脱敏误触发（复核片段在桶的 review/，未入库）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "为隐私做的模糊、马赛克或色块盖住了任务物体或操作区域（预处理造成，attribution 记 preprocessing）；只盖住人脸、不碍操作的不算",
+   "aliases": {
+    "pantheon": [
+     "privacy_mask",
+     "privacy_mask_artifact",
+     "image_masking",
+     "image_masking_artifact",
+     "anonymization_artifact",
+     "visual_redaction",
+     "image_redaction",
+     "localized_image_blur"
+    ],
+    "argus": [
+     "Privacy blur hides task objects",
+     "Privacy blur over the scene"
+    ]
+   },
+   "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
    "id": "MV-1",
    "dimension": "MV",
    "dimension_name": "多视角一致性",
@@ -936,7 +1058,7 @@
    ]
   },
   {
-   "id": "MV-5",
+   "id": "MV-4",
    "dimension": "MV",
    "dimension_name": "多视角一致性",
    "name": "相机标定、末端投影与画面不符",
@@ -1455,7 +1577,7 @@
    ]
   },
   {
-   "id": "TASK-5",
+   "id": "TASK-4",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "任务完成度",
@@ -1483,13 +1605,13 @@
      "Task left unfinished（操作失误里的结果类）"
     ]
    },
-   "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-12；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
+   "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-10；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
    "origin_codes": [
     "requirement"
    ]
   },
   {
-   "id": "TASK-6",
+   "id": "TASK-5",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "完成质量不合格",
@@ -1513,7 +1635,7 @@
    ]
   },
   {
-   "id": "TASK-7",
+   "id": "TASK-6",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "多余动作",
@@ -1539,7 +1661,7 @@
    ]
   },
   {
-   "id": "TASK-8",
+   "id": "TASK-7",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "动作极慢",
@@ -1574,329 +1696,7 @@
    ]
   },
   {
-   "id": "LABEL-2",
-   "dimension": "LABEL",
-   "dimension_name": "标注与描述",
-   "name": "一条有多份描述，彼此不一致",
-   "origin": "具",
-   "samples": "真实：A2（原任务名 `Clothes Folding` 对重标注的指令）、C3",
-   "platform": "部分：技能画像的标注分歧检出（要模型）",
-   "platform_status": "有读数",
-   "platform_codes": [
-    "skill_profile.descriptions_conflict"
-   ],
-   "kind": "defect",
-   "level": "episode",
-   "description": "一条有多份描述，彼此不一致",
-   "aliases": {
-    "astra6_v1": [
-     "A02"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "同一条数据有好几份描述（比如总指令和子任务），说的却不是一回事。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "LABEL-3",
-   "dimension": "LABEL",
-   "dimension_name": "标注与描述",
-   "name": "没有标注、只有类别名、占位没填",
-   "origin": "具",
-   "samples": "真实：C5 的任务名只是 `task 1`、`task 2`；A3；C1 的 `subtask`",
-   "platform": "能处理：没有标注时先由模型补一句描述",
-   "platform_status": "有读数",
-   "platform_codes": [
-    "task_success.task_text_missing"
-   ],
-   "kind": "defect",
-   "level": "episode",
-   "description": "没有标注、只有类别名、占位没填",
-   "aliases": {
-    "astra6_v1": [
-     "A04"
-    ],
-    "pantheon": [
-     "missing_instruction",
-     "missing_task_instruction"
-    ],
-    "argus": [
-     "Instruction missing"
-    ]
-   },
-   "explain_zh": "任务描述是空的、只有一个类别名（如 task 1），或者描述类字段里填的是占位符。例：droid200 里有 94 条没有指令；RSS 挑战赛数据的 subtask 列全是 TODO。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "LABEL-4",
-   "dimension": "LABEL",
-   "dimension_name": "标注与描述",
-   "name": "纯中文、中英混排、混进元数据",
-   "origin": "文",
-   "samples": "真实：B6、B8",
-   "platform": "未测",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "phenomenon",
-   "level": "dataset",
-   "description": "纯中文、中英混排、混进元数据",
-   "aliases": {
-    "astra6_v1": [
-     "—"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "描述是纯中文、中英混写，或者把质量标签等元数据混进了描述里。平台要能正确处理，本身不一定是问题。例：Galaxea。",
-   "origin_codes": [
-    "article"
-   ]
-  },
-  {
-   "id": "LABEL-5",
-   "dimension": "LABEL",
-   "dimension_name": "标注与描述",
-   "name": "标注与画面不符",
-   "origin": "具",
-   "samples": "合成",
-   "platform": "能判：进「标注分歧」的人工复核（要模型）",
-   "platform_status": "能判",
-   "platform_codes": [
-    "task_success.label_conflict_suspect",
-    "skill_profile.label_disagreement"
-   ],
-   "kind": "defect",
-   "level": "episode",
-   "description": "标注与画面不符",
-   "aliases": {
-    "astra6_v1": [
-     "A01",
-     "A02"
-    ],
-    "pantheon": [
-     "instruction_mismatch",
-     "annotation_mismatch",
-     "goal_alignment.matches_given=false"
-    ],
-    "argus": [
-     "Instruction or labels do not match footage"
-    ]
-   },
-   "explain_zh": "描述说的和视频里做的不是一回事。例：指令让叠裤子，视频里叠的是 T 恤。",
-   "origin_codes": [
-    "tools"
-   ],
-   "attributes": {
-    "relation": "指令与实际的关系（同 Argus 的 goal_alignment.relation）：narrower = 做了指令要的，还明显多做了；broader = 只做了指令要的一部分；different = 做的是另一件连贯的事（换了物体、目标）；unrelated = 画面与指令对不上（多半标错）；aligned 不报。只差做法（方向、用哪只手、步骤顺序）而终态相同的，relation 照实际记 aligned / narrower / broader，差异本身仍记一条 LABEL-5"
-   }
-  },
-  {
-   "id": "SET-1",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "同一数据集内的重复条目",
-   "origin": "具",
-   "samples": "合成（已有）",
-   "platform": "能判（实测）：注入的字节级副本和重编码副本都被完整性检查记为可疑 `duplicate_content`，不拒",
-   "platform_status": "能判",
-   "platform_codes": [
-    "data_integrity.duplicate_content",
-    "dedup.duplicate"
-   ],
-   "kind": "defect",
-   "level": "dataset",
-   "description": "同一数据集内的重复条目：字节相同，或只是重新编码",
-   "aliases": {
-    "astra6_v1": [
-     "D01"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "同一个数据集里有两条其实是同一段录像（字节完全相同，或者只是重新编码过），被重复计入了。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "SET-4",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "输入格式",
-   "origin": "具",
-   "samples": "真实：A4（mcap，相机 topic 无共同前缀、H.265）、B8（动作列拆开存放）",
-   "platform": "实测：LeRobot v2.0、v2.1、v3.0 的 22 个子集全部通过预检并读出；mcap 里 GenRobot 的三个子集读出、ABC-130k 预检拒收；Galaxea 预检拒收（§11 第 8、9 条）；Lance 第二批",
-   "platform_status": "能判",
-   "platform_codes": [
-    "preflight"
-   ],
-   "kind": "phenomenon",
-   "level": "dataset",
-   "description": "输入格式",
-   "aliases": {
-    "astra6_v1": [
-     "—"
-    ],
-    "pantheon": []
-   },
-   "explain_zh": "数据集用了不常见的格式或写法（比如动作列拆成多列、mcap 的 topic 命名不标准），平台要能读进来。这是测接入能力的样本。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "SET-5",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "隐私与安全",
-   "origin": "具",
-   "samples": "缺",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "dataset",
-   "description": "隐私与安全（人脸、无关人员入镜）",
-   "aliases": {
-    "astra6_v1": [
-     "—"
-    ],
-    "pantheon": [
-     "person-in-scene",
-     "human_in_frame"
-    ]
-   },
-   "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "STRM-9",
-   "dimension": "STRM",
-   "dimension_name": "传感器流与时间",
-   "name": "时间比例错误（快进 / 慢放）",
-   "origin": "具",
-   "samples": "真实：Pantheon 第二批标注里 MolmoAct2 294 条 `sped_up_recording`（第二批）",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "episode",
-   "description": "录制的时间轴与真实时间不成比例：画面按时间戳播放比实际快或慢（跳帧、时间戳压缩）；不同流各自采样率不同不算",
-   "aliases": {
-    "astra6_v1": [
-     "T06"
-    ],
-    "pantheon": [
-     "timebase.sped_up_recording",
-     "sped-up"
-    ],
-    "argus": [
-     "Recording plays faster than real time"
-    ]
-   },
-   "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "IMG-12",
-   "dimension": "IMG",
-   "dimension_name": "单路画面质量",
-   "name": "相机移位、安装状态改变",
-   "origin": "具",
-   "samples": "真实：第二批标注 `setup_change` / `camera_adjustment`（RealOmin 4 条）",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "episode",
-   "description": "一条里相机被碰动、取下或视角未经声明地改变；有意的运镜和移动底盘不算",
-   "aliases": {
-    "astra6_v1": [
-     "V07"
-    ],
-    "pantheon": [
-     "setup_change",
-     "camera_adjustment"
-    ],
-    "argus": [
-     "Setup changes mid-episode",
-     "Camera turned away or covered（转开、取下的部分）"
-    ]
-   },
-   "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "IMG-13",
-   "dimension": "IMG",
-   "dimension_name": "单路画面质量",
-   "name": "任务物体或末端出画",
-   "origin": "具",
-   "samples": "真实：第二批标注 `out_of_view` / `unintended_out_of_view`（MolmoAct2 10 条、Galaxea 1 条，待入库）；S6 的 DROID 末端出画（第二批）",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "episode",
-   "description": "任务物体或执行末端有一段时间不在任何机位的画面里（所有相机都看不到），不是被挡住；按任务设计移出画面的不算",
-   "aliases": {
-    "pantheon": [
-     "out_of_view",
-     "unintended_out_of_view"
-    ],
-    "argus": [
-     "Task object leaves every camera"
-    ]
-   },
-   "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "IMG-14",
-   "dimension": "IMG",
-   "dimension_name": "单路画面质量",
-   "name": "脱敏模糊遮住任务物体",
-   "origin": "具",
-   "samples": "真实：HABIT 12 条（Argus 标注，待入库）；G10 HiFi-UMI 的大块马赛克像脱敏误触发（复核片段在桶的 review/，未入库）",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "episode",
-   "description": "为隐私做的模糊、马赛克或色块盖住了任务物体或操作区域（预处理造成，attribution 记 preprocessing）；只盖住人脸、不碍操作的不算",
-   "aliases": {
-    "pantheon": [
-     "privacy_mask",
-     "privacy_mask_artifact",
-     "image_masking",
-     "image_masking_artifact",
-     "anonymization_artifact",
-     "visual_redaction",
-     "image_redaction",
-     "localized_image_blur"
-    ],
-    "argus": [
-     "Privacy blur hides task objects",
-     "Privacy blur over the scene"
-    ]
-   },
-   "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
-   "origin_codes": [
-    "tools"
-   ]
-  },
-  {
-   "id": "TASK-10",
+   "id": "TASK-8",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "达成后被撤销",
@@ -1926,7 +1726,7 @@
    ]
   },
   {
-   "id": "TASK-11",
+   "id": "TASK-9",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "未记录的外部干预、场景重置",
@@ -1959,7 +1759,7 @@
    ]
   },
   {
-   "id": "TASK-12",
+   "id": "TASK-10",
    "dimension": "TASK",
    "dimension_name": "任务与步骤",
    "name": "执行失误（抓取失败、掉落、碰撞、反复尝试）",
@@ -2004,8 +1804,8 @@
      "dropped_object": "物体掉落",
      "knocked_object": "碰倒、碰歪别的物体",
      "spilled_contents": "洒出",
-     "task_left_unfinished": "没做完（成败归 TASK-5）",
-     "undid_own_result": "把已完成的结果又拆掉（归 TASK-10）"
+     "task_left_unfinished": "没做完（成败归 TASK-4）",
+     "undid_own_result": "把已完成的结果又拆掉（归 TASK-8）"
     }
    },
    "subtype_aliases": {
@@ -2053,6 +1853,206 @@
     "subtype": "失误的种类，取 subtypes 里的名字；一条里有几处失误就写几个区间，每个区间一个 subtype",
     "recovered": "这次失误之后操作者是否恢复、接着把这一步做成：true / false / null（看不出）；恢复的时刻写 recovered_at_s"
    }
+  },
+  {
+   "id": "LABEL-1",
+   "dimension": "LABEL",
+   "dimension_name": "标注与描述",
+   "name": "一条有多份描述，彼此不一致",
+   "origin": "具",
+   "samples": "真实：A2（原任务名 `Clothes Folding` 对重标注的指令）、C3",
+   "platform": "部分：技能画像的标注分歧检出（要模型）",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "skill_profile.descriptions_conflict"
+   ],
+   "kind": "defect",
+   "level": "episode",
+   "description": "一条有多份描述，彼此不一致",
+   "aliases": {
+    "astra6_v1": [
+     "A02"
+    ],
+    "pantheon": []
+   },
+   "explain_zh": "同一条数据有好几份描述（比如总指令和子任务），说的却不是一回事。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "LABEL-2",
+   "dimension": "LABEL",
+   "dimension_name": "标注与描述",
+   "name": "没有标注、只有类别名、占位没填",
+   "origin": "具",
+   "samples": "真实：C5 的任务名只是 `task 1`、`task 2`；A3；C1 的 `subtask`",
+   "platform": "能处理：没有标注时先由模型补一句描述",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "task_success.task_text_missing"
+   ],
+   "kind": "defect",
+   "level": "episode",
+   "description": "没有标注、只有类别名、占位没填",
+   "aliases": {
+    "astra6_v1": [
+     "A04"
+    ],
+    "pantheon": [
+     "missing_instruction",
+     "missing_task_instruction"
+    ],
+    "argus": [
+     "Instruction missing"
+    ]
+   },
+   "explain_zh": "任务描述是空的、只有一个类别名（如 task 1），或者描述类字段里填的是占位符。例：droid200 里有 94 条没有指令；RSS 挑战赛数据的 subtask 列全是 TODO。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "LABEL-3",
+   "dimension": "LABEL",
+   "dimension_name": "标注与描述",
+   "name": "纯中文、中英混排、混进元数据",
+   "origin": "文",
+   "samples": "真实：B6、B8",
+   "platform": "未测",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "phenomenon",
+   "level": "dataset",
+   "description": "纯中文、中英混排、混进元数据",
+   "aliases": {
+    "astra6_v1": [
+     "—"
+    ],
+    "pantheon": []
+   },
+   "explain_zh": "描述是纯中文、中英混写，或者把质量标签等元数据混进了描述里。平台要能正确处理，本身不一定是问题。例：Galaxea。",
+   "origin_codes": [
+    "article"
+   ]
+  },
+  {
+   "id": "LABEL-4",
+   "dimension": "LABEL",
+   "dimension_name": "标注与描述",
+   "name": "标注与画面不符",
+   "origin": "具",
+   "samples": "合成",
+   "platform": "能判：进「标注分歧」的人工复核（要模型）",
+   "platform_status": "能判",
+   "platform_codes": [
+    "task_success.label_conflict_suspect",
+    "skill_profile.label_disagreement"
+   ],
+   "kind": "defect",
+   "level": "episode",
+   "description": "标注与画面不符",
+   "aliases": {
+    "astra6_v1": [
+     "A01",
+     "A02"
+    ],
+    "pantheon": [
+     "instruction_mismatch",
+     "annotation_mismatch",
+     "goal_alignment.matches_given=false"
+    ],
+    "argus": [
+     "Instruction or labels do not match footage"
+    ]
+   },
+   "explain_zh": "描述说的和视频里做的不是一回事。例：指令让叠裤子，视频里叠的是 T 恤。",
+   "origin_codes": [
+    "tools"
+   ],
+   "attributes": {
+    "relation": "指令与实际的关系（同 Argus 的 goal_alignment.relation）：narrower = 做了指令要的，还明显多做了；broader = 只做了指令要的一部分；different = 做的是另一件连贯的事（换了物体、目标）；unrelated = 画面与指令对不上（多半标错）；aligned 不报。只差做法（方向、用哪只手、步骤顺序）而终态相同的，relation 照实际记 aligned / narrower / broader，差异本身仍记一条 LABEL-4"
+   }
+  },
+  {
+   "id": "SET-1",
+   "dimension": "SET",
+   "dimension_name": "数据集级",
+   "name": "同一数据集内的重复条目",
+   "origin": "具",
+   "samples": "合成（已有）",
+   "platform": "能判（实测）：注入的字节级副本和重编码副本都被完整性检查记为可疑 `duplicate_content`，不拒",
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.duplicate_content",
+    "dedup.duplicate"
+   ],
+   "kind": "defect",
+   "level": "dataset",
+   "description": "同一数据集内的重复条目：字节相同，或只是重新编码",
+   "aliases": {
+    "astra6_v1": [
+     "D01"
+    ],
+    "pantheon": []
+   },
+   "explain_zh": "同一个数据集里有两条其实是同一段录像（字节完全相同，或者只是重新编码过），被重复计入了。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "SET-2",
+   "dimension": "SET",
+   "dimension_name": "数据集级",
+   "name": "输入格式",
+   "origin": "具",
+   "samples": "真实：A4（mcap，相机 topic 无共同前缀、H.265）、B8（动作列拆开存放）",
+   "platform": "实测：LeRobot v2.0、v2.1、v3.0 的 22 个子集全部通过预检并读出；mcap 里 GenRobot 的三个子集读出、ABC-130k 预检拒收；Galaxea 预检拒收（§11 第 8、9 条）；Lance 第二批",
+   "platform_status": "能判",
+   "platform_codes": [
+    "preflight"
+   ],
+   "kind": "phenomenon",
+   "level": "dataset",
+   "description": "输入格式",
+   "aliases": {
+    "astra6_v1": [
+     "—"
+    ],
+    "pantheon": []
+   },
+   "explain_zh": "数据集用了不常见的格式或写法（比如动作列拆成多列、mcap 的 topic 命名不标准），平台要能读进来。这是测接入能力的样本。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "SET-3",
+   "dimension": "SET",
+   "dimension_name": "数据集级",
+   "name": "隐私与安全",
+   "origin": "具",
+   "samples": "缺",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "dataset",
+   "description": "隐私与安全（人脸、无关人员入镜）",
+   "aliases": {
+    "astra6_v1": [
+     "—"
+    ],
+    "pantheon": [
+     "person-in-scene",
+     "human_in_frame"
+    ]
+   },
+   "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
+   "origin_codes": [
+    "tools"
+   ]
   }
  ],
  "legend": {
@@ -2075,12 +2075,12 @@
   "explain_zh": "每一项在说什么问题，通俗解释",
   "guards": "对照项守的检测项：样本上这几项都应当不报",
   "platform_status": "平台侧的注记，不属于分类表：由模块注册表生成（coverage_from_registry.py，设计 17 §6.2）。能判 = 默认策略下判废或转人工；有读数 = 只报告或只有读数；部分 = 覆盖它的模块都有前提；没有 = 缺口；能处理 = 对照项",
-  "subtypes": "某一项下的细分种类（目前只有 TASK-12）：期望值里写在 value 或区间的 subtype 上，打分仍按检测项计",
-  "attributes": "期望值可以带的属性（TASK-12 的 subtype / recovered，LABEL-5 的 relation）：说明是哪一种，不改变该报不该报"
+  "subtypes": "某一项下的细分种类（目前只有 TASK-10）：期望值里写在 value 或区间的 subtype 上，打分仍按检测项计",
+  "attributes": "期望值可以带的属性（TASK-10 的 subtype / recovered，LABEL-4 的 relation）：说明是哪一种，不改变该报不该报"
  },
- "taxonomy_version": "1.3",
+ "taxonomy_version": "2.0",
  "rules": [
-  "v1 迭代期间可以删项（删掉的编号不复用）；改名不改号；每版在 changelog 里写明改了什么",
+  "v1 定稿前编号可以调整（1.3 删项，2.0 各维度重新编号、去掉空号）：不同版本的编号按 renumbered 换算，不能直接比；改名不改号；每版在 changelog 里写明改了什么",
   "同一现象用最具体的一项；有独立证据的不同问题可以多标",
   "「出现」不等于「拒收」：严重度与是否放行分开定义，失败演示可以是有价值的样本",
   "没有依据的正例不进期望值；量出来的规则只写结论明确的那一侧",
@@ -2097,7 +2097,37 @@
   "injected": "合成注入",
   "viewed": "我们看了截帧判的（看了哪几帧写在 readings 里；拿不准的交给人工）"
  },
+ "renumbered": {
+  "from_version": "1.3",
+  "ids": {
+   "MV-5": "MV-4",
+   "TASK-5": "TASK-4",
+   "TASK-6": "TASK-5",
+   "TASK-7": "TASK-6",
+   "TASK-8": "TASK-7",
+   "TASK-10": "TASK-8",
+   "TASK-11": "TASK-9",
+   "TASK-12": "TASK-10",
+   "LABEL-2": "LABEL-1",
+   "LABEL-3": "LABEL-2",
+   "LABEL-4": "LABEL-3",
+   "LABEL-5": "LABEL-4",
+   "SET-4": "SET-2",
+   "SET-5": "SET-3"
+  },
+  "note": "2.0 numbers the items of every dimension again without gaps; ids not listed are unchanged. Ids of different versions are not comparable: map 1.x ids through this table."
+ },
  "changelog": [
+  {
+   "version": "2.0",
+   "date": "2026-10-07",
+   "why": "需求方：编号可以删掉然后重新排，这是第一版，可以迭代",
+   "changes": [
+    "各维度重新编号、去掉空号（68 项不变）：MV-5 → MV-4、TASK-5 → TASK-4、TASK-6 → TASK-5、TASK-7 → TASK-6、TASK-8 → TASK-7、TASK-10 → TASK-8、TASK-11 → TASK-9、TASK-12 → TASK-10、LABEL-2 → LABEL-1、LABEL-3 → LABEL-2、LABEL-4 → LABEL-3、LABEL-5 → LABEL-4、SET-4 → SET-2、SET-5 → SET-3",
+    "没列出的编号不变；新旧对照写在 renumbered，不同版本的编号要按它换算",
+    "TOS 上 v1 的样本集文件仍是 1.3 编号，下次更新样本集时换成 2.0；打分工具读到 1.3 的期望会按对照表换算"
+   ]
+  },
   {
    "version": "1.3",
    "date": "2026-10-07",

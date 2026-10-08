@@ -49,8 +49,10 @@ History: 1.x described modules by their funnel gate (``gate``: hard veto, soft s
 or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
 whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel: the task's
 policy grades a module's findings (design doc 17 §4) and the two blocks hand every episode on (§3).
-2.2 binds taxonomy 1.3: the time-length outlier and the undersampled skill family are the platform's own
-dataset-level readings (no item; SET-3 is gone) and motion_quality no longer covers SET-3.
+2.2 bound taxonomy 1.3: the time-length outlier and the undersampled skill family became the platform's own
+dataset-level readings (no item: the task and skill statistics item was dropped), which motion_quality covered too.
+3.0 binds taxonomy 2.0, which numbers the items of every dimension again without gaps (C6 ``renumbered`` maps
+1.3 ids to 2.0); results of tasks run before keep the ids they were run with.
 """
 from __future__ import annotations
 
@@ -58,9 +60,9 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "2.2"
+REGISTRY_VERSION = "3.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
-TAXONOMY_VERSION = "1.3"
+TAXONOMY_VERSION = "2.0"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
@@ -349,7 +351,7 @@ def _motion_params() -> dict:
             "spike_min": _line("尖刺判定线", "尖刺分低于这个值，报「动作尖刺」（ACT-2）", 0.5, 0.0, 1.0),
             "gripper_jitter_min": _line("夹爪抖动判定线", "夹爪平稳分低于这个值，报「夹爪抖动」（ACT-5）", 0.5, 0.0, 1.0),
             "saturation_min": _line("执行器饱和判定线", "执行响应分低于这个值，报「执行器饱和」（ACT-4）", 0.5, 0.0, 1.0),
-            "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-8）", 0.5, 0.0, 1.0),
+            "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-7）", 0.5, 0.0, 1.0),
             "severe_below": _line("严重判定线", "平滑度、尖刺分低于这个值时，发现的严重度记为高", 0.2, 0.0, 1.0),
             "idle_edge_min_s": _line("起止空转判定线（秒）", "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
                                      1.0, 0.0, 60.0),
@@ -526,7 +528,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("actuator_saturation", "ACT-4", "执行器饱和", "medium", scope_kind="channel"),
                _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),
                _info("stuck", "ACT-8", "执行器卡死", "medium", scope_kind="channel"),
-               _info("fluency_low", "TASK-8", "操作不流畅"),
+               _info("fluency_low", "TASK-7", "操作不流畅"),
                _info("idle_opening", "TASK-1", "开头空转"),
                _info("idle_closing", "TASK-1", "结尾空转"),
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
@@ -562,10 +564,10 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", needs=frozenset({"video", "vlm", "eef_input"}), block="vlm", stage="vlm",
         depends_on=(),
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
-        codes=(_blocking("inconsistent", "MV-5", "末端投影与画面不符", appealable=True),
-               _review("unsettled", "MV-5", "末端投影与画面是否相符待人工核对", "eef_check"),
-               _info("opinion_mismatch", "MV-5", "模型意见：末端投影与画面不符"),
-               _info("record_mismatch", "MV-5", "上传轨迹与数据集的记录不符")),
+        codes=(_blocking("inconsistent", "MV-4", "末端投影与画面不符", appealable=True),
+               _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check"),
+               _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符"),
+               _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符")),
         param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
@@ -583,11 +585,11 @@ MODULES: tuple[ModuleSpec, ...] = (
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=("autolabel",),
-        codes=(_blocking("failure", "TASK-5", "任务失败", appealable=True),
-               _review("uncertain", "TASK-5", "任务成败拿不准", "task_verdict"),
-               _info("recovery", "TASK-12", "中途失误后完成"),
-               _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "label"),
-               _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述")),
+        codes=(_blocking("failure", "TASK-4", "任务失败", appealable=True),
+               _review("uncertain", "TASK-4", "任务成败拿不准", "task_verdict"),
+               _info("recovery", "TASK-10", "中途失误后完成"),
+               _review("label_conflict_suspect", "LABEL-4", "标注与画面疑似不符", "label"),
+               _info("task_text_missing", "LABEL-2", "没有任务标注，用的是自产描述")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
@@ -618,8 +620,8 @@ MODULES: tuple[ModuleSpec, ...] = (
         summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
         level="dataset", needs=frozenset({"video", "vlm"}), block="vlm", stage="profile",
         depends_on=("autolabel",),
-        codes=(_review("label_disagreement", "LABEL-5", "标注与画面不符", "label"),
-               _info("descriptions_conflict", "LABEL-2", "多份描述彼此不一致", "medium"),
+        codes=(_review("label_disagreement", "LABEL-4", "标注与画面不符", "label"),
+               _info("descriptions_conflict", "LABEL-1", "多份描述彼此不一致", "medium"),
                _info("undersampled_family", None, "样本偏少的技能族", scope_kind="dataset")),
         param_schema=_no_params(),
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),

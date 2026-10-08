@@ -10,7 +10,7 @@
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；2.0 直接读发现，旧运行目录照旧用对照表，自动识别 |
 | `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
-| `taxonomy.json` | 检测项分类 1.3（68 项；TASK-12 的子类、LABEL-5 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
+| `taxonomy.json` | 检测项分类 1.3（68 项；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 | `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
 | `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
@@ -18,7 +18,7 @@
 ## `coverage_from_registry.py`
 
 `platform_status` 一列不再手写，跟着注册表走：默认策略下判废或转人工的项「能判」，只报告或只有读数的「有读数」，覆盖它的模块都有前提
-（本体在规格库、有状态量、上传 trajectory.json）的「部分」并写明前提，没有模块覆盖的「没有」，对照项「能处理」；预检判的 SET-4 记 `preflight`。
+（本体在规格库、有状态量、上传 trajectory.json）的「部分」并写明前提，没有模块覆盖的「没有」，对照项「能处理」；预检判的 SET-2 记 `preflight`。
 `platform` 一列（样本实测看到的）照旧手写。注册表改了细码或覆盖，`tests/test_coverage.py` 会失败，重新生成：
 
 ```bash
@@ -44,7 +44,7 @@ score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果�
 - 期望 present 且平台报了 = TP，没报 = FN；期望 absent（在 `clean` 里）而平台报了 = FP，没报 = TN；没有期望的项不算。
 - 相机限定的期望只和同一路相机的结果比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
 - 这条 episode 上能报这一项的模块都没跑（漏斗短路、没选、预检不支持）记 `not_assessed`，都执行出错记 `error`，两者都不进 precision / recall。
-- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-4 看预检能不能读进来。
+- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-2 看预检能不能读进来。
 - `recall` 只算评估到的；`recall_end_to_end` 把没评估、执行出错、没有规则的都留在分母里。
 - 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。
 - episode 级：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
@@ -103,7 +103,7 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 | `timestamps` | STRM-4 | 倒退 0.5 s 三行 / 重复一行 |
 | `spike`、`sawtooth`、`constant_channel`、`stale_state` | ACT-2、ACT-1、ACT-3、ACT-8 | 状态量单点跳变 12 / 4 倍 p95 步长；锯齿 20% / 5% 量程；夹爪通道全程 / 后半段恒定；状态量沿用旧值 |
 | `duplicate` | SET-1 | 字节级副本 / 重编码副本 |
-| `label_swap` | LABEL-5 | 换成另一条的任务描述（需要多任务的基底） |
+| `label_swap` | LABEL-4 | 换成另一条的任务描述（需要多任务的基底） |
 | `drift`、`clock_reset` | AV-5 | 画面越来越落后，到最后一帧落后 0.6 / 0.2 s；中段起整体落后 0.6 / 0.2 s（`--plan droid_sync`） |
 | `--dataset-fault meta_fps`、`meta_totals` | FILE-8 | `meta/info.json` 的 fps 写成两倍；总条数、总帧数多写（整个子集一处，`--plan none` 时只生成原样对照） |
 

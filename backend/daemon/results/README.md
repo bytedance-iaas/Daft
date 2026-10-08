@@ -145,20 +145,20 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 1. **报告**：`c $B/report | python3 -m json.tool | head -40` —— `revision` 1，`counts` 为 total 9、passed 5、rejected 3、held 1、review 5；
    `links` 里有任务、报告，以及 `?source=task_success`、`?source=skill_profile` 两条裁决页链接。
    `c "$B/report?rev=2"` 是 404「没有结果版本 r2……」；`c "$B/report?rev=0"` 是 400。
-   报告是 2.0：`overview.reject_items` 是 SET-1、STRM-5、TASK-5 各 1 条；时间戳检查一节 `summary` 的 `assessed_episodes` 9、
+   报告是 2.0：`overview.reject_items` 是 SET-1、STRM-5、TASK-4 各 1 条；时间戳检查一节 `summary` 的 `assessed_episodes` 9、
    `flagged_episodes` 1、`levels` 为 blocking 1、review 0、info 0。
 2. **明细表**：`c "$B/report/tables/visual_quality?sort=score&order=desc&limit=3"` —— 最高分的三行（ep8 的两路、ep7 的一路），
    `has_more: true`；带上返回的 `next_cursor`（`&cursor=...`）接着翻，一直翻到底，18 行不重不漏，ep3 那一路没有分的排在最后。
    `c "$B/report/tables/visual_quality?sort=sharpness"` 是 400，列出能排序的列；`c $B/report/tables/nope` 是 404。
-3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「任务没有完成：3 路复核一致判未完成」（`kind: finding`、`code: failure`、`item: TASK-5`、`appealable: true`），
+3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「任务没有完成：3 路复核一致判未完成」（`kind: finding`、`code: failure`、`item: TASK-4`、`appealable: true`），
    证据帧 `details/evidence/task_success/ep000002_0.jpg`，两路视频来自源数据集，`from_ts` 28、`to_ts` 42（v3 拼接文件里的一段）。
-   `findings` 里是这一条的全部发现：两路相机各一条「曝光不足」（IMG-2，`info`）和任务成败判定的 `failure`（TASK-5，`blocking`，`appealable: true`）。
+   `findings` 里是这一条的全部发现：两路相机各一条「曝光不足」（IMG-2，`info`）和任务成败判定的 `failure`（TASK-4，`blocking`，`appealable: true`）。
    `c $B/episodes/99` 是 404。
    **episode 列表**：`c "$B/episodes?limit=4"` —— ep0–3，`has_more: true`，`counts` 为 all 9、passed 5、reject 3、held 1、review 3；
    `c "$B/episodes?review=true"` 是 ep3、ep4、ep5；`c "$B/episodes?list=reject"` 是 ep1、ep2、ep7（`reason_modules` 分别是时间戳检查、
    任务成败判定、精确去重）；`c "$B/episodes?q=ep%208"` 只有 ep8；`c "$B/episodes?q=abc"` 是 400。
    每条带 `items` / `levels`（ep1 是 `["STRM-5", "IMG-2"]` / `["blocking", "info"]`）；`c "$B/episodes?level=review"` 是 ep3、ep4、ep5，
-   `c "$B/episodes?item=TASK-5"` 是 ep2、ep3、ep5，`c "$B/episodes?item=strm-5"` 是 400。
+   `c "$B/episodes?item=TASK-4"` 是 ep2、ep3、ep5，`c "$B/episodes?item=strm-5"` 是 400。
    **同步曲线**：`c $B/episodes/3/sync-curves` 是 404 `no_curves`（手写的运行目录没有曲线文件；被时间戳判废的 ep1 也一样，
    两块并行之后每个模块都看过每一条，D57）；没有这个模块结果的条目是 404 `no_record`（自动化测试里有）；
    有曲线的条目返回逐相机的 `t` / `flow` / `speed`、`lags` / `xcorr` 和 `peak`。
@@ -166,7 +166,7 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
    stage 占比 numeric 0.1、frame 0.3、vlm 0.6。`c "$B/perf?scope=subtask"` 是 400（要给 `subtask`）。
 5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片：ep3（判成败）、ep4（标注分歧）、ep5（两个问题），
    计数 `{"decided": 0, "pending": 3, "unapplied": 0}`；ep8（运动质量打不出分）不在里面。每个问题带它问的细码与项：
-   ep3 的判成败是 `codes: ["uncertain"]`、`items: ["TASK-5"]`，ep4 的标注分歧是 `label_disagreement` / LABEL-5。
+   ep3 的判成败是 `codes: ["uncertain"]`、`items: ["TASK-4"]`，ep4 的标注分歧是 `label_disagreement` / LABEL-4。
    `c "$B/adjudication?tab=appeals&status=all"` 是 ep2（任务成败判定判失败）和 ep7（与 ep0 重复，D42 起可以复议）；时间戳残段 ep1 不能复议。
 6. **提交裁决**：
 

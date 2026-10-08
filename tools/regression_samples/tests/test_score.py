@@ -202,13 +202,13 @@ def test_a_drop_for_an_item_nobody_checked_is_not_a_false_alarm(tmp_path):
 
 def test_a_dataset_level_item_counts_once_per_subset(tmp_path):
     exp = expectation(*[episode(i, problems=["SET-1"]) for i in range(3)], episode(3, problems=[]),
-                      *[episode(i, problems=[{"item": "LABEL-3", "unit": "subset"}]) for i in (4, 5)])
+                      *[episode(i, problems=[{"item": "LABEL-2", "unit": "subset"}]) for i in (4, 5)])
     dup = record(1, "data_integrity", "fail", False, {"findings": [{"code": "duplicate_content", "message": "与另一条重复"}]})
     recs = [record(0, "data_integrity"), dup, record(2, "data_integrity")]
     items = run_score(tmp_path, exp, recs)["items"]
     assert (items["SET-1"]["present"], items["SET-1"]["tp"], items["SET-1"]["fn"]) == (1, 1, 0)
     assert items["SET-1"]["unit"] == "subset"
-    assert items["LABEL-3"]["present"] == 1 and items["LABEL-3"]["mapped"] is False
+    assert items["LABEL-2"]["present"] == 1 and items["LABEL-2"]["mapped"] is False
 
 
 def test_end_to_end_recall_keeps_what_was_not_assessed(tmp_path):
@@ -245,7 +245,7 @@ def test_the_map_controls_are_the_taxonomy_guards():
 
 
 def test_ingestion_follows_the_preflight(tmp_path):
-    exp = expectation(episode(0, phenomena=["SET-4"]))
+    exp = expectation(episode(0, phenomena=["SET-2"]))
     doc = run_score(tmp_path, exp, [], supported=False)
     assert doc["ingestion"] == {SUBSET: {"handled": False, "preflight_supported": False}}
 
@@ -270,6 +270,33 @@ def test_command_writes_the_score_and_gates_on_the_baseline(tmp_path):
     assert S.main(base + ["--baseline", str(tmp_path / "base.json"), "--min-support", "7"]) == 0   # too few episodes to judge
     assert S.main(base + ["--baseline", str(tmp_path / "s.json")]) == 0
     assert run
+
+
+def test_an_expectation_of_taxonomy_1_3_is_scored_with_the_new_ids(tmp_path):
+    """Sample set v1 on TOS is still 1.3 (taxonomy 2.0 renumbered every dimension): ids go through ``renumbered``."""
+    old = expectation(episode(0, problems=["TASK-12", "LABEL-5"], clean=["TASK-5"]), episode(1, problems=["FILE-4"]))
+    old["taxonomy"] = "taxonomy.json v1.3 (design 16 §3, 68 items in 9 dimensions)"
+    new, tax = S.upgrade_expectation(old, {"taxonomy_version": "1.3", "items": []}, TAXONOMY)
+    assert tax is TAXONOMY and TAXONOMY["renumbered"]["from_version"] == "1.3"
+    assert [p["item"] for p in new["episodes"][0]["problems"]] == ["TASK-10", "LABEL-4"]
+    assert [c["item"] for c in new["episodes"][0]["clean"]] == ["TASK-4"]
+    assert new["episodes"][1]["problems"] == [{"item": "FILE-4"}]          # unchanged ids stay
+    assert old["episodes"][0]["problems"][0]["item"] == "TASK-12"           # the input is not modified
+    same = expectation(episode(0, problems=["TASK-10"]))
+    assert S.upgrade_expectation(same, TAXONOMY, TAXONOMY) == (same, TAXONOMY)
+    newer = dict(same, taxonomy="taxonomy.json v9.0 (later)")
+    with pytest.raises(S.InputError):
+        S.upgrade_expectation(newer, TAXONOMY, TAXONOMY)
+    # the command: the set's own taxonomy.json next to the expectation is 1.3, the score is in 2.0
+    (tmp_path / "set").mkdir()
+    (tmp_path / "set" / "taxonomy.json").write_text(json.dumps(dict(TAXONOMY, taxonomy_version="1.3")), encoding="utf-8")
+    (tmp_path / "set" / "expectation.json").write_text(json.dumps(old), encoding="utf-8")
+    write_run(str(tmp_path / "runs" / "demo"), [decode_failed(1), record(0, "data_integrity")])
+    (tmp_path / "runs" / "runs.json").write_text(json.dumps({"demo": {"set": "anchor", "subset": SUBSET}}), encoding="utf-8")
+    assert S.main(["--expectation", str(tmp_path / "set" / "expectation.json"), "--runs-map", str(tmp_path / "runs" / "runs.json"),
+                   "--out", str(tmp_path / "s.json")]) == 0
+    doc = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert doc["taxonomy_version"] == "2.0" and doc["items"]["TASK-10"]["present"] == 1 and doc["items"]["FILE-4"]["tp"] == 1
 
 
 def test_bad_input_exits_2(tmp_path):
@@ -344,7 +371,7 @@ def test_map_uses_codes_the_platform_writes():
                     assert alt in texts, (r["id"], alt)
 
 
-@pytest.mark.parametrize("item", ["FILE-4", "STRM-1", "IMG-4", "ACT-2", "AV-1", "TASK-5", "SET-1"])
+@pytest.mark.parametrize("item", ["FILE-4", "STRM-1", "IMG-4", "ACT-2", "AV-1", "TASK-4", "SET-1"])
 def test_core_items_are_mapped(item):
     assert any(item in r["items"] for r in FMAP["rules"])
 
@@ -421,11 +448,11 @@ def test_a_run_of_findings_is_scored_from_the_findings_themselves(tmp_path):
 
 def test_not_assessed_comes_from_the_records_and_errors_from_their_status(tmp_path):
     """An item a module could not assess is not assessed; a module that failed on the episode is an error."""
-    exp = expectation(episode(0, problems=["TASK-5"]), episode(1, problems=["TASK-5"]), episode(2, problems=["TASK-5"]))
-    recs = [record2(0, "task_success", [finding("failure", "TASK-5")]),
-            record2(1, "task_success", unassessable=["TASK-5"]),
+    exp = expectation(episode(0, problems=["TASK-4"]), episode(1, problems=["TASK-4"]), episode(2, problems=["TASK-4"]))
+    recs = [record2(0, "task_success", [finding("failure", "TASK-4")]),
+            record2(1, "task_success", unassessable=["TASK-4"]),
             record2(2, "task_success", status="error")]
-    row = score2(tmp_path, exp, recs)["items"]["TASK-5"]
+    row = score2(tmp_path, exp, recs)["items"]["TASK-4"]
     assert (row["tp"], row["fn"]) == (1, 0)
     assert row["not_assessed"]["present"] == 1 and row["error"]["present"] == 1
     assert row["recall"] == 1.0 and row["recall_end_to_end"] == round(1 / 3, 4)
@@ -547,4 +574,4 @@ def test_a_run_of_findings_needs_the_registry(tmp_path):
 def test_the_registry_covers_every_taxonomy_item_it_names():
     items = {i["id"] for i in TAXONOMY["items"]}
     assert set(COVERS) <= items
-    assert COVERS["TASK-5"] == {"task_success"} and COVERS["STRM-1"] >= {"data_integrity", "visual_quality"}
+    assert COVERS["TASK-4"] == {"task_success"} and COVERS["STRM-1"] >= {"data_integrity", "visual_quality"}

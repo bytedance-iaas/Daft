@@ -113,7 +113,7 @@
 | LeRobot v3 的 `dtype: language` 列（HIW-500 等） | `language_persistent` / `language_events`：每帧一个列表，元素 `{role, content, style('subtask'…), timestamp, camera, tool_calls}`；persistent 从 `timestamp` 起持续有效，events 是瞬时的 | persistent 的 `style=subtask` → 片段（下一条起点为终点）；events → 事件 |
 | Galaxea（LeRobot v2.1） | 逐帧 `task_index` 在一条 episode 里变化（7 个步骤文本在 `tasks.jsonl` 里，中英文用 `@` 连接）；`coarse_task_index` 是整条的任务；`quality_index` / `coarse_quality_index` 指向 `tasks.jsonl` 里的 `qualified` / `unqualified` | 片段：`task_index` 的连续段；片段质量取同一段的 `quality_index`；条目任务取 `coarse_task_index` |
 | HABIT（LeRobot v2.0） | 逐帧 `low_level_task_index` + `meta/subtasks.jsonl`，`human_role_subtask_index` + `meta/human_subtasks.jsonl`；布尔段列 `is_intervention_segment` / `is_high_jerk_segment` / `is_error_segment`；episodes 行里有 `low_level_tasks[]`、`task_status`（如 `recovered`） | 片段（两套：机器人分步、人的分步）；布尔列 → 带标志的片段；条目标签 `task_status` |
-| RSS 2026（LeRobot v2.1） | 逐帧字符串列 `subtask`（这个数据集全是 `TODO` 占位） | 字符串连续段 → 片段；全是占位时不显示（预检已有 FILE-8 / LABEL-3 的提示） |
+| RSS 2026（LeRobot v2.1） | 逐帧字符串列 `subtask`（这个数据集全是 `TODO` 占位） | 字符串连续段 → 片段；全是占位时不显示（预检已有 FILE-8 / LABEL-2 的提示） |
 | Pantheon Argus（外部标注，开源） | 每条 episode 一个 JSON：`timeline[]`（`t_s`, `end_s`, `arm`, `verb_class`, `object`, `carry_phase`, `contribution` = advancing / wasteful / idle, `progress`）、`key_events[]`、`completion{outcome, goal frame}`、`operator_mistakes`、`recovery`、`data_issues`、`state_changes`、`scene_graph`；已发布的 `labels-2026-09-28` 用的是 `event_labels[]` 同一套字段 | `timeline` → 片段（名称 `verb_class`，部位 `arm`，贡献 `contribution`）；`key_events` → 事件；`completion` → 条目标签。h200-14 上有本地副本 `raw/pantheon_labels/published_labels_2026-09-28`，可作外部标注文件的接入样本 |
 | mcap | 没有约定；映射里指定 `segments` 的 topic 与字段，或附件 JSON | 片段 / 事件 |
 

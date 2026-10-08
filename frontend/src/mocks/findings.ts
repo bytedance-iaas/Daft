@@ -223,12 +223,12 @@ export function findingsReport(): ReportV2 {
       pass_rate: 0.82,
       run: { ...r1.overview.run, revision: 1 },
       reject_reasons: [
-        { module: 'task_success', kind: 'finding', code: 'failure', item: 'TASK-5', count: 5 },
+        { module: 'task_success', kind: 'finding', code: 'failure', item: 'TASK-4', count: 5 },
         { module: 'timestamp_check', kind: 'finding', code: 'fragment', item: 'STRM-5', count: 1 },
         { module: 'dedup', kind: 'duplicate', code: 'duplicate', item: 'SET-1', count: 1 },
       ],
       reject_items: [
-        { item: 'TASK-5', count: 5 },
+        { item: 'TASK-4', count: 5 },
         { item: 'SET-1', count: 1 },
         { item: 'STRM-5', count: 1 },
       ],
@@ -249,13 +249,13 @@ export function findingsReport(): ReportV2 {
 
 /** The questions of the findings task: the main task's, each naming the finding codes it asks about (C4 2.3.0). */
 export function withCodes(questions: Map<number, AdjudicationCard['questions']>): Map<number, AdjudicationCard['questions']> {
-  const codes: Record<string, [string, string]> = { label: ['label_disagreement', 'LABEL-5'], task_verdict: ['uncertain', 'TASK-5'] };
+  const codes: Record<string, [string, string]> = { label: ['label_disagreement', 'LABEL-4'], task_verdict: ['uncertain', 'TASK-4'] };
   const out = new Map<number, AdjudicationCard['questions']>();
   for (const [ep, qs] of questions) {
     out.set(
       ep,
       qs.map((q) => {
-        const pair = q.line === 'reject_appeal' ? (q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-5']) : codes[q.line];
+        const pair = q.line === 'reject_appeal' ? (q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-4']) : codes[q.line];
         return pair ? { ...q, codes: [pair[0]], items: [pair[1]] } : q;
       }),
     );

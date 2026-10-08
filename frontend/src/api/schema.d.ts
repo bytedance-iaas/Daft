@@ -1945,7 +1945,7 @@ export interface components {
         RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "autolabel" | "vlm" | "profile";
         /** @enum {unknown} */
         FindingLevel: "blocking" | "review" | "info";
-        /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-5 */
+        /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-4 */
         TaxonomyItemId: string;
         FindingCode: {
             /** @description unique within its module */

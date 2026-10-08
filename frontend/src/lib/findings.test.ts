@@ -54,9 +54,9 @@ describe('the findings views read the registry and the report 2.0', () => {
     const m = coverageMatrix(reg, report.overview);
     expect([m.covered, m.total, m.taxonomyVersion]).toEqual([4, 6, '1.1']);
     const items = m.dimensions.flatMap((d) => d.items);
-    expect(items.map((i) => i.id).sort()).toEqual(['ACT-3', 'AV-1', 'IMG-1', 'MV-1', 'STRM-3', 'TASK-5']);
+    expect(items.map((i) => i.id).sort()).toEqual(['ACT-3', 'AV-1', 'IMG-1', 'MV-1', 'STRM-3', 'TASK-4']);
     const byId = Object.fromEntries(items.map((i) => [i.id, i]));
-    expect(byId['TASK-5']).toMatchObject({ status: 'covered', episodes: 13 });
+    expect(byId['TASK-4']).toMatchObject({ status: 'covered', episodes: 13 });
     expect(byId['ACT-3'].status).toBe('not_covered');
     // dimensions in taxonomy order
     expect(m.dimensions.map((d) => d.id)).toEqual(reg.taxonomy.dimensions.map((d) => d.id).filter((d) => m.dimensions.some((x) => x.id === d)));
@@ -70,13 +70,13 @@ describe('the findings views read the registry and the report 2.0', () => {
   });
 
   it('a click on an item goes to the modules that cover it', () => {
-    expect(reportersOf(reg, ['visual_quality', 'task_success'], 'TASK-5')).toEqual(['task_success']);
-    expect(reportersOf(reg, ['visual_quality'], 'TASK-5')).toEqual([]);
+    expect(reportersOf(reg, ['visual_quality', 'task_success'], 'TASK-4')).toEqual(['task_success']);
+    expect(reportersOf(reg, ['visual_quality'], 'TASK-4')).toEqual([]);
   });
 
   it('rejects by item: the report counts an episode once per item; an older one is summed', () => {
     expect(rejectsByItem(reg, report.overview).map((r) => r.value)).toEqual([4, 1, 1]);
-    expect(rejectsByItem(reg, report.overview)[0].name).toMatch(/^TASK-5 /);
+    expect(rejectsByItem(reg, report.overview)[0].name).toMatch(/^TASK-4 /);
     const older = { ...report.overview, reject_items: undefined, reject_reasons: [
       { module: 'timestamp_check', kind: 'finding' as const, code: 'gap', item: 'STRM-3', count: 2 },
       { module: 'timestamp_check', kind: 'finding' as const, code: 'jitter', item: 'STRM-3', count: 1 },
@@ -107,7 +107,7 @@ describe('the findings views read the registry and the report 2.0', () => {
 
 describe('one episode', () => {
   const f = (level: string, code: string): EpisodeFinding =>
-    ({ module: 'task_success', level, appealable: false, finding: { code, item: 'TASK-5', severity: 'high', message_zh: code } }) as EpisodeFinding;
+    ({ module: 'task_success', level, appealable: false, finding: { code, item: 'TASK-4', severity: 'high', message_zh: code } }) as EpisodeFinding;
 
   it('groups the findings by level in their order', () => {
     const g = groupByLevel([f('info', 'a'), f('blocking', 'b'), f('info', 'c')]);

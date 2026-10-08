@@ -101,10 +101,14 @@ info:
     out (`VizCamera.hidden`), LeRobot and Lance curve groups instead of the automatic ones, the subtitle
     track, the default speed and looping; the presentation model carries the one in effect (`VizDataset.display`).
 
-    **2.8.0** (2026-10-07): the check-item taxonomy is version 1.3. An item's `kind` is one of `defect`,
-    `phenomenon` and `control` (the depth holes and noise item is now a `defect`), and five items are gone:
-    SET-2, SET-3, SET-6, LABEL-1 and TASK-9. The time-length outlier and the undersampled skill family are
-    still reported as dataset-level findings, now without an item.
+    **2.8.0** (2026-10-07): the check-item taxonomy is version 2.0. An item's `kind` is one of `defect`,
+    `phenomenon` and `control` (the depth holes and noise item is now a `defect`); five items are gone (the
+    cross-dataset versions and long-task controls, the dataset statistics, same-source versions and task
+    description forms), and the items of every dimension are numbered again without gaps: MV-5 is now MV-4,
+    TASK-5 to TASK-8 are TASK-4 to TASK-7, TASK-10 to TASK-12 are TASK-8 to TASK-10, LABEL-2 to LABEL-5 are
+    LABEL-1 to LABEL-4, SET-4 and SET-5 are SET-2 and SET-3. Results of tasks run before keep the numbers they
+    were run with. The time-length outlier and the undersampled skill family are still reported as
+    dataset-level findings, without an item.
   x-description-zh: |
     ## 概览
 
@@ -165,8 +169,10 @@ info:
     登记的数据集有一份所有人共用的展示配置（`GET` / `PUT` / `DELETE /datasets/{id}/viz/display`）：可视化的缺省布局、相机的顺序与显示名以及哪几路不进布局模版
     （`VizCamera.hidden`）、LeRobot 与 Lance 取代自动分组的曲线分组、字幕轨、缺省倍速与循环；展示模型带着生效的那一份（`VizDataset.display`）。
 
-    **2.8.0**（2026-10-07）：检测项分类表升到 1.3。检测项的 `kind` 只有 `defect`、`phenomenon`、`control` 三种（深度空洞、噪声一项改为 `defect`），
-    删掉了 SET-2、SET-3、SET-6、LABEL-1、TASK-9 五项。时长离群、样本偏少的技能族仍作为数据集级的发现报出，不再挂检测项。
+    **2.8.0**（2026-10-07）：检测项分类表升到 2.0。检测项的 `kind` 只有 `defect`、`phenomenon`、`control` 三种（深度空洞、噪声一项改为 `defect`）；
+    删掉了五项（跨数据集的同源版本、长时任务两个对照项，数据集统计、同源派生、任务描述的形态），各维度重新编号、去掉空号：MV-5 改为 MV-4，
+    TASK-5 到 TASK-8 改为 TASK-4 到 TASK-7，TASK-10 到 TASK-12 改为 TASK-8 到 TASK-10，LABEL-2 到 LABEL-5 改为 LABEL-1 到 LABEL-4，SET-4、SET-5 改为 SET-2、SET-3。
+    这一版之前跑的任务，结果里仍是原来的编号。时长离群、样本偏少的技能族仍作为数据集级的发现报出，不挂检测项。
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -2328,7 +2334,7 @@ paths:
                         counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
                         pass_rate: 0.82
                         reject_reasons:
-                          - {module: task_success, kind: finding, code: failure, item: TASK-5, count: 5}
+                          - {module: task_success, kind: finding, code: failure, item: TASK-4, count: 5}
                           - {module: timestamp_check, kind: finding, code: fragment, item: STRM-5, count: 1}
                           - {module: dedup, kind: duplicate, code: duplicate, item: SET-1, count: 1}
                         token_usage:
@@ -2340,17 +2346,17 @@ paths:
                           requests_unknown_usage: 41
                         duration_s: null
                         reject_items:
-                          - {item: TASK-5, count: 5}
+                          - {item: TASK-4, count: 5}
                           - {item: SET-1, count: 1}
                           - {item: STRM-5, count: 1}
                         policy: {preset: default, version: '1'}
                         coverage:
                           taxonomy_version: '1.3'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
-                            ACT-8, AV-1, AV-3, TASK-1, TASK-5, TASK-8, LABEL-2, LABEL-3, LABEL-5, SET-1, TASK-12]
+                            ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-1, LABEL-2, LABEL-4, SET-1, TASK-10]
                           not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
-                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-5, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-6,
-                            TASK-7, LABEL-4, SET-4, SET-5, STRM-9, IMG-12, IMG-13, IMG-14, TASK-10, TASK-11]
+                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-5,
+                            TASK-6, LABEL-3, SET-2, SET-3, STRM-9, IMG-12, IMG-13, IMG-14, TASK-8, TASK-9]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:
@@ -2360,8 +2366,8 @@ paths:
                           - {item: AV-1, episodes: 2, blocking: 0, review: 0, info: 2}
                           - {item: AV-3, episodes: 4, blocking: 0, review: 0, info: 4}
                           - {item: TASK-1, episodes: 17, blocking: 0, review: 0, info: 17}
-                          - {item: TASK-5, episodes: 11, blocking: 5, review: 6, info: 0}
-                          - {item: LABEL-5, episodes: 5, blocking: 0, review: 5, info: 0}
+                          - {item: TASK-4, episodes: 11, blocking: 5, review: 6, info: 0}
+                          - {item: LABEL-4, episodes: 5, blocking: 0, review: 5, info: 0}
                           - {item: SET-1, episodes: 1, blocking: 1, review: 0, info: 0}
                       modules:
                         - id: timestamp_check
@@ -2443,8 +2449,8 @@ paths:
                             flagged_episodes: 11
                             levels: {blocking: 5, review: 6, info: 0}
                             items:
-                              - {item: TASK-5, code: failure, level: blocking, episodes: 5, share: 0.104}
-                              - {item: TASK-5, code: uncertain, level: review, episodes: 6, share: 0.125}
+                              - {item: TASK-4, code: failure, level: blocking, episodes: 5, share: 0.104}
+                              - {item: TASK-4, code: uncertain, level: review, episodes: 6, share: 0.125}
                             unassessable: []
                       skipped_modules:
                         - {id: kinematic_limits, reason: 预检没读到机器人型号（robot_type 为 unknown），创建任务时选择跳过；其余模块照常}
@@ -3003,7 +3009,7 @@ paths:
                             priority: 重点
                             latest_decision: null
                             codes: [label_disagreement]
-                            items: [LABEL-5]
+                            items: [LABEL-4]
                             follow_up_of: null
                           - line: task_verdict
                             source_module: task_success
@@ -3014,7 +3020,7 @@ paths:
                             priority: null
                             latest_decision: null
                             codes: [uncertain]
-                            items: [TASK-5]
+                            items: [TASK-4]
                             follow_up_of: null
                       - episode_index: 4
                         status: pending
@@ -3028,7 +3034,7 @@ paths:
                             priority: 高置信
                             latest_decision: null
                             codes: [label_disagreement]
-                            items: [LABEL-5]
+                            items: [LABEL-4]
                             follow_up_of: null
                     next_cursor: null
                     has_more: false
@@ -3828,7 +3834,7 @@ components:
     TaxonomyItemId:
       type: string
       pattern: "^[A-Z]+-[0-9]+$"
-      description: an item of the taxonomy (C6), e.g. FILE-3, MV-5
+      description: an item of the taxonomy (C6), e.g. FILE-3, MV-4
     FindingCode:
       type: object
       additionalProperties: false

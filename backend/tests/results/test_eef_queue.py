@@ -68,7 +68,7 @@ def test_the_answers_are_executed_and_change_the_lists(eef_world):
     w.switch(3)
     assert [w.get(f"/episodes/{ep}").json()["list"] for ep in (0, 4, 8)] == ["passed", "reject", "passed"]
     assert w.get("/episodes/4").json()["reasons"] == [
-        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
+        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-4", "appealable": False,
          "text": "人工裁决判为 EEF 与视频不一致"}]
     cards = _cards(w, status="all")
     assert cards[0]["status"] == "applied" and cards[4]["status"] == "applied"

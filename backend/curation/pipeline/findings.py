@@ -394,7 +394,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
     for key, item, why_key in (("smoothness", "ACT-1", None), ("spike", "ACT-2", "spike_reason"),
                                ("gripper_jitter", "ACT-5", "gripper_reason"),
                                ("actuator_saturation", "ACT-4", "saturation_reason"),
-                               ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-8", "fluency_reason")):
+                               ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-7", "fluency_reason")):
         if d.get(key) is None:
             why = str(d.get(why_key) or "") if why_key else ""
             if not why and key in ("actuator_saturation", "stuck") and no_state:
@@ -423,7 +423,7 @@ def _task_success(passed, score, d, p) -> Derived:
     """v1's verdict (video protocol in production, the frame-probe protocol in older records): failure,
     an abstention, the label guard's hold (which today also asks the task verdict), a mid-way recovery
     (frame protocol only; the video protocol does not report mistakes), and a task text the platform wrote
-    itself (LABEL-3). The completion estimate is a reading; the primary answer's evidence stretch is the
+    itself (LABEL-2). The completion estimate is a reading; the primary answer's evidence stretch is the
     failure's interval (P19)."""
     out = Derived()
     m = "task_success"
@@ -455,13 +455,13 @@ def _task_success(passed, score, d, p) -> Derived:
     if verdict == "recovery" or "recovery_dip" in (d.get("rules") or []):
         out.add(m, "recovery", "中途进度回落后又完成了任务", readings={"dip": _r(d.get("dip", (d.get("raw") or {}).get("dip")))})
     elif d.get("input_mode") == "video" or d.get("protocol"):
-        out.cannot("TASK-12", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
     source = str(d.get("task_desc_source") or "")
     if source in ("自产caption", "无"):
         out.add(m, "task_text_missing", "没有任务标注，用的是平台自动生成的描述" if source == "自产caption"
                 else "没有任务标注，也没有生成出描述", readings={"task_text_source": source})
     elif not source:
-        out.cannot("LABEL-3", "not_applicable", "记录里没有任务描述的来源")
+        out.cannot("LABEL-2", "not_applicable", "记录里没有任务描述的来源")
     return out
 
 
@@ -627,7 +627,7 @@ def _dedup(passed, score, d, p) -> Derived:
 def _skill_profile(passed, score, d, p) -> Derived:
     """The family an episode is filed under (a reading) and the label audit's flag (passed None: the audit
     queued it; its tier lives in ``label_audit.json``). Datasets keep one description per episode, so
-    descriptions cannot be compared (LABEL-2)."""
+    descriptions cannot be compared (LABEL-1)."""
     out = Derived()
     m = "skill_profile"
     for key in ("family", "subskill", "grouping_text_source"):
@@ -635,7 +635,7 @@ def _skill_profile(passed, score, d, p) -> Derived:
             out.readings[key] = d.get(key)
     if passed is None:
         out.add(m, "label_disagreement", "标注与画面不一致，或画面描述与标注归到了不同的技能")
-    out.cannot("LABEL-2", "single_description", "每条只有一份任务描述，无从比较")
+    out.cannot("LABEL-1", "single_description", "每条只有一份任务描述，无从比较")
     return out
 
 
