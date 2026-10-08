@@ -35,7 +35,7 @@ def test_the_default_plan_has_v1s_gates(vlm_stage, tmp_path):
         assert json.load(fh) == res.doc                 # --out writes what was printed
     plan = res.doc
     assert plan["vlm_parallelism"] == 64
-    assert _stage(plan, "vlm")["gates"] == {"episode": 32, "probe": 64, "endstate": 64,
+    assert _stage(plan, "vlm")["gates"] == {"episode": 64, "probe": 64, "endstate": 64,
                                             "arbitration": 32}
     assert _stage(plan, "vlm")["merge"] == {"strategy": "none", "groups": []}
     assert [s["id"] for s in plan["stages"]] == ["numeric", "frame", "dedup", "vlm",
@@ -80,7 +80,7 @@ def test_bad_arguments_are_usage_errors(vlm_stage, tmp_path):
 def test_check_runs_with_its_plan_stage_gates(vlm_stage, tmp_path):
     res, plan = _plan(vlm_stage, tmp_path, "--task-vlm-parallelism", "4")
     assert res.rc == 0
-    assert _stage(res.doc, "vlm")["gates"] == {"episode": 2, "probe": 4, "endstate": 4,
+    assert _stage(res.doc, "vlm")["gates"] == {"episode": 4, "probe": 4, "endstate": 4,
                                                "arbitration": 2}
     rd = str(tmp_path / "run")
     shutil.copytree(vlm_stage["base"], rd)

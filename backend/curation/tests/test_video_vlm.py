@@ -252,6 +252,31 @@ def test_an_episode_without_a_task_text_gets_the_picture_defect_request_alone(mo
     assert "picture defects only" in text and "Assess the robot manipulation task" not in text
 
 
+def test_the_request_timeout_grows_with_the_video_sent(monkeypatch):
+    """A short clip keeps the configured timeout; a long multi-camera one gets half a second per
+    frame sent, up to the cap; the hedge is given that budget, not the configured floor."""
+    from curation.adapters import video_vlm
+    from curation.adapters.video_vlm import TIMEOUT_MAX_S, request_timeout
+
+    short = [VideoClip("cam", "data:video/mp4;base64,YWJj", "abc", 0.0, 4.0, 20, 3)]
+    assert request_timeout(short, 5.0, 60.0) == 60.0                     # 20 frames: the floor
+    droid = [VideoClip(c, "data:video/mp4;base64,YWJj", "abc", 0.0, 18.0, 90, 3)
+             for c in ("ext1", "ext2", "wrist")]
+    assert request_timeout(droid, 5.0, 60.0) == 135.0                    # 270 frames x 0.5 s
+    long = [VideoClip("cam", "data:video/mp4;base64,YWJj", "abc", 0.0, 3000.0, 15000, 3)]
+    assert request_timeout(long, 5.0, 60.0) == TIMEOUT_MAX_S
+    seen = {}
+
+    def hedged(send, *, tag, timeout_s, gate=None):
+        seen["timeout_s"] = timeout_s
+        return Response(json.dumps(judged(camera="ext1")))
+
+    monkeypatch.setattr("curation.adapters.vlm_client.hedged_request", hedged)
+    monkeypatch.setattr("requests.post", lambda *a, **kw: pytest.fail("not through the hedge"))
+    video_vlm.make_video_assessor("http://test/v1", "m", timeout_s=60.0, fps=5.0)(droid, "pick")
+    assert seen["timeout_s"] == 135.0
+
+
 def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
     from curation.pipeline.funnel import TaskDeps, build_endstate_voter, task_check_episode
     from curation.pipeline.incidents import IncidentLog, wrap_call, wrap_voter

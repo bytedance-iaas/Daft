@@ -59,7 +59,8 @@ def test_full_plan_matches_the_design_example():
     # D72: no caption stage before the checks - the 88 unlabeled episodes are simply not judged
     assert (vlm["block"], vlm["episodes"]) == ("vlm", "selected") and "after" not in vlm
     assert vlm["modules"] == ["task_success", "camera_defects"] and "hard_gates" not in vlm
-    assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32}  # no guard_caption (D73)
+    # no guard_caption (D73); one request per episode, so episode = probe (2026-10-08)
+    assert vlm["gates"] == {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
     assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
@@ -278,8 +279,8 @@ def test_caps_flow_into_the_plan():
     assert p["limits"]["vlm_parallelism"] == {"value": 16, "bound_by": "task"}
     assert p["vlm_parallelism"] == 16
     g = derive_gates(16)
-    assert stage(p, "vlm")["gates"] == {k: g[k] for k in
-                                        ("episode", "probe", "endstate", "arbitration")}
+    assert stage(p, "vlm")["gates"] == {**{k: g[k] for k in ("probe", "endstate", "arbitration")},
+                                        "episode": g["probe"]}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 

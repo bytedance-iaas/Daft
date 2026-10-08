@@ -222,6 +222,10 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             stage["episodes"] = "selected"
             if kind == "vlm":
                 stage["gates"] = stage_gates(stage_id, gates)
+                # one request per episode (D71): an episode in flight is one probe in flight,
+                # so the episode gate is the probe gate (v1's half, for its 2-3 requests per
+                # episode, stays in derive_gates for v1's own configuration)
+                stage["gates"]["episode"] = stage["gates"]["probe"]
                 stage["merge"] = _merge_proposal(members, site, notes)
             stages.append(stage)
             previous = stage_id

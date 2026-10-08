@@ -23,6 +23,22 @@ CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
 CAMERA_CHECK_MAX_TIMES = 8
+#: How long one video request may take grows with what it carries (2026-10-08): the model's
+#: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
+#: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
+#: image requests (60 s) made the hedge fire on nearly every long episode and waste a request.
+#: The configured timeout stays the floor; the request's own size raises it, up to a cap.
+TIMEOUT_PER_FRAME_S = 0.5
+TIMEOUT_MAX_S = 600.0
+
+
+def request_timeout(clips: list[VideoClip], fps: float, floor_s: float) -> float:
+    """The timeout of one request over ``clips`` sampled at ``fps``: never under ``floor_s``,
+    half a second per frame sent, never over :data:`TIMEOUT_MAX_S`."""
+    frames = sum(max(0.0, float(c.end_s) - float(c.start_s)) * float(fps) for c in clips)
+    return float(min(TIMEOUT_MAX_S, max(float(floor_s), TIMEOUT_PER_FRAME_S * frames)))
+
+
 TASK_PROMPT = """Assess the robot manipulation task from the supplied continuous videos.
 Task: {instruction}
 Camera guidance: {hints}
@@ -411,6 +427,7 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
             prompt += "\nRe-examine the action and object trajectory carefully; do not guess missing evidence."
         content = [{"type": "text", "text": prompt}] + video_content(clips, fps=fps)
         messages = [{"role": "user", "content": content}]
+        budget_s = request_timeout(clips, fps, timeout_s)   # grows with the video sent
 
         def ask() -> str:
             """One call. ``response_format`` makes the server constrain decoding to valid JSON,
@@ -422,7 +439,7 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
                 payload["response_format"] = {"type": "json_object"}
             response = vlm_client.hedged_request(
                 lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
-                tag=tag, timeout_s=timeout_s, gate=gate)
+                tag=tag, timeout_s=budget_s, gate=gate)
             if (constrained["json"] and getattr(response, "status_code", 200) == 400
                     and "response_format" in (getattr(response, "text", "") or "")):
                 constrained["json"] = False

@@ -92,7 +92,7 @@ v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门�
 
 | 闸门 | 管什么 | v1 配置键 | v1 默认 | 由 N 推导 |
 |---|---|---|---|---|
-| episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2 |
+| episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2（v1 一条 2–3 次请求）；**v2 的计划里 = N**：D71 起一条只发一次请求，在途的条数就是在途的请求数（2026-10-08） |
 | probe | 打分请求，进程级一把，所有 episode 共用 | `checks.task_success.vlm.max_concurrency` | 64 | N |
 | endstate | 逐机位复核（**D71 起 v2 不发这类请求**，闸门与配置键留给 v1 的 `rejudge`） | episode 并发 × 2 | 64 | N |
 | arbitration | 取证仲裁链（**同上，D71 起 v2 不发**） | = episode 并发 | 32 | N/2 |
@@ -176,7 +176,7 @@ planner 的输出，也是 `curation plan --json` 的 schema：
      "episodes": "survivors:numeric", "hard_gates": ["video_action_sync"]},
     {"id": "vlm", "kind": "vlm", "command": "check",
      "modules": ["task_success"], "episodes": "survivors:frame",
-     "gates": {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32, "guard_caption": 32},
+     "gates": {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32},
      "merge": {"strategy": "none", "groups": []}},
     {"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"},
     {"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1, "modules": ["dedup"], "episodes": "keep"},

@@ -174,7 +174,12 @@ type TokenView = 'module' | 'subtask';
  */
 function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   const reg = useModules();
-  const usage = useQuery({ queryKey: qk.usage(task.id), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })) });
+  const usage = useQuery({
+    queryKey: qk.usage(task.id),
+    queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })),
+    // the per-module rows must follow the totals above while the model is being called
+    refetchInterval: task.state === 'running' || task.active_subtask ? 5000 : false,
+  });
   const [view, setView] = useState<TokenView>('module');
   const u = task.usage;
   const moduleLabel = (id: string) =>
