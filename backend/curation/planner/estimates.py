@@ -20,7 +20,6 @@ AGGREGATE_S = 1.0
 #: the call graph per episode (04 §4.1, D71) for the two existing VLM modules.
 TASK_SUCCESS_PROBES = 1       # one multi-camera video judgement, answering for every camera too
 MAX_ENDSTATE_CAMS = 4         # pipeline.max_endstate_cams
-CAPTIONS_PER_EPISODE = 1
 
 
 def _units_per_episode(spec: Any) -> int:
@@ -36,19 +35,15 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
              selected: int, unlabeled: int, cameras: int,
              max_units: int, notes: list[str]) -> dict[str, Any]:
     """Requests and seconds for ``stages``; appends what it could not count to ``notes``. The two
-    blocks run side by side (design doc 17 §3): the wall clock is the longer block's, then aggregate."""
+    blocks run side by side (design doc 17 §3): the wall clock is the longer block's, then aggregate.
+    ``unlabeled`` episodes are not judged by task_success (D72), so they cost no request there."""
     requests = 0
     per_block: dict[str, float] = {}
-    autolabelled = 0
     uncounted: list[str] = []
     for stage in stages:
         sid, gates = stage["id"], stage.get("gates", {})
         seconds = 0.0
-        if sid == "autolabel":
-            autolabelled = unlabeled
-            requests += unlabeled * CAPTIONS_PER_EPISODE
-            seconds += _vlm_seconds(unlabeled * CAPTIONS_PER_EPISODE, gates["caption"])
-        elif sid == "integrity":
+        if sid == "integrity":
             seconds += selected * INTEGRITY_S_PER_EPISODE / stage["concurrency"]
         elif sid == "numeric":
             seconds += selected * NUMERIC_S_PER_EPISODE / stage["concurrency"]
@@ -70,7 +65,7 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     requests += n
                     seconds += _vlm_seconds(n, gates["probe"])
                 elif module == "task_success":
-                    probes = selected * TASK_SUCCESS_PROBES
+                    probes = max(0, selected - unlabeled) * TASK_SUCCESS_PROBES
                     requests += probes
                     seconds += _vlm_seconds(probes, gates["probe"])
                 elif getattr(specs[module], "rides_on", None):

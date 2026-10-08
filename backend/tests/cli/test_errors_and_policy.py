@@ -128,8 +128,8 @@ def test_one_attempt_per_request_unless_retry_is_given(vlm_stage, tmp_path):
 
 
 def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
-    """--vlm-reasoning-effort puts reasoning_effort into every model request of check
-    and autolabel; without it no request has the field (v1 never sent one)."""
+    """--vlm-reasoning-effort puts reasoning_effort into every model request of check;
+    without it no request has the field (v1 never sent one)."""
     rd = _copy(vlm_stage, tmp_path, "plain")
     with FakeVlmServer() as vlm:
         assert _vlm_check(vlm_stage, rd, vlm.url).rc == 0
@@ -139,13 +139,7 @@ def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
     rd = _copy(vlm_stage, tmp_path, "effort")
     with FakeVlmServer() as vlm:
         assert _vlm_check(vlm_stage, rd, vlm.url, "--vlm-reasoning-effort", "minimal").rc == 0
-        os.remove(os.path.join(rd, "autolabel", "captions.jsonl"))
-        al = run("autolabel", "--input", vlm_stage["dataset"], "--run-dir", rd, "--episodes",
-                 "0-7", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm",
-                 "--vlm-reasoning-effort", "minimal")
-        assert al.rc == 0, al.doc
     posts = _posts(vlm)
-    assert any("All cameras show the SAME robot episode" in c["text"] for c in posts)
     assert posts and all(c["payload"]["reasoning_effort"] == "minimal" for c in posts)
     assert requests.post is before                      # restored after each command
 
@@ -232,32 +226,26 @@ def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
         assert res.doc["modules"][m]["error_episodes"] == [1]
 
 
-def test_a_failed_caption_is_an_error_down_to_the_verdict(vlm_stage, tmp_path):
+def test_an_episode_without_a_task_text_is_not_judged(vlm_stage, tmp_path):
+    """D72: 4 and 6 have no annotation. No caption is written for them and no judgement request
+    is sent: their record says ``no_task_text`` (an info finding, nothing to review), they are
+    not held, and every other check still counts for them."""
     rd = _copy(vlm_stage, tmp_path)
-    caption = "All cameras show the SAME robot episode"
-    with FakeVlmServer(fail=lambda text, payload: 500 if caption in text else None) as vlm:
-        al = run("autolabel", "--input", vlm_stage["dataset"], "--run-dir", rd,
-                 "--episodes", "0-7", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-    assert al.rc == 0, al.doc
-    assert al.doc["counts"] == {"total": 2, "ok": 0, "unclear": 0, "error": 2}
-    assert al.doc["error_episodes"] == [4, 6]
-    lines = {ln["episode_index"]: ln
-             for ln in read_jsonl(os.path.join(rd, "autolabel", "captions.jsonl"))}
-    for e in (4, 6):
-        assert lines[e]["status"] == "error" and lines[e]["caption"] in (None, "")
-    with FakeVlmServer() as vlm:                         # the model is back for the check
+    with FakeVlmServer() as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0
+    assert len(_posts(vlm)) == vlm_stage["reference_posts"]
+    assert not os.path.exists(os.path.join(rd, "autolabel"))
     recs = results(rd, "task_success")
     for e in (4, 6):
-        assert recs[e]["status"] == "error"
-        assert [i["step"] for i in recs[e]["error"]["incidents"]] == ["autolabel"]
-    for e in (0, 1, 3, 7):
-        assert comparable(recs[e]) == comparable(vlm_stage["reference"][e])
+        assert recs[e]["status"] == "ok" and recs[e]["error"] is None
+        assert recs[e]["details"]["skipped"] == "no_task_text"
+        assert [f["code"] for f in recs[e]["findings"]] == ["task_text_missing"]
+        assert {u["reason"] for u in recs[e]["unassessable"]} >= {"no_task_text"}
     verdicts = _funnel(rd)
     for e in (4, 6):
-        assert verdicts[e]["verdict"] == "held"
-        assert verdicts[e]["error_modules"] == ["autolabel"]
+        assert verdicts[e]["verdict"] == "keep" and verdicts[e]["error_modules"] == []
+    assert verdicts[5]["verdict"] == "drop"                        # its timestamps, as ever
 
 
 def test_a_changed_source_stops_the_commands(dataset, tmp_path):
@@ -268,12 +256,13 @@ def test_a_changed_source_stops_the_commands(dataset, tmp_path):
     guard = ["--input", dataset, "--run-dir", rd, "--source-manifest", sm]
     vlm_args = ["--vlm-model", "fake-vlm", "--vlm-endpoint"]
 
-    # an unlabelled episode's video: autolabel stops before any model call ...
+    # an episode's video: the VLM check stops before any model call ...
     with open(os.path.join(dataset, "videos", "chunk-000", WRIST, "episode_000004.mp4"),
               "ab") as fh:
         fh.write(b"\0")
     with FakeVlmServer() as vlm:
-        res = run("autolabel", *guard, "--episodes", "0-7", *vlm_args, vlm.url)
+        res = run("check", "--modules", "task_success", *guard, "--episodes", "0-7",
+                  *vlm_args, vlm.url)
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     assert res.doc["error"]["details"]["key"].endswith("episode_000004.mp4")
     assert not _posts(vlm)
@@ -288,7 +277,8 @@ def test_a_changed_source_stops_the_commands(dataset, tmp_path):
     res = run("check", "--modules", Chain.NUMERIC, *guard, "--episodes", "5-7")
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     with FakeVlmServer() as vlm:
-        res = run("autolabel", *guard, "--episodes", "6", *vlm_args, vlm.url)
+        res = run("check", "--modules", "task_success", *guard, "--episodes", "6",
+                  *vlm_args, vlm.url)
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     # without the manifest the broken file ends the stage: no episode can be judged
     res = run("check", "--modules", Chain.NUMERIC, "--input", dataset, "--run-dir", rd,

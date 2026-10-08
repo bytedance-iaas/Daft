@@ -102,13 +102,6 @@ class Run:
         return {}
 
     # the whole-stage steps (StageRun's): what they did, in order
-    def autolabel(self, selection):
-        if self.journal.done("autolabel"):
-            return
-        self.note("autolabel", "start", None)
-        self.note("autolabel", "done", None)
-        self.stage_done("autolabel", "succeeded")
-
     def check_stage(self, st, episodes, *, fresh, incremental=False):
         if self.journal.done(st["id"]):
             return []
@@ -188,11 +181,12 @@ def test_the_blocks_run_side_by_side_and_never_filter_each_other(tmp_path, monke
     last_vlm = max(at(events, "vlm", "done", e) for e in selection)
     last_frame = max(at(events, "frame", "done", e) for e in selection)
     assert last_vlm < last_frame
-    # autolabel before the block's checks; this plan's dedup is a whole-set step after them
-    assert at(events, "autolabel", "done", None) < min(at(events, "vlm", "start", e) for e in selection)
+    # this plan is from before D70 / D72: its autolabel stage is skipped (the caption pass is gone),
+    # its dedup is a whole-set step after the block's checks
+    assert ("autolabel", "start", None) not in events
     assert at(events, "dedup", "start", tuple(selection)) > last_frame
     assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "dedup": "succeeded",
-                          "autolabel": "succeeded", "vlm": "succeeded"}
+                          "autolabel": "skipped", "vlm": "succeeded"}
     # the store knows where every episode is in each block
     store = EpisodeState(state_path(run.wd.root))
     try:

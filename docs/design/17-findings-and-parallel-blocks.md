@@ -179,8 +179,8 @@ class ModuleSpec:
     level: Literal["episode", "dataset"]
     needs: frozenset[str]
     block: Literal["cpu", "vlm"]                 # 在哪个块（§3.1）
-    stage: str                                   # 块内的段：integrity / numeric / frame / dedup；autolabel / vlm / profile
-    depends_on: tuple[str, ...]                  # 只剩数据依赖：autolabel、captions；不再有 numeric_gates / frame_gates / funnel_verdict
+    stage: str                                   # 块内的段：integrity / numeric / frame / dedup；vlm（autolabel、profile 已下线）
+    depends_on: tuple[str, ...]                  # 只留数据依赖的位置（3.2 起为空）；不再有 numeric_gates / frame_gates / funnel_verdict
     codes: tuple[FindingCode, ...]               # 细码目录
     covers: tuple[str, ...]                      # 声明覆盖的检测项（codes 的 item 的并集，可以多）
     param_schema: dict; tables: tuple[TableSpec, ...]
@@ -193,7 +193,7 @@ class ModuleSpec:
 
 ```python
 BLOCKS = {"cpu": ("integrity", "numeric", "frame", "dedup"),
-          "vlm": ("autolabel", "vlm")}           # profile 随技能画像下线（D68）
+          "vlm": ("vlm",)}                       # profile 随技能画像下线（D68），autolabel 随补描述下线（D72）
 FULL_SET_STAGES = ()                             # D70 起没有全量步骤（§3.2）
 ```
 
@@ -301,7 +301,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `uncertain` | TASK-5 | medium | review（task_verdict） | 弃权 |
 | `recovery` | TASK-12 | low | info | 中途回落后完成 |
 | `label_conflict_suspect` | LABEL-5 | medium | review（label） | 判废护栏 |
-| `task_text_missing` | LABEL-3 | low | info | 任务文本来源是「自产caption」（P20） |
+| `task_text_missing` | LABEL-3 | low | info | 没有任务标注：D72 起这条不判成败（记录 `no_task_text`）；更早的任务里是「用了自产caption」（P20） |
 | `completion`（读数） | TASK-5 | — | 读数 | 完成度估计 |
 
 **镜头画面缺陷**（随任务成败）
@@ -345,9 +345,9 @@ A 类算法不动，壳里读 `details` 生成。
   选中的全部 episode
       │
       ├─ CPU 块（CPU 池）                                 ├─ VLM 块（VLM 闸门）
-      │   integrity   数据完整性                           │   autolabel  无标注补描述（只对无标注条目）
-      │       │ 传全部条目                                 │       │ 数据依赖：成败判定要先有描述
-      │   numeric     时间戳 · 运动学 · 运动质量             │   vlm        任务成败(+画面缺陷) · EEF
+      │   integrity   数据完整性                           │   vlm        任务成败(+画面缺陷) · EEF
+      │       │ 传全部条目                                 │              （无标注条目不判成败，D72）
+      │   numeric     时间戳 · 运动学 · 运动质量             │
       │       │ 传全部条目                                 │
       │   frame       视觉质量 · 视频-动作同步               │
       │       │ 传全部条目                                 │
@@ -361,7 +361,8 @@ A 类算法不动，壳里读 `details` 生成。
 - **段只为效率**：帧档两个模块共享一次解码（D18 的这一半保留），各段有自己的并发宽度与内存准入；段之间传的是「本块的全部条目」，
   上一段的结果不过滤下一段。出错的条目照样进下一段（取代 P10）。
 - **块之间没有数据依赖**。EEF 是混合模块：放 VLM 块，它的 CPU 测量阶段照旧从 CPU 池拿名额（设计 14 §2.2 完整性 L3 的做法）。
-- **autolabel 不是模块**，仍是 VLM 块的第一段，只对无标注条目跑；`task_success` 对它的依赖是数据依赖（`depends_on`）。
+- **没有补描述这一段了**（D72）：原来 VLM 块第一段 `autolabel` 把全部无标注条目补完描述才放行 `vlm`（DROID 2000 条里 953 条无标注，
+  判定要等 7 小时）。现在无标注条目不判成败，`task_success` 写一条 `no_task_text` 记录；`depends_on` 清空。D72 之前的计划里的这一段 Daemon 记 skipped。
 - **坏文件上的模型调用**：VLM 块裁片失败在发请求之前，照 D33 记 `error`，不发模型请求、不烧重试；这一条若有完整性的 blocking 发现，
   照 D35 直接拒。不加「完整性判坏就跳过 VLM」的门，块之间保持独立。
 
@@ -528,7 +529,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.5 进度与 SSE
 
-- C3 的 stage id：`integrity`、`numeric`、`frame`、`dedup`、`autolabel`、`vlm`、`profile`（`post_verdict`、`profile_vlm` 退役）；进度行多一个可选的 `block`。
+- C3 的 stage id：`integrity`、`numeric`、`frame`、`dedup`、`vlm`（`post_verdict`、`profile_vlm` 退役；`profile` 随 D68、`autolabel` 随 D72 只在旧任务的进度里出现）；进度行多一个可选的 `block`。
 - C4 的 `StageProgress` 多 `block`、`full_set`；`PipelineEpisode` 的 `last_stage` / `next_stage` 改成 `stages: {stage: done|error|running|waiting}`
   与 `provisional`（临时判决）。
 
@@ -649,7 +650,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 
 - **计划 2.0**（`planner/plan.py`）：每段写 `block`、块内的 `after`、全量步骤的 `full_set`，`episodes` 只有 `selected` 与 `unlabeled`；
   没有 `hard_gates`、没有漏斗判决档（`verdict`），最后是 `final`。估时按两块取较长的一块再加判决。档名 `profile_vlm` 退役为 `profile`。
-- **Daemon**（`orchestr/blocks.py`）：一块一个线程；块内依次是 autolabel（整段，VLM 块的检查之前）、逐条交接的段（一条链，复用
+- **Daemon**（`orchestr/blocks.py`）：一块一个线程；块内是逐条交接的段（一条链，复用
   `episode_pipeline` / 外部 CLI 的批次路径）、全量步骤（整段，块内前面的段做完才启动）。一块失败、另一块经共享的中止信号停下；CPU 块的
   CPU 名额记在任务的键上，VLM 块的链另用一把键，免得一条链退出时把另一条的名额还掉。
 - **episode 状态库**：两块的运行在 `meta` 里登记各块的逐条段，`block_progress` 给每条在每块各记一个位置；一段有了记录（判完或出错）

@@ -102,10 +102,10 @@ def test_switching_to_the_default_reruns_aggregate_only(chain):
     assert _records(chain.rd) == chain.digest            # the module records stay as they were
     assert _list(chain.rd, 2, "held") == {}
     reject = _list(chain.rd, 2, "reject")
-    assert sorted(reject) == [1, 2, 4, 5, 6, 7]
+    assert sorted(reject) == [1, 2, 5, 7]                 # 4 and 6 have no task text: not judged (D72)
     assert [r["code"] for r in reject[2]["reasons"]][:1] == ["gap"]
     assert [r["code"] for r in reject[5]["reasons"]][:1] == ["fragment"]
     assert reject[7]["reasons"][0]["kind"] == "duplicate" and reject[7]["reasons"][0]["duplicate_of"] == 3
-    assert sorted(_list(chain.rd, 2, "passed")) == [0, 3]
-    assert sorted(_list(chain.rd, 2, "review")) == [0, 1, 3, 4, 6, 7]
+    assert sorted(_list(chain.rd, 2, "passed")) == [0, 3, 4, 6]
+    assert sorted(_list(chain.rd, 2, "review")) == [0, 1, 3, 7]
     assert (_policy(chain.rd, 1), _policy(chain.rd, 2)) == ("report_only", "default")

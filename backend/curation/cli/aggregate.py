@@ -55,12 +55,11 @@ def add_parser(sub, parents) -> None:
 
 def _episodes(args, run_dir: str, modules: list[str]) -> list[int]:
     from ..pipeline.records import latest_results
-    from ..pipeline.tasktext import load_autolabel
 
     given = runctx.read_episode_file(args.episodes)
     if given is not None:
         return given
-    found: set[int] = set(load_autolabel(run_dir))
+    found: set[int] = set()
     for m in modules:
         found |= set(latest_results(run_dir, m))
     if not found:

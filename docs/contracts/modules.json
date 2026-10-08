@@ -1,5 +1,5 @@
 {
- "registry_version": "3.1",
+ "registry_version": "3.2",
  "taxonomy_version": "1.2",
  "blocks": [
   {
@@ -16,7 +16,6 @@
    "id": "vlm",
    "title_zh": "VLM 块",
    "stages": [
-    "autolabel",
     "vlm"
    ]
   }
@@ -26,7 +25,6 @@
   "numeric",
   "frame",
   "dedup",
-  "autolabel",
   "vlm"
  ],
  "full_set_stages": [],
@@ -76,6 +74,10 @@
   {
    "id": "not_applicable",
    "title_zh": "对本数据集不适用"
+  },
+  {
+   "id": "no_task_text",
+   "title_zh": "没有任务标注，没有做任务成败判定"
   }
  ],
  "review_lines": [
@@ -1954,9 +1956,7 @@
    ],
    "block": "vlm",
    "stage": "vlm",
-   "depends_on": [
-    "autolabel"
-   ],
+   "depends_on": [],
    "codes": [
     {
      "code": "failure",
@@ -1999,7 +1999,7 @@
     {
      "code": "task_text_missing",
      "item": "LABEL-3",
-     "name_zh": "没有任务标注，用的是自产描述",
+     "name_zh": "没有任务标注，没有做任务成败判定",
      "severity": "low",
      "level": "info",
      "scope_kind": "episode",
@@ -2061,9 +2061,7 @@
    ],
    "block": "vlm",
    "stage": "vlm",
-   "depends_on": [
-    "autolabel"
-   ],
+   "depends_on": [],
    "codes": [
     {
      "code": "glitch",

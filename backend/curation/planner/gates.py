@@ -30,9 +30,9 @@ from typing import Mapping
 GATE_NAMES = ("episode", "probe", "endstate", "arbitration", "guard_caption",
               "caption", "llm", "audit")
 
-#: The gates each VLM stage of a plan carries (v1's call sites, 04 §4.1).
+#: The gates each VLM stage of a plan carries (v1's call sites, 04 §4.1). ``caption`` is v1's
+#: caption pass; no v2 stage carries it since the autolabel stage went (D72).
 STAGE_GATES: dict[str, tuple[str, ...]] = {
-    "autolabel": ("caption",),
     "vlm": ("episode", "probe", "endstate", "arbitration", "guard_caption"),
 }
 

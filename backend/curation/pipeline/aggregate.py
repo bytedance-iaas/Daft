@@ -37,13 +37,13 @@ from . import policy as policy_mod
 from .adjudication import Decisions, judged_with
 from .records import (is_error, is_v2, latest_results, revision_dir, write_json_atomic,
                       write_text_atomic)
-from .tasktext import TaskText, load_autolabel
+from .tasktext import TaskText
 from .verdicts import Graded, Verdict, also_failed, judge, name_of
 
 #: the stages whose modules judge an episode on its own; dedup judges one against the others
 #: (streaming since D70) and is added for a kept episode by :func:`decide`
 EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
-NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
+NAMES_CN = {m.id: m.name_zh for m in registry.MODULES}
 DEDUP = "dedup"
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
@@ -65,7 +65,6 @@ class RunState:
     episodes: list[int]
     policy: policy_mod.Policy | None = None
     results: dict[str, dict[int, dict]] | None = None
-    autolabel: dict | None = None
 
     def __post_init__(self) -> None:
         chosen = set(registry.with_riders(self.modules))
@@ -75,8 +74,6 @@ class RunState:
             self.policy = policy_mod.load(self.run_dir)
         if self.results is None:
             self.results = {m: latest_results(self.run_dir, m) for m in self.modules}
-        if self.autolabel is None:
-            self.autolabel = load_autolabel(self.run_dir)
         for m, recs in self.results.items():
             if any(not is_v2(r) for r in recs.values()):
                 raise LegacyRun(f"{self.run_dir}: {m} has result records of C2 1.0 - a task made by an earlier "

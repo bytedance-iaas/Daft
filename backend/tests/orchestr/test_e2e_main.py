@@ -17,17 +17,18 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert created["state"] == "queued"
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    # the fixture under the one judgement (D71): 2 captions, 2 rejected on their timestamps, 4 the
-    # judgement rejects (1 4 5 6), 7 a copy of 3 -> 2 / 6 / 0; 0 and 3 abstain, 1 4 6 7 can be appealed
-    assert task["summary"] == {"total": 8, "passed": 2, "rejected": 6, "held": 0, "review": 6,
-                               "pass_rate": 0.25}
+    # the fixture under the one judgement (D71): 2 rejected on their timestamps, 2 the judgement
+    # rejects (1 5), 7 a copy of 3, 4 and 6 have no task text and are not judged (D72) -> 4 / 4 / 0;
+    # 0 and 3 abstain, 1 and 7 can be appealed
+    assert task["summary"] == {"total": 8, "passed": 4, "rejected": 4, "held": 0, "review": 4,
+                               "pass_rate": 0.5}
     assert task["result_rev"] == 1
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]
     assert [s["id"] for s in stages] == [
-        "numeric", "frame", "dedup", "autolabel", "vlm", "final", "report", "verify"]
+        "numeric", "frame", "dedup", "vlm", "final", "report", "verify"]     # D72: no caption stage
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
-        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm"}
+        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "vlm": "vlm"}
     assert not [s["id"] for s in stages if s.get("full_set")], "D70: no stage waits for the whole set"
     assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}

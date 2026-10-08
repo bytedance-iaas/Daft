@@ -7,6 +7,7 @@ from the request's texts and each image's pixel size, never the bytes
 """
 from __future__ import annotations
 
+import os
 import shutil
 
 import numpy as np
@@ -79,10 +80,10 @@ def test_the_mini_dataset_walks_every_task_success_path(vlm_stage):
     annotation (4 and 6). Nothing is rescued by a second request any more."""
     got = {e: (verdict_of(r), r["details"].get("verdict"))
            for e, r in vlm_stage["reference"].items()}
+    # 4 and 6 have no task text: not judged at all (D72), no caption is written for them
     assert got == {0: ("abstain", "uncertain"), 1: ("fail", "failure"),
                    2: ("abstain", "uncertain"), 3: ("abstain", "uncertain"),
-                   4: ("fail", "failure"), 5: ("fail", "failure"),
-                   6: ("fail", "failure"), 7: ("abstain", "uncertain")}
-    captions = {ln["episode_index"]: ln["caption"] for ln in
-                read_jsonl(f"{vlm_stage['reference_dir']}/autolabel/captions.jsonl")}
-    assert set(captions) == {4, 6} and any(c != ANNOTATION for c in captions.values())
+                   4: ("abstain", None), 5: ("fail", "failure"),
+                   6: ("abstain", None), 7: ("abstain", "uncertain")}
+    assert {e for e, r in vlm_stage["reference"].items() if r["details"].get("skipped")} == {4, 6}
+    assert not os.path.exists(f"{vlm_stage['reference_dir']}/autolabel")

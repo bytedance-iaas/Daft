@@ -69,6 +69,8 @@ def struct_from_task(task_struct: dict | None) -> dict:
 
     if task_struct is None:
         reason = "任务成败判定没有产生结果，无法读取逐机位复核"
+    elif detail.get("skipped") == "no_task_text":
+        reason = "没有任务标注，没有发判定请求"                       # D72
     elif reviews is None:
         reason = "判定请求没有按相机作答（非视频模式或请求失败）"
     elif per_camera and not any(e["answered"] for e in per_camera.values()):

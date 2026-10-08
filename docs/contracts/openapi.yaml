@@ -3545,7 +3545,7 @@ components:
               depends_on:
                 type: array
                 items: {enum: [autolabel]}
-                description: "data only: the captions autolabel writes for episodes without a task text"
+                description: "data only; empty for every module now that no caption is written for episodes without a task text"
               codes:
                 type: array
                 minItems: 1

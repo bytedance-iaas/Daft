@@ -44,13 +44,15 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
     task = results(ran["dir"], "task_success")
     cam = results(ran["dir"], MOD)
     assert set(cam) == set(task) == set(vlm_stage["reference"])
-    for rec in cam.values():
+    for ep, rec in cam.items():
         # advisory: every finding it reports is info under the default policy, never a vote (P18)
         assert rec["status"] == "ok" and rec["error"] is None and "score" not in rec["readings"]
         assert all(registry.finding_code(MOD, f["code"]).level == "info" for f in rec["findings"])
         d = rec["details"]
         assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["source"] == "task_success.cameras"
-        assert set(d["items"]) == set(ITEMS) and d["cams"]
+        assert set(d["items"]) == set(ITEMS)
+        # an episode without a task text got no judgement request, so no camera answered (D72)
+        assert d["cams"] or task[ep]["details"].get("skipped") == "no_task_text"
         assert set(d["items"].values()) <= LEVELS         # one status per item, nothing nested
         assert set(d["per_camera"]) == set(d["cams"])
         for cam_entry in d["per_camera"].values():

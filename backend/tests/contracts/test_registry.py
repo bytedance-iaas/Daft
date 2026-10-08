@@ -28,7 +28,7 @@ def test_module_spec(spec):
     assert spec.needs <= M.NEEDS
     assert set(spec.depends_on) <= M.DEPENDENCIES
     assert spec.block in M.BLOCKS and spec.stage in M.BLOCKS[spec.block]
-    assert spec.stage != "autolabel", "autolabel is a stage, not a module"
+    assert spec.stage != "autolabel", "the caption pass is gone (3.2); no stage of that name"
     jsonschema.Draft202012Validator.check_schema(spec.param_schema)
     for table in spec.tables:
         assert table.default_sort in table.sortable
@@ -116,9 +116,9 @@ def test_v1_facts():
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
                                                                     "eef_video_consistency",
                                                                     "data_integrity"}
-    assert {m.id for m in M.MODULES if "autolabel" in m.depends_on} == {"task_success",
-                                                                        "camera_defects"}
-    assert "autolabel" not in M.ids()
+    assert not any(m.depends_on for m in M.MODULES), "3.2: no data dependency is left"
+    assert "autolabel" not in M.ids() and "autolabel" not in M.STAGES and M.BLOCKS["vlm"] == ("vlm",)
+    assert dict(M.UNASSESSABLE_REASONS)["no_task_text"]
 
 
 def test_the_default_policy_reproduces_todays_gates():

@@ -101,7 +101,7 @@ def name_of(module: str) -> str:
     try:
         return registry.get(module).name_zh
     except KeyError:
-        return {"autolabel": "无标注补描述"}.get(module, module)
+        return {"autolabel": "无标注补描述"}.get(module, module)   # verdicts from before D72
 
 
 def also_failed(errors: list[str]) -> str:
@@ -173,12 +173,8 @@ def judge(ep: int, records: dict[str, dict | None], expected: list[str], policy:
     for m in expected:
         rec = records.get(m)
         if rec is None or is_error(rec):
-            who = m
-            incs = ((rec or {}).get("error") or {}).get("incidents") or []
-            if m == "task_success" and incs and all(i.get("step") == "autolabel" for i in incs):
-                who = "autolabel"
-            errors.append(who)
-            detail[who] = cause(rec)
+            errors.append(m)
+            detail[m] = cause(rec)
     out = Verdict(ep, "keep", graded, errors, detail)
     if any(g.level == "blocking" for g in graded):
         out.verdict = "drop"

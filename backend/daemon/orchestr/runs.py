@@ -1,9 +1,10 @@
 """The main run and the four subtasks (design doc 00 §4 and §4.1, 17 §3).
 
 Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's two blocks side by side
-(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame on the episode pipeline, then dedup on the
-whole selection; the VLM block's autolabel, vlm on the episode pipeline, then the skill profile on the
-whole selection - no stage filters another (D57). Then ``final`` (aggregate: the policy verdicts into
+(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame -> dedup and the VLM block's vlm, every
+stage on the episode pipeline (an episode without a task text is not judged by task_success, D72; plans
+from before carry an autolabel stage, now skipped) - no stage filters another (D57). Then ``final``
+(aggregate: the policy verdicts into
 revision N), ``report`` (commit.json last) and ``verify``: the run
 directory is synced to ``<delivery>/<run_id>/``, read back, ``_COMPLETE`` written; only then does
 ``result_rev`` switch (D25) and ``latest`` move for a complete batch (D29, P13). Every per-episode stage
@@ -170,33 +171,6 @@ class StageRun(Run):
                 out += ["--param", f"{mid}.{key}={value}"]
         return out
 
-    # -- autolabel ------------------------------------------------------------------
-    def autolabel(self, episodes: list[int]) -> None:
-        sid = "autolabel"
-        if self.journal.done(sid) or not episodes:
-            if not self.journal.done(sid):
-                self.stage_done(sid, "skipped")
-            return
-        self.progress(sid, state="running", done=0, total=0)
-        argv = ["autolabel", *self.source_args(), "--run-dir", str(self.wd.root),
-                "--episodes", self.episodes_arg("autolabel.in", episodes), "--resume",
-                "--plan-stage", str(self.wd.plan), *self.vlm_args()]
-        outcome = self.cli(sid, argv, need_input=True, need_vlm=True, crash_retry=True,
-                           episodes=len(episodes))
-        if outcome.ok:
-            c = outcome.doc.get("counts") or {}
-            self.log(sid, "info", f"给 {c.get('total', 0)} 条没有任务标注的 episode 补描述："
-                                  f"{c.get('ok', 0)} 条补上、{c.get('unclear', 0)} 条看不清、"
-                                  f"{c.get('error', 0)} 条出错")
-            self.stage_done(sid, "completed_with_errors" if c.get("error") else "succeeded")
-            return
-        if outcome.status == "module_failed":
-            self.log(sid, "error", f"补描述整体失败：{outcome.message or outcome.reason()}。"
-                                   "没有标注的条目，任务成败判定会待补跑")
-            self.stage_done(sid, "failed")
-            return
-        self.fail_on(outcome, sid)
-
     # -- aggregate ------------------------------------------------------------------
     def aggregate(self, sid: str, phase: str, rev: int, modules: list[str],
                   selection: list[int]) -> dict:
@@ -338,11 +312,7 @@ class RetryRun(StageRun):
                     eps |= need
                     mods += [x for x in (host, m) if x not in mods]
             todo[st["id"]] = ([m for m in st["modules"] if m in mods], sorted(eps))
-        vlm = todo.get("vlm", ([], []))
-        captions = vlm[1] if "task_success" in vlm[0] and any(
-            s.get("command") == "autolabel" for s in plan["stages"]) else []
-        ids = (["autolabel"] if captions else []) + [s["id"] for s in stream] \
-            + ["final", "report", "verify"]
+        ids = [s["id"] for s in stream] + ["final", "report", "verify"]
         self.plan_progress(ids, plan)
         pairs = sum(len(m) * len(e) for m, e in todo.values())
         self.journal.set(retry={sid: {"modules": m, "episodes": e} for sid, (m, e) in todo.items()},
@@ -351,8 +321,6 @@ class RetryRun(StageRun):
                                    f"出错或没有结果的模块（共 {pairs} 对）"
                  + (f"，整体失败的模块全量重跑：{names(sorted(failed))}" if failed else ""))
         rev = self.allocate_revision()
-        if captions:
-            self.autolabel(captions)
         for st in stream:
             self.check_intent()
             mods, eps = todo[st["id"]]

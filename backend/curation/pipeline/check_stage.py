@@ -245,7 +245,8 @@ class StageRun:
 
             stale.setdefault("task_success", set()).update(
                 e for e, rec in current["task_success"].items()
-                if (rec.get("details") or {}).get("protocol") != PROTOCOL)
+                if (rec.get("details") or {}).get("protocol") != PROTOCOL
+                and not (rec.get("details") or {}).get("skipped"))     # not judged at all (D72)
             if "camera_defects" in current:
                 stale.setdefault("camera_defects", set()).update(
                     e for e, rec in current["camera_defects"].items()
@@ -376,8 +377,14 @@ class StageRun:
             self.o.task_text.instructions[int(ep)] = str(row.get("instruction") or "")
         text, src, problem = self.o.task_text.resolve(ep)
         if problem is not None:
-            log.add("autolabel", cause=problem)
-            return {"task_success": None}, {}
+            # D72: no task text, no judgement - the record says so and the episode goes on;
+            # the platform does not write a caption for it (the autolabel step is gone)
+            from .tasktext import NO_TASK_TEXT, SRC_NONE
+
+            detail = {"rules": [NO_TASK_TEXT], "skipped": NO_TASK_TEXT, "task_desc_source": SRC_NONE,
+                      "reason": "没有任务标注，没有做任务成败判定"}
+            return {"task_success": {"passed": None, "score": None,
+                                     "detail": json.dumps(detail, ensure_ascii=False)}}, {}
         clients = self.o.task_clients
         deps = funnel.TaskDeps(
             vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",

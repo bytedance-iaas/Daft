@@ -121,9 +121,8 @@
     ├─▶ ②′ snapshot     curation snapshot —— 固化源文件清单与版本指纹
     │     之后每一步读源数据都按它校验；中途发现源数据变了，任务失败并提示重新预检
     │
-    ├─▶ ③ autolabel     curation autolabel --episodes <没有任务标注的条目>
-    │     由 VLM 补一句任务描述，作为任务成败判定的任务文本
-    │     （v1 行为：漏斗之前、对无标注条目全量跑；没勾 VLM 模块就不跑）
+    ├─▶ ③ ~~autolabel~~  D72 起没有这一步：没有任务标注的条目，任务成败判定直接不判（记录写明 no_task_text），
+    │     其余检查照常；平台不再替它补描述
     │
     ├─▶ ④ check · 漏斗   档的划分与顺序照搬 v1；一档一个进程，前一档的幸存者是后一档的 --episodes
     │     数值档  check --modules timestamp_check,kinematic_limits,motion_quality
@@ -335,6 +334,14 @@ D54 来自同日需求方评审 D53 时对 CPU 资源的要求，D55 来自 2026
 每条 episode 的模型请求从 1 + 机位数（+ 条件触发的仲裁）降到 1；旧协议（`video-task/1`、`camera-check/1`、`1.1`）判出的记录视为过期，重试会重判。
 D39 的两种改标重判口径（`v1` / `full`）在单次判决下没有区别，字段与对话框暂留、行为合一。
 复核与仲裁的代码留给 v1 的 `rejudge`，v2 不建它们的客户端；两段式在真值上的价值从未测过，要对比去 D71 之前的历史里取 |
+| D72 | **没有任务标注的条目不判成败，补描述这一步整个去掉**（2026-10-08 需求方定：「如果没有 label 就直接 skip 掉，不要有 autolabel 这一个 action 了」）。
+起因：VLM 块原来是 `autolabel → vlm` 两条命令串着跑，`autolabel` 把所选里全部无标注条目补完描述 `vlm` 才开始，DROID 2000 条里 953 条无标注，
+判定要等 7 小时才开始。现在 `check task_success` 碰到没有任务文本的条目就写一条「没判」的记录（`details.skipped = no_task_text`，
+LABEL-3 的 `task_text_missing` 仅报告，TASK-5 / LABEL-5 记为 `no_task_text` 无法评估），不发模型请求、不转人工、不 held；
+这条 episode 按其余检查的结果判通过与否，通过时交付清单里 `task_text` 为空。`curation autolabel` 命令、`autolabel/captions.jsonl`、
+`dataset_stages.py` 与 C2 的两份 autolabel schema 删除；注册表 3.2（VLM 块只剩 `vlm`，`depends_on` 清空，新增无法评估原因 `no_task_text`）；
+计划不再出 `autolabel` 段，估算把无标注条目从判定次数里扣掉；D72 之前排好的计划里的 `autolabel` 段 Daemon 直接记 skipped。
+同一轮清出来的还有：每档 worker 启动时重新列一遍 TOS 对象清单、同一条 episode 的视频每档各读一次——前者下一刀用 `source_manifest.json` 顶替，后者记账待量化 |
 | D70 | **去重改成流式，没有全量步骤了**（2026-10-07 需求方定：「去重还是不能 overlap」）：精确去重从 CPU 块的「全量步骤」
 改成块里最后一个**逐条段** —— 一条 episode 从帧档出来就立刻算它的 action 哈希，和前面的段交叠，不再等全集跑完才整段启动；
 哈希撞车时才读视频算内容指纹（只读撞上的那两条，罕见）。A 类算法 `action_hash` / `episode_fingerprint` 一行不改，

@@ -186,7 +186,7 @@ def test_a_killed_daemon_recovers_its_task_and_keeps_user_intent(tmp_path, mini_
         assert not _alive(child) or second.wait(victim, lambda t: not _alive(child), 60)
         done = second.wait(victim, lambda t: t["state"] in TERMINAL and not t["active_subtask"])
         assert done["state"] == "succeeded", json.dumps(done)[:2000]
-        assert done["summary"]["total"] == 8 and done["summary"]["passed"] == 2
+        assert done["summary"]["total"] == 8 and done["summary"]["passed"] == 4
         kinds = [e["kind"] for e in second.call("GET", f"/tasks/{victim}/timeline").json()["items"]]
         assert "system_pause" in kinds and "system_resume" in kinds
         assert second.task(paused)["state"] == "paused"

@@ -1744,7 +1744,7 @@ export interface components {
                 /** @enum {unknown} */
                 block: "cpu" | "vlm";
                 stage: components["schemas"]["RegistryStage"];
-                /** @description data only: the captions autolabel writes for episodes without a task text */
+                /** @description data only; empty for every module now that no caption is written for episodes without a task text */
                 depends_on: "autolabel"[];
                 /** @description the finding codes the module reports (design doc 17 §2.2) */
                 codes: components["schemas"]["FindingCode"][];
@@ -3455,7 +3455,7 @@ export interface components {
             }[];
         };
         stage: {
-            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; autolabel, vlm, profile) and final; stages of new modules follow the same pattern */
+            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; vlm) and final - autolabel and profile only in plans made while those stages existed; stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";

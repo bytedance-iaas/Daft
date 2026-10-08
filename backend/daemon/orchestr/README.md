@@ -20,7 +20,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
-| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内依次是 autolabel 与逐条交接的段（D70 起没有全量步骤；更早的计划里的 `full_set` 段仍按整段跑）；一块失败另一块随之停下 |
+| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内是逐条交接的段（D70 起没有全量步骤；更早的计划里的 `full_set` 段仍按整段跑，`autolabel` 段记 skipped，D72）；一块失败另一块随之停下 |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 一块的逐条段（一条链）：每段一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`（只在块内），每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
@@ -51,9 +51,9 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `created → queued` 入队。第一次运行时 `run.json` 还冻结结果格式 `c2: "2.0"`、注册表版本和完整的判决策略（`params.policy`，缺省
   `default`；设计 17 §4.1），aggregate 按它判，每个结果版本另存一份 `policy.json`。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
-- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm）各一个线程同时跑，互不过滤。
+- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（vlm）各一个线程同时跑，互不过滤。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
-  autolabel 在 VLM 块的检查之前整段跑（任务成败要读补出的描述）；dedup 是 CPU 块最后一个逐条段，和前面的段交叠（D70）。
+  没有任务标注的条目 vlm 段不判成败（D72；D72 之前排好的计划还带一个 autolabel 段，直接记 skipped）；dedup 是 CPU 块最后一个逐条段，和前面的段交叠（D70）。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。

@@ -29,7 +29,8 @@ def add_parser(sub, parents) -> None:
                    help="selected episodes, by the dataset's own indices (default: all of them: "
                         "0..episode_count-1, or the preflight's episode_indices)")
     p.add_argument("--unlabeled", metavar="EXPR",
-                   help="episodes without a task text, when known (exact autolabel stage)")
+                   help="episodes without a task text, when known (task_success does not judge "
+                        "them; the count in the notes and the estimate are then exact)")
     p.add_argument("--cpu-cores", type=int, metavar="N",
                    help="CPU cores of the node (default: this machine's); a task may use "
                         "all of them but two")

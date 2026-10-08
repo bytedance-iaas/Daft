@@ -7,7 +7,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 3.0（D68）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 3.2（D68–D72）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -373,4 +373,15 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   契约文件本身没有改（这些都是开放的 details 字段）。
 - **C4 不变**：`relabel_rerun`（`v1` / `full`）仍在请求体里，两种口径行为合一；去掉字段与控制台里的选项另算一刀。
 - 配置：`checks.task_success.vlm.single_pass` 删除；`timeouts.endstate` / `arbitration`、相关闸门键仍在，v1 的 `rejudge` 在读。
+
+## 二十、没有任务标注的条目不判成败，补描述下线（2026-10-08，D72）
+
+需求方：「如果没有 label 就直接 skip 掉，不要有 autolabel 这一个 action 了」。原来 VLM 块先把所选里全部无标注条目补完描述，判定才开始。
+
+- **C1 3.2**：`blocks` 里 VLM 块只剩 `vlm`，`stages` 不再有 `autolabel`；每个模块的 `depends_on` 为空；`unassessable_reasons` 多 `no_task_text`；
+  `task_success.task_text_missing` 的说明改为「没有任务标注，没有做任务成败判定」。
+- **C2**：`cli/autolabel.schema.json`、`cli/autolabel-line.schema.json` 与它们的示例删除；计划（`plan.schema.json` 2.0）不再生成 `autolabel` 段，
+  枚举里的 `autolabel` 保留给旧计划；`task_success` 对无标注条目的记录：`status: ok`、`details.skipped = "no_task_text"`、`task_desc_source = "无"`，
+  发现只有 `task_text_missing`，TASK-5 / LABEL-5 列在 `unassessable`（`no_task_text`）；交付清单里这种条目的 `task_text` 为 null。
+- **C3 / C4**：stage id 枚举不变（旧任务的进度里仍有 `autolabel`）；新任务的进度没有这一行；`usage` 的模块里不再出现 `autolabel`。
 

@@ -10,7 +10,6 @@ deliveries/<delivery-name>/
 │   ├── run.json                   任务快照：输入/模块/参数/预检/版本指纹
 │   ├── source_manifest.json       ★ 源文件清单与版本指纹（D27）
 │   ├── plan.json                  执行计划（04 篇），存档便于复现与调优
-│   ├── autolabel/captions.jsonl   无标注条目的补充描述
 │   ├── checks/                    ★ 模块级结果，子任务按模块覆盖
 │   │   ├── timestamp_check/{parts/*.jsonl, results.jsonl}
 │   │   ├── task_success/{parts/*.jsonl, results.jsonl}

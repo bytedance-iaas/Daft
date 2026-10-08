@@ -7,11 +7,10 @@ where a module runs, its finding codes and tunable parameters from here (the fro
 Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 
 * **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
-  (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm). Stages
+  (integrity -> numeric -> frame -> dedup) and the VLM block (vlm). Stages
   inside a block exist to share a decode and to size their own concurrency; every stage gets every
-  selected episode. ``dedup`` needs the whole selection and starts once the stages
-  before them in their block are done (``FULL_SET_STAGES``). ``depends_on`` is data only: the
-  captions ``autolabel`` writes for episodes without a task text.
+  selected episode, one at a time (no stage waits for the whole selection: ``FULL_SET_STAGES`` is
+  empty). ``depends_on`` names data dependencies only; since 3.2 no module has one.
 * **What it can find.** Every module carries its catalogue of finding codes (``codes``). A code maps
   to one item of the taxonomy (C6, ``docs/contracts/taxonomy.json``, bound version
   ``TAXONOMY_VERSION``) and has a default severity and a default level under the default policy:
@@ -24,8 +23,9 @@ Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
   what it assessed and what it could not, with a reason from ``UNASSESSABLE_REASONS``, so "found
   nothing" and "did not look" are told apart.
 
-``autolabel`` (captioning episodes without a task text) is not a module; it is the first stage of
-the VLM block and a data dependency of ``task_success``.
+An episode without a task text is not judged by ``task_success`` (3.2, D72): its record says so
+(``no_task_text``) and the episode goes through every other check. The platform no longer writes a
+caption for it; the ``autolabel`` stage of earlier plans is gone.
 
 ``param_schema`` drives the second screen of the new-task form (D38), so every parameter carries
 ``title`` (the field label), ``description`` (help text) and ``default``; a choice lists its
@@ -56,17 +56,18 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "3.1"
+REGISTRY_VERSION = "3.2"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "1.2"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
-Stage = Literal["integrity", "numeric", "frame", "dedup", "autolabel", "vlm"]
+Stage = Literal["integrity", "numeric", "frame", "dedup", "vlm"]
 
-#: The two blocks and their stages in order (design doc 17 §3.1).
+#: The two blocks and their stages in order (design doc 17 §3.1). The VLM block is one stage since
+#: 3.2: the caption pass before it (``autolabel``) is gone.
 BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup"),
-                                      "vlm": ("autolabel", "vlm")}
+                                      "vlm": ("vlm",)}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
 #: No stage needs the whole selection at once since D70 (dedup streams like the others);
@@ -79,9 +80,9 @@ STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
                                    "embodiment_profile", "vlm", "raw_bytes", "eef_input"})
 
-#: What a module's input depends on, data only (2.0): the captions of episodes without a task text.
-#: A change upstream (a relabel) makes the module's results stale.
-DEPENDENCIES: frozenset[str] = frozenset({"autolabel"})
+#: What a module's input may depend on, data only (2.0). Empty since 3.2: the captions of episodes
+#: without a task text (``autolabel``) are no longer made. A change upstream makes results stale.
+DEPENDENCIES: frozenset[str] = frozenset()
 
 #: A finding's severity, the module's own measure (design doc 17 §1.2).
 SEVERITIES: tuple[str, ...] = ("high", "medium", "low")
@@ -101,6 +102,7 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("model_no_answer", "模型没有回答这一项"),
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
+    ("no_task_text", "没有任务标注，没有做任务成败判定"),
 )
 
 #: v1's evidence modes (``pipeline.sync_plots`` / ``pipeline.evidence_frames``).
@@ -555,12 +557,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
-        depends_on=("autolabel",),
+        depends_on=(),
         codes=(_blocking("failure", "TASK-5", "任务失败", appealable=True),
                _review("uncertain", "TASK-5", "任务成败拿不准", "task_verdict"),
                _info("recovery", "TASK-12", "中途失误后完成"),
                _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "task_verdict"),
-               _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述")),
+               _info("task_text_missing", "LABEL-3", "没有任务标注，没有做任务成败判定")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
@@ -570,7 +572,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="camera_defects", name_zh="镜头画面缺陷",
         summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
-        depends_on=("autolabel",),
+        depends_on=(),
         # minor -> low, severe -> medium
         codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
                _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),

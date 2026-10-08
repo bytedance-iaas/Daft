@@ -91,7 +91,7 @@ def test_the_first_dedup_stands_after_the_decisions(flow):
     run again, its group {3, 7} stands and keeps 7 now that 3 is gone (D58); the
     the kept set loses 3."""
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
-        assert fh.read().split() == ["0", "7"]
+        assert fh.read().split() == ["0", "6", "7"]              # 6: no task text, not judged (D72)
     counts = flow.steps["funnel2"].doc["counts"]
     assert counts["decided_out"] == 1 and counts["decided_in"] == 0
     assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
@@ -99,13 +99,13 @@ def test_the_first_dedup_stands_after_the_decisions(flow):
 
 def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     r1, r2 = flow.path("revisions", "r0001"), flow.path("revisions", "r0002")
-    assert _eps(r1, "passed") == [0, 3]
-    assert _eps(r2, "passed") == [0, 7]
-    assert _eps(r2, "reject") == [1, 2, 3, 4, 5, 6] and _eps(r2, "held") == []
+    assert _eps(r1, "passed") == [0, 3, 4, 6]               # 4 and 6: no task text, not judged (D72)
+    assert _eps(r2, "passed") == [0, 6, 7]
+    assert _eps(r2, "reject") == [1, 2, 3, 4, 5] and _eps(r2, "held") == []
     # 3 was decided; 0 is still asked, 7 - delivered in 3's place - is asked whether its
-    # task succeeded instead of whether its reject stands; 1, 4 (judged again with its new
-    # label) and 6 are rejected by the judgement and can be appealed
-    assert _eps(r2, "review") == [0, 1, 4, 6, 7]
+    # task succeeded instead of whether its reject stands; 1 and 4 (judged for the first time,
+    # with its new label) are rejected by the judgement and can be appealed; 6 still has no text
+    assert _eps(r2, "review") == [0, 1, 4, 7]
     review = {e["episode_index"]: e for e in _json(r2, "review.json")["episodes"]}
     assert [i["line"] for i in review[7]["review"]] == ["task_verdict"]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
@@ -118,5 +118,5 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     commit = _json(r2, "commit.json")
     assert commit["parts"]["task_success"] == ["0001", "0002"]
     report = _json(r2, "report.json")
-    assert report["overview"]["counts"] == {"total": 8, "passed": 2, "rejected": 6,
-                                            "held": 0, "review": 5, "skipped": 0}
+    assert report["overview"]["counts"] == {"total": 8, "passed": 3, "rejected": 5,
+                                            "held": 0, "review": 4, "skipped": 0}

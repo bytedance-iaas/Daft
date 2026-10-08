@@ -4,11 +4,12 @@ The v2 side of the synthetic parity (design doc 11 §3, 2026-09-21): the atomic
 commands run in this process in the order of the Daemon's two blocks (design doc 17 §3),
 one block after the other -
 
-    preflight -> plan -> snapshot -> autolabel -> check (integrity) -> check numeric
+    preflight -> plan -> snapshot -> check (integrity) -> check numeric
     -> check frame -> check vlm -> check dedup
     -> aggregate final -> report -> verify
 
-- every stage on the whole selection (no stage filters another, D57), into one v2 run
+- every stage on the whole selection (no stage filters another, D57; an episode without a
+task text is not judged by task_success, D72), into one v2 run
 directory, which ``python -m parity compare`` loads directly. Model calls go
 through the same tape hooks as ``dump-v1``: ``--replay`` serves v1's recorded
 answers and counts every request that is not on the tape (a different prompt,
@@ -121,7 +122,6 @@ class Chain:
                 or os.path.isdir(os.path.join(ds, "frames.lance")):
             # mcap / lance: the Daemon names the task's selection (their semantics sample)
             common += ["--selection", episodes]
-        self.run("autolabel", "autolabel", *common, "--episodes", episodes, *self.vlm)
         if INTEGRITY in self.modules:           # the CPU block's first stage (design doc 14)
             self.run("check integrity", "check", "--modules", INTEGRITY, *common,
                      "--episodes", episodes)

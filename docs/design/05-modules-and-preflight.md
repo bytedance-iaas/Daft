@@ -4,8 +4,8 @@
 
 > **注册表 2.0（2026-10-01，设计 17，D56–D58，F12.1 已落地）**：模块不再按漏斗的「门」描述，改成三件事——
 > **在哪跑**：`block`（`cpu` / `vlm`）与块内的段 `stage`（CPU 块 `integrity → numeric → frame → dedup`，VLM 块
-> `autolabel → vlm`；D70 起每段都是逐条的，没有全量步骤），两块并行、互不过滤，`depends_on` 只剩数据依赖
-> `autolabel`；**能报什么**：`codes`，每个细码对应分类表（C6，`docs/contracts/taxonomy.json` 1.1）的一项，带缺省严重度、
+> `vlm`；D70 起每段都是逐条的，没有全量步骤；D72 起没有补描述段），两块并行、互不过滤，`depends_on` 只留数据依赖的位置
+> （3.2 起为空）；**能报什么**：`codes`，每个细码对应分类表（C6，`docs/contracts/taxonomy.json` 1.1）的一项，带缺省严重度、
 > 默认策略下的级别（blocking / review / info，P18）、review 级的裁决线、blocking 级可否复议；**覆盖什么**：`covers`
 > （细码的项，加只给读数的项 `also_covers`）。去掉了 `gate`、`input_scope`、`affects_dataset_verdict`、`produces_adjudication`、
 > `review_lines`、模块级 `appealable`——后三项由细码推出（代码里仍是 `ModuleSpec` 的属性）。导出的 JSON 另带
@@ -43,7 +43,7 @@ class ModuleSpec:
 | `motion_quality` | 运动质量 | episode | soft | `action`,`state` | numeric | — | 否 |
 | `visual_quality` | 视觉质量 | episode | soft | `video` | frame | 硬门① | 否 |
 | `video_action_sync` | 视频-动作同步 | episode | hard | `video`,`action` | frame | 硬门① | 否 |
-| `task_success` | 任务成败判定 | episode | hard | `video`,`vlm` | vlm | 硬门②，autolabel | **是** |
+| `task_success` | 任务成败判定 | episode | hard | `video`,`vlm` | vlm | 硬门②；无标注条目不判（D72） | **是** |
 | `camera_defects` | 镜头画面缺陷 | episode | none | `video`,`vlm` | vlm | 随 `task_success` | 否（建议项） |
 | `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 可复议（D42） |
 
@@ -60,7 +60,7 @@ class ModuleSpec:
   由此有两个集合要分清：检查通过集合（keep）和去重后的交付集合，报告里的交付统计吃的是后者。
 - `timestamp_check` 里包含「残段」规则（时长低于 `min_duration_s`），不是单独的模块。
   `task_success` 的取证仲裁子链 D71 起不再触发（代码留给 v1 的 `rejudge`），判废护栏仍在，同样不是单独的模块。
-- **`autolabel`（无标注补 caption）不是一个模块**，是 `task_success` 的前置步骤：没勾它就不跑；它没有自己的报告小节，产出体现在「数据包完整性」和任务文本的来源标注里。
+- **没有任务标注的条目不补描述**（D72）：`task_success` 对它写一条「没判」记录（`no_task_text`，只报告），其余检查照常；预检只在 notes 里说有多少条会这样。
   它对某条 episode 失败（调用重试用尽、或解码失败）时，这一条按执行出错处理：不再往后走，待补跑（D24、D33）。
   v1 在这种情况下给空串、让成败判定拿空任务文本照跑，v2 不这么做。
 - **`camera_defects` 是 `task_success` 的随附模块**（`rides_on="task_success"`，registry 1.14）：它的答案来自

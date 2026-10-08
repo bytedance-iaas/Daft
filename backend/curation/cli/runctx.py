@@ -1,6 +1,6 @@
 """What the pipeline commands share: the run directory, the source, the VLM, the gates.
 
-``autolabel``, ``check``, ``aggregate``, ``export``, ``report`` and
+``check``, ``aggregate``, ``report`` and
 ``adjudicate-apply`` all work on a local run directory (design doc 00 §4.2);
 the ones that read source data take ``--input`` (read with the input key set)
 and ``--source-manifest`` (every object they read is checked against it,

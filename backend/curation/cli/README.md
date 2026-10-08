@@ -8,7 +8,6 @@
 | `curation preflight` | 只读 metadata，判格式、数 episode、给出每个模块「可跑 / 需补充 / 不支持」及原因（F2.7） | `cli/preflight.schema.json` |
 | `curation plan` | 执行计划：分档、每档并发度与八把闸门、VLM 请求合并提议（纯计算，W6 的库） | `cli/plan.schema.json` |
 | `curation snapshot` | 固化任务要读的源对象清单（键、大小、ETag 或修改时间），写 `source_manifest.json` | `cli/source-manifest.schema.json` |
-| `curation autolabel` | 给没有任务标注的 episode 补一句描述（`autolabel/captions.jsonl`） | `cli/autolabel.schema.json` |
 | `curation check` | 跑**一档**的模块（数值档、帧档、VLM 档，或 `dedup`），每条 episode 一行结果 | `cli/check.schema.json` |
 | `curation aggregate` | `funnel`：每条 keep / drop / held 与 `keep.txt`；`final`：passed / reject / held 三个清单和 review 视图 | `cli/aggregate.schema.json` |
 | `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
@@ -32,7 +31,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `lerobot_meta.py` | 不读样本数据的 LeRobot 元数据读取：格式识别、episode 表、每条的文件键 |
 | `containers.py` / `preflight_containers.py` | mcap 与 Lance（D44）：识别、按 v1 的规则给 mcap 文件编号、按范围读 mcap 的摘要区、读 Lance 的 `meta/`、TOS 数据的本地副本（`SourceCache`）、`source_info.json`；这两种格式的预检 |
 | `runctx.py` | 流水线命令共用的部分：运行目录、`--input` / `--source-manifest`、VLM 参数与三个行为开关、闸门、配置、`VlmSession`（探活、传输策略、用量记账） |
-| `preflight.py` / `plan.py` / `snapshot.py` / `autolabel.py` / `check.py` / `aggregate.py` / `adjudicate.py` / `report_cmd.py` / `verify.py` / `task_client.py` | 各条命令 |
+| `preflight.py` / `plan.py` / `snapshot.py` / `check.py` / `aggregate.py` / `adjudicate.py` / `report_cmd.py` / `verify.py` / `task_client.py` | 各条命令 |
 | `source_manifest.py` | `source_manifest.json` 的生成与校验（`--source-manifest`，对不上退出码 6） |
 | `episodes.py` / `inputs.py` | `--episodes` 语法（含 `@文件`）、`--input` / `--source` |
 
@@ -47,7 +46,6 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `vlm_policy.py` | 传输策略：对冲开关、外层重试、文本调用一次一发、用量记账（W6 的两本账） |
 | `tasktext.py` | 任务描述的来源：原始标注 / 自产 caption / 人工改标（改标的重判口径） |
 | `skipped.py` | 缺源文件、照 v1 跳过的条（D40）：快照里的 `skipped_episodes` 与读到才发现的 `skipped_episodes.json` |
-| `dataset_stages.py` | `autolabel` |
 | `aggregate.py` / `adjudication.py` / `reporting.py` | 聚合判决、人工裁决、报告 |
 | `funnel.py` / `run.py` | v1 的编排（B 类），只把闭包里的构建函数提到模块级；`curation run` 仍走它们 |
 | `rejudge.py` | v1 的 rejudge（B 类）；改标重判的函数体提成 `rerun_task_success`，`check` 按 v1 口径重判时调的就是它（D39） |
@@ -91,7 +89,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比对）自带 4 次尝试、闸门不低于 2；v2 命令下它也是一次一发、闸门按给定大小，`--retry 3` 就是 v1 的行为。Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`（与 v1 一致）；直接用命令行的人默认拿到的是「一次直来直去」的执行。
 
 **VLM**：`--vlm-backend <名>`（站点配置 `vlm_backends` 里的预设）或 `--vlm-endpoint <URL> --vlm-model <名>`（缺省取 `$CURATION_VLM_ENDPOINT` / `$CURATION_VLM_MODEL`）；密钥只放在环境变量里，`--vlm-api-key-env <变量名>` 指明是哪个变量（缺省 `ARK_API_KEY`）。每条调模型的命令先 `GET /models` 探活一次，不通就退出码 4，不会逐条报错。
-`check` 与 `autolabel` 可加 `--vlm-reasoning-effort <档位>`：给了才在每个模型请求里带 `reasoning_effort`，值原样转交、命令行不校验；不给时请求与 v1 逐字节相同（v1 从不发这个字段）。
+`check` 可加 `--vlm-reasoning-effort <档位>`：给了才在每个模型请求里带 `reasoning_effort`，值原样转交、命令行不校验；不给时请求与 v1 逐字节相同（v1 从不发这个字段）。
 
 **凭证只走环境变量**，没有任何参数接收密钥（argv 在 `ps` 里全局可见）：
 
@@ -112,7 +110,6 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 ```
 <run-dir>/
   preflight.json  plan.json  source_manifest.json
-  autolabel/captions.jsonl                     每条无标注 episode 一行（ok / unclear / error）
   checks/<module>/parts/0001.jsonl …           每次 check 调用写一个新分片，逐条追加、逐行 fsync；高编号的分片优先
   checks/<module>/results.jsonl                压实后的当前结果（每条一行，按下标排序）
   checks/<module>/inflight.json                正在处理的 episode（进程被杀后留下，--resume 读它）
@@ -139,7 +136,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 认得 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起的三表布局，D44）。其余（`.rrd`、别的 Lance 表、其他 LeRobot 版本、认不出的目录）所有模块都是 `unsupported`，原因写明检测到的格式（`format_unsupported`）。
 - `info.json` 结构校验沿用 v1 的 `validate_info`，报错原文放进 `validation`（中文，照抄给用户）。
 - 运动学极限：型号读到且在规格库里是 `available`；读到但不在规格库里是 `unsupported`，只跳过这一项，其余模块照常；读不到（缺失、空串或 `unknown`）是 `needs_input`，`input_hint.options` 列出规格库的 9 个型号。`--embodiment-id` 覆盖 `robot_type`，与 v1 相同。
-- 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示会先补描述。
+- 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示这些条不判成败（D72）。
 - `--modules` 只报告所选模块，没选的模块不追问。原因文案用英文，`validation` 里 v1 的报错保持中文原文。
 - 列目录时发现缺文件的条写进 `warnings`：LeRobot v2 缺数据 parquet 或某个机位视频的条照 v1 跳过（见 snapshot）；v3 的不跳过，检查时读不了、记为出错。
 - 编号不是 0 … count-1 时（从大数据集里取出、没有重新编号的子集；mcap 按文件名 `episode_<N>.mcap` 编号），`dataset.episode_indices` 写出全部编号，写法同 `--episodes`（如 `1,3,5`、`2604-2626`），`warnings` 里另有一句提示；编号正常的数据集没有这个字段（F12.8）。
@@ -152,7 +149,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 **plan**：`curation plan --preflight pf.json --modules a,b,… [--episodes 表达式] [--unlabeled 表达式] [--vlm-parallelism N] [--backend-parallelism N] [--task-vlm-parallelism N] [--task-cpu-concurrency N] [--cpu-cores N] [--running-tasks N] [--site-config 文件] [--out plan.json] --json`
 
 - 不读数据、不联网。并行度取各层上限里最小的那个（D31），`limits.*.bound_by` 写明卡在哪一层；`--running-tasks` 大于 1 时均分。
-- 各档的闸门由并行度推导；`check` / `autolabel` 用 `--plan-stage plan.json` 取自己那一档（整份计划按模块或档名挑，单独一档的 JSON 也行）。
+- 各档的闸门由并行度推导；`check` 用 `--plan-stage plan.json` 取自己那一档（整份计划按模块或档名挑，单独一档的 JSON 也行）。
 - `--episodes` 不给就是数据集的全部条目；给了就要都在数据集里——按预检的 `episode_indices`，没有它时是 0 … count-1。不在的是用法错误（退出码 2），提示写明数据集有哪些编号（F12.8）。
 
 **snapshot**：`curation snapshot --input … [--episodes 表达式] --out <运行目录>/source_manifest.json --json`
@@ -163,10 +160,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - mcap / Lance 记的对象不同（全部 mcap 文件；Lance 的 `meta/` 与三张表），见下文。
 - LeRobot v2 的某条缺数据 parquet 或任一机位的视频（v1 的 `_v2_missing`）时，这条照 v1 跳过（D40）：记进 `skipped_episodes`（写明缺了哪些文件），带 `--source-manifest` 的命令都不读它；它不进任何清单、不计入总数，报告的完整性一块列出。v3 数据集不跳（v1 会去读），缺文件的条在检查时读不了，记为出错。
 
-**autolabel**：`curation autolabel --input … --run-dir … --episodes 表达式 [--source-manifest …] [--resume] [--plan-stage …] [VLM 参数] [行为开关] --json`
-
-- 只处理所选里没有任务标注的条；每条一行写进 `autolabel/captions.jsonl`：`ok`（有描述）、`unclear`（模型看不清，正常结果）、`error`（调用失败或解码失败，带 `incidents`）。
-- `--resume` 跳过已经 `ok` / `unclear` 的条。出错的条在下游是执行错误：它的 task_success 记为 `error`（事故步骤 `autolabel`），聚合时 held，重跑 autolabel 后再判。
+**没有任务标注的条目**（D72）：不补描述、不判成败。`check --modules task_success` 给它写一条 `status: ok` 的记录，`details.skipped = "no_task_text"`，
+发现只有 LABEL-3 的 `task_text_missing`（仅报告），TASK-5 / LABEL-5 记为无法评估（`no_task_text`）；不发模型请求、不转人工、不 held，`--resume` 不重做。
+这条的去留由其余模块决定，通过时清单里 `task_text` 为 null。
 
 **check**：`curation check --modules <一档的模块> --input … --run-dir … --episodes 表达式 [--source-manifest …] [--part NNNN] [--resume] [--plan-stage …] [--survivors-out 文件] [--incremental] [--max-episodes N] [VLM 参数] [行为开关] --json`
 
@@ -279,7 +275,7 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 | 交付 | 不再写交付数据集（D69）：平台只交付质检报告与结果清单，两种格式都一样 | 同左 |
 | EEF–视频一致性 | 可用（F5.13）：trajectory.json 的相机写 `media.uri=episode_<N>.mcap` 与 `media.topic`（图像 topic），模块把该 topic 的 JPEG / H.264 帧转成本地视频读，TOS 上按区间流式读（`streams.objects`） | 不支持：`unsupported`，原因码 `format_unsupported_by_module` |
 
-- **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
+- **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
 - **TOS 上的数据先拉到本地再读**：v1 的两个读取器只认本地目录。`tos://` 上的数据由 `SourceCache` 在本地留一份副本：mcap 先给每个文件放一个空占位（v1 按目录里的文件名编号，占位不会被读），读到哪条才下载哪条；Lance 第一次读时整表下载（读取器要整表）。设了 `CURATION_SOURCE_CACHE` 就放在它下面（`<目录>/<格式>-<地址哈希>/<数据集名>/`，同一任务后面的命令复用，Daemon 在运行结束时删掉），没设就放在这条命令自己的临时目录里、命令结束就删。每个副本按列举时的大小和 ETag 核对，对不上以退出码 6 结束（`source_changed`）；带 `--source-manifest` 时照常先核对快照。只读源桶，从不往源桶写；凭证只从 `CURATION_INPUT_TOS_*` 环境变量读。
 - **临时视频**：读取器转出来的视频（mcap 里 JPEG / H.264 消息转成的 mp4、Lance 里取出的视频）写在 `$TMPDIR`，命令结束时清掉。Daemon 把 `TMPDIR` 指到任务的缓存目录下，不占容器的 `/tmp`。
 - **`source_info.json`**：第一条读源数据的命令在运行目录里写下 v1 报告要用的信息（读取器的 `mcap_dataset_info` / `lance_dataset_info`：型号从哪来、时间轴从哪来、有没有任务文本；用到的机器人规格），`report` 据此写出 v1 的数据包体检（`report.json` 的 `integrity.container`、`report.md` 的「数据包」一节）。
@@ -293,7 +289,7 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 ```
 preflight → plan → snapshot
 CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（逐条交接，和前面的段交叠，D70）
-VLM 块：autolabel（只补无标注条目）→ check task_success（及 EEF）
+VLM 块：check task_success（及 EEF；没有任务标注的条目不判，D72）
 两块都结束 → aggregate --phase final --revision N → report --revision N → （同步运行目录到交付目录）→ verify
 ```
 
@@ -312,7 +308,7 @@ adjudicate-apply → check task_success --episodes <rerun_task_success>（写新
 
 重试（子任务）只补跑出错或缺记录的（模块 × 条目）：每一段只带要补的模块与条目（`check --modules <要补的> --resume`），dedup 和别的段一样只补出错或缺记录的条目，然后 `final`。
 
-mcap / Lance 数据集的顺序相同，`autolabel`、`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。
+mcap / Lance 数据集的顺序相同，`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。
 
 ## 手动验证步骤
 
@@ -357,7 +353,6 @@ with FakeVlmServer(port=8766) as s:
 
    ```bash
    S="--input $D/mini --run-dir $R --source-manifest $R/source_manifest.json"
-   $C autolabel $S --episodes 0-7
    $C check --modules timestamp_check,kinematic_limits,motion_quality $S --episodes 0-7 --survivors-out "$R/stages/numeric.txt"
    $C check --modules visual_quality,video_action_sync $S --episodes "@$R/stages/numeric.txt" --survivors-out "$R/stages/frame.txt"
    $C check --modules task_success $S --episodes "@$R/stages/frame.txt"
@@ -367,7 +362,7 @@ with FakeVlmServer(port=8766) as s:
    $C report --run-dir "$R" --revision 1
    ```
 
-   应看到：autolabel 给 2 条（4、6）补了描述；数值档 `timestamp_check (part 0001): 8 episodes - ok 8, error 0; findings: gap 1, fragment 1`（2 时间戳跳变、5 残段，默认策略下 blocking，停在这一档）；task_success 6 条 `ok 6, error 0`，发现 `uncertain 3`（0、3 和 3 的字节级副本 7，进复核）、`failure 3`（1、4、6：一次判决就判失败，D71）与 `task_text_missing 2`（4、6 用的是自产描述，只报告）；dedup 报 `duplicate 1`（7 与 3 重复）；final 为 `passed 2, reject 6, held 0, review 6`（0 和 3 问成败，1、4、6 是可复议的判废，7 是可复议的去重拒绝），日志有 `policy default: 2 kept, 3 rejected, 0 held`；`$R/revisions/r0001/policy.json` 是 `{"preset": "default", ...}`。
+   应看到：数值档 `timestamp_check (part 0001): 8 episodes - ok 8, error 0; findings: gap 1, fragment 1`（2 时间戳跳变、5 残段，默认策略下 blocking，停在这一档）；task_success 6 条 `ok 6, error 0`，发现 `uncertain 3`（0、3 和 3 的字节级副本 7，进复核）、`failure 1`（1：一次判决就判失败，D71）与 `task_text_missing 2`（4、6 没有任务标注，不判成败、只报告，D72）；dedup 报 `duplicate 1`（7 与 3 重复）；final 为 `passed 4, reject 4, held 0, review 4`（0 和 3 问成败，1 是可复议的判废，7 是可复议的去重拒绝；4、6 靠其余检查通过），日志有 `policy default: 4 kept, 1 rejected, 0 held`；`$R/revisions/r0001/policy.json` 是 `{"preset": "default", ...}`。
    假模型的回答只看请求的文字、图片张数和像素尺寸，不看图片字节，所以这些数在 macOS 和 Linux 上一样（`tests/cli/test_fake_model.py`）。
    `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 2」、判决策略、按细码的拒绝原因，每个模块一行「评估 N 条;检出:…」；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
    没给 `--concurrency`，所以整个过程中任何时刻只有一个模型请求在飞（`tests/cli/test_pipeline_chain.py` 在假模型那边量过）。
@@ -461,7 +456,6 @@ with FakeVlmServer(port=8766) as s:
       $C preflight --input "$IN" --vlm-backend ark --json > "$R/preflight.json"
       $C snapshot --input "$IN" --episodes 0-7 --out "$R/source_manifest.json"
       S="--input $IN --run-dir $R --source-manifest $R/source_manifest.json --selection 0-7"
-      $C autolabel $S --episodes 0-7
       $C check --modules timestamp_check,kinematic_limits,motion_quality $S --episodes 0-7 --survivors-out "$R/stages/numeric.txt"
       $C check --modules visual_quality,video_action_sync $S --episodes "@$R/stages/numeric.txt" --survivors-out "$R/stages/frame.txt"
       $C check --modules task_success $S --episodes "@$R/stages/frame.txt"

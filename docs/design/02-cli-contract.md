@@ -46,7 +46,7 @@ episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,
 
 **mcap / Lance 数据集**（D44）另有两处约定：
 
-- 读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
+- 读源数据的命令（`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
   v1 用所选 episode 的前 100 条判定这两种数据集的语义（控制模式、单位等），而 v2 的一条命令只读某一档的幸存者，
   所以 Daemon 把整个任务的所选另外传进来；不传时取 `--episodes`。LeRobot 数据集的语义样本是数据集本身的前 100 条，不看它。
 - v1 的两个读取器只认本地目录，`tos://` 上的数据先拉到本地副本再读：环境变量 `CURATION_SOURCE_CACHE` 指定副本放在哪
@@ -164,24 +164,11 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 带这份清单的命令都不读它们，它们不进任何清单、不计入总数，报告的完整性一节列出来。
 之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
 
-### 3.4 `curation autolabel` — 给没有任务标注的条目补描述
+### 3.4 ~~`curation autolabel`~~ — 已删除（D72）
 
-```bash
-curation autolabel --input tos://... --run-dir <dir> --episodes @unlabeled.txt \
-                   --vlm-backend <name> [--vlm-reasoning-effort <档位>] \
-                   [--concurrency N] [--retry N] [--hedge] --json
-```
-
-v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有任务标注的条目，VLM 无从判断任务成败，
-所以先由模型看画面写一句任务描述。结果写 `<run-dir>/autolabel/captions.jsonl`：
-
-```jsonc
-{"episode_index": 17, "caption": "put the orange box into the bin", "source": "自产caption"}
-```
-
-下游用它的地方：`task_success` 拿它当任务文本（**有原始标注就用标注，没有才用它**）；
-报告的明细表写每条的任务文本和它的来源。
-抽帧与提示词原样搬运 `dataset_level/caption.py`。
+没有任务标注的条目不再由模型补描述：`check --modules task_success` 碰到这样的条目写一条「没判」的记录
+（`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-3 的 `task_text_missing` 仅报告），不发模型请求；
+这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。v1 的 `pipeline/run.py` 仍有漏斗前补 caption 的兜底，那是 v1 的事。
 
 ### 3.5 `curation check` — 跑检查
 
@@ -264,7 +251,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 `--plan-stage <file>` 传入 planner 为这一档生成的 VLM 请求合并分组；不传就逐模块单发。
 
-`--vlm-reasoning-effort <档位>`（`autolabel` 同样接受）：给了才在每个请求里带 `reasoning_effort`，
+`--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，
 不给什么都不发 —— v1 从不发思考参数，对账固定不给。档位是否在模型的有效档位内，由 Daemon 建任务时校验（03 篇）。
 
 **改了标的条目怎么重判**（D39）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用改标时记下的口径判：

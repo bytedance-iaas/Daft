@@ -22,7 +22,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 |---|---|---|
 | 前端控制台 | `frontend/` | 概览、数据集（列表、详情、「可视化」页）、质检任务（新建 / 列表 / 详情）、质检报告、人工裁决、系统和资源配置，报告、裁决与任务详情里的迷你播放器；构建产物由 Daemon 托管 |
 | API Daemon | `backend/daemon/` | REST 与 SSE、SQLite 仓储、鉴权、任务编排（排队、逐档流水线、暂停 / 停止 / 继续、崩溃恢复、子任务、发布到交付目录）、密钥与 VLM 后端管理、结果读取、数据可视化（`viz/`：LeRobot / mcap / Lance 读取器 → 统一展示模型，曲线、帧包与样本包、转封装 / 转码，按区间读 TOS） |
-| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → autolabel → check（逐档）→ aggregate → report → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
+| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → check（逐档）→ aggregate → report → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分档、并发、八把 VLM 闸门、请求合并；`curation plan` 与 Daemon 共用 |
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、报告生成（`export/`，数据集写出器随 D69 删掉）、编排壳、VLM 客户端与视频输入；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
@@ -35,8 +35,8 @@ Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走�
 （`python -m curation.viz.transcode`）。
 
 **两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
-→ `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `autolabel` → `vlm`（eef_video_consistency、task_success，camera_defects 骑在
-task_success 的请求上）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
+→ `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `vlm`（eef_video_consistency、task_success，camera_defects 骑在
+task_success 的请求上；没有任务标注的条目 task_success 不判，D72）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
 本块下一段；`dedup` 是全量步骤，块内前面的段跑完才启动。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 **判决是策略判决**（F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），两块都结束后 `aggregate` 用任务的策略
 （`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info，再判

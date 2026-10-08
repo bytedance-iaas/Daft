@@ -119,7 +119,10 @@ def derive(module: str, passed: bool | None, score: float | None, details: dict 
     if passed is False and fail and not any(levels.get(f["code"]) == "blocking" for f in out.findings):
         why = str(details.get("reason") or details.get("why") or "").strip()
         out.add(module, fail, f"「{spec.name_zh}」判定不通过" + (f"：{why}" if why else ""))
-    if passed is None and defer and not any(levels.get(f["code"]) == "review" for f in out.findings) \
+    # a record that says ``skipped`` holds no judgement to defer to a person (task_success on an
+    # episode without a task text, D72): the deriver already said what it could not assess
+    if passed is None and defer and not details.get("skipped") \
+            and not any(levels.get(f["code"]) == "review" for f in out.findings) \
             and not any(levels.get(f["code"]) == "blocking" for f in out.findings):
         why = str(details.get("reason") or "").strip()
         out.add(module, defer, f"「{spec.name_zh}」需要人工确认" + (f"：{why}" if why else ""))
@@ -427,6 +430,14 @@ def _task_success(passed, score, d, p) -> Derived:
     failure's interval (P19)."""
     out = Derived()
     m = "task_success"
+    if d.get("skipped") == "no_task_text":
+        # D72: the episode has no task text, so there was no judgement to derive from
+        text = "没有任务标注，没有做任务成败判定"
+        out.add(m, "task_text_missing", text, readings={"task_text_source": "无"})
+        for item in ("TASK-5", "LABEL-5"):
+            out.cannot(item, "no_task_text", text)
+        out.cannot("TASK-12", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        return out
     verdict = str(d.get("verdict") or "")
     completion = d.get("video_completion", d.get("completion_final"))
     if completion is not None:
@@ -458,8 +469,9 @@ def _task_success(passed, score, d, p) -> Derived:
         out.cannot("TASK-12", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
     source = str(d.get("task_desc_source") or "")
     if source in ("自产caption", "无"):
-        out.add(m, "task_text_missing", "没有任务标注，用的是平台自动生成的描述" if source == "自产caption"
-                else "没有任务标注，也没有生成出描述", readings={"task_text_source": source})
+        # "自产caption": a record from before D72, judged with a caption the platform wrote
+        out.add(m, "task_text_missing", "没有任务标注，用的是当时平台生成的描述" if source == "自产caption"
+                else "没有任务标注，也没有描述", readings={"task_text_source": source})
     elif not source:
         out.cannot("LABEL-3", "not_applicable", "记录里没有任务描述的来源")
     return out

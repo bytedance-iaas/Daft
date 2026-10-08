@@ -114,9 +114,8 @@ def comparable(rec: dict) -> dict:
 
 class Chain:
     """The commands of the Daemon's main run on one run directory (plan 2.0, design doc 17 §3): the two blocks
-    one after the other - autolabel, the CPU checks, the VLM checks, then the full-set steps dedup and
-    every stage on the whole selection, then the final verdicts. The Daemon runs the blocks
-    side by side; the records do not depend on it."""
+    one after the other - the CPU checks, the VLM check, dedup - every stage on the whole selection,
+    then the final verdicts. The Daemon runs the blocks side by side; the records do not depend on it."""
 
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
     FRAME = "visual_quality,video_action_sync"
@@ -157,9 +156,8 @@ class Chain:
                 "--source-manifest", self.path("source_manifest.json"), *self.extra_source]
 
     def before_vlm(self, episodes: str = "0-7") -> None:
-        """autolabel, check numeric, check frame: every stage on the whole selection."""
+        """check numeric, check frame: every stage on the whole selection."""
         os.makedirs(self.path("stages"), exist_ok=True)
-        self.step("autolabel", "autolabel", *self.common(), "--episodes", episodes, *self.vlm)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
                   "--episodes", episodes, "--survivors-out", self.path("stages", "numeric.txt"))
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),

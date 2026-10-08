@@ -46,8 +46,8 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
   见 [`docs/contracts/cli/result-record.schema.json`](../../docs/contracts/cli/result-record.schema.json)。
   `verdict` 取 `pass` / `fail` / `abstain` / `scored`（打分项，不投票）/ `error`（D33：降级得来的结论也算出错）。
 - **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 两块的顺序依次调 v2 的原子命令（设计 17 §3：CPU 块的检查与去重、
-  VLM 块的补描述与模型判定，每一段都拿全部所选条目），写出一个普通的 v2 运行目录，`compare` 直接读它（`checks/*/results.jsonl`、
-  `revisions/r0001/` 的清单、`autolabel/`、`checks/dedup/groups.json`）。
+  VLM 块的模型判定，每一段都拿全部所选条目；D72 起没有补描述这一步，无标注条目不判成败），写出一个普通的 v2 运行目录，`compare` 直接读它
+  （`checks/*/results.jsonl`、`revisions/r0001/` 的清单、`checks/dedup/groups.json`）。
   `--replay` 用 v1 的录制带回答；`--fake-vlm` 用内置假模型现答并录一盘新带。调模型的命令都带 `--hedge`
   （v1 总是对冲，挂钩替换的正是对冲函数）和 `--concurrency 64`（N=64 时八把闸门与 v1 出厂值逐项相等）。
   `/models` 探活不算模型调用：v2 每条命令探一次、v1 一次运行探两次，回放时这类请求可重复取用，不计入命中和剩余。
@@ -273,7 +273,7 @@ $python -m parity compare --golden $W/v2-adj-golden --candidate $W/v2-adj --all-
 | `dump.json` | 状态（clean / dirty / refused）与问题清单、v1 源码核对结果、命令行、生效配置及其哈希、各库版本、耗时、录制统计 |
 | `records/<module>.jsonl` | 六项漏斗检查的规范化记录，按 episode 下标排序 |
 | `verdicts.jsonl` | 漏斗判决：keep / drop、原因、硬门失败项、软分、弃权项 |
-| `autolabel.jsonl` | 无标注条目补打的任务描述 |
+| `autolabel.jsonl` | 无标注条目补打的任务描述（v1 的转储才有；v2 自 D72 起不补描述，这一项两边都没有时跳过） |
 | `dedup.json` | 去重遍历顺序、动作哈希撞车组、内容指纹、剔除的重复对 |
 | `skill_profile.json` | v1 的归族与标注分歧复核队列（`dump-v1` 仍写，v2 不产出、不比对，D68）|
 | `final.json` | 终判清单（v2 口径：passed = 漏斗 keep − 重复项）以及 v1 三个文件各自的名单 |

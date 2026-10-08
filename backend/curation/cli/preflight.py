@@ -15,8 +15,8 @@ Rules (F2.7, doc 05 §2-§4, D6, D34):
   needs_input with the registry's models as options. ``--embodiment-id``
   overrides the robot type, as v1's ``--embodiment-id`` did.
 * VLM modules: no backend chosen -> needs_input (field ``vlm``); episodes
-  without a task text never grey them out - autolabel captions them first,
-  which a note says.
+  without a task text never grey them out - task_success leaves those episodes
+  unjudged (D72), which a note says.
 * ``--modules`` narrows the report to the selected modules: nothing is asked
   about a module that is not selected.
 * EEF-video consistency (registry 1.4, design doc 12): ``--param
