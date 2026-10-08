@@ -60,7 +60,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.0"
+REGISTRY_VERSION = "4.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -573,16 +573,20 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="camera_defects", name_zh="镜头画面缺陷",
-        summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+        summary_zh="借任务成败判定的请求，由模型顺带按机位报告花屏、抖动、镜头污染、视觉遮挡，"
+                   "并对照每路相机的画面与命名；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=(),
-        # minor -> low, severe -> medium
+        # minor -> low, severe -> medium; identity: the picture contradicts the camera's name
         codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
                _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),
-               _info("contamination", "IMG-7", "镜头污染或遮挡", scope_kind="camera")),
+               _info("contamination", "IMG-7", "镜头污染或遮挡", scope_kind="camera"),
+               _info("occlusion", "IMG-8", "视觉遮挡", scope_kind="camera"),
+               _info("identity", "MV-2", "机位身份与命名不符", severity="medium", scope_kind="camera")),
         param_schema=_no_params(),
         tables=(TableSpec("camera_defects", "逐机位画面缺陷",
-                          ("episode_index", "camera", "glitch", "shake", "contamination")),),
+                          ("episode_index", "camera", "glitch", "shake", "contamination", "occlusion",
+                           "view_matches_name")),),
         rides_on="task_success"),
     ModuleSpec(
         id="dedup", name_zh="精确去重",

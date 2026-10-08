@@ -485,17 +485,28 @@ export function GenericBlock({ record }: BlockProps) {
   );
 }
 
-// camera_defects (registry 1.14): the model's own reading of this episode's picture, per camera.
-// One line for the three items, then only the cameras that reported something, so a clean episode
-// is one line and a dirty one says which camera, how bad, and when.
-const CD_ITEMS = ['glitch', 'shake', 'contamination'] as const;
+// camera_defects (registry 1.14; 4.1 adds occlusion and the camera's identity): the model's own
+// reading of this episode's picture, per camera. One line for the four items, then only the cameras
+// that reported something, so a clean episode is one line and a dirty one says which camera, how
+// bad, and when; a camera whose picture contradicts its name gets its own line.
+const CD_ITEMS = ['glitch', 'shake', 'contamination', 'occlusion'] as const;
 
 interface CdItem {
   level?: string;
   times?: [number, number][];
   whole?: boolean;                       // the model said it lasts the whole clip
   note?: string;
+  kind?: string;                         // contamination: what is on the lens
+  source?: string;                       // occlusion: what hides the scene
+  share?: number | null;                 // occlusion: the share of the clip it covers
+}
+
+interface CdView {
   kind?: string;
+  arm?: string;
+  matches_name?: string;
+  same_as?: string;
+  note?: string;
 }
 
 interface CdCamera {
@@ -504,6 +515,8 @@ interface CdCamera {
   glitch?: CdItem;
   shake?: CdItem;
   contamination?: CdItem;
+  occlusion?: CdItem;
+  view?: CdView;
 }
 
 function cdSpans(item: CdItem | undefined): string {
@@ -515,22 +528,35 @@ function cdSpans(item: CdItem | undefined): string {
 function cdPhrase(name: string, item: CdItem | undefined): string {
   const K = E().cameraDefects;
   const level = K.level[str(item?.level) ?? ''] ?? K.level.unknown;
-  const kind = item?.kind && item.kind !== 'none' ? `（${K.kind[item.kind] ?? item.kind}）` : '';
+  const what = item?.kind && item.kind !== 'none' ? item.kind : item?.source && item.source !== 'none' ? item.source : '';
+  const kind = what ? `（${K.kind[what] ?? what}）` : '';
   const spans = cdSpans(item);
+  const share = typeof item?.share === 'number' && item.share > 0 && !item.whole ? K.share(Math.round(item.share * 100)) : '';
   // the full-width bracket already separates, so a space goes in only without a kind
-  return `${name} ${level}${kind}${spans ? `${kind ? '' : ' '}${spans}` : ''}`;
+  return `${name} ${level}${kind}${spans ? `${kind ? '' : ' '}${spans}` : ''}${share ? ` ${share}` : ''}`;
+}
+
+function cdIdentityLine(view: CdView | undefined): string {
+  const K = E().cameraDefects;
+  if (!view) return '';
+  if (view.same_as) return K.sameAs(view.same_as);
+  if (view.matches_name !== 'no') return '';
+  const what = [K.viewKind[str(view.kind) ?? ''] ?? '', K.viewArm[str(view.arm) ?? ''] ?? ''].filter(Boolean).join('、');
+  return K.mismatch(what) + (view.note ? `：${view.note}` : '');
 }
 
 function CameraDefectsBlock({ record }: BlockProps) {
   const d = details(record);
   const K = E().cameraDefects;
   const status = (d.items ?? {}) as Record<string, string>;
+  const identity = str(d.identity) ?? 'unknown';
   const perCamera = (d.per_camera ?? {}) as Record<string, CdCamera>;
   const cams = Object.keys(perCamera);
   const reported = cams.filter((cam) => CD_ITEMS.some((i) => {
     const level = str(perCamera[cam][i]?.level);
     return level === 'minor' || level === 'severe';
   }));
+  const misnamed = cams.filter((cam) => cdIdentityLine(perCamera[cam].view));
   const unanswered = cams.filter((cam) => !perCamera[cam].answered);
   const worst = CD_ITEMS.map((i) => cdPhrase(K.items[i], { level: status[i] })).join(' · ');
   return (
@@ -545,6 +571,18 @@ function CameraDefectsBlock({ record }: BlockProps) {
             .join(' · ')}
         </div>
       ))}
+      {identity === 'inconsistent' ? (
+        <div className="episode-line warn">
+          {K.identity.inconsistent}
+          {misnamed.map((cam) => (
+            <div key={cam}>
+              <b>{cam}</b>
+              {'：'}
+              {cdIdentityLine(perCamera[cam].view)}
+            </div>
+          ))}
+        </div>
+      ) : identity === 'consistent' ? <div className="muted">{K.identity.consistent}</div> : null}
       {!reported.length && !unanswered.length ? <div className="muted">{K.clean}</div> : null}
       {unanswered.length ? <div className="episode-line muted">{K.unanswered(unanswered.length)}{str(d.reason) ? `：${str(d.reason)}` : ''}</div> : null}
       {reported.length && cams.length > reported.length + unanswered.length ? (

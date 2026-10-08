@@ -7,7 +7,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 4.0（D68–D73 与分类表 2.0 合流，2026-10-08）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；检测项编号按分类表 2.0；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 4.1（2026-10-08；4.0 是 D68–D73 与分类表 2.0 合流）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷（4.1 起多视觉遮挡与机位身份）；检测项编号按分类表 2.0；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -398,4 +398,17 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 两条线各自把注册表记作 3.x、C4 记作 2.x 与 3.x–4.x。合流后：**C1 4.0**（上面 3.0–3.2 的全部删减 + 分类表 2.0 的编号：任务成败判定的项是
 TASK-4 / TASK-10 / LABEL-2 / LABEL-4，`motion_quality` 不再覆盖已删的 SET-3）、**C4 4.2.0**（2.6.0–2.8.0 的新增与 3.0.0–4.1.0 的删减都在，
 changelog 两边的条目按版本号排在一起）。这之前跑的任务，记录里是各自当时的编号，读方按当时的注册表显示。
+
+## 二十一、画面缺陷多两项：视觉遮挡与机位身份（2026-10-08）
+
+需求方的 16 项清单里视觉遮挡（IMG-8）与左右手 / 机位身份一致（MV-2）此前没有模块覆盖；两项都只看画面就能判，
+所以并进任务成败判定那一次请求里每路相机的 `camera_check`，不增加模型调用。
+
+- **C1 4.1**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，severity medium，按机位），
+  明细表加 `occlusion`、`view_matches_name` 两列；`covers` 相应多 IMG-8、MV-2。其他模块不变。
+- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/3`，`items` 多 `occlusion`，
+  新增 `identity`（`consistent` / `inconsistent` / `unknown`），`per_camera` 每路多 `occlusion`（`level`、`times`、`source`、`share`）
+  与 `view`（`kind`、`arm`、`matches_name`、`same_as`、`note`）；旧协议的记录视为过期，重试会重判，读出来 IMG-8 / MV-2 记 unassessable。
+  `task_success` 记录里 `cameras[*].camera_check` 同样多这两块。
+- **C4 不变**；报告小节 `summary` 多 `occlusion` 计数与 `identity` 计数（都是开放字段）。
 

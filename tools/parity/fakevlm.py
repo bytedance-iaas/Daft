@@ -130,7 +130,7 @@ class FakeVlm:
             block = {}
             for i, name in enumerate(cams):
                 k = int(round(ends[i] * 10)) + sum(map(ord, name))
-                block[name] = {"camera_check": _fake_camera_check(k, starts[i], ends[i])}
+                block[name] = {"camera_check": _fake_camera_check(k, starts[i], ends[i], name)}
             return json.dumps({"cameras": block})
         if "Assess the robot manipulation task from the supplied continuous videos" in text:
             camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
@@ -163,26 +163,17 @@ class FakeVlm:
                     block[name] = {
                         "verdict": ("uncertain" if k % 5 == 0 else verdict),
                         "reason": "synthetic per-camera observation",
-                        "camera_check": _fake_camera_check(k, c_start, c_end),
+                        "camera_check": _fake_camera_check(k, c_start, c_end, name),
                     }
                 out["cameras"] = block
             elif 'extra field "camera_check"' in text:
-                # the camera_defects report: a pure function of the camera name and the
-                # window, so every level, an omitted item and an omitted report all occur
-                # over the fixture without touching the verdict above
+                # the camera_defects report (the two-pass shape v1's rejudge still asks for): a
+                # pure function of the camera name and the window, so every level, an omitted
+                # item and an omitted report all occur over the fixture without touching the
+                # verdict above
                 k = int(round(end * 10)) + sum(map(ord, camera))
                 if k % 11:
-                    levels = ("none", "minor", "severe")
-                    kinds = ("dirt", "smudge", "water", "obstruction", "other")
-                    def item(level):
-                        return {"level": level, "note": f"synthetic {level}",
-                                "times": [] if level == "none" else [[start, min(end, start + 0.5)]]}
-                    check = {"glitch": item(levels[k % 3]),
-                             "contamination": dict(item(levels[(k // 9) % 3]),
-                                                   kind="none" if levels[(k // 9) % 3] == "none" else kinds[k % 5])}
-                    if k % 7:
-                        check["shake"] = item(levels[(k // 3) % 3])
-                    out["camera_check"] = check
+                    out["camera_check"] = _fake_camera_check(k, start, end, camera)
             return json.dumps(out)
         if "Build a TWO-LEVEL skill taxonomy" in text:
             caps = _bullets_after(text, "CAPTIONS:")
@@ -278,11 +269,13 @@ class FakeVlm:
         return {"post": self.post, "get": self.get}
 
 
-def _fake_camera_check(k: int, start: float, end: float) -> dict:
-    """The three picture-defect items, a pure function of ``k`` - every level, an omitted item
-    and an omitted report all occur over the fixture without touching any verdict."""
+def _fake_camera_check(k: int, start: float, end: float, camera: str = "") -> dict:
+    """The four picture-defect items and the camera's view, a pure function of ``k`` - every
+    level, an omitted item, an omitted report and a camera that contradicts its name all occur
+    over the fixture without touching any verdict."""
     levels = ("none", "minor", "severe")
     kinds = ("dirt", "smudge", "water", "obstruction", "other")
+    sources = ("arm", "body", "person", "object", "cable", "other")
 
     def item(level):
         return {"level": level, "note": f"synthetic {level}",
@@ -292,7 +285,13 @@ def _fake_camera_check(k: int, start: float, end: float) -> dict:
         return {}
     check = {"glitch": item(levels[k % 3]),
              "contamination": dict(item(levels[(k // 9) % 3]),
-                                   kind="none" if levels[(k // 9) % 3] == "none" else kinds[k % 5])}
+                                   kind="none" if levels[(k // 9) % 3] == "none" else kinds[k % 5]),
+             "occlusion": dict(item(levels[(k // 27) % 3]),
+                               source="none" if levels[(k // 27) % 3] == "none" else sources[k % 6])}
     if k % 7:
         check["shake"] = item(levels[(k // 3) % 3])
+    wrist = "wrist" in camera.lower() or "hand" in camera.lower()
+    check["view"] = {"kind": "wrist" if wrist else "fixed", "arm": "single",
+                     "matches_name": "no" if k % 13 == 0 else "yes", "same_as": "",
+                     "note": "synthetic view"}
     return check

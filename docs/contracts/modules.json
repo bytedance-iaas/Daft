@@ -1,5 +1,5 @@
 {
- "registry_version": "4.0",
+ "registry_version": "4.1",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -2011,7 +2011,7 @@
   {
    "id": "camera_defects",
    "name_zh": "镜头画面缺陷",
-   "summary_zh": "借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+   "summary_zh": "借任务成败判定的请求，由模型顺带按机位报告花屏、抖动、镜头污染、视觉遮挡，并对照每路相机的画面与命名；只出结果，不影响判决",
    "level": "episode",
    "needs": [
     "video",
@@ -2047,12 +2047,32 @@
      "level": "info",
      "scope_kind": "camera",
      "appealable": false
+    },
+    {
+     "code": "occlusion",
+     "item": "IMG-8",
+     "name_zh": "视觉遮挡",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "identity",
+     "item": "MV-2",
+     "name_zh": "机位身份与命名不符",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
     }
    ],
    "covers": [
     "IMG-5",
     "IMG-6",
-    "IMG-7"
+    "IMG-7",
+    "IMG-8",
+    "MV-2"
    ],
    "param_schema": {
     "type": "object",
@@ -2068,7 +2088,9 @@
       "camera",
       "glitch",
       "shake",
-      "contamination"
+      "contamination",
+      "occlusion",
+      "view_matches_name"
      ],
      "default_sort": "episode_index"
     }

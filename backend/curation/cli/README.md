@@ -178,7 +178,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 一次只跑一档（D18）：`data_integrity`（完整性档，漏斗最前，设计 14）、`timestamp_check,kinematic_limits,motion_quality`（数值档）、`visual_quality,video_action_sync`（帧档，共用一次解码）、`task_success`（VLM 档，随附 `camera_defects`），或 `dedup`（对整个 keep 集合一次跑完）。混档是参数错误。
 - `data_integrity`（D50、D51）：文件结构、整读（mcap CRC、零填充、parquet 数据页）、v1 的逐条结构校验，`--param data_integrity.decode_test=true` 时逐帧解码；坏了判废、可疑的留给人（`integrity_check`），存储读失败算出错。数据集级发现写 `checks/data_integrity/dataset.json`。详见 [模块 README](../extensions/integrity/README.md)。
 - `camera_defects`（registry 1.14）：`task_success` 的随附模块，`--modules task_success` 自动带上它，不必列出也不能单独跑。
-  判定请求的每路相机回答里多一个 `camera_check` 字段（花屏 / 抖动 / 镜头污染），没有额外的模型调用；记录只出
+  判定请求的每路相机回答里多一个 `camera_check` 字段（花屏 / 抖动 / 镜头污染 / 视觉遮挡，以及这路相机的画面与命名是否相符），没有额外的模型调用；记录只出
   `abstain`（`passed=score=null`），不影响判决。详见设计 13「逐机位画面缺陷」。
 - 每条做完立刻追加到 `checks/<module>/parts/<part>.jsonl`（整行写入并 fsync）；`--part` 不给时取比现有最大编号大一的号。结束时重写 `results.jsonl`。
 - `--survivors-out` 写出进入下一档的条（本档硬门没拦下、也没出错的），Daemon 用它当下一档的 `--episodes @文件`，与 v1 的漏斗一致。

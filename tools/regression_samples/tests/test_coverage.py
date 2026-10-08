@@ -23,7 +23,8 @@ def test_the_rules():
     assert items["FILE-4"]["platform_codes"] == ["data_integrity.decode_failed", "data_integrity.decode_concealed"]
     # reported only: the retired soft scores and the camera defects (registry 1.14 rides on task_success)
     for item, code in (("IMG-1", "visual_quality.frozen"), ("IMG-5", "camera_defects.glitch"),
-                       ("IMG-6", "camera_defects.shake"), ("IMG-7", "camera_defects.contamination")):
+                       ("IMG-6", "camera_defects.shake"), ("IMG-7", "camera_defects.contamination"),
+                       ("IMG-8", "camera_defects.occlusion"), ("MV-2", "camera_defects.identity")):
         assert (items[item]["platform_status"], items[item]["platform_codes"]) == ("有读数", [code]), item
     # every module that covers it has a precondition
     assert items["MV-4"]["platform_status"] == "部分"

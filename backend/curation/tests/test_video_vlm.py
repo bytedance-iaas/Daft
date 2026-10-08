@@ -350,7 +350,9 @@ def test_resume_rejudges_old_frame_records_and_keeps_current_video_records(monke
 def _check(**over):
     base = {"glitch": {"level": "none", "times": [], "note": ""},
             "shake": {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"},
-            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"}}
+            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"},
+            "occlusion": {"level": "minor", "source": "arm", "times": [[1.0, 1.5]], "note": "arm in front"},
+            "view": {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}}
     base.update(over)
     return base
 
@@ -365,15 +367,27 @@ def test_camera_check_is_optional_and_normalised():
     assert got["glitch"] == {"level": "none", "times": [], "note": ""}
     assert got["shake"] == {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"}
     assert got["contamination"]["level"] == "severe" and got["contamination"]["kind"] == "smudge"
+    # occlusion: its source and the share of the clip (0.5 s of a 2 s window) it covers
+    assert got["occlusion"]["source"] == "arm" and got["occlusion"]["share"] == 0.25
+    assert got["view"] == {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}
     assert got["problems"] == []
     # malformed pieces degrade to unknown / are dropped, never raise
     bad = parse_camera_check({"glitch": {"level": "awful", "times": [[5, 9], [1, "x"], [0, 1]]},
-                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"}}, [clip()])
+                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"},
+                              "occlusion": {"level": "severe", "source": "ghost"},
+                              "view": {"kind": "drone", "arm": "left", "matches_name": "no", "same_as": 3}}, [clip()])
     assert bad["glitch"]["level"] == "unknown" and bad["glitch"]["times"] == [[0, 1]]
     assert bad["shake"]["level"] == "unknown"
     assert bad["contamination"] == {"level": "minor", "times": [], "note": "", "kind": "other"}
-    assert len(bad["problems"]) == 5          # level, two intervals, missing shake, kind
+    # severe with no stretch named covers the whole clip; an unknown source reads other
+    assert bad["occlusion"] == {"level": "severe", "times": [], "note": "", "source": "other", "share": 1.0}
+    assert bad["view"] == {"kind": "unknown", "arm": "left", "matches_name": "no", "same_as": "", "note": ""}
+    assert len(bad["problems"]) == 8          # level, two intervals, missing shake, kind, source, view kind, same_as
     assert parse_camera_check("nope", [clip()])["problems"] == ["camera_check is not an object"]
+    # the two 4.1 members missing: the items read unknown and the slip is named, nothing raises
+    old = parse_camera_check({k: v for k, v in _check().items() if k in ("glitch", "shake", "contamination")}, [clip()])
+    assert old["occlusion"]["level"] == "unknown" and old["view"]["matches_name"] == "unknown"
+    assert old["problems"] == ["occlusion: missing or not an object", "view: missing or not an object"]
     # the five core fields are still exactly required
     with pytest.raises(ValueError):
         parse_assessment(json.dumps(dict(answer(), extra=1)), [clip()])
@@ -419,8 +433,9 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     review = make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
     assert len(sent) == 1                                # the verdict was never sent back for repair
     assert review["verdict"] == "success" and review["completion"] == 0.9
-    assert {k: v["level"] for k, v in review["camera_check"].items() if isinstance(v, dict)} == \
-        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown"}
+    assert {k: v["level"] for k, v in review["camera_check"].items() if isinstance(v, dict) and "level" in v} == \
+        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown", "occlusion": "unknown"}
+    assert review["camera_check"]["view"]["matches_name"] == "unknown"
     assert "not valid JSON" in review["camera_check"]["problems"][0]
 
     # the field first, so the cut has to close over a member in the middle of the object

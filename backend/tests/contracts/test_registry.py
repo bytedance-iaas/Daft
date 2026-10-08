@@ -248,7 +248,7 @@ def test_camera_defects_rides_on_task_success():
     spec = M.get("camera_defects")
     assert spec.rides_on == "task_success" and (spec.block, spec.stage) == ("vlm", "vlm")
     assert {c.level for c in spec.codes} == {"info"} and not spec.produces_adjudication
-    assert spec.covers == ("IMG-5", "IMG-6", "IMG-7")
+    assert spec.covers == ("IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2")       # 4.1: occlusion, identity
     assert M.riders_of("task_success") == ("camera_defects",) and M.riders_of("dedup") == ()
     assert M.with_riders(["task_success", "dedup"]) == ["task_success", "camera_defects", "dedup"]
     assert M.with_riders(["dedup"]) == ["dedup"]                     # no host, no rider

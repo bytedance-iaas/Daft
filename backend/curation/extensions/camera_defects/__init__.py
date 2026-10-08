@@ -1,13 +1,14 @@
-"""camera_defects: glitch, shake and lens contamination, reported by the model in the
-per-camera review it already makes for task_success (no request of its own).
+"""camera_defects: glitch, shake, lens contamination, occlusion and the camera's own identity,
+reported by the model in the per-camera answers it already gives for task_success (no request of
+its own).
 
 The one judgement request asks the model for a ``camera_check`` per camera next to its verdict
 (``adapters.video_vlm.CAMERAS_PROMPT``; an episode without a task text gets the same question
 alone, ``CAMERAS_ONLY_PROMPT``, D73); this module reads those answers back out of
 task_success's per-camera answers (``cameras``) and turns them into one advisory record per episode. The
-record never votes: ``passed`` and ``score`` stay None, the three items live in ``details``
-and are always present - ``unknown`` when the model did not answer, when the review failed,
-or when task_success produced nothing at all.
+record never votes: ``passed`` and ``score`` stay None, the four defect items and the identity
+live in ``details`` and are always present - ``unknown`` when the model did not answer, when the
+review failed, or when task_success produced nothing at all.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import json
 from collections import Counter
 
 from ...adapters.video_vlm import (CAMERA_CHECK_ITEMS, CAMERA_CHECK_LEVELS,
-                                   CAMERA_CHECK_PROTOCOL)
+                                   CAMERA_CHECK_PROTOCOL, VIEW_FIELDS, empty_view)
 from ...pipeline.records import legacy_verdict
 
 MODULE_ID = "camera_defects"
@@ -23,8 +24,11 @@ HOST = "task_success"
 UNKNOWN = "unknown"
 _RANK = {level: i for i, level in enumerate(CAMERA_CHECK_LEVELS)}   # none < minor < severe
 
-NAME_ZH = {"glitch": "花屏", "shake": "抖动", "contamination": "镜头污染"}
+NAME_ZH = {"glitch": "花屏", "shake": "抖动", "contamination": "镜头污染", "occlusion": "视觉遮挡"}
 LEVEL_ZH = {"none": "无", "minor": "轻微", "severe": "严重", UNKNOWN: "未知"}
+#: the episode's camera identity (MV-2): every answered camera matches its name, or one does not
+IDENTITY = ("consistent", "inconsistent", UNKNOWN)
+IDENTITY_ZH = {"consistent": "一致", "inconsistent": "不符", UNKNOWN: "未知"}
 
 
 def struct_from_task(task_struct: dict | None) -> dict:
@@ -53,8 +57,14 @@ def struct_from_task(task_struct: dict | None) -> dict:
             entry[item] = {"level": level if level in _RANK or level == UNKNOWN else UNKNOWN,
                            "times": [list(t) for t in (got.get("times") or []) if isinstance(t, (list, tuple))],
                            "note": str(got.get("note") or "")}
+            if got.get("whole"):
+                entry[item]["whole"] = True
             if item == "contamination":
                 entry[item]["kind"] = str(got.get("kind") or "none")
+            if item == "occlusion":
+                entry[item]["source"] = str(got.get("source") or "none")
+                entry[item]["share"] = got.get("share") if isinstance(got.get("share"), (int, float)) else None
+        entry["view"] = _view_of(check, cam, cams)
         per_camera[cam] = entry
 
     # One status per item: the worst level over the cameras that answered, unknown when none
@@ -80,8 +90,33 @@ def struct_from_task(task_struct: dict | None) -> dict:
         reason = ""
     out = {"protocol": CAMERA_CHECK_PROTOCOL, "source": f"{HOST}.cameras", "cams": cams,
            "known": known, "clean_ratio": (clean / known) if known else None, "reason": reason,
-           "items": items, "per_camera": per_camera}
+           "items": items, "identity": identity_of(per_camera), "per_camera": per_camera}
     return {"passed": None, "score": None, "detail": json.dumps(out, ensure_ascii=False, default=str)}
+
+
+def _view_of(check, cam: str, cams: list[str]) -> dict:
+    """This camera's ``view`` as the model gave it, ``same_as`` settled against the supplied
+    cameras: it must name another one of them (an exact name or a unique dotted suffix), else
+    it reads empty and the slip is kept in the entry's ``problems`` by the caller's record."""
+    raw = check.get("view") if isinstance(check, dict) else None
+    view = {k: str((raw or {}).get(k) or empty_view()[k]) for k in VIEW_FIELDS} if isinstance(raw, dict) else empty_view()
+    same = view.get("same_as") or ""
+    if same:
+        matches = [c for c in cams if c != cam and (c == same or c.endswith("." + same))]
+        view["same_as"] = matches[0] if len(matches) == 1 else ""
+    return view
+
+
+def identity_of(per_camera: dict[str, dict]) -> str:
+    """The episode's camera identity (MV-2) over the cameras that answered: ``inconsistent`` as soon
+    as one camera plainly contradicts its name or duplicates another, ``consistent`` when at least one
+    camera was checked against its name and none objected, ``unknown`` when nothing was said."""
+    views = [e.get("view") or {} for e in per_camera.values() if e.get("answered")]
+    if any(v.get("matches_name") == "no" or v.get("same_as") for v in views):
+        return "inconsistent"
+    if any(v.get("matches_name") == "yes" for v in views):
+        return "consistent"
+    return UNKNOWN
 
 
 def _parse_detail(task_struct: dict | None) -> dict:
@@ -101,6 +136,7 @@ def _parse_detail(task_struct: dict | None) -> dict:
 def summary(results: dict[int, dict]) -> dict:
     """The report section's statistics over this module's records (``episode_index -> record``)."""
     by_item = {item: Counter() for item in CAMERA_CHECK_ITEMS}
+    identity: Counter = Counter()
     severe = minor_or_worse = cameras = unanswered = 0
     ratios = []
     for rec in results.values():
@@ -112,6 +148,8 @@ def summary(results: dict[int, dict]) -> dict:
             worst = max(worst, _RANK.get(status, 0))
         severe += worst >= _RANK["severe"]
         minor_or_worse += worst >= _RANK["minor"]
+        status = str(d.get("identity") or UNKNOWN)
+        identity[status if status in IDENTITY else UNKNOWN] += 1
         for e in (d.get("per_camera") or {}).values():
             cameras += 1
             unanswered += not e.get("answered")
@@ -120,6 +158,7 @@ def summary(results: dict[int, dict]) -> dict:
     # one flat dict of counts per item: the console charts each of them, no view of its own
     out = {item: {lv: c.get(lv, 0) for lv in (*CAMERA_CHECK_LEVELS, UNKNOWN)}
            for item, c in by_item.items()}
+    out["identity"] = {k: identity.get(k, 0) for k in IDENTITY}
     out.update(episodes_with_severe=severe, episodes_with_minor_or_worse=minor_or_worse,
                cameras=cameras, cameras_unanswered=unanswered,
                clean_ratio_mean=(sum(ratios) / len(ratios)) if ratios else None)
@@ -133,19 +172,28 @@ def table_rows(results: dict[int, dict]) -> list[dict]:
         rec = results[ep]
         d = rec.get("details") or {}
         per_camera = d.get("per_camera") or {}
+        identity = str(d.get("identity") or UNKNOWN)
         if not per_camera:
             rows.append({"episode_index": ep, "verdict": legacy_verdict(rec), "camera": "", "answered": False,
                          **{item: UNKNOWN for item in CAMERA_CHECK_ITEMS}, "contamination_kind": "none",
-                         **{f"{item}_times": "[]" for item in CAMERA_CHECK_ITEMS}, "note": d.get("reason") or ""})
+                         "occlusion_source": "none", "occlusion_share": None,
+                         **{f"{item}_times": "[]" for item in CAMERA_CHECK_ITEMS},
+                         "identity": identity, **{f"view_{k}": "" for k in VIEW_FIELDS if k != "note"},
+                         "note": d.get("reason") or ""})
             continue
         for cam in sorted(per_camera):
             e = per_camera[cam]
+            view = e.get("view") or {}
             rows.append({"episode_index": ep, "verdict": legacy_verdict(rec), "camera": cam,
                          "answered": bool(e.get("answered")),
                          **{item: (e.get(item) or {}).get("level", UNKNOWN) for item in CAMERA_CHECK_ITEMS},
                          "contamination_kind": (e.get("contamination") or {}).get("kind", "none"),
+                         "occlusion_source": (e.get("occlusion") or {}).get("source", "none"),
+                         "occlusion_share": (e.get("occlusion") or {}).get("share"),
                          **{f"{item}_times": json.dumps((e.get(item) or {}).get("times") or [])
                             for item in CAMERA_CHECK_ITEMS},
-                         "note": " / ".join(n for n in ((e.get(item) or {}).get("note") for item in CAMERA_CHECK_ITEMS) if n)
-                                 or (e.get("error") or "")})
+                         "identity": identity,
+                         **{f"view_{k}": str(view.get(k) or "") for k in VIEW_FIELDS if k != "note"},
+                         "note": " / ".join(n for n in ((e.get(item) or {}).get("note") for item in CAMERA_CHECK_ITEMS)
+                                            if n) or (view.get("note") or "") or (e.get("error") or "")})
     return rows

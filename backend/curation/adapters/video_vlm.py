@@ -17,12 +17,19 @@ PROTOCOL = "video-task/2"
 #: the per-camera picture-defect report answered inside that same request (camera_defects module).
 #: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
 #: stale, so ``check --resume`` judges them again. ``camera-check/1`` and ``1.1`` were the two-pass
-#: review's; ``2`` is the single-pass block's.
-CAMERA_CHECK_PROTOCOL = "camera-check/2"
-CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")
+#: review's; ``2`` is the single-pass block's; ``3`` adds occlusion and the camera's view (what the
+#: camera physically is, against its name).
+CAMERA_CHECK_PROTOCOL = "camera-check/3"
+CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
+OCCLUSION_SOURCES = ("none", "arm", "body", "person", "object", "cable", "other")
 CAMERA_CHECK_MAX_TIMES = 8
+#: the camera's view, read from the picture alone and held against the camera's name (MV-2)
+VIEW_KINDS = ("wrist", "fixed")
+VIEW_ARMS = ("left", "right", "single")
+VIEW_MATCHES = ("yes", "no")
+VIEW_FIELDS = ("kind", "arm", "matches_name", "same_as", "note")
 #: How long one video request may take grows with what it carries (2026-10-08): the model's
 #: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
 #: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
@@ -71,22 +78,44 @@ jitter beyond that. Decide between the two by asking whether the scene is still 
 scene that jumps is shake, a broken-looking scene is glitch; report both only when both are really
 there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
 "minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
-the episode. times are episode-relative seconds within that camera's own window, like evidence;
+the episode. occlusion: the working area - the gripper, the object being handled or the place it
+goes - is hidden from THIS camera by something between the lens and the scene: the robot's own arm
+or body, a person, a cable, a held object, or the scene pressed against the lens; the lens itself
+is clean (a thing stuck ON the lens is contamination). "minor" hides it briefly or in part,
+"severe" hides the action for a stretch long enough that it cannot be followed; source names what
+hides it. times are episode-relative seconds within that camera's own window, like evidence;
 leave times empty for "none". Give up to four intervals; when the defect recurs in short bursts
 across the clip, give the span that encloses them rather than one burst, and say "intermittent" in
 the note. When the defect is there for the whole clip, leave times empty and write "persistent" in
-the note. Keep every note under twelve words. Use "unknown" when you cannot judge an item. These
-items never change verdict, completion or evidence."""
+the note. view: what THIS camera physically is, read from the picture alone - "wrist" when the
+picture moves with the arm and shows the gripper from behind it, "fixed" when the scene stays put;
+arm is the arm the camera is mounted on or mainly looks at, "single" when the robot has one arm.
+matches_name is "no" ONLY when the picture plainly contradicts the camera's supplied name: a name
+saying wrist, hand or gripper on a fixed view, a fixed-sounding name on a wrist view, or left/right
+in the name on the other arm of a two-arm robot. Left or right in the name of a single-arm robot or
+of a stereo pair says nothing about arms: answer "unknown" rather than guess. same_as names
+another supplied camera when the two pictures are the same recording, else leave it empty. Keep
+every note under twelve words. Use "unknown" when you cannot judge an item. These items never
+change verdict, completion or evidence."""
+
+#: the members of one camera's ``camera_check``: the four picture-defect items and the view
+CAMERA_CHECK_SHAPE = """"glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "contamination":{"level":"none|minor|severe|unknown",
+                      "kind":"none|dirt|smudge|water|obstruction|other",
+                      "times":[[start_s,end_s]],"note":"..."},
+     "occlusion":{"level":"none|minor|severe|unknown",
+                  "source":"none|arm|body|person|object|cable|other",
+                  "times":[[start_s,end_s]],"note":"..."},
+     "view":{"kind":"wrist|fixed|unknown","arm":"left|right|single|unknown",
+             "matches_name":"yes|no|unknown","same_as":"","note":"..."}"""
 
 #: the two-pass shape: one review request per camera, the defect report riding on it
 CAMERA_CHECK_PROMPT = """
-Also report this camera's own picture defects in ONE extra field "camera_check" of the same JSON
-object, next to the five fields above (keep those five exactly as specified):
+Also report this camera's own picture defects and what it is in ONE extra field "camera_check" of
+the same JSON object, next to the five fields above (keep those five exactly as specified):
 {"camera_check":{
-  "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-  "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-  "contamination":{"level":"none|minor|severe|unknown",
-                   "kind":"none|dirt|smudge|water|obstruction|other","times":[[start_s,end_s]],"note":"..."}}}
+     """ + CAMERA_CHECK_SHAPE + """}}
 """ + CAMERA_CHECK_DEFS + """
 It must be valid JSON like the rest of the object."""
 
@@ -100,11 +129,7 @@ five exactly as specified). Give one entry for EVERY camera supplied above, unde
    "verdict":"success|failure|uncertain",
    "reason":"what THIS camera alone shows, under fifteen words",
    "camera_check":{
-     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "contamination":{"level":"none|minor|severe|unknown",
-                      "kind":"none|dirt|smudge|water|obstruction|other",
-                      "times":[[start_s,end_s]],"note":"..."}}}}}
+     """ + CAMERA_CHECK_SHAPE + """}}}}
 Judge each camera on what THAT camera shows and nothing else: a camera that cannot see the objects
 or the relevant action is "uncertain" for that camera, even when another camera settles the episode.
 Do not copy the episode verdict into every camera. The episode's own verdict stays in the five
@@ -112,8 +137,8 @@ fields above and is yours to decide from all the cameras together.
 """ + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
-#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same three defect
-#: items, no verdict - there is no task to judge, so nothing is asked about success or failure.
+#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same defect
+#: items and view, no verdict - there is no task to judge, so nothing is asked about success or failure.
 CAMERAS_ONLY_PROMPT = """Inspect the supplied continuous videos for picture defects only. This episode
 has no task description, so there is no task to judge: do not assess success or failure, do not
 describe what the robot does. All cameras show the same episode.
@@ -121,11 +146,7 @@ Return one JSON object with exactly one field "cameras", with one entry for EVER
 above, under its exact name:
 {"cameras":{"<exact supplied camera name>":{
    "camera_check":{
-     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "contamination":{"level":"none|minor|severe|unknown",
-                      "kind":"none|dirt|smudge|water|obstruction|other",
-                      "times":[[start_s,end_s]],"note":"..."}}}}}
+     """ + CAMERA_CHECK_SHAPE + """}}}}
 """ + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
@@ -332,22 +353,56 @@ def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
 
 
+def empty_view() -> dict:
+    """A camera's ``view`` when the model said nothing about it."""
+    return {"kind": "unknown", "arm": "unknown", "matches_name": "unknown", "same_as": "", "note": ""}
+
+
+def parse_view(raw, problems: list[str]) -> dict:
+    """The ``view`` member of a camera's ``camera_check``, normalised; never raises. Enum values the
+    model got wrong read ``unknown`` and are named in ``problems``; ``same_as`` is kept as the model
+    wrote it (which supplied camera it names is settled by the rider, which knows them all)."""
+    out = empty_view()
+    if not isinstance(raw, dict):
+        problems.append("view: missing or not an object")
+        return out
+    for field, allowed in (("kind", VIEW_KINDS), ("arm", VIEW_ARMS), ("matches_name", VIEW_MATCHES)):
+        value = str(raw.get(field, "")).strip().lower()
+        if value in allowed:
+            out[field] = value
+        elif value != "unknown":
+            problems.append(f"view: {field} {raw.get(field)!r} is not one of {'/'.join(allowed)}/unknown")
+    same_as = raw.get("same_as")
+    if isinstance(same_as, str):
+        out["same_as"] = same_as.strip()[:120]
+    elif same_as is not None:
+        problems.append("view: same_as is not a string")
+    note = raw.get("note")
+    if isinstance(note, str):
+        out["note"] = note.strip()[:200]
+    return out
+
+
 def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
     """The optional ``camera_check`` field, normalised; never raises.
 
-    The three items are always present with ``level`` in none / minor / severe / unknown;
-    anything the model got wrong is downgraded to ``unknown`` (or dropped, for a bad time
-    interval) and named in ``problems``. A defect report must never cost a repair round
+    The four items are always present with ``level`` in none / minor / severe / unknown, and so
+    is ``view``; anything the model got wrong is downgraded to ``unknown`` (or dropped, for a bad
+    time interval) and named in ``problems``. A defect report must never cost a repair round
     trip or fail the review it rides on - the task verdict is the review's job.
     """
     out: dict = {item: {"level": "unknown", "times": [], "note": ""} for item in CAMERA_CHECK_ITEMS}
     out["contamination"]["kind"] = "none"
+    out["occlusion"]["source"] = "none"
+    out["occlusion"]["share"] = None
+    out["view"] = empty_view()
     problems: list[str] = []
     if not isinstance(raw, dict):
         out["problems"] = ["camera_check is not an object"]
         return out
     lo = min((c.start_s for c in clips), default=0.0) - 0.05
     hi = max((c.end_s for c in clips), default=float("inf")) + 0.05
+    window = hi - lo - 0.1                      # the clip's own length, without the tolerance
     for item in CAMERA_CHECK_ITEMS:
         got = raw.get(item)
         if not isinstance(got, dict):
@@ -387,6 +442,25 @@ def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
                 out[item]["kind"] = "none" if out[item]["level"] == "none" else "other"
                 if kind:
                     problems.append(f"contamination: kind {got.get('kind')!r} is not known")
+        if item == "occlusion":
+            source = str(got.get("source", "")).strip().lower()
+            if source in OCCLUSION_SOURCES:
+                out[item]["source"] = source
+            else:
+                out[item]["source"] = "none" if out[item]["level"] == "none" else "other"
+                if source:
+                    problems.append(f"occlusion: source {got.get('source')!r} is not known")
+            # how much of this camera's window the occlusion covers: the share the console and
+            # the findings quote (the model gives stretches, not a ratio)
+            if out[item]["level"] == "none":
+                out[item]["share"] = 0.0
+            elif out[item].get("whole"):
+                out[item]["share"] = 1.0
+            elif out[item]["times"] and window > 0:
+                out[item]["share"] = round(min(1.0, sum(b - a for a, b in out[item]["times"]) / window), 3)
+            elif out[item]["level"] in CAMERA_CHECK_LEVELS:
+                out[item]["share"] = 1.0          # minor / severe with no stretch named: the whole clip
+    out["view"] = parse_view(raw.get("view"), problems)
     out["problems"] = problems
     return out
 

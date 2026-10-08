@@ -62,21 +62,31 @@ video:
 没有标注的条目不补描述、不判成败，只发一次画面缺陷请求（02 篇 §3.4）；判废前也不再拿画面描述核对标注。代码留给 v1。
 `check --resume` 会重新判定缺少当前视频协议标记的旧探针结果。EEF 的恢复判断同时比较视频协议和预处理配置。
 
-## 逐机位画面缺陷（camera_defects，registry 1.14）
+## 逐机位画面缺陷（camera_defects，registry 1.14；4.1 加遮挡与机位身份）
 
 判定请求里每路相机的回答各带一个字段 `camera_check`（D71 之前是追加在逐机位复核请求上），
-报告这路相机自己的三项画面缺陷：花屏（`glitch`）、相机抖动（`shake`）、镜头污染（`contamination`）。
-每项给 `none` / `minor` / `severe` / `unknown` 四档、若干时间段（口径同 `evidence`：episode 相对秒）
-和一句说明，污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`）。抖动指相机本体
-晃动，腕部相机随手臂运动属正常，只报超出的抖动。
+报告这路相机自己的四项画面缺陷：花屏（`glitch`）、相机抖动（`shake`）、镜头污染（`contamination`）、
+视觉遮挡（`occlusion`，注册表 4.1 起）。每项给 `none` / `minor` / `severe` / `unknown` 四档、若干时间段
+（口径同 `evidence`：episode 相对秒）和一句说明，污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` /
+`other`），遮挡另给 `source`（挡住画面的是什么：`arm` / `body` / `person` / `object` / `cable` / `other`）和
+解析时算出的 `share`（时间段合计占这路相机窗口的比例；整段遮挡记 1.0，没给时间段的 minor / severe 也记 1.0）。
+抖动指相机本体晃动，腕部相机随手臂运动属正常，只报超出的抖动。遮挡指镜头干净、但操作区（夹爪、被操作的物件、
+目标位置）被镜头与场景之间的东西挡住；贴在镜头上的东西算污染不算遮挡。
+
+同一个字段里还有一项 `view`（4.1 起）：模型只看画面说这路相机**物理上是什么**——`kind`（`wrist` 随臂运动、
+`fixed` 场景不动）、`arm`（装在哪条臂上或主要看哪条臂，单臂机器人 `single`）、`matches_name`（画面是否与相机的命名
+相符：命名里带 wrist / hand / gripper 却是固定机位、固定命名却随臂动、双臂机器人命名里的 left / right 与画面相反，
+才答 `no`；单臂机器人或双目的 left / right 与臂无关，答 `unknown`）、`same_as`（两路是同一份录像时写另一路的名字）。
+`camera_defects` 由此给每条 episode 一个 `identity`：有一路 `no` 或 `same_as` 就是 `inconsistent`，有一路 `yes`
+且无人反对是 `consistent`，谁都没说是 `unknown`；细码 `identity`（MV-2，info）按机位各报一条。
 
 - **不增加模型调用**：复核请求本来每路相机一次、无条件发出，这段提问只是让同一次回答多带一个字段。
   请求体不变（没有新媒体），只多约 150 个输出 token。
 - **每次都问**，没有开关、界面上也不勾选：`camera_defects` 是 `task_success` 的随附模块
   （`ModuleSpec.rides_on="task_success"`）。凡是 `task_success` 在跑，它就出结果；单独跑它是参数错误。
 - **只出结果，不影响判决**：`affects_dataset_verdict=False`，记录永远是 `passed=score=null`（`abstain`），
-  不进 keep / drop / held，不提复核问题。注册表 2.0（设计 17，2026-10-01）去掉了这个字段：三个细码 `glitch`（IMG-5）、
-  `shake`（IMG-6）、`contamination`（IMG-7）默认级别都是 info，效果相同；它骑在任务成败判定的请求上（`rides_on`），从不单独待补跑，
+  不进 keep / drop / held，不提复核问题。注册表 2.0（设计 17，2026-10-01）去掉了这个字段：细码 `glitch`（IMG-5）、
+  `shake`（IMG-6）、`contamination`（IMG-7）、`occlusion`（IMG-8）、`identity`（MV-2）默认级别都是 info，效果相同；它骑在任务成败判定的请求上（`rides_on`），从不单独待补跑，
   模型没回答（unknown）在记录 2.0 里是 unassessable `model_no_answer`。
 - **解析永不失败**：缺字段、档位写错、时间段越界都只记进 `problems`，三项按 `unknown` 落盘，绝不触发
   格式修复重试，也不影响 `verdict`、`completion` 和 `evidence` 的校验。
@@ -89,17 +99,19 @@ video:
 - **整段就说整段**：覆盖窗口 95% 以上的时间区间折成 `whole` 标记、清空 `times`，控制台显示「全程」。
   5fps 下模型的定位精度只有 0.2 秒且会四舍五入，一个 0–57 秒的区间是「一直都有」而不是定位，不该写成
   看起来精确的数字。每项最多两个区间，取最严重的两段，本质是线索而非穷举。
-- 记录的 `details`：`protocol="camera-check/2"`、`source="task_success.cameras"`、`items` 是三项各一个
-  跨机位最坏档（`none` / `minor` / `severe` / `unknown`），逐机位的档位、时间段与污染种类只存一份在
-  `per_camera` 里（同一件事不说两遍），`clean_ratio` 是「已答项里判为 none 的比例」，`reason` 说明为什么是
-  unknown（成败判定没结果 / 没跑复核 / 模型没答）。报告小节按三项各一张计数图，episode 明细页一行给三项
-  最坏档、再只列报了问题的机位。
+- 记录的 `details`：`protocol="camera-check/3"`、`source="task_success.cameras"`、`items` 是四项各一个
+  跨机位最坏档（`none` / `minor` / `severe` / `unknown`），`identity` 是整条的机位身份结论，逐机位的档位、时间段、
+  污染种类、遮挡来源与占比、`view` 只存一份在 `per_camera` 里（同一件事不说两遍），`clean_ratio` 是「已答项里判为 none
+  的比例」，`reason` 说明为什么是 unknown（成败判定没结果 / 没跑复核 / 模型没答）。报告小节按四项各一张计数图加一张
+  机位身份计数，episode 明细页一行给四项最坏档、再只列报了问题的机位，机位身份不符时另起一行说哪一路、画面是什么。
 - `--resume` 口径：`details.protocol` 不是当前协议号的旧记录视为待补跑，会连同 `task_success`
   一起重判。**改了这一段的措辞就要把协议号升一版**（`camera-check/1` → `1.1`：区分花屏与抖动、最多四段、
-  能写 intermittent；→ `2`：随 D71 搬进判定请求的逐机位回答）—— 不升的话旧 prompt 判出来的记录和新的
-  长得一样，重试不会重判，一个任务里会掺着两套措辞的答案而看不出来。
-- 模型在 5fps / ≤720p 上可能漏掉单帧花屏、把腕部相机的正常运动当抖动、把静止遮挡物当污染——所以它只
-  作建议项，与 CPU 侧 `visual_quality`（清晰度、曝光、冻结的逐帧统计量）互补。
+  能写 intermittent；→ `2`：随 D71 搬进判定请求的逐机位回答；→ `3`：加遮挡与 `view`）—— 不升的话旧 prompt 判出来的记录和新的
+  长得一样，重试不会重判，一个任务里会掺着两套措辞的答案而看不出来。`3` 之前的记录没有遮挡与 `view`：读出来
+  IMG-8、MV-2 记 unassessable，不报错。
+- 模型在 5fps / ≤720p 上可能漏掉单帧花屏、把腕部相机的正常运动当抖动、把静止遮挡物当污染、把机械臂正常经过
+  镜头前当遮挡——所以它只作建议项，与 CPU 侧 `visual_quality`（清晰度、曝光、冻结的逐帧统计量）互补。机位身份
+  只在画面明显与命名矛盾时才说不符，单臂与双目命名里的 left / right 一律不作判断，宁可 unknown。
 
 ## EEF 复核
 

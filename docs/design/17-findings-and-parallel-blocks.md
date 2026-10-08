@@ -311,6 +311,8 @@ A 类算法不动，壳里读 `details` 生成。
 | `glitch` | IMG-5 | minor → low，severe → medium | info | 带时间段 |
 | `shake` | IMG-6 | 同上 | info | 带时间段 |
 | `contamination` | IMG-7 | 同上 | info | 带时间段与种类 |
+| `occlusion` | IMG-8 | 同上 | info | 带时间段、遮挡来源与占比（注册表 4.1） |
+| `identity` | MV-2 | medium | info | 这路相机的画面与命名不符，或与另一路是同一份录像（注册表 4.1）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
 | unknown | — | — | unassessable `model_no_answer` | 模型没答 |
 
 **精确去重**

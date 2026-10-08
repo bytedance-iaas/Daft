@@ -341,17 +341,25 @@ describe('质检报告 (07 §5)', () => {
     const record: ResultRecord = {
       episode_index: 12, module: 'camera_defects', verdict: 'abstain', passed: null, score: null, gate: 'none', evidence: [], elapsed_s: 0.02, error: null,
       details: {
-        protocol: 'camera-check/1', source: 'task_success.video_reviews', reason: '',
-        cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 6, clean_ratio: 0.67,
-        items: { glitch: 'none', shake: 'minor', contamination: 'minor' },
+        protocol: 'camera-check/3', source: 'task_success.cameras', reason: '', identity: 'inconsistent',
+        cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 8, clean_ratio: 0.67,
+        items: { glitch: 'none', shake: 'minor', contamination: 'minor', occlusion: 'severe' },
         per_camera: {
-          robot0_sensor_camera0: { answered: true, error: null, problems: [], glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }) },
+          robot0_sensor_camera0: {
+            answered: true, error: null, problems: [],
+            glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }),
+            occlusion: cam('none', [], { source: 'none', share: 0 }),
+            // registry 4.1: the picture contradicts the camera's name
+            view: { kind: 'fixed', arm: 'single', matches_name: 'no', same_as: '', note: 'scene never moves with the arm' },
+          },
           robot1_sensor_camera0: {
             answered: true, error: null, problems: [],
             glitch: cam('none'),
             shake: cam('minor', [[1.5, 4.5], [13.5, 15]]),
             // the other camera says the whole clip: no span, one word
             contamination: cam('minor', [[0, 49.7]], { kind: 'smudge' }),
+            occlusion: cam('severe', [[20, 30]], { source: 'arm', share: 0.2 }),
+            view: { kind: 'fixed', arm: 'single', matches_name: 'yes', same_as: '', note: '' },
           },
         },
       },
@@ -360,11 +368,13 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=12#episodes`);
     const block = await screen.findByTestId('episode-module-camera_defects');
     const body = within(block).getByTestId('episode-camera-defects');
-    expect(body).toHaveTextContent('花屏 无 · 抖动 轻微 · 镜头污染 轻微');
-    expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒');
+    expect(body).toHaveTextContent('花屏 无 · 抖动 轻微 · 镜头污染 轻微 · 视觉遮挡 严重');
+    expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒 · 视觉遮挡 严重（机械臂）20–30 秒 占 20%');
     expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
+    expect(body).toHaveTextContent('机位身份与命名不符');
+    expect(body).toHaveTextContent('robot0_sensor_camera0：画面与命名不符（画面是固定机位、单臂）：scene never moves with the arm');
     expect(body).toHaveTextContent('建议项，不影响判决');
-    expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check/);
+    expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check|matches_name/);
     expect(body.textContent).not.toMatch(/机位数|条数|状态/);          // the old generic rendering
   });
 

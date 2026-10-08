@@ -113,6 +113,20 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
              "per_camera": {"observation.images.a": {"answered": True, "glitch": {"level": "none"},
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
+# registry 4.1: occlusion per camera and the camera's identity against its name (camera-check/3)
+CAM_VIEW = {"protocol": "camera-check/3", "reason": "", "identity": "inconsistent",
+            "items": {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "severe"},
+            "per_camera": {
+                "observation.images.wrist": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "severe", "source": "arm", "times": [[1.0, 4.0]], "share": 0.3},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "no", "same_as": "",
+                                                      "note": "scene never moves with the arm"}},
+                "observation.images.front": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
+                                                      "note": ""}}}}
 
 EEF_REJECT = {"decision": {"outcome": "reject", "reason": "ext 的末端位置与画面不符", "confirmed": [
     {"code": "confirmed", "subitem": "position_2d", "camera_id": "ext"}], "human": [], "unchecked": []},
@@ -187,9 +201,12 @@ CASES = [
     ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-10"}),
     ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-10"}),
     ("task_success", True, None, TASK_OK_FRAMES, {"recovery", "task_text_missing"}, set()),
-    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
-    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
-    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
+    # records from before registry 4.1 carry no occlusion item and no view: those two read unassessed
+    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6", "IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, {"IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_VIEW, {"occlusion", "identity"}, set()),
+    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(),
+     {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
     ("eef_video_consistency", False, None, EEF_REJECT, {"inconsistent", "record_mismatch"}, set()),
     ("eef_video_consistency", None, None, EEF_HUMAN, {"unsettled"}, set()),
     ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, set()),

@@ -777,9 +777,11 @@
    "name": "视觉遮挡",
    "origin": "需；文",
    "samples": "真实：G11；S6 的两条 DROID（第二批）",
-   "platform": "**没有（实测）**：G11 放行；注入盖住 70% 画面 5 秒的方块放行，分 1.0",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform": "有读数（要模型，注册表 4.1 起）：画面缺陷模块的 `occlusion` 细码按机位报出遮挡来源、时间段与占比；此前 G11 放行、注入盖住 70% 画面 5 秒的方块放行，新口径未实测",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.occlusion"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "视觉遮挡：该看见的操作区域被物体、衣物、手挡住；没拍到是 IMG-13，脱敏模糊是 IMG-14",
@@ -1003,9 +1005,11 @@
    "name": "左右手、机位身份一致",
    "origin": "需",
    "samples": "真实：S4，前视与腕部相机标反，有修正版成对，共 60 条；左右手对调要合成",
-   "platform": "**没有（实测）**：标反与修正两版的结果除了机位名对调，完全相同",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform": "有读数（要模型，注册表 4.1 起）：画面缺陷模块的 `identity` 细码按机位报出画面与命名不符、两路同一画面；此前标反与修正两版的结果除了机位名对调完全相同，新口径未实测",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.identity"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "身份一致：左右手、机位的标注和画面对得上",

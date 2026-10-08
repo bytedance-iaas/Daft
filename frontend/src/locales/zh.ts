@@ -856,6 +856,10 @@ export const zh = {
     glitch: '花屏',
     shake: '相机抖动',
     contamination: '镜头污染',
+    occlusion: '视觉遮挡',
+    identity: '机位身份与命名',
+    consistent: '一致',
+    inconsistent: '不符',
     none: '无',
     minor: '轻微',
     severe: '严重',
@@ -1743,9 +1747,18 @@ export const zh = {
   /** The report's Episode tab (F6.2): one episode, module by module. */
   episodeTab: {
     cameraDefects: {
-      items: { glitch: '花屏', shake: '抖动', contamination: '镜头污染' } as Record<string, string>,
+      items: { glitch: '花屏', shake: '抖动', contamination: '镜头污染', occlusion: '视觉遮挡' } as Record<string, string>,
       level: { none: '无', minor: '轻微', severe: '严重', unknown: '未知' } as Record<string, string>,
-      kind: { dirt: '脏污', smudge: '油污', water: '水渍', obstruction: '遮挡物', other: '其它' } as Record<string, string>,
+      kind: {
+        dirt: '脏污', smudge: '油污', water: '水渍', obstruction: '遮挡物', other: '其它',
+        arm: '机械臂', body: '机身', person: '人', object: '物件', cable: '线缆',
+      } as Record<string, string>,
+      share: (pct: number) => `占 ${pct}%`,
+      identity: { consistent: '机位身份与命名一致', inconsistent: '机位身份与命名不符', unknown: '机位身份未对照命名' } as Record<string, string>,
+      viewKind: { wrist: '腕部相机', fixed: '固定机位', unknown: '' } as Record<string, string>,
+      viewArm: { left: '左臂', right: '右臂', single: '单臂', unknown: '' } as Record<string, string>,
+      sameAs: (other: string) => `与 ${other} 是同一路画面`,
+      mismatch: (what: string) => (what ? `画面与命名不符（画面是${what}）` : '画面与命名不符'),
       clean: '各机位画面正常',
       whole: '全程',
       span: (start: string, end: string) => `${start}–${end} 秒`,

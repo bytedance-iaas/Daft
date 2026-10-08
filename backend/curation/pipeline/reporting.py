@@ -669,14 +669,17 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append("")
             continue
         if spec is not None and sec["id"] == "camera_defects":
-            from ..extensions.camera_defects import LEVEL_ZH, NAME_ZH
+            from ..extensions.camera_defects import IDENTITY_ZH, LEVEL_ZH, NAME_ZH
 
             s = sec["summary"]
-            lines.append("- 建议项,不影响判决;借逐机位复核请求顺带回答,没有新增模型调用")
+            lines.append("- 建议项,不影响判决;借任务成败判定的请求顺带回答,没有新增模型调用")
             for item, name in NAME_ZH.items():
                 c = s.get(item) or {}
                 lines.append(f"- {name}:" + " · ".join(f"{LEVEL_ZH[lv]} {c.get(lv, 0)}"
                                                        for lv in ("severe", "minor", "none", "unknown")))
+            ident = s.get("identity") or {}
+            lines.append("- 机位身份与命名:" + " · ".join(f"{IDENTITY_ZH[k]} {ident.get(k, 0)}"
+                                                        for k in ("inconsistent", "consistent", "unknown")))
             lines.append(f"- 未答机位 {s.get('cameras_unanswered', 0)} / {s.get('cameras', 0)} · 出错 {cnt['error']}")
             lines.append("")
             continue

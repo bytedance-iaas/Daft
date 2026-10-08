@@ -17,7 +17,8 @@ from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, comparable, results, run
 
 MOD = "camera_defects"
-ITEMS = ("glitch", "shake", "contamination")
+ITEMS = ("glitch", "shake", "contamination", "occlusion")
+IDENTITY = {"consistent", "inconsistent", "unknown"}
 LEVELS = {"none", "minor", "severe", "unknown"}
 ASK = 'more field "cameras"'                             # the per-camera block every judgement asks for
 REVIEW = "Independently review ONLY this camera"         # the two-pass review: must never be sent
@@ -54,9 +55,10 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
         # an episode without a task text got no judgement request, so no camera answered (D72)
         assert d["cams"] or task[ep]["details"].get("skipped") == "no_task_text"
         assert set(d["items"].values()) <= LEVELS         # one status per item, nothing nested
+        assert d["identity"] in IDENTITY
         assert set(d["per_camera"]) == set(d["cams"])
         for cam_entry in d["per_camera"].values():
-            assert set(ITEMS) <= set(cam_entry)
+            assert set(ITEMS) <= set(cam_entry) and set(cam_entry["view"]) == {"kind", "arm", "matches_name", "same_as", "note"}
     # the fake model answers by camera and window: over the fixture the levels differ
     statuses = {r["details"]["items"][i] for r in cam.values() for i in ITEMS}
     assert len(statuses - {"unknown"}) >= 2, statuses
@@ -113,7 +115,7 @@ def test_resume_redoes_an_episode_whose_defect_report_is_from_an_older_protocol(
     path = os.path.join(part, name)
     with open(path, "rb") as fh:                       # same length in, same length out: the
         raw = fh.read()                               # part index addresses records by offset
-    old, new = b'"camera-check/2"', b'"camera-check/0"'
+    old, new = b'"camera-check/3"', b'"camera-check/0"'
     assert len(old) == len(new) and raw.count(old) == len(results(run_dir, MOD))
     with open(path, "wb") as fh:
         fh.write(raw.replace(old, new, 1))
@@ -162,6 +164,7 @@ def test_the_verdict_ignores_the_rider_and_the_report_shows_it(vlm_stage, ran, t
     n = len(results(ran["dir"], MOD))
     for item in ITEMS:                                   # one counts dict per item, every episode in it
         assert set(s[item]) == LEVELS and sum(s[item].values()) == n, (item, s[item])
+    assert set(s["identity"]) == IDENTITY and sum(s["identity"].values()) == n
     assert s["cameras"] >= n and s["cameras_unanswered"] < s["cameras"]
     assert 0.0 <= s["clean_ratio_mean"] <= 1.0
     with open(c.path("revisions", "r0001", "report.md"), encoding="utf-8") as fh:

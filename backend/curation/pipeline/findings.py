@@ -479,14 +479,19 @@ def _task_success(passed, score, d, p) -> Derived:
 
 #: camera_defects' answer levels -> a finding's severity (design doc 17 §2.2: minor -> low, severe -> medium)
 CAMERA_LEVELS = {"minor": "low", "severe": "medium"}
-_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "画面抖动"), ("contamination", "IMG-7", "镜头污染或遮挡"))
+_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "画面抖动"), ("contamination", "IMG-7", "镜头污染或遮挡"),
+                 ("occlusion", "IMG-8", "视觉遮挡"))
 _CONTAMINATION = {"dirt": "脏污", "smudge": "污渍", "water": "水滴", "obstruction": "遮挡", "other": "其他"}
+_OCCLUSION = {"arm": "机械臂", "body": "机身", "person": "人", "object": "物件", "cable": "线缆", "other": "其他"}
+_VIEW_KIND = {"wrist": "腕部相机", "fixed": "固定机位"}
+_VIEW_ARM = {"left": "左臂", "right": "右臂", "single": "单臂"}
 
 
 @deriver("camera_defects")
 def _camera_defects(passed, score, d, p) -> Derived:
     """Per camera and item, a minor or severe answer is a finding with the stretches the model named; an
-    item no camera answered could not be assessed (``model_no_answer``)."""
+    item no camera answered could not be assessed (``model_no_answer``). The camera identity (MV-2) is
+    one finding per camera whose picture contradicts its name or duplicates another camera."""
     out = Derived()
     m = "camera_defects"
     if d.get("clean_ratio") is not None:
@@ -497,6 +502,7 @@ def _camera_defects(passed, score, d, p) -> Derived:
         why = str(d.get("reason") or "没有逐机位复核的回答")
         for _, item, _ in _CAMERA_ITEMS:
             out.cannot(item, "model_no_answer", why[:200])
+        out.cannot("MV-2", "model_no_answer", why[:200])
         return out
     for key, item, name in _CAMERA_ITEMS:
         if items.get(key, "unknown") == "unknown":
@@ -510,13 +516,38 @@ def _camera_defects(passed, score, d, p) -> Derived:
             label = name
             if key == "contamination" and entry.get("kind") in _CONTAMINATION and entry.get("kind") != "other":
                 label = f"镜头{_CONTAMINATION[entry['kind']]}"
+            if key == "occlusion" and entry.get("source") in _OCCLUSION and entry.get("source") != "other":
+                label = f"被{_OCCLUSION[entry['source']]}遮挡"
             note = str(entry.get("note") or "").strip()
+            extra = {}
+            if key == "contamination":
+                extra["kind"] = entry.get("kind")
+            if key == "occlusion":
+                extra["source"] = entry.get("source")
+                if isinstance(entry.get("share"), (int, float)):
+                    extra["share"] = _r(entry["share"])
             out.add(m, key, f"{short_camera(cam)} {label}（{'严重' if level == 'severe' else '轻微'}）"
                             + (f"：{note[:120]}" if note else ""),
                     severity=CAMERA_LEVELS[level], scope={"camera": short_camera(cam)},
                     time_s=(float(times[0][0]), float(times[0][1])) if times else None,
-                    readings={"level": level, "times": times[:8],
-                              **({"kind": entry.get("kind")} if key == "contamination" else {})})
+                    readings={"level": level, "times": times[:8], **extra})
+    # the camera identity: what the picture says the camera is, against its name (MV-2)
+    if str(d.get("identity") or "unknown") == "unknown":
+        out.cannot("MV-2", "model_no_answer", "没有一路相机的画面被对照过它的命名")
+    for cam, e in sorted(per.items()):
+        view = (e or {}).get("view") or {}
+        what = "、".join(x for x in (_VIEW_KIND.get(view.get("kind")), _VIEW_ARM.get(view.get("arm"))) if x)
+        note = str(view.get("note") or "").strip()
+        if view.get("same_as"):
+            out.add(m, "identity", f"{short_camera(cam)} 与 {short_camera(view['same_as'])} 是同一路画面"
+                                   + (f"：{note[:120]}" if note else ""),
+                    severity="medium", scope={"camera": short_camera(cam)},
+                    readings={"kind": view.get("kind"), "arm": view.get("arm"), "same_as": view["same_as"]})
+        elif view.get("matches_name") == "no":
+            out.add(m, "identity", f"{short_camera(cam)} 的画面与命名不符" + (f"（画面是{what}）" if what else "")
+                                   + (f"：{note[:120]}" if note else ""),
+                    severity="medium", scope={"camera": short_camera(cam)},
+                    readings={"kind": view.get("kind"), "arm": view.get("arm")})
     return out
 
 
