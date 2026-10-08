@@ -1,4 +1,4 @@
-"""``curation report`` - the report of one result revision (design doc 02 §3.8).
+"""``curation report`` - the report of one result revision (design doc 02 §3.7).
 
 Writes ``report.md``, ``report.json`` (``cli/report.schema.json``), ``perf.json``
 and ``tables/*.parquet`` into ``revisions/r<NNNN>/`` - next to the four lists

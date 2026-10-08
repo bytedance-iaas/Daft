@@ -52,8 +52,8 @@ blame 是最快的排查路径。最终产物一样：一个不含上游 daft �
 
 | 类别 | 范围 | 策略 |
 |---|---|---|
-| **A 原样搬运** | `core/*`（含 `checks/`、`contract.py`、`task_type.py`）、`registry/*`、`ingest/*`（含数据集语义 profile、动作语义预检、schema 校验、公共数据集目录，D44 起还有 mcap / lance 两个读取器）、`export/lerobot_writer.py`、`export/safe_write.py`、`pipeline/verdict.py`、`dataset_level/*`、`episode_select.py`、`vlm_call_kinds.py` | **逐字复制，连中文注释一起**。只允许改 import 路径。任何其他改动都要在 PR 里单独说明理由 |
-| **B 改造搬运** | `pipeline/run.py`、`pipeline/funnel.py`、`pipeline/rejudge.py`、`pipeline/reprofile.py`、`adapters/vlm_client.py`、`adapters/decode.py`、`export/publish.py`、`export/report.py`、`tos_store.py`、`delivery.py`、`fetch.py`；以及 `ui/` 里要留下的三样：`auth.py`（鉴权中间件）、`runner.py` 的深链与地址解析函数、`manifest.py` 的数据整形函数 | 拆成 stage / 加 usage 采集 / 加增量导出 / 从 Gradio 里剥出来。**算法调用顺序和参数不变**，只改编排外壳 |
+| **A 原样搬运** | `core/*`（含 `checks/`、`contract.py`、`task_type.py`）、`registry/*`、`ingest/*`（含数据集语义 profile、动作语义预检、schema 校验、公共数据集目录，D44 起还有 mcap / lance 两个读取器）、`export/safe_write.py`、`pipeline/verdict.py`、`dataset_level/*`、`episode_select.py`、`vlm_call_kinds.py` | **逐字复制，连中文注释一起**。只允许改 import 路径。任何其他改动都要在 PR 里单独说明理由 |
+| **B 改造搬运** | `pipeline/run.py`、`pipeline/funnel.py`、`pipeline/rejudge.py`、`adapters/vlm_client.py`、`adapters/decode.py`、`export/report.py`、`tos_store.py`、`delivery.py`、`fetch.py`；以及 `ui/` 里要留下的三样：`auth.py`（鉴权中间件）、`runner.py` 的深链与地址解析函数、`manifest.py` 的数据整形函数 | 拆成 stage / 加 usage 采集 / 加增量导出 / 从 Gradio 里剥出来。**算法调用顺序和参数不变**，只改编排外壳 |
 | **C 全新编写** | `cli/`、`daemon/`、`frontend/`、`deploy/charts/` | 英文注释，按本册契约实现 |
 
 ### 2.1 A 类的保护机制
@@ -64,6 +64,8 @@ blame 是最快的排查路径。最终产物一样：一个不含上游 daft �
 已经采纳的改动登记在 `tools/parity/a_class_declared.json`（2026-09-24 起；第一批是设计 13 的视频判定改过的
 5 个 A 类文件）：逐文件记下新内容的哈希、出自哪个提交、为什么改。守卫放行与登记哈希一致的文件——分支推送没有
 PR 描述，靠登记才能每次推送都过；登记过的文件再改一行又会被拦下，要么在 PR 描述里补 `parity-change:`，要么更新登记。
+**采纳一次删除**也在这里登记（`"removed": true`，不记哈希）：技能画像（D68）与数据集导出（D69）下线时删掉的
+A 类文件就是这么放行的，守卫此后要求它们确实不在；哪天又出现，照样拦下。
 登记只管守卫，不替代对账：设计 13 起判定改动用 v2 自录的黄金基线回放把关（见对账工具 README）。
 
 ### 2.2 B 类里最危险的三处
@@ -74,7 +76,7 @@ PR 描述，靠登记才能每次推送都过；登记过的文件再改一行�
    原样保留，只**新增** usage 采集。
 3. **`rejudge.py` 的裁决优先级**：「整条弃用压过成败裁决」「改了标但已有人工成败结论的不重跑模型」
    这类规则藏在代码顺序里，拆分时极易丢失。拆之前先把现有单测跑通，拆之后必须全绿。
-4. **`run.py` 里的先后顺序**：无标注补 caption 在漏斗之前、对全部输入；去重和技能画像在判决之后、
+4. **`run.py` 里的先后顺序**（v1）：无标注补 caption 在漏斗之前、对全部输入；去重和技能画像在判决之后、
    只对 keep 集合；弃权条目算 keep。这些顺序决定了每个模块「看到的是哪些条目」，
    拆成 stage 时顺序一变，去重结果和技能体系就跟着变，对账必然不过。
 5. **`funnel.py` 帧档的一次解码两用**：同步检查吃全帧率、视觉质量从同一批帧抽稀、逐机位串行、用完即释放。
@@ -88,13 +90,13 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | v1 能力 | v2 去向 |
 |---|---|
 | `curation run` 一口气跑完 | 拆成原子命令，由 Daemon 编排；对账基线用 `release_v1` 上的原版跑 |
-| `curation rejudge` | 拆成 `adjudicate-apply` + 重跑 + `aggregate` + 画像同步，由「执行裁决」子任务编排；**不再自动重新导出**（D9） |
+| `curation rejudge` | 拆成 `adjudicate-apply` + 重跑 + `aggregate` + `report`，由「执行裁决」子任务编排；**只改判决与报告**（D69 起平台不写交付数据集） |
 | `rejudge --retry-abstained` | 并入「重试」：调用失败的条目在 v2 里是「执行出错、待补跑」，重试补跑的就是它们 |
-| `reprofile`（隐藏命令） | 保留为内部步骤：`check --modules skill_profile --incremental` |
+| `reprofile`（隐藏命令） | 去掉：技能画像下线（D68） |
 | `--lite` / 界面「快速质检」 | 新建页的「快速质检」预设（只勾不调模型的六项） |
 | `--only` / `--skip` / 界面「自选模块」 | 任务的 `modules` 列表 |
 | `--max-episodes` / `--episodes` | episode 选择的「前 N 条」/「自选」 |
-| `--report-only` | 任务参数 `export=false`，之后可用「导出」补做 |
+| `--report-only` | 不再需要：平台只出质检报告（D69） |
 | `--batch` / 界面多选数据集 | `POST /tasks/batch`，一个数据集一个任务 |
 | `--set` / `--config` | CLI 保留；任务级参数走 `params` 和 `modules[].params`，站点级走 ConfigMap |
 | `--vlm-backend` 预设（站点配置维护） | 改为用户在「密钥与资源管理」里自己维护的 VLM 后端 |
@@ -110,7 +112,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 人工裁决随交付目录跨批次沿用 | **不保留**（D32）。裁决只属于产生它的任务 |
 | `latest` =「最近跑的是哪一次」 | 改为「最近一次发布成功的完整版本」（D29） |
 | `.rrd` 输入 | 维持 v1 现状：代码原样搬运，默认关闭（`ingest.rrd_enabled: false`），预检按「不支持的格式」处理 |
-| mcap / lance 输入（D44） | 全量接入：读取器与 `export/mcap_writer.py` 原样搬运，开关 `ingest.mcap_enabled` / `ingest.lance_enabled` 照 v1 默认开；预检识别、快照、质检、交付都支持，TOS 上的数据先拉到本地缓存再读（02 篇 §2 与 §3.1、05 篇 §3）；交付照 v1：mcap 是 `mcap_curated/` 逐字节拷贝 + `index.json`，lance 是 `episodes_parquet/`（原格式交付未做） |
+| mcap / lance 输入（D44） | 全量接入：读取器原样搬运，开关 `ingest.mcap_enabled` / `ingest.lance_enabled` 照 v1 默认开；预检识别、快照、质检、交付都支持，TOS 上的数据先拉到本地缓存再读（02 篇 §2 与 §3.1、05 篇 §3）；交付的是报告与结果清单，三种格式一样（D69） |
 | 本地路径 / FSX 挂载作输入输出 | 输入保留为 experimental；交付目录只支持 `tos://` |
 
 ## 3. 黄金对账
@@ -125,18 +127,18 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 降级得出的结论（D33） | 打分失败后复核救回、仲裁失败维持弃权、少一路机位照判，结论照常生效 | 同样算执行出错，整条待补跑 | 同上；黄金基线要求零失败，所以基线里不会有这类条目 |
 | 无标注补 caption 失败（D33） | 给空串，成败判定拿空任务文本照跑 | 执行出错，不进后面的档 | 同上 |
 | 被去重剔除的条目 | `passed.json` 按漏斗判决生成，没扣掉它（同时也在 `reject.json` 里）；交付数据集里是扣掉的 | 只在 `reject` 里 | 终判清单按交付口径比：passed = 漏斗 keep − 重复项（W0 实测确认） |
-| 执行裁决之后（D9） | 顺手重新导出 | 只改判决与报告，导出由用户显式触发 | 裁决对账比的是三份清单与改标结果，不比导出时机 |
+| 执行裁决之后（D9、D69） | 顺手重新导出 | 只改判决与报告，平台不写交付数据集 | 裁决对账比的是三份清单与改标结果 |
 | 人工裁决的归属（D32） | 随交付目录跨批次沿用 | 只属于本任务 | 不对账；v1 的沿用逻辑不搬 |
 | 完整性标志与 `latest`（D7、D29） | `passed.json` 兼作标志；`latest` = 最近一次跑批 | `_COMPLETE`；`latest` = 最近一次发布成功的完整版本 | 不对账 |
 | 思考参数、Token 采集 | 没有 | 有，默认不传思考参数 | 对账固定不传 |
 | 改标重判（D39） | `rejudge` 只跑多视角打分 + 逐机位复核两层 | 默认同 v1；执行裁决时可选首轮的完整流程 | 默认口径逐位对账（回放）；选了完整流程的不要求与 v1 一致 |
 | 源文件缺失的条目（D40） | 静默剔除，不进任何清单和计数 | 同样剔除；报告列出哪几条、缺什么，汇总给条数 | 三份清单照比；v2 多出的跳过清单不比 |
-| 技能画像整个模块失败（D41） | 不挡交付，画像小节标失败 | 全部待补跑，一条都不交付，等重试 | 基线要求零失败，不会出现；不对账 |
+| ~~技能画像整个模块失败（D41）~~ | 不挡交付，画像小节标失败 | 技能画像已下线（D68）；同一条规则对别的不判废模块仍成立 | 不对账 |
 | 改标之后又重新提交另一段标注 | 沿用之前给的成败结论，不重判 | 之前顺手给的成败结论作废，按新标注重判（follow-up 的作废规则） | 裁决对账只覆盖改标这一条线；成败结论与复议对清单的影响由 CLI 测试钉住 |
 | 重复项的人工处理（D42） | 重复项若有成败弃权，照样进成败裁决，人判成功就写回 `passed`、交付；复议只认任务成败判定的拒绝 | 已被拒绝的条目不再问成败；重复项可在「被拒复议」里恢复为可用 | 裁决对账排除重复项和被恢复的重复项，单独列出 |
 | mcap / lance 的语义样本（D44） | 一次跑完，所选的前 100 条 | 每档只读幸存者，Daemon 另传整个任务的所选（`--selection`），同样取前 100 条 | 合成数据的 mcap / lance 两份上 v1 对 v2 回放逐位一致（`tools/parity/tests/test_containers_parity.py`） |
-| mcap / lance 交付里自产描述的来源用词（D44） | `自产caption补标` | `自产caption`（与 v2 其他交付一致） | 交付清单不对账 |
-| mcap / lance 交付的形态（D44） | 每种格式都另写一份 `episodes_parquet/`；mcap 再交 `mcap_curated/` | mcap 只交 `mcap_curated/`（与 LeRobot 源只交 `lerobot_curated/` 一致）；lance 交 `episodes_parquet/` 与 `videos/` | 不对账 |
+| 自产描述的来源用词（D44） | `自产caption补标` | `自产caption`（报告与明细表里的写法） | 不对账 |
+| ~~mcap / lance 交付的形态（D44）~~ | 每种格式都另写一份 `episodes_parquet/`；mcap 再交 `mcap_curated/` | D69 起不写交付数据集，三种格式交的都是报告与结果清单 | 不对账 |
 
 ### 3.1 基线
 
@@ -148,9 +150,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | `droid_lerobot` 前 50 条 | 50 条（使用文档演示的同一批） | 运动学极限（franka 在规格库）；有 / 无标注混合（约 28 / 22）；三机位含外部机位；判废护栏、取证仲裁、标注分歧与三条裁决线 | 大规模 |
 
 **已知缺口：v3 格式本期不做对账**（需求方已确认）。两个基线的源格式如果都是 LeRobot v2，
-v3 的读取和导出路径（多条拼接的 parquet / mp4、按 chunk 重编码）就只靠搬运过来的 v1 单元测试保障。
-增量导出的 v3 分支是新写的代码，风险比 v2 分支高，W7 的验收里单独用一个小的 v3 夹具跑通
-「可被官方 loader 无警告加载」，但不和 v1 逐位比。
+v3 的读取路径（多条拼接的 parquet / mp4）就只靠搬运过来的 v1 单元测试保障。
 
 确定性六项里，去重这一行要先确认基线里真有字节级重复的条目，没有的话这一行是空转 ——
 在 CI 的迷你数据集里复制两条 episode 来补。
@@ -196,7 +196,7 @@ v3 的读取和导出路径（多条拼接的 parquet / mp4、按 chunk 重编�
 | `dedup` | 重复组划分；**输入集合固定为 golden 的 keep 名单**再比 | **逐位一致** |
 | 无标注补 caption | 有 / 无 caption、`unclear` 的条数 | 不比文本；条数差异逐条列出 |
 | `task_success` | 每条 episode 的终判（pass / fail / abstain）与走到的判据（`detail.rules`） | 差异 < 2% 且不超过 v1 自身噪声底的 1.5 倍，**逐条列出并人工确认** |
-| `skill_profile` | 每条有无归族、标注分歧队列的成员（不比族名，族名每次归纳都不同） | 同上 |
+| ~~`skill_profile`~~ | 技能画像下线（D68）后 v2 不产出它，不再比对 | — |
 | 人工裁决（droid 基线） | 同一组裁决输入，执行后三份清单与改标结果 | **逐位一致**（裁决逻辑不调模型的部分） |
 
 **VLM 三项先做回放对账，再做真模型比对。** 模型输出不可复现，拿两次真实调用的结果去比，只能比到「差不多」。
@@ -206,7 +206,7 @@ v3 的读取和导出路径（多条拼接的 parquet / mp4、按 chunk 重编�
    和对应的响应录下来。
 2. v2 接一个**回放后端**跑同一基线：请求哈希命中就回放当时的响应，没命中就记一条「请求不一致」并点名是哪个模块、
    哪条 episode、哪类调用。
-3. 验收：请求 100% 命中；在回放的响应下，`task_success` 与 `skill_profile` 的规范化记录与 v1 **逐位一致**。
+3. 验收：请求 100% 命中；在回放的响应下，`task_success` 的规范化记录与 v1 **逐位一致**。
    提示词动了一个字、抽帧差了一帧、JPEG 参数变了，都会在第 2 步现形。
 
 回放过了，再用真模型跑一遍做统计比对（下表的容差），确认端到端没有别的问题。
@@ -278,7 +278,7 @@ VLM 请求合并会改变模型的输入形态，任何模块在被允许合并�
 |---|---|---|
 | 单元测试 | A 类算法 | **v1 现有测试全部搬运并保持绿**（`curation/tests/` 约 2 万行，是最宝贵的资产） |
 | 契约测试 | CLI `--json` schema、REST schema | schema 变更必须同步改测试，防止契约漂移 |
-| 集成测试 | preflight → autolabel → check → aggregate → export → report → verify 全链路 | CI 每次跑，**不联网、不要任何密钥**：数据用脚本生成的迷你 LeRobot v2 数据集（8 条、合成视频，脚本进仓库、数据不进），VLM 用录制回放的假后端 |
+| 集成测试 | preflight → autolabel → check → aggregate → report → verify 全链路 | CI 每次跑，**不联网、不要任何密钥**：数据用脚本生成的迷你 LeRobot v2 数据集（8 条、合成视频，脚本进仓库、数据不进），VLM 用录制回放的假后端 |
 | 对账测试 | 黄金对账 | 手动触发（要真 VLM 和真数据），发版前必跑 |
 | 前端 | 关键交互（表单校验、状态按钮禁用、深链解析） | 组件测试 + 少量 E2E |
 

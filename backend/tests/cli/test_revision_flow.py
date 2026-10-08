@@ -1,11 +1,11 @@
 """A second result revision after human decisions, exported incrementally (W3).
 
-The Daemon's adjudication sequence (doc 02 §3.9, doc 06 §5) on the fixture,
+The Daemon's adjudication sequence (doc 02 §3.8, doc 06 §5) on the fixture,
 after a complete first run:
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> aggregate funnel -> check skill_profile --incremental on its keep.txt
-    -> aggregate final -> report -> export --incremental -> verify
+    -> aggregate funnel
+    -> aggregate final -> report -> verify
 
 all on revision 2, with revision 1 left as it was. Dedup is not run again: its
 groups stand, and aggregate picks each group's keeper after the human decisions (design
@@ -50,15 +50,13 @@ def flow(tmp_path_factory, mini_dataset):
             c.funnel()
             c.post()
             c.deliver(delivery)
-            first = {"export": c.steps["export"],
-                     "manifest": _json(c.rd, "export", "manifest.json")}
             decisions = str(tmp / "decisions.json")
             with open(decisions, "w", encoding="utf-8") as fh:
                 json.dump({"schema_version": "1.0", "decisions": [
                     {"id": 1, "episode_index": 3, "line": "task_verdict", "decision": "failure",
                      "new_label": None, "note": "the block never reaches the bin",
                      "decided_by": "alice", "decided_at": 1790000000000},
-                    {"id": 2, "episode_index": 4, "line": "label", "decision": "custom_label",
+                    {"id": 2, "episode_index": 4, "line": "task_verdict", "decision": "unsure",
                      "new_label": NEW_LABEL, "note": None, "decided_by": "alice",
                      "decided_at": 1790000000001}]}, fh)
             applied = c.step("apply", "adjudicate-apply", "--run-dir", c.rd,
@@ -68,21 +66,17 @@ def flow(tmp_path_factory, mini_dataset):
                    "--episodes", ",".join(map(str, rerun)), *c.vlm)
             c.step("funnel2", "aggregate", "--run-dir", c.rd, "--phase", "funnel",
                    "--revision", "2", "--episodes", "0-7")
-            keep = c.path("revisions", "r0002", "keep.txt")
-            c.step("profile2", "check", "--modules", "skill_profile", *c.common(),
-                   "--episodes", "@" + keep, "--incremental", *c.vlm)
             c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
-            c.deliver(delivery, "--revision", "2", "--incremental")
-    c.first, c.delivery = first, delivery
+            c.deliver(delivery)
+    c.delivery = delivery
     return c
 
 
 def test_decisions_name_what_runs_next(flow):
     doc = flow.steps["apply"].doc
     assert doc["applied"] == 2 and doc["rerun_task_success"] == [4]
-    assert doc["profile_resync"] == [3, 4]
     assert doc["label_changes"] == [{"episode_index": 4, "new_label": NEW_LABEL}]
     rejudged = flow.steps["rejudge"].doc["modules"]["task_success"]
     assert rejudged["part"] == "0002" and rejudged["episodes"]["total"] == 1
@@ -92,122 +86,37 @@ def test_decisions_name_what_runs_next(flow):
     assert rec["details"]["task_desc_source"] == "人工改标"
 
 
-def test_the_first_dedup_stands_and_the_profile_follows_the_decisions(flow):
+def test_the_first_dedup_stands_after_the_decisions(flow):
     """keep.txt of revision 2 drops the episode a person judged failed; dedup is not
     run again, its group {3, 7} stands and keeps 7 now that 3 is gone (D58); the
-    profile loses 3 and files 7."""
+    the kept set loses 3."""
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
-        assert fh.read().split() == ["0", "1", "4", "6", "7"]
+        assert fh.read().split() == ["0", "6", "7"]              # 6: no task text, not judged (D72)
     counts = flow.steps["funnel2"].doc["counts"]
-    assert counts["keep"] == 6 and counts["decided_out"] == 1 and counts["decided_in"] == 0
+    assert counts["decided_out"] == 1 and counts["decided_in"] == 0
     assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
-    profile = flow.steps["profile2"].doc["modules"]["skill_profile"]
-    assert profile["episodes"]["total"] == 5                  # 0 1 4 6 7: not 3
-    filed = {r["episode_index"] for r in
-             read_jsonl(flow.path("checks", "skill_profile", "parts", "0002.jsonl"))}
-    assert filed == {0, 1, 4, 6, 7}
-    rows = read_jsonl(flow.path("checks", "skill_profile", "assignments.jsonl"))
-    assert sorted(r["episode_id"] for r in rows) == ["ep000000", "ep000001", "ep000004",
-                                                     "ep000006", "ep000007"]
-    relabelled = next(r for r in rows if r["episode_id"] == "ep000004")
-    assert relabelled["grouping_text"] == NEW_LABEL
 
 
 def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     r1, r2 = flow.path("revisions", "r0001"), flow.path("revisions", "r0002")
-    assert _eps(r1, "passed") == [0, 1, 3, 4, 6]
-    assert _eps(r2, "passed") == [0, 1, 4, 6, 7]
-    assert _eps(r2, "reject") == [2, 3, 5] and _eps(r2, "held") == []
+    assert _eps(r1, "passed") == [0, 3, 4, 6]               # 4 and 6: no task text, not judged (D72)
+    assert _eps(r2, "passed") == [0, 6, 7]
+    assert _eps(r2, "reject") == [1, 2, 3, 4, 5] and _eps(r2, "held") == []
     # 3 was decided; 0 is still asked, 7 - delivered in 3's place - is asked whether its
-    # task succeeded instead of whether its reject stands; v1's two layers (D39) abstain
-    # on 4's new label
-    assert _eps(r2, "review") == [0, 4, 7]
+    # task succeeded instead of whether its reject stands; 1 and 4 (judged for the first time,
+    # with its new label) are rejected by the judgement and can be appealed; 6 still has no text
+    assert _eps(r2, "review") == [0, 1, 4, 7]
     review = {e["episode_index"]: e for e in _json(r2, "review.json")["episodes"]}
     assert [i["line"] for i in review[7]["review"]] == ["task_verdict"]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
     assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human", "code": "failure",
                                      "item": "TASK-4", "appealable": False,
                                      "text": "人工裁决判失败（任务未完成）"}]
-    passed = {e["episode_index"]: e for e in _json(r2, "passed.json")["episodes"]}
-    assert passed[4]["task_text"] == {"text": NEW_LABEL, "source": "人工改标"}
+    judged = {r["episode_index"]: r for r in read_jsonl(flow.path("checks", "task_success", "results.jsonl"))}
+    assert (judged[4]["details"]["task_desc"], judged[4]["details"]["task_desc_source"]) == (NEW_LABEL, "人工改标")
     assert _json(r2, "adjudications.json") == {"applied": [1, 2]}
     commit = _json(r2, "commit.json")
     assert commit["parts"]["task_success"] == ["0001", "0002"]
     report = _json(r2, "report.json")
-    assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
-                                            "held": 0, "review": 3, "skipped": 0}
-
-
-def test_the_second_export_is_incremental(flow):
-    first, second = flow.first["export"].doc, flow.steps["export"].doc
-    assert first["incremental"] is False and first["episodes"] == 5
-    assert second["incremental"] is True and second["full_reason"] is None
-    assert second["episodes"] == 5
-    # 3 leaves; 4 (relabelled) and 6 move up one slot: renumbered, videos renamed; 7 joins
-    assert second["diff"] == {"keep": 2, "relabel": 0, "renumber": 2, "add": 1, "drop": 1}
-    assert second["videos_copied"] == 2 and second["videos_renamed"] == 4
-    man = _json(flow.rd, "export", "manifest.json")
-    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 4, 6, 7]
-    by_ep = {e["episode_index"]: e for e in man["episodes"]}
-    assert by_ep[4]["task"] == {"text": NEW_LABEL, "source": "人工改标"}
-    tasks = read_jsonl(flow.path("export", "lerobot_curated", "meta", "episodes.jsonl"))
-    assert tasks[by_ep[4]["new_index"]]["tasks"] == [NEW_LABEL]
-    assert flow.steps["verify"].doc["failed"] == []
-    assert flow.steps["verify"].doc["complete_marker"] is True
-    assert _json(flow.delivery, "export", "manifest.json")["fingerprint"] == man["fingerprint"]
-
-
-def test_export_syncs_to_tos_and_verify_completes_it(flow, tmp_path, cloud, monkeypatch):
-    """--output tos://: _COMPLETE goes first, stale files go, the two manifests come last,
-    and only the output key set is used; verify then reads it back and completes it."""
-    rd = str(tmp_path / "run")
-    shutil.copytree(flow.rd, rd)
-    prefix = "deliveries/droid-50/run1"
-    bucket = cloud.bucket("dst-bucket", readers={"out-ak"})
-    bucket[f"{prefix}/_COMPLETE"] = b""                                  # a verified old state
-    stale = f"{prefix}/export/lerobot_curated/data/chunk-000/episode_000009.parquet"
-    bucket[stale] = b"old"
-    monkeypatch.setenv("CURATION_OUTPUT_TOS_ACCESS_KEY", "out-ak")
-    monkeypatch.setenv("CURATION_OUTPUT_TOS_SECRET_KEY", "out-sk")
-    url = f"tos://dst-bucket/{prefix}"
-    res = run("export", "--run-dir", rd, "--input", flow.ds, "--revision", "2", "--output", url)
-    assert res.rc == 0, res.doc
-    assert f"{prefix}/_COMPLETE" not in bucket and stale not in bucket
-    man = _json(rd, "export", "manifest.json")
-    for rel, info in man["files"].items():
-        assert len(bucket[f"{prefix}/export/lerobot_curated/{rel}"]) == info["size"], rel
-    puts = [c[2] for c in cloud.calls if c[0] == "put"]
-    assert puts[-2:] == [f"{prefix}/export/manifest.detail.json",
-                         f"{prefix}/export/manifest.json"]
-    assert {c["access_key"] for c in cloud.clients} == {"out-ak"}
-
-    # what the Daemon uploads as the run goes, then the read-back
-    for dirpath, dirs, files in os.walk(rd):
-        rel_dir = os.path.relpath(dirpath, rd).replace(os.sep, "/")
-        if rel_dir == "export/lerobot_curated" or rel_dir.startswith("export/lerobot_curated/"):
-            continue
-        for name in files:
-            if name == "inflight.json":
-                continue
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            with open(os.path.join(dirpath, name), "rb") as fh:
-                bucket[f"{prefix}/{rel}"] = fh.read()
-    res = run("verify", "--run-dir", rd, "--output", url, "--visibility-timeout", "0")
-    assert res.rc == 0 and res.doc["failed"] == [] and res.doc["complete_marker"] is True
-    assert f"{prefix}/_COMPLETE" in bucket
-
-
-def test_export_stops_when_the_source_changed(flow, tmp_path):
-    rd = str(tmp_path / "run")
-    shutil.copytree(flow.rd, rd)
-    parquet = os.path.join(flow.ds, "data", "chunk-000", "episode_000001.parquet")
-    with open(parquet, "rb") as fh:
-        original = fh.read()
-    try:
-        with open(parquet, "ab") as fh:
-            fh.write(b"\0")
-        res = run("export", "--run-dir", rd, "--input", flow.ds, "--revision", "2")
-        assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
-    finally:
-        with open(parquet, "wb") as fh:
-            fh.write(original)
+    assert report["overview"]["counts"] == {"total": 8, "passed": 3, "rejected": 5,
+                                            "held": 0, "review": 4, "skipped": 0}

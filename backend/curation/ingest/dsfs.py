@@ -182,6 +182,20 @@ def prefetch(root_url: str, *, store=None, quiet: bool = False) -> int:
     return len(lst.files)
 
 
+def seed(root_url: str, objects) -> None:
+    """把调用方已经拿到的清单交给读端(幂等):``objects`` 是 (数据集内相对键, 大小, etag)。
+    v2 的命令在自己的清单上做格式判定和源文件校验,读端拿同一份,不再向 TOS 列第二遍。"""
+    bucket, root = _split(root_url)
+    if (bucket, root) in _LISTINGS:
+        return
+    lst = _Listing(bucket, root)
+    for rel, size, etag in objects:
+        lst.add(f"{root}/{rel}" if root else str(rel), size, etag)
+    _LISTINGS[(bucket, root)] = lst
+    if not tos_store_mod.is_anonymous_bucket(bucket):
+        tos_store_mod.register_bucket_region(bucket, _store(bucket).region)
+
+
 def forget(root_url: str | None = None) -> None:
     """丢掉清单缓存(单测/同进程换数据集用)。"""
     if root_url is None:

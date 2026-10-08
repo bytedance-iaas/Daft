@@ -1,4 +1,7 @@
-"""A small LeRobot v3.0 dataset for the v3 export tests.
+"""A small LeRobot v3.0 dataset for the tests that need one.
+
+It was written for the v3 export tests; the export went away with D69, the fixture stays
+because the data-integrity and missing-source tests read a v3 dataset.
 
 v3 is not compared with v1 (design doc 10, section 3.1); this fixture only has to be
 a correct v3.0 dataset that the official loader opens without a warning, laid out

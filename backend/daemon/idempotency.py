@@ -16,7 +16,7 @@ must not create a second task. Rules:
 * replays carry the header ``Idempotent-Replayed: true``.
 
 W5 wraps ``createTask``, ``createTasksBatch``, ``taskAction``, ``retryTask``,
-``continueTask``, ``reexportTask`` and ``applyAdjudication`` with :meth:`Idempotency.run`;
+``continueTask`` and ``applyAdjudication`` with :meth:`Idempotency.run`;
 the W4 write endpoints use it too.
 """
 from __future__ import annotations

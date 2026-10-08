@@ -2,7 +2,7 @@
 
 Every sample is a copy of a clean fixture with one kind of damage per episode, so each
 episode's expected finding is known: LeRobot v2 (``parity.fixtures``), LeRobot v3 with
-shared files (``tests/export/v3_fixture``) and mcap. The clean fixtures pass, except the
+shared files (``tests/cli/v3_fixture``) and mcap. The clean fixtures pass, except the
 two byte-equal episodes the dedup fixture carries on purpose (3 and 7), which are
 suspects.
 """
@@ -188,7 +188,7 @@ def test_the_decode_test_finds_what_the_structure_cannot(cli, dataset, tmp_path)
 
 @pytest.fixture
 def v3(tmp_path) -> str:
-    from tests.export.v3_fixture import make_mini_lerobot_v3
+    from tests.cli.v3_fixture import make_mini_lerobot_v3
 
     return make_mini_lerobot_v3(str(tmp_path / "v3"))
 
@@ -306,7 +306,7 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
     from .fakevlm_server import FakeVlmServer
     from .pipeline import Chain
 
-    v1 = "timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup,skill_profile"
+    v1 = "timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup"
 
     def lists(rd: str) -> dict[str, list]:
         # the verdicts; each entry's findings (C2 final-list 2.0) also list the module's own suspicions

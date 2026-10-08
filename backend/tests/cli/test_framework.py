@@ -260,9 +260,7 @@ def test_v1_commands_are_handed_to_the_legacy_cli(tmp_path, capsys):
     assert main(["ls", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "a.txt" in out and "共 0 个目录、1 个文件" in out      # v1's own wording
-    with pytest.raises(SystemExit) as info:                        # hidden v1 command
-        main(["reprofile", "--help"])
-    assert info.value.code == 0
+    assert "reprofile" not in str(main(["--help"]) or "")           # retired with the skill profile
 
 
 # ---------------------------------------------------------------- signals (subprocess)

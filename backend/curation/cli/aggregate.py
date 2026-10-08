@@ -4,10 +4,10 @@ Pure computation in seconds, recomputed in full every time. The modules' finding
 task's policy (``run.json``'s ``policy``, frozen at start; the default policy when there is none):
 
 * ``--phase funnel``: the funnel modules -> ``verdicts.jsonl`` (the machine's keep / drop / held per
-  episode, 2.0 lines) and ``keep.txt`` (the input of dedup and skill_profile), into
+  episode, 2.0 lines) and ``keep.txt`` (the input of dedup), into
   ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``. ``keep.txt`` follows the
   applied human decisions (``decided_in`` / ``decided_out`` count them);
-* ``--phase final --revision N``: adds dedup, skill_profile and the applied human decisions and writes
+* ``--phase final --revision N``: adds dedup and the applied human decisions and writes
   ``passed`` / ``reject`` / ``held`` (disjoint and complete) and the ``review`` view (C2 2.0) and the
   policy it used (``policy.json``) into ``revisions/r<NNNN>/``. A revision that already has
   ``commit.json`` is never written again.
@@ -55,12 +55,11 @@ def add_parser(sub, parents) -> None:
 
 def _episodes(args, run_dir: str, modules: list[str]) -> list[int]:
     from ..pipeline.records import latest_results
-    from ..pipeline.tasktext import load_autolabel
 
     given = runctx.read_episode_file(args.episodes)
     if given is not None:
         return given
-    found: set[int] = set(load_autolabel(run_dir))
+    found: set[int] = set()
     for m in modules:
         found |= set(latest_results(run_dir, m))
     if not found:
@@ -111,12 +110,11 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                             f"{counts['decided_in']} in, {counts['decided_out']} out")
     else:
         from ..pipeline.adjudication import Decisions
-        from ..pipeline.dataset_stages import load_profile
         from ..pipeline.records import write_json_atomic
 
         decisions = Decisions.of(run_dir)
         task_text = _task_text(ctx, args, run_dir, episodes)
-        profile = load_profile(run_dir) if "skill_profile" in modules else None
+        profile = None          # the skill profile was removed (registry 3.0)
         result = agg.final(state, args.revision, decisions, task_text,
                            (profile or {}).get("label_audit"))
         files = agg.write_final(out_dir, result)

@@ -6,13 +6,39 @@ import math
 
 from .video_input import VideoClip, video_content
 
-PROTOCOL = "video-task/1"
-#: the per-camera picture-defect report riding on every endstate review (camera_defects module)
-CAMERA_CHECK_PROTOCOL = "camera-check/1"
+#: ONE request judges the episode AND every camera (design 13, D71): no review request per
+#: camera, no arbitration, and since D73 no label guard either. The per-camera answers come out of
+#: the same reasoning pass, so they are not an independent second signature - what guards a
+#: rejection is the evidence it must cite and sending everything less than a clear answer to a
+#: person. Records judged under the earlier two-pass protocol (``video-task/1``) are stale:
+#: ``check --resume`` judges them again. An episode without a task text gets the picture-defect
+#: request alone (``CAMERAS_ONLY_PROMPT``): same cameras, same defect items, no verdict.
+PROTOCOL = "video-task/2"
+#: the per-camera picture-defect report answered inside that same request (camera_defects module).
+#: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
+#: stale, so ``check --resume`` judges them again. ``camera-check/1`` and ``1.1`` were the two-pass
+#: review's; ``2`` is the single-pass block's.
+CAMERA_CHECK_PROTOCOL = "camera-check/2"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
 CAMERA_CHECK_MAX_TIMES = 8
+#: How long one video request may take grows with what it carries (2026-10-08): the model's
+#: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
+#: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
+#: image requests (60 s) made the hedge fire on nearly every long episode and waste a request.
+#: The configured timeout stays the floor; the request's own size raises it, up to a cap.
+TIMEOUT_PER_FRAME_S = 0.5
+TIMEOUT_MAX_S = 600.0
+
+
+def request_timeout(clips: list[VideoClip], fps: float, floor_s: float) -> float:
+    """The timeout of one request over ``clips`` sampled at ``fps``: never under ``floor_s``,
+    half a second per frame sent, never over :data:`TIMEOUT_MAX_S`."""
+    frames = sum(max(0.0, float(c.end_s) - float(c.start_s)) * float(fps) for c in clips)
+    return float(min(TIMEOUT_MAX_S, max(float(floor_s), TIMEOUT_PER_FRAME_S * frames)))
+
+
 TASK_PROMPT = """Assess the robot manipulation task from the supplied continuous videos.
 Task: {instruction}
 Camera guidance: {hints}
@@ -34,6 +60,25 @@ or failure MUST cite at least one evidence interval. All evidence timestamps
 must be episode-relative seconds within the supplied camera window. If the
 objects or the relevant action cannot be observed, return uncertain.
 """
+#: what the three picture-defect items mean. Shared word for word by the two shapes below, so the
+#: two-pass review and the single-pass per-camera block ask exactly the same question.
+CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn, blocky, smeared or
+garbled frames, wrong colours in patches, or a frozen picture with artifacts. shake: the WHOLE
+picture moves as one while the scene itself stays intact - the view jolts, drifts or wobbles, the
+framing jumps, and the edges may show black bars or a changed field of view; the camera body is
+moving, not the robot or the objects. A wrist camera moving with the arm is normal, report only
+jitter beyond that. Decide between the two by asking whether the scene is still whole: a whole
+scene that jumps is shake, a broken-looking scene is glitch; report both only when both are really
+there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
+"minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
+the episode. times are episode-relative seconds within that camera's own window, like evidence;
+leave times empty for "none". Give up to four intervals; when the defect recurs in short bursts
+across the clip, give the span that encloses them rather than one burst, and say "intermittent" in
+the note. When the defect is there for the whole clip, leave times empty and write "persistent" in
+the note. Keep every note under twelve words. Use "unknown" when you cannot judge an item. These
+items never change verdict, completion or evidence."""
+
+#: the two-pass shape: one review request per camera, the defect report riding on it
 CAMERA_CHECK_PROMPT = """
 Also report this camera's own picture defects in ONE extra field "camera_check" of the same JSON
 object, next to the five fields above (keep those five exactly as specified):
@@ -42,16 +87,47 @@ object, next to the five fields above (keep those five exactly as specified):
   "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
   "contamination":{"level":"none|minor|severe|unknown",
                    "kind":"none|dirt|smudge|water|obstruction|other","times":[[start_s,end_s]],"note":"..."}}}
-glitch: corrupted, torn, blocky, smeared or garbled frames, or a frozen picture with artifacts.
-shake: the camera body itself moving or vibrating, not the robot or objects moving; a wrist camera
-moving with the arm is normal, report only jitter beyond that. contamination: dirt, smudges, water
-drops or an object stuck to or covering the lens. "minor" is visible but leaves the scene readable;
-"severe" hides or distorts the scene for part of the episode. times are episode-relative seconds
-within this camera's window, like evidence; leave times empty for "none", and give at most two
-intervals, the worst ones, rounded to the nearest half second. When the defect is there for the whole
-clip, leave times empty and write "persistent" in the note. Keep every note under twelve words.
-Use "unknown" when you cannot judge an item. This field never changes verdict, completion or
-evidence, and it must be valid JSON like the rest of the object."""
+""" + CAMERA_CHECK_DEFS + """
+It must be valid JSON like the rest of the object."""
+
+#: the single-pass shape: ONE request judges the episode and every camera. The five core fields keep
+#: their meaning - they are the episode's verdict - and each camera says what it alone shows, so a
+#: finding can still be attributed to one camera without a request per camera.
+CAMERAS_PROMPT = """
+Add ONE more field "cameras" to the same JSON object, next to the five fields above (keep those
+five exactly as specified). Give one entry for EVERY camera supplied above, under its exact name:
+{"cameras":{"<exact supplied camera name>":{
+   "verdict":"success|failure|uncertain",
+   "reason":"what THIS camera alone shows, under fifteen words",
+   "camera_check":{
+     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "contamination":{"level":"none|minor|severe|unknown",
+                      "kind":"none|dirt|smudge|water|obstruction|other",
+                      "times":[[start_s,end_s]],"note":"..."}}}}}
+Judge each camera on what THAT camera shows and nothing else: a camera that cannot see the objects
+or the relevant action is "uncertain" for that camera, even when another camera settles the episode.
+Do not copy the episode verdict into every camera. The episode's own verdict stays in the five
+fields above and is yours to decide from all the cameras together.
+""" + CAMERA_CHECK_DEFS + """
+The whole answer must be one valid JSON object."""
+
+#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same three defect
+#: items, no verdict - there is no task to judge, so nothing is asked about success or failure.
+CAMERAS_ONLY_PROMPT = """Inspect the supplied continuous videos for picture defects only. This episode
+has no task description, so there is no task to judge: do not assess success or failure, do not
+describe what the robot does. All cameras show the same episode.
+Return one JSON object with exactly one field "cameras", with one entry for EVERY camera supplied
+above, under its exact name:
+{"cameras":{"<exact supplied camera name>":{
+   "camera_check":{
+     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "contamination":{"level":"none|minor|severe|unknown",
+                      "kind":"none|dirt|smudge|water|obstruction|other",
+                      "times":[[start_s,end_s]],"note":"..."}}}}}
+""" + CAMERA_CHECK_DEFS + """
+The whole answer must be one valid JSON object."""
 
 
 def _resolve_camera(name: str, cameras: dict) -> object | None:
@@ -68,7 +144,11 @@ def _resolve_camera(name: str, cameras: dict) -> object | None:
     return cameras[matches[0]] if len(matches) == 1 else None
 
 
-def parse_assessment(text: str, clips: list[VideoClip]) -> dict:
+def parse_assessment(text: str, clips: list[VideoClip], *, per_camera: bool = False) -> dict:
+    """The model's answer, validated. ``per_camera``: the single-pass shape, which also carries a
+    ``cameras`` block - required (a missing one costs the one repair round, like a missing core
+    field, because the per-camera verdicts are read by the decision), but lenient inside it: a
+    camera the model got wrong reads ``unavail`` and is named in ``problems``, never an error."""
     from .vlm_client import strip_reasoning
 
     raw = strip_reasoning(text).strip()
@@ -86,9 +166,12 @@ def parse_assessment(text: str, clips: list[VideoClip]) -> dict:
             raise
         answer = json.loads(without)
         dropped = "camera_check was not valid JSON and was dropped; the verdict is unaffected"
-    if not isinstance(answer, dict) or set(answer) - {"camera_check"} != {
+    allowed = {"cameras"} if per_camera else {"camera_check"}
+    if not isinstance(answer, dict) or set(answer) - allowed != {
             "verdict", "task_type", "completion", "reason", "evidence"}:
         raise ValueError("video assessment has invalid fields")
+    if per_camera and "cameras" not in answer:
+        raise ValueError("the single-pass answer needs a per-camera block")
     if answer["verdict"] not in ("success", "failure", "uncertain"):
         raise ValueError("invalid video verdict")
     if answer["task_type"] not in ("transient", "persistent"):
@@ -121,12 +204,88 @@ def parse_assessment(text: str, clips: list[VideoClip]) -> dict:
             raise ValueError("video evidence timestamp is outside the episode")
         if not isinstance(item["observation"], str) or not item["observation"].strip():
             raise ValueError("video evidence needs an observation")
-    if dropped:
+    if per_camera:
+        answer["cameras"] = parse_cameras(answer.get("cameras"), clips)
+        if dropped:
+            for entry in answer["cameras"].values():
+                entry["camera_check"].setdefault("problems", []).append(dropped)
+    elif dropped:
         answer["camera_check"] = parse_camera_check(None, clips)
         answer["camera_check"]["problems"] = [dropped]
     elif "camera_check" in answer:
         answer["camera_check"] = parse_camera_check(answer["camera_check"], clips)
     return answer
+
+
+def parse_cameras(raw, clips: list[VideoClip]) -> dict:
+    """``{camera: {verdict, reason, camera_check}}`` for every supplied camera; never raises.
+
+    One entry per clip, always, so the decision reads a complete table: a camera the model left
+    out, or answered badly, reads ``unavail`` - which the decision counts as neither a success nor
+    a failure vote, exactly as an unanswered review did. Each camera's defect times are bounded by
+    THAT camera's own window, which the two-pass shape could not do from a joined request.
+    """
+    answers = raw if isinstance(raw, dict) else {}
+    known = {c.camera: c for c in clips}
+    out: dict = {}
+    for clip in clips:
+        got = answers.get(clip.camera)
+        if got is None:                       # models shorten long feature names, as in evidence
+            for name, value in answers.items():
+                if isinstance(name, str) and _resolve_camera(name, known) is clip:
+                    got = value
+                    break
+        entry = {"verdict": "unavail", "reason": "", "camera_check": parse_camera_check(None, [clip])}
+        problems: list[str] = []
+        if not isinstance(got, dict):
+            problems.append("the model gave no entry for this camera")
+        else:
+            verdict = str(got.get("verdict", "")).strip().lower()
+            if verdict in ("success", "failure", "uncertain"):
+                entry["verdict"] = verdict
+            else:
+                problems.append(f"verdict {got.get('verdict')!r} is not success/failure/uncertain")
+            reason = got.get("reason")
+            entry["reason"] = reason.strip()[:200] if isinstance(reason, str) else ""
+            entry["camera_check"] = parse_camera_check(got.get("camera_check"), [clip])
+        if problems:
+            entry["camera_check"].setdefault("problems", []).extend(problems)
+        out[clip.camera] = entry
+    extra = [n for n in answers if isinstance(n, str) and _resolve_camera(n, known) is None]
+    if extra and out:
+        next(iter(out.values()))["camera_check"].setdefault("problems", []).append(
+            f"the answer named cameras that were not supplied: {sorted(extra)[:4]}")
+    return out
+
+
+def parse_cameras_only(text: str, clips: list[VideoClip]) -> dict:
+    """The answer to :data:`CAMERAS_ONLY_PROMPT`: ``{"cameras": {camera: {verdict, reason,
+    camera_check}}}`` in the shape of :func:`parse_cameras` - ``verdict`` is ``unavail`` for every
+    camera, since nothing was judged - so the camera_defects rider reads both answers alike. An
+    answer without a ``cameras`` object costs the one repair round; inside it, lenient."""
+    from .vlm_client import strip_reasoning
+
+    raw = strip_reasoning(text).strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    answer = json.loads(raw)
+    if not isinstance(answer, dict) or not isinstance(answer.get("cameras"), dict):
+        raise ValueError("the picture-defect answer needs a cameras object")
+    answers, known = answer["cameras"], {c.camera: c for c in clips}
+    out: dict = {}
+    for clip in clips:
+        got = answers.get(clip.camera)
+        if got is None:
+            for name, value in answers.items():
+                if isinstance(name, str) and _resolve_camera(name, known) is clip:
+                    got = value
+                    break
+        check = got.get("camera_check") if isinstance(got, dict) else None
+        entry = {"verdict": "unavail", "reason": "", "camera_check": parse_camera_check(check, [clip])}
+        if not isinstance(got, dict):
+            entry["camera_check"].setdefault("problems", []).append("the model gave no entry for this camera")
+        out[clip.camera] = entry
+    return {"cameras": out}
 
 
 def _without_camera_check(raw: str) -> str | None:
@@ -235,8 +394,12 @@ def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
 def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
                         timeout_s: float = 60, api_key_env: str | None = None,
                         max_in_flight: int = 16, thinking: bool | None = None,
-                        json_mode: bool = True,
-                        fps: float = 5.0):
+                        json_mode: bool = True, fps: float = 5.0, cameras_only: bool = False):
+    """The ``probe`` request is the judgement: it also answers for every camera (D71), so there is
+    no review request per camera and no arbitration. With ``cameras_only`` the same request asks
+    for the picture defects alone (an episode without a task text, D73); ``instruction`` is then
+    ignored. The ``endstate`` and ``arbitration`` tags are v1's own commands' (``rejudge``), not
+    the product's."""
     import requests
     from .vlm_client import SharedGate, _with_thinking, auth_headers
 
@@ -244,18 +407,27 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
     headers = auth_headers(api_key_env)
     url = endpoint.rstrip("/") + "/chat/completions"
     constrained = {"json": bool(json_mode)}      # flipped off if the backend refuses the field
+    per_camera = tag == "probe"                   # the judgement answers for every camera
 
-    def assess(clips: list[VideoClip], instruction: str, *, hints: str = "") -> dict:
+    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "") -> dict:
         from . import vlm_client
 
-        prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
-        if tag == "endstate":
+        if cameras_only:
+            prompt = CAMERAS_ONLY_PROMPT
+        else:
+            prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
+        if cameras_only:
+            pass
+        elif per_camera:
+            prompt += CAMERAS_PROMPT            # one request answers the episode and every camera
+        elif tag == "endstate":
             prompt += "\nIndependently review ONLY this camera; abstain if its view is insufficient."
             prompt += CAMERA_CHECK_PROMPT       # the camera_defects report rides on every review
         elif tag == "arbitration":
             prompt += "\nRe-examine the action and object trajectory carefully; do not guess missing evidence."
         content = [{"type": "text", "text": prompt}] + video_content(clips, fps=fps)
         messages = [{"role": "user", "content": content}]
+        budget_s = request_timeout(clips, fps, timeout_s)   # grows with the video sent
 
         def ask() -> str:
             """One call. ``response_format`` makes the server constrain decoding to valid JSON,
@@ -267,7 +439,7 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
                 payload["response_format"] = {"type": "json_object"}
             response = vlm_client.hedged_request(
                 lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
-                tag=tag, timeout_s=timeout_s, gate=gate)
+                tag=tag, timeout_s=budget_s, gate=gate)
             if (constrained["json"] and getattr(response, "status_code", 200) == 400
                     and "response_format" in (getattr(response, "text", "") or "")):
                 constrained["json"] = False
@@ -278,7 +450,9 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
         for attempt in range(2):
             text = ask()
             try:
-                return parse_assessment(text, clips)
+                if cameras_only:
+                    return parse_cameras_only(text, clips)
+                return parse_assessment(text, clips, per_camera=per_camera)
             except (ValueError, TypeError, KeyError) as exc:
                 if attempt:
                     raise ValueError(f"invalid video assessment after repair: {exc}") from exc

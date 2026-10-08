@@ -51,6 +51,14 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         raise InputUnreachable(f"nothing found at {storage.uri}", {"uri": storage.uri})
     ctx.log("info", f"listed {len(listing)} objects under {storage.uri}")
     ctx.check_stop("after listing the input")
+    if storage.remote:
+        # the one listing of the task: later commands read it back instead of listing again
+        from . import listing_cache
+
+        try:
+            listing_cache.save(listing_cache.path_beside(args.out), storage.uri, listing)
+        except OSError as e:
+            ctx.log("warn", f"could not keep the listing for later commands: {e}")
 
     fmt = lerobot_meta.detect_format(listing)
     if fmt.kind in ("mcap", "lance"):

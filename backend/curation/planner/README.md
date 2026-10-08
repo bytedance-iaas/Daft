@@ -13,7 +13,7 @@ Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联�
 |---|---|
 | `limits.py` | 上限取交集（D31）：CPU 并发 = min(核数 − 2（至少 1），任务上限)，是一个任务最多用多少，核本身由 Daemon 的全局 CPU 池在任务之间分（P4、D54）；VLM 并行度 N = min(任务、模型、后端、站点上限，模型和后端都没配时再加站点默认或 64)，多任务同跑时按任务数均分（P1）；计划里记下是哪一层卡住的（`bound_by`） |
 | `gates.py` | 一个 N 推导八把闸门（04 §2.2）；endstate、arbitration、guard_caption 沿用 v1 在 `funnel.py` 里对 episode 闸门的耦合；站点可逐把覆盖，按 N 等比缩放；`v1_set_overrides()` 给出让 v1 代码用上这组闸门的 `--set` |
-| `plan.py` | `build_plan()`：分档、幸存者链、硬门、autolabel 条件、两个聚合档、dedup（并发恒为 1）与技能画像、合并提案、估算；输出符合 `docs/contracts/cli/plan.schema.json` |
+| `plan.py` | `build_plan()`：两块的段、聚合档、dedup（逐条段，并发恒为 1）、合并提案、估算（无标注条目不计判定请求，D72）；输出符合 `docs/contracts/cli/plan.schema.json` |
 | `estimates.py` | 估算用的常数全部来自 v1 的实测与出厂配置，逐条注明出处 |
 | `merge.py` | `FramePolicy`、`MergeUnit`、`MergeGroup`、`MergeLimits`、`none` 与 `per_episode_multi_module` 两个策略、合并请求的拼装与按 key 拆回、`vlm.merge.enabled` 开关 |
 | `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块）；`chat_payload()` 把请求拼成 v1 形态的请求体 |
@@ -39,7 +39,7 @@ plan = build_plan(preflight_json, task["modules"], episode_indices,
                              cpu_cores=容器的 CPU 配额（读不到就不传，默认 os.cpu_count()）,
                              running_tasks=启动时正在运行的任务数),
                   SiteConfig.from_mapping(site_yaml_的_concurrency_与_vlm_段),   # CPU 没有站点设置（D54）
-                  unlabeled_episodes=没有任务标注的条目下标（知道就传，autolabel 档的去留就是精确的）)
+                  unlabeled_episodes=没有任务标注的条目下标（知道就传，不判成败的条数与估算就是精确的）)
 ```
 
 **CLI（W3）**：`curation plan` 调同一个函数；建议 `--cpu-cores` → `cpu_cores`，`--vlm-parallelism` → `model_parallelism`
@@ -73,7 +73,7 @@ from curation.contracts import schemas
 from curation.planner import build_plan
 pf = json.loads((schemas.contracts_dir() / "examples/preflight.json").read_text())["valid"][0]
 plan = build_plan(pf, ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-                       "video_action_sync", "task_success", "dedup", "skill_profile"],
+                       "video_action_sync", "task_success", "dedup"],
                   limits={"cpu_cores": 32}, validate=True)
 for s in plan["stages"]:
     print(s["id"], s.get("episodes", ""), s.get("concurrency", ""), s.get("gates", ""), s.get("merge", ""))
@@ -82,10 +82,10 @@ print(plan["estimates"])
 EOF
 ```
 
-核对：八档依次是 autolabel、numeric、frame、vlm、verdict、dedup、profile、final；frame 读 `survivors:numeric`，vlm 读
-`survivors:frame`；CPU 两档并发 30（32 核留 2 核）；dedup 并发 1；vlm 档闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 /
-guard_caption 32`，profile 档 `caption 32 / llm 16 / audit 16`；两个 VLM 档都是 `{"strategy": "none", "groups": []}`；
-估算 3000 次请求（autolabel 88 + 成败判定 200×(8+2×3) + 画像 112）；notes 里说明运动学极限缺型号、哪些调用没计入。
+核对：五段依次是 numeric、frame、dedup（CPU 块）、vlm（VLM 块）与收尾的 final（D72 起没有 autolabel 段）；CPU 两段并发 30（32 核留 2 核）；
+dedup 并发 1；vlm 段闸门 `episode 64 / probe 64 / endstate 64 / arbitration 32`（`guard_caption` 随判废护栏下线，D73；episode = probe，一条一次请求），
+合并是 `{"strategy": "none", "groups": []}`；上限 `cpu_concurrency 30 / vlm_parallelism 64`，都由 planner 定；
+估算 200 次请求（每条 1 次：有标注的判成败，88 条没标注的只看画面缺陷）；notes 里说明 88 条没有任务标注、运动学极限缺型号、哪些调用没计入。
 
 **3. 上限取交集与闸门推导**：
 
@@ -213,6 +213,6 @@ EOF
 - `check --json` 的 `merge.requests` 按模块计：一个合并请求在它携带的每个模块里各记一次；任务级请求总数以实际账为准。
 - 合并请求的延迟行还没有标签：`vlm_latency.csv` 的五个标签是数据契约，加 `merged` 要单独定。
 - 计划里的八把闸门是 v1 的调用点；新模块的请求暂按 `probe` 估算，真正接入时要定它归哪把闸门。
-- 估算是建议值：假定所选条目全部过硬门；仲裁、判废护栏与画像的纯文本调用随数据变化，不计入。
+- 估算是建议值：假定所选条目全部过硬门；判废护栏的调用随数据变化，不计入。
 - 10 篇 §3.4 要求示例模块走真实的方舟端点再跑一遍对账：`run_merge_consistency` 可以直接用，
   缺的是真实的 `send`（上表「合并执行」一行）和按 `FramePolicy` 解码的 `frames`，都属于接入步骤。

@@ -34,13 +34,11 @@ function countTaskGets(id: string): () => number {
 }
 
 describe('任务详情 (07 §4.2)', () => {
-  it('shows the header, the never-exported banner (导出, not 重新导出) and the report overview', async () => {
+  it('shows the header and the report overview', async () => {
     renderApp(`/tasks/${MAIN}`);
     expect(await screen.findByRole('heading', { name: /droid 前 50 条质检/ })).toBeInTheDocument();
     expect(screen.getAllByText('错误').length).toBeGreaterThan(0);
-    const banner = screen.getByTestId('delivery-banner');
-    expect(banner).toHaveTextContent('交付数据集待导出。');
-    expect(within(banner).getByRole('button', { name: '导出' })).toBeInTheDocument();
+    expect(screen.queryByTestId('delivery-banner')).toBeNull();     // D69: nothing to re-export
     const summary = screen.getByTestId('report-summary');
     for (const t of ['50', '41', '7', '2', '10', '82%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
   });
@@ -277,7 +275,8 @@ describe('任务详情 (07 §4.2)', () => {
     expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['模块', '请求', '输入', '输出', '思维链', '缓存命中']);
     expect(rows()).toEqual([
       ['任务成败判定', '786', '1.54M', '49.5K', '32.7K', '728K'],
-      ['技能画像', '100', '466K', '18K', '10.2K', '203.8K'],
+      // this task ran before the skill profile was retired: the registry no longer names it
+      ['skill_profile', '100', '466K', '18K', '10.2K', '203.8K'],
     ]);
     const total = () => [...table.querySelectorAll('tfoot td, .arco-table-tfoot td')].map((c) => c.textContent);
     expect(total()).toEqual(['合计', '886', '2.01M', '67.5K', '42.9K', '931.8K']);
@@ -436,11 +435,10 @@ describe('任务详情 (07 §4.2)', () => {
     expect(await screen.findByTestId('report-summary')).toHaveTextContent('缺源文件3未参与质检，不计入总数');
     const timeline = await screen.findByTestId('timeline');
     const tags = await within(timeline).findAllByTestId('relabel-rerun-tag');
-    // The apply_adjudication subtask's start and end; the re-export after it has no such tag.
+    // The apply_adjudication subtask's start and end both carry the protocol tag.
     expect(tags.map((t) => t.textContent)).toEqual(['改标重判：首轮完整流程', '改标重判：首轮完整流程']);
     expect(tags[0].closest('.htl-node')).toHaveTextContent('执行裁决：应用 12 条裁决');
     expect(tags[0].closest('.htl-node')).toHaveTextContent('子任务 · 执行裁决 #1');
-    expect(within(timeline).getByText('重新导出：只处理变动的 episode。').closest('.htl-node')).not.toHaveTextContent('改标重判');
   });
 
   it('a finished task whose access key was deleted offers 重新绑定访问密钥 (rebind-credentials)', async () => {

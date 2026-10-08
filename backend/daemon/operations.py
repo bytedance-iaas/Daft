@@ -67,7 +67,6 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "repreflightTask": ("POST", "/api/v1/tasks/{id}/repreflight"),
     "retryTask": ("POST", "/api/v1/tasks/{id}/retry"),
     "continueTask": ("POST", "/api/v1/tasks/{id}/continue"),
-    "reexportTask": ("POST", "/api/v1/tasks/{id}/reexport"),
     "applyAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication/apply"),
     "purgeTaskArtifacts": ("POST", "/api/v1/tasks/{id}/purge-artifacts"),
     "getTaskPlan": ("GET", "/api/v1/tasks/{id}/plan"),

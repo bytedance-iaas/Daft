@@ -4,11 +4,12 @@ The v2 side of the synthetic parity (design doc 11 §3, 2026-09-21): the atomic
 commands run in this process in the order of the Daemon's two blocks (design doc 17 §3),
 one block after the other -
 
-    preflight -> plan -> snapshot -> autolabel -> check (integrity) -> check numeric
-    -> check frame -> check vlm -> check dedup -> check skill_profile
-    -> aggregate final -> report -> export -> verify
+    preflight -> plan -> snapshot -> check (integrity) -> check numeric
+    -> check frame -> check vlm -> check dedup
+    -> aggregate final -> report -> verify
 
-- every stage on the whole selection (no stage filters another, D57), into one v2 run
+- every stage on the whole selection (no stage filters another, D57; an episode without a
+task text is not judged by task_success, D72), into one v2 run
 directory, which ``python -m parity compare`` loads directly. Model calls go
 through the same tape hooks as ``dump-v1``: ``--replay`` serves v1's recorded
 answers and counts every request that is not on the tape (a different prompt,
@@ -24,7 +25,7 @@ With ``--from RUN_DIR --decisions FILE`` it runs the Daemon's adjudication seque
 instead (doc 02 section 3.9) on a copy of a finished run directory -
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> check skill_profile --incremental (the whole selection) -> aggregate final -> report
+    -> aggregate final -> report
 
 on the next result revision; its tape is the one ``dump-v1 -- rejudge`` recorded
 while v1 applied the same decisions, and ``compare`` checks the two (D39).
@@ -48,7 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 BACKEND = os.path.join(REPO, "backend")
 ALL_MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-               "video_action_sync", "task_success", "dedup", "skill_profile")
+               "video_action_sync", "task_success", "dedup")
 #: v2's own first gate (design doc 14); v1 has no such module, so the default chain leaves it out
 #: and ``--modules`` adds it to record a golden with it
 INTEGRITY = "data_integrity"
@@ -102,9 +103,6 @@ class Chain:
         if rerun:
             self.run("check task_success", "check", "--modules", "task_success", *common,
                      "--episodes", ",".join(str(e) for e in rerun), *self.vlm)
-        if "skill_profile" in self.modules:
-            self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                     "--episodes", episodes, "--incremental", *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", revision, "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", revision)
@@ -124,7 +122,6 @@ class Chain:
                 or os.path.isdir(os.path.join(ds, "frames.lance")):
             # mcap / lance: the Daemon names the task's selection (their semantics sample)
             common += ["--selection", episodes]
-        self.run("autolabel", "autolabel", *common, "--episodes", episodes, *self.vlm)
         if INTEGRITY in self.modules:           # the CPU block's first stage (design doc 14)
             self.run("check integrity", "check", "--modules", INTEGRITY, *common,
                      "--episodes", episodes)
@@ -135,14 +132,9 @@ class Chain:
         self.run("check vlm", "check", "--modules", "task_success", *common,
                  "--episodes", episodes, *self.vlm)
         self.run("check dedup", "check", "--modules", "dedup", *common, "--episodes", episodes)
-        self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
-                 "--episodes", episodes, *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")
-        out = ["--output", self.delivery] if self.delivery else []
-        self.run("export", "export", "--run-dir", rd, "--input", ds, "--source-manifest", sm,
-                 *out)
         if self.delivery:
             _mirror(rd, self.delivery)            # what the Daemon uploads as it goes
             self.run("verify", "verify", "--run-dir", rd, "--output", self.delivery,
@@ -183,16 +175,12 @@ def next_revision(run_dir: str) -> int:
 
 
 def _mirror(run_dir: str, delivery: str) -> None:
-    """Copy the run directory into the delivery, as the Daemon's sync does (the dataset
-    itself went there through ``export --output``)."""
+    """Copy the run directory into the delivery, as the Daemon's sync does (D69: that is the
+    whole delivery - the result revisions, the report and its details)."""
     import shutil
 
-    skip = {os.path.join(run_dir, "export", name)
-            for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
-
     def ignore(d, names):
-        return [n for n in names if os.path.join(d, n) in skip or n == "inflight.json"
-                or n.startswith(".")]
+        return [n for n in names if n == "inflight.json" or n.startswith(".")]
 
     shutil.copytree(run_dir, delivery, ignore=ignore, dirs_exist_ok=True)
 
@@ -203,8 +191,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", required=True, help="the dataset")
     p.add_argument("--episodes", default=None,
                    help="episode expression (default: every episode of the dataset)")
-    p.add_argument("--delivery", help="a local directory standing in for the delivery (export "
-                                      "and verify run when given)")
+    p.add_argument("--delivery", help="a local directory standing in for the delivery (the run "
+                                      "directory is mirrored there and verified when given)")
     p.add_argument("--from", dest="from_run", metavar="RUN_DIR",
                    help="adjudicate: copy this finished v2 run directory to --out and run the "
                         "adjudication sequence on it (needs --decisions)")

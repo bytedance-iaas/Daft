@@ -1,16 +1,13 @@
-"""``curation adjudicate-apply`` - apply this task's human decisions (design doc 02 §3.9).
+"""``curation adjudicate-apply`` - apply this task's human decisions (design doc 02 §3.8).
 
 The first step of v1's ``rejudge``: decisions are recorded as applied - no model
-call, no export (D9) - and the command names what runs next:
+call - and the command names what runs next:
 
 * ``rerun_task_success``: relabels in force that no person concluded and that
-  task_success has not judged with their text yet - a fresh relabel, or one whose
-  follow-up task verdict just lapsed (C1 1.3) - judged again by ``check --modules
-  task_success`` with the new label, the way
-  ``relabel_rerun`` says (D39: ``v1``, the default, is v1's rejudge; ``full`` the
-  first run's flow), recorded with each relabel;
-* ``profile_resync``: episodes the skill profile has to re-file or drop
-  (``check --modules skill_profile --incremental``).
+  task_success has not judged with their text yet (the ``new_label`` a person sent
+  with their task verdict, D68) - judged again by ``check --modules task_success``
+  with the new label, the way ``relabel_rerun`` says (D39: ``v1``, the default, is
+  v1's rejudge; ``full`` the first run's flow), recorded with each relabel;
 
 ``decisions.json`` (``cli/decisions.schema.json``) holds only this task's
 decisions not applied yet (D32); a decision already applied is skipped by id,
@@ -88,6 +85,4 @@ def render(p: dict) -> str:
     if p["rerun_task_success"]:
         lines.append("  re-judge task_success: " + ", ".join(map(str, p["rerun_task_success"]))
                      + f" (relabel_rerun {p['relabel_rerun']})")
-    if p["profile_resync"]:
-        lines.append("  re-sync skill profile: " + ", ".join(map(str, p["profile_resync"])))
     return "\n".join(lines)

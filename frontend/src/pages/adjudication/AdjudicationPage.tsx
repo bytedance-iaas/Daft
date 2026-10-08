@@ -8,7 +8,7 @@ import { moduleName, qk, showSubtask, useModules, useTask } from '../../api/quer
 import type { AdjudicationCard, AdjudicationCounts, Task } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
-import { keepCard, ownQuestions, statusQuery, viewCard } from '../../lib/adjudication';
+import { keepCard, statusQuery, viewCard } from '../../lib/adjudication';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { AppealsTab } from './AppealsTab';
@@ -63,7 +63,7 @@ export function AdjudicationPage() {
   const moduleOptions = (reg.data?.modules ?? []).filter((m) => (tab === 'appeals' ? isAppealable(m) : producesAdjudication(m))).map((m) => ({ label: m.name_zh, value: m.id }));
   // The review tab asks about episodes still in passed; appeals (applies_to reject) have their own tab.
   const typeOptions = (catalog ?? []).filter((l) => l.applies_to === 'passed').map((l) => {
-    const owner = reviewCards.flatMap(ownQuestions).find((q) => q.line === l.id)?.source_module;
+    const owner = reviewCards.flatMap((c) => c.questions).find((q) => q.line === l.id)?.source_module;
     return { label: owner ? zh.adjudication.typeOption(l.title_zh, moduleName(reg.data, owner)) : l.title_zh, value: l.id };
   });
 

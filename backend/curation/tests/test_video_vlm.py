@@ -42,6 +42,13 @@ def answer(verdict="success", camera="cam"):
                           "observation": "object is lifted"}]}
 
 
+def judged(verdict="success", camera="cam", cam_verdict=None):
+    """The judgement's answer (D71): the five fields plus the per-camera block."""
+    return dict(answer(verdict, camera),
+                cameras={camera: {"verdict": cam_verdict or verdict, "reason": "this view",
+                                  "camera_check": {}}})
+
+
 def test_clip_preserves_continuous_frames_and_excludes_adjacent_episodes(video):
     clips = prepare_videos(video)
     assert len(clips) == 1 and clips[0].frames == 10
@@ -118,11 +125,12 @@ def mock_transport(monkeypatch, responses):
 
 
 def test_video_transport_and_schema_repair(monkeypatch):
-    malformed = answer()
+    malformed = judged()
     malformed["evidence"][0]["end_s"] = 100
-    sent = mock_transport(monkeypatch, [json.dumps(malformed), json.dumps(answer())])
+    sent = mock_transport(monkeypatch, [json.dumps(malformed), json.dumps(judged())])
     assess = make_video_assessor("http://test/v1", "video-model", fps=3)
-    assert assess([clip()], "pick up object") == answer()
+    out = assess([clip()], "pick up object")
+    assert {k: out[k] for k in answer()} == answer() and out["cameras"]["cam"]["verdict"] == "success"
     assert len(sent) == 2
     content = sent[0]["messages"][0]["content"]
     videos = [v for v in content if v["type"] == "video_url"]
@@ -159,22 +167,22 @@ def test_evidence_camera_suffix_match_and_repair_message(monkeypatch):
         else:
             with pytest.raises(ValueError):
                 parse_assessment(json.dumps(a), [long_clip])
-    sent = mock_transport(monkeypatch, [json.dumps(answer(camera="robot1_camera0")), json.dumps(short)])
+    sent = mock_transport(monkeypatch, [json.dumps(judged(camera="robot1_camera0")),
+                                        json.dumps(judged(camera="robot0_camera0"))])
     assess = make_video_assessor("http://test/v1", "video-model")
     assess([long_clip], "pick up object")
     assert "observation.images.robot0_camera0" in sent[1]["messages"][-1]["content"]
 
 
-@pytest.mark.parametrize("primary,review,passed", [
+@pytest.mark.parametrize("primary,camera,passed", [
     ("success", "success", True), ("failure", "failure", False),
     ("success", "failure", None), ("failure", "success", None),
-    ("failure", "uncertain", None), ("uncertain", "success", True),
+    ("failure", "uncertain", None), ("uncertain", "success", None),   # no rescue by a camera (D71)
 ])
-def test_video_decision_has_no_probe_thresholds(monkeypatch, primary, review, passed):
+def test_video_decision_has_no_probe_thresholds(monkeypatch, primary, camera, passed):
     monkeypatch.setattr("curation.pipeline.video_task.prepare_videos", lambda *a, **kw: [clip()])
     result = judge_video_episode({}, {}, "pick up object",
-                                 lambda *a, **kw: answer(primary),
-                                 lambda *a, **kw: answer(review))
+                                 lambda *a, **kw: judged(primary, cam_verdict=camera))
     assert result.passed is passed
     assert result.detail["input_mode"] == "video"
     assert result.detail["video_evidence"]
@@ -187,7 +195,7 @@ def test_video_timeout_is_not_failure_and_has_no_image_fallback(monkeypatch):
     def broken(*a, **kw):
         raise TimeoutError("video timeout")
 
-    result = judge_video_episode({}, {}, "pick", broken, broken)
+    result = judge_video_episode({}, {}, "pick", broken)
     assert result.passed is None and result.detail["rules"] == ["video_score_failed"]
 
 
@@ -195,7 +203,78 @@ def test_media_preparation_failure_is_execution_error_not_model_abstention():
     from curation.pipeline.video_task import VideoPreparationError
 
     with pytest.raises(VideoPreparationError):
-        judge_video_episode({}, {}, "pick", lambda *a: pytest.fail("model called"), None)
+        judge_video_episode({}, {}, "pick", lambda *a: pytest.fail("model called"))
+
+
+def test_a_rejection_is_the_one_answer_and_nothing_else_is_asked(monkeypatch):
+    """D73: no label guard - a failure verdict with an original annotation is a rejection on
+    that one request; no caption, no comparison, no second request of any kind."""
+    monkeypatch.setattr("curation.pipeline.video_task.prepare_videos", lambda *a, **kw: [clip()])
+    calls = []
+
+    def scorer(*a, **kw):
+        calls.append(a)
+        return judged("failure", cam_verdict="failure")
+
+    result = judge_video_episode({}, {}, "pick up object", scorer, task_src="原始标注")
+    assert result.passed is False and len(calls) == 1
+    assert "label_check" not in result.detail and result.detail["rules"] == ["video_single_pass_failure"]
+
+
+def test_an_episode_without_a_task_text_gets_the_picture_defect_request_alone(monkeypatch):
+    """D73: the cameras-only request asks for the three defect items per camera and no verdict;
+    its answer reads in the shape of the judgement's per-camera block."""
+    from curation.adapters.video_vlm import (CAMERAS_ONLY_PROMPT, CAMERA_CHECK_DEFS,
+                                             make_video_assessor, parse_cameras_only)
+
+    assert "picture defects only" in CAMERAS_ONLY_PROMPT and CAMERA_CHECK_DEFS in CAMERAS_ONLY_PROMPT
+    assert '"verdict"' not in CAMERAS_ONLY_PROMPT and "Task:" not in CAMERAS_ONLY_PROMPT
+    clips = [clip(), clip(camera="wrist")]
+    answer = json.dumps({"cameras": {"cam": {"camera_check": {
+        "glitch": {"level": "minor", "times": [[0.0, 0.5]], "note": "blocky"},
+        "shake": {"level": "none", "times": [], "note": ""},
+        "contamination": {"level": "severe", "kind": "water", "times": [], "note": "persistent"}}}}})
+    got = parse_cameras_only(answer, clips)
+    assert set(got) == {"cameras"} and set(got["cameras"]) == {"cam", "wrist"}
+    cam, wrist = got["cameras"]["cam"], got["cameras"]["wrist"]
+    assert cam["verdict"] == "unavail" and cam["camera_check"]["glitch"]["level"] == "minor"
+    assert cam["camera_check"]["contamination"]["kind"] == "water"
+    assert wrist["camera_check"]["glitch"]["level"] == "unknown"
+    assert "the model gave no entry for this camera" in wrist["camera_check"]["problems"]
+    with pytest.raises(ValueError):
+        parse_cameras_only(json.dumps({"verdict": "success"}), clips)
+
+    sent = mock_transport(monkeypatch, [answer])
+    assess = make_video_assessor("http://test/v1", "m", cameras_only=True)
+    out = assess(clips)
+    assert len(sent) == 1 and out["cameras"]["cam"]["camera_check"]["glitch"]["level"] == "minor"
+    text = json.dumps(sent[0])
+    assert "picture defects only" in text and "Assess the robot manipulation task" not in text
+
+
+def test_the_request_timeout_grows_with_the_video_sent(monkeypatch):
+    """A short clip keeps the configured timeout; a long multi-camera one gets half a second per
+    frame sent, up to the cap; the hedge is given that budget, not the configured floor."""
+    from curation.adapters import video_vlm
+    from curation.adapters.video_vlm import TIMEOUT_MAX_S, request_timeout
+
+    short = [VideoClip("cam", "data:video/mp4;base64,YWJj", "abc", 0.0, 4.0, 20, 3)]
+    assert request_timeout(short, 5.0, 60.0) == 60.0                     # 20 frames: the floor
+    droid = [VideoClip(c, "data:video/mp4;base64,YWJj", "abc", 0.0, 18.0, 90, 3)
+             for c in ("ext1", "ext2", "wrist")]
+    assert request_timeout(droid, 5.0, 60.0) == 135.0                    # 270 frames x 0.5 s
+    long = [VideoClip("cam", "data:video/mp4;base64,YWJj", "abc", 0.0, 3000.0, 15000, 3)]
+    assert request_timeout(long, 5.0, 60.0) == TIMEOUT_MAX_S
+    seen = {}
+
+    def hedged(send, *, tag, timeout_s, gate=None):
+        seen["timeout_s"] = timeout_s
+        return Response(json.dumps(judged(camera="ext1")))
+
+    monkeypatch.setattr("curation.adapters.vlm_client.hedged_request", hedged)
+    monkeypatch.setattr("requests.post", lambda *a, **kw: pytest.fail("not through the hedge"))
+    video_vlm.make_video_assessor("http://test/v1", "m", timeout_s=60.0, fps=5.0)(droid, "pick")
+    assert seen["timeout_s"] == 135.0
 
 
 def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
@@ -204,14 +283,17 @@ def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
     from curation.pipeline.rejudge import rerun_task_success
 
     cfg = {"checks": {"task_success": {"vlm": {"endpoint": "http://test/v1", "model": "m"}}}}
-    sent = mock_transport(monkeypatch, [json.dumps(answer())] * 4)
+    # the judgement is ONE request answering for every camera (D71); v1's own rejudge takes the
+    # same path for video input, so it is one request too
+    sent = mock_transport(monkeypatch, [json.dumps(judged()), json.dumps(judged())])
     scorer = wrap_call(vlm_completion_from_config(cfg), IncidentLog(), step="probe", call_kind="probe")
-    voter = wrap_voter(build_endstate_voter(cfg), IncidentLog())
-    deps = TaskDeps(scorer, voter, None, lambda *a, **kw: pytest.fail("sparse decode called"))
+    deps = TaskDeps(scorer, None, None, lambda *a, **kw: pytest.fail("sparse decode called"))
     result = task_check_episode(cfg, None, deps, video, "pick", "原始标注", 10, None, None, "")
     assert result["passed"] is True
+    assert len(sent) == 1
+    voter = wrap_voter(build_endstate_voter(cfg), IncidentLog())
     assert rerun_task_success(cfg, video, "pick", scorer, voter).passed is True
-    assert len(sent) == 4
+    assert len(sent) == 2
     assert all(any(c["type"] == "video_url" for c in p["messages"][0]["content"]) for p in sent)
 
 
@@ -224,13 +306,6 @@ def test_caption_uses_continuous_video_with_wrapped_client(monkeypatch, video):
     capper = wrap_call(make_vlm_captioner("http://test/v1", "m"), IncidentLog(), step="caption", call_kind="caption")
     assert caption_episodes([{"episode_id": "ep0", "video": video}], capper) == ["pick up object"]
     assert any(c["type"] == "video_url" for c in sent[0]["messages"][0]["content"])
-
-
-def test_profile_prefers_video_description_and_falls_back_on_unobservable():
-    from curation.dataset_level.reassign import grouping_text_and_source
-
-    assert grouping_text_and_source("old annotation", "pick up object") == ("pick up object", "自产caption")
-    assert grouping_text_and_source("old annotation", "unclear") == ("old annotation", "原始标注")
 
 
 def test_video_caption_does_not_reuse_old_image_caption(monkeypatch, video):
@@ -372,6 +447,7 @@ def test_endstate_review_asks_for_camera_check_without_a_repair(monkeypatch):
     assert review["camera_check"]["glitch"]["level"] == "unknown"
     prompt = sent[0]["messages"][0]["content"][0]["text"]
     assert "Independently review ONLY this camera" in prompt and CAMERA_CHECK_PROMPT.strip() in prompt
-    sent = mock_transport(monkeypatch, [json.dumps(answer())])
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
     make_video_assessor("http://test/v1", "video-model")([clip()], "pick up")
-    assert "camera_check" not in sent[0]["messages"][0]["content"][0]["text"]   # the probe is untouched
+    prompt = sent[0]["messages"][0]["content"][0]["text"]
+    assert 'more field "cameras"' in prompt and len(sent) == 1       # the judgement asks per camera, once

@@ -62,6 +62,22 @@ def test_a_declared_change_passes_until_the_file_changes_again(tmp_path, v1_src)
     assert proc.returncode == 1
 
 
+def test_a_declared_removal_passes_and_an_undeclared_one_does_not(tmp_path, v1_src):
+    """An A-class file may be deleted when the algorithm it carries loses its last caller: the
+    removal is pinned in the ledger the same way a change is (registry 3.0 dropped three)."""
+    tree = tmp_path / "curation"
+    shutil.copytree(f"{v1_src}/curation", tree)
+    (tree / "core" / "checks" / "kinematics.py").unlink()
+    assert aclass.check(str(tree))["missing"] == ["core/checks/kinematics.py"]
+    declared = tmp_path / "declared.json"
+    declared.write_text(json.dumps({"files": {"core/checks/kinematics.py": {
+        "removed": True, "since": "abc", "why": "test"}}}))
+    res = aclass.check(str(tree), declared_path=str(declared))
+    assert res["missing"] == [] and res["declared"] == ["core/checks/kinematics.py"]
+    proc = run_parity("a-class-check", "--tree", str(tree), "--declared", str(declared))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 def test_working_tree_is_clean():
     """Right now no A-class file differs from the freeze commit other than the ones
     ``a_class_declared.json`` pins (design 13's video judgement, 2026-09-24)."""

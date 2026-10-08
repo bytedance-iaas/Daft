@@ -3,7 +3,7 @@
 The synthetic datasets are the LeRobot fixture's eight episodes in the two formats
 (``parity.fixtures.make_mini_mcap`` / ``make_mini_lance``), so the verdicts must be the
 LeRobot chain's: ep 2 (timestamp jump) and ep 5 (fragment) fail the numeric gate, ep 7 is
-ep 3's byte copy (dedup), eps 4 and 6 have no task text (autolabel). v1 itself on the same
+ep 3's byte copy (dedup), eps 4 and 6 have no task text (not judged, D72). v1 itself on the same
 data is checked bit for bit by ``tools/parity/tests/test_containers_parity.py``.
 
 Local datasets run the whole Daemon order; datasets on a fake TOS check what is read
@@ -30,8 +30,7 @@ from .fakevlm_server import FakeVlmServer  # noqa: E402
 from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
-PASSED, REJECT = [0, 1, 3, 4, 6], [2, 5, 7]
-DATASET_DIR = {"mcap": "mcap_curated", "lance": "lance_episodes"}
+PASSED, REJECT = [0, 3, 4, 6], [1, 2, 5, 7]       # the one judgement (D71): 1 5 fail; 4 6 have no task text (D72)
 
 
 @pytest.fixture(scope="session")
@@ -75,7 +74,7 @@ def test_preflight_reads_the_format(cli, mini_mcap, mini_lance, fmt):
     assert ds["total_frames"] == 516
     by = {m["id"]: m for m in doc["modules"]}
     for m in ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-              "video_action_sync", "task_success", "dedup", "skill_profile"):
+              "video_action_sync", "task_success", "dedup"):
         assert by[m]["availability"] == "available", by[m]
     eef = by["eef_video_consistency"]
     if fmt == "mcap":         # F5.13: it reads mcap image topics; the dataset preflight asks for the file
@@ -221,9 +220,8 @@ def test_chain_verdicts_are_the_lerobot_fixtures(chain):
     ts = results(chain.rd, "timestamp_check")
     assert sorted(e for e, r in ts.items() if verdict_of(r) == "fail") == [2, 5]
     assert verdict_of(results(chain.rd, "dedup")[7]) == "fail"
-    captions = {line["episode_index"] for line in
-                read_jsonl(os.path.join(chain.rd, "autolabel", "captions.jsonl"))}
-    assert captions == {4, 6}
+    task = results(chain.rd, "task_success")
+    assert {e for e, r in task.items() if r["details"].get("skipped") == "no_task_text"} == {4, 6}
     assert all(r["status"] != "error" for m in ("timestamp_check", "kinematic_limits",
                                                   "motion_quality", "visual_quality",
                                                   "video_action_sync", "task_success")
@@ -236,78 +234,19 @@ def test_chain_semantics_come_from_the_selection(chain):
     rec = results(chain.rd, "motion_quality")[0]
     assert verdict_of(rec) in ("pass", "fail", "scored", "abstain")
     assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 8   # every one (D57)
-
-
-def test_chain_delivers_the_format(chain, mini_mcap):
-    exp = chain.steps["export"].doc
-    assert exp["format"] == chain.fmt and exp["incremental"] is False
-    assert exp["dataset_dir"] == f"export/{DATASET_DIR[chain.fmt]}"
-    root = os.path.join(chain.delivery, "export", DATASET_DIR[chain.fmt])
-    with open(os.path.join(root, "index.json")) as fh:
-        index = json.load(fh)
-    with open(os.path.join(chain.delivery, "export", "manifest.json")) as fh:
-        manifest = json.load(fh)
-    assert not schemas.errors("cli/export-manifest.schema.json", manifest)
-    assert manifest["dataset_dir"] == DATASET_DIR[chain.fmt]
-    assert [e["episode_index"] for e in manifest["episodes"]] == PASSED
-    if chain.fmt == "mcap":
-        assert sorted(os.listdir(root)) == sorted([f"episode_{i}.mcap" for i in PASSED]
-                                                  + ["index.json"])
-        for i in PASSED:                          # byte for byte the source's
-            with open(os.path.join(root, f"episode_{i}.mcap"), "rb") as a, \
-                    open(os.path.join(mini_mcap, f"episode_{i}.mcap"), "rb") as b:
-                assert a.read() == b.read()
-        by = {r["episode_id"]: r for r in index["episodes"]}
-        assert by["ep000004"]["instruction_source"] == "自产caption"
-        assert by["ep000004"]["relabeled"] is True and by["ep000000"]["relabeled"] is False
-    else:
-        import pandas as pd
-
-        assert "原格式交付本版本未做" in index["说明"] and "note" in exp
-        df = pd.read_parquet(os.path.join(root, "episodes_parquet"))
-        assert sorted(df["episode_id"]) == [f"ep{i:06d}" for i in PASSED]
-        src = dict(zip(df["episode_id"], df["instruction_source"]))
-        assert src["ep000004"] == "自产caption" and src["ep000000"] == "原始标注"
-        for video in df["video"]:                 # pointers into the delivery
-            for v in video.values():
-                assert v["path"].startswith(chain.delivery) and os.path.isfile(v["path"])
-    verify = chain.steps["verify"].doc
-    assert verify["failed"] == [] and verify["complete_marker"] is True
-
-
 def test_chain_leaves_no_temporary_videos(chain):
     assert os.listdir(chain.tmp) == []
-
-
-def test_a_second_export_writes_nothing_new(chain, tmp_path):
-    """Always a full export for these formats; unchanged bytes are not uploaded again and
-    --incremental says why it did not build on the previous export."""
-    res = run("export", "--run-dir", chain.rd, "--input", chain.ds, "--output", chain.delivery,
-              "--incremental")
-    assert res.rc == 0 and res.doc["incremental"] is False
-    assert "LeRobot" in res.doc["full_reason"]
-    assert res.doc["diff"] == {"keep": 5, "relabel": 0, "renumber": 0, "add": 0, "drop": 0}
-    import re
-
-    logs = " ".join(e.get("msg", "") for e in res.events)
-    up, gone = map(int, re.search(r"(\d+) file\(s\) uploaded, (\d+) deleted", logs).groups())
-    # mcap: at most index.json (its generated_at, when the second ticked), never a .mcap;
-    # lance: daft names its parquet part anew each time (one in, one out), no video again
-    assert (up, gone) in ([(0, 0), (1, 0)] if chain.fmt == "mcap" else [(1, 1)])
-
-
 def test_chain_report_notes_the_container(chain):
+    """The container section is v1's health check of the data package - and since D69 only
+    that: there is no delivered dataset to describe."""
     with open(os.path.join(chain.rd, "revisions", "r0001", "report.json")) as fh:
         report = json.load(fh)
     container = report["integrity"]["container"]
-    assert container["format"] == chain.fmt
-    assert container["delivery"]
+    assert container["format"] == chain.fmt and "delivery" not in container
+    assert isinstance(container["findings"], list)
     with open(os.path.join(chain.rd, "revisions", "r0001", "report.md"), encoding="utf-8") as fh:
         md = fh.read()
-    if chain.fmt == "lance":
-        assert "原格式交付本版本未做" in md
-    else:
-        assert "mcap_curated" in md
+    assert f"## 数据包({chain.fmt})" in md and "交付数据集" not in md
 
 
 # ---------------------------------------------------------------- on a fake TOS
@@ -437,39 +376,57 @@ def test_tos_changed_object_exits_6(cli, tos, mini_mcap, tmp_path):
     sm = str(tmp_path / "sm.json")
     assert cli("snapshot", "--input", "tos://src/ds/mcap", "--out", sm).rc == 0
     tos.buckets["src"]["ds/mcap/episode_3.mcap"] += b"\0"
+    # the guard works on a fresh listing of the bucket; the stage commands take the snapshot's
+    # listing while it lives (an hour, or until the Daemon drops it for a resume or a retry)
+    from curation.cli import listing_cache
+
+    listing_cache.forget(str(tmp_path))
     res = cli("check", "--modules", "timestamp_check", "--input", "tos://src/ds/mcap",
               "--run-dir", str(tmp_path / "run"), "--source-manifest", sm, "--episodes", "3")
     assert res.rc == 6 and res.doc["error"]["details"]["key"] == "episode_3.mcap"
     tos.buckets["src"]["ds/mcap/episode_9.mcap"] = tos.buckets["src"]["ds/mcap/episode_0.mcap"]
     del tos.buckets["src"]["ds/mcap/episode_3.mcap"]
     tos.buckets["src"]["ds/mcap/episode_3.mcap"] = tos.buckets["src"]["ds/mcap/episode_0.mcap"]
+    listing_cache.forget(str(tmp_path))
     res = cli("check", "--modules", "timestamp_check", "--input", "tos://src/ds/mcap",
               "--run-dir", str(tmp_path / "run"), "--source-manifest", sm, "--episodes", "1")
     assert res.rc == 6                            # a new episode file: the dataset changed
     assert res.doc["error"]["details"]["change"] == "added"
 
 
-def test_tos_export_mcap(cli, tos, mini_mcap, tmp_path, monkeypatch):
-    """Export of a remote mcap dataset: the kept files come through the cache, byte for byte."""
-    from .pipeline import Chain
+def _listings(cloud) -> int:
+    return sum(1 for c in cloud.calls if c[0] == "list")
+
+
+def test_the_bucket_is_listed_once_per_task(cli, tos, mini_mcap, tmp_path, monkeypatch):
+    """The snapshot keeps its listing next to the manifest; the stage commands take it instead
+    of listing the bucket again (each used to list on its own, then once more for the guard and,
+    for LeRobot, once more for v1's reader), until it expires, the metadata files changed, or the
+    Daemon dropped it for a resume or a retry."""
+    from curation.cli import listing_cache
 
     tos.upload_dir(mini_mcap, "src", "ds/mcap")
-    monkeypatch.setenv("CURATION_SOURCE_CACHE", str(tmp_path / "cache"))
-    with FakeVlmServer() as vlm:
-        c = Chain("tos://src/ds/mcap", str(tmp_path / "run"), vlm.url,
-                  extra_source=["--selection", EPISODES])
-        c.front()
-        c.funnel()
-        c.post()
-        c.deliver(str(tmp_path / "delivery"))
-    assert _list(c.rd, "passed") == PASSED
-    root = tmp_path / "delivery" / "export" / "mcap_curated"
-    for i in PASSED:
-        assert (root / f"episode_{i}.mcap").read_bytes() == \
-            tos.buckets["src"][f"ds/mcap/episode_{i}.mcap"]
-    assert c.steps["verify"].doc["complete_marker"] is True
-
-
+    rd = tmp_path / "run"
+    manifest = str(rd / "source_manifest.json")
+    assert cli("snapshot", "--input", "tos://src/ds/mcap", "--out", manifest).rc == 0
+    cache = rd / listing_cache.CACHE_NAME
+    assert cache.is_file()
+    per = _listings(tos)                                   # the calls one listing of the bucket takes
+    assert per >= 1
+    common = ["--input", "tos://src/ds/mcap", "--run-dir", str(rd), "--source-manifest", manifest,
+              "--selection", "0-7"]
+    for _ in range(2):
+        res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+        assert res.rc == 0, res.doc
+    assert _listings(tos) == per                           # no listing after the snapshot's
+    assert any("from the snapshot's listing" in e.get("msg", "") for e in res.events)
+    listing_cache.forget(str(rd))                          # what the Daemon does for a resume / retry
+    assert not cache.exists()
+    res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+    assert res.rc == 0 and _listings(tos) == 2 * per and cache.is_file()
+    monkeypatch.setattr(listing_cache, "MAX_AGE_S", 0.0)   # expired: listed afresh, kept again
+    res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+    assert res.rc == 0 and _listings(tos) == 3 * per
 # ---------------------------------------------------------------- the helpers
 
 

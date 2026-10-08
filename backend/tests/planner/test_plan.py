@@ -42,7 +42,7 @@ def test_example_preflight_is_valid():
 def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
     assert p["schema_version"] == "2.0"
-    assert ids(p) == ["numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
+    assert ids(p) == ["numeric", "frame", "dedup", "vlm", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 30, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
@@ -53,26 +53,21 @@ def test_full_plan_matches_the_design_example():
         "id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric",
         "concurrency": 30, "modules": ["visual_quality", "video_action_sync"], "episodes": "selected"}
     assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check", "block": "cpu",
-                                 "after": "frame", "full_set": True, "concurrency": 1,
+                                 "after": "frame", "concurrency": 1,
                                  "modules": ["dedup"], "episodes": "selected"}
-    assert stage(p, "autolabel") == {"id": "autolabel", "kind": "vlm", "command": "autolabel",
-                                     "block": "vlm", "episodes": "unlabeled", "gates": {"caption": 32}}
     vlm = stage(p, "vlm")
-    assert (vlm["block"], vlm["after"], vlm["episodes"]) == ("vlm", "autolabel", "selected")
+    # D72: no caption stage before the checks - the 88 unlabeled episodes are simply not judged
+    assert (vlm["block"], vlm["episodes"]) == ("vlm", "selected") and "after" not in vlm
     assert vlm["modules"] == ["task_success", "camera_defects"] and "hard_gates" not in vlm
-    assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
-                            "guard_caption": 32}
+    # no guard_caption (D73); one request per episode, so episode = probe (2026-10-08)
+    assert vlm["gates"] == {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
-    profile = stage(p, "profile")
-    assert (profile["block"], profile["after"], profile["full_set"], profile["episodes"]) == \
-        ("vlm", "vlm", True, "selected")
-    assert profile["gates"] == {"caption": 32, "llm": 16, "audit": 16}
     assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
 
 def test_blocks_never_chain_into_each_other():
     """design doc 17 §3.3: ``after`` names a stage of the same block; every stage takes the selection."""
-    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup", "skill_profile"]):
+    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup"]):
         p = plan(chosen, preflight=X.preflight(64, without_task=5))
         by_id = {s["id"]: s for s in p["stages"]}
         for s in p["stages"]:
@@ -82,14 +77,14 @@ def test_blocks_never_chain_into_each_other():
             if "after" in s:
                 assert by_id[s["after"]]["block"] == s["block"]
             assert s["episodes"] in ("selected", "unlabeled")
-            assert ("full_set" in s) == (s["id"] in C1.FULL_SET_STAGES)
+            assert "full_set" not in s, "D70: a plan no longer marks a whole-set stage"
 
 
 def test_the_eef_module_is_in_the_vlm_block():
     """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success, and like every
     stage it takes the whole selection (D57: nothing upstream filters it)."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final"]
+    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
         and vlm["episodes"] == "selected" and "hard_gates" not in vlm
@@ -185,29 +180,39 @@ def test_a_dataset_with_its_own_indices_is_selected_by_them():
         build_plan(X.preflight(64), ["timestamp_check"], [64])
 
 
-# ---------------------------------------------------------------- autolabel
+# ---------------------------------------------------------------- episodes without a task text (D72)
 
-def test_autolabel_only_with_unlabeled_episodes_and_task_success():
+def _unlabeled_note(p) -> str | None:
+    return next((n for n in p["estimates"]["notes"] if "no task text" in n), None)
+
+
+def test_no_stage_captions_and_task_success_skips_the_unlabeled():
+    """D72: whatever lacks a task text, the plan has no autolabel stage; a note says how many
+    episodes task_success will not judge, and only when task_success is on."""
     labelled, unlabelled = X.preflight(64), X.preflight(64, without_task=10)
-    assert "autolabel" not in ids(plan(["task_success"], preflight=labelled))
-    assert ids(plan(["task_success"], preflight=unlabelled))[0] == "autolabel"
-    # v1 captions unlabeled episodes only when task_success runs; skill_profile reuses
-    # those captions and captions the rest itself (run.py), so it does not trigger autolabel
-    assert "autolabel" not in ids(plan(["skill_profile"], preflight=unlabelled))
-    assert "autolabel" not in ids(plan(["timestamp_check", "visual_quality"], preflight=unlabelled))
+    for pf in (labelled, unlabelled):
+        assert "autolabel" not in ids(plan(["task_success"], preflight=pf))
+    assert _unlabeled_note(plan(["task_success"], preflight=labelled)) is None
+    assert _unlabeled_note(plan(["task_success"], preflight=unlabelled)).startswith("10 selected episode(s)")
+    assert _unlabeled_note(plan(["dedup"], preflight=unlabelled)) is None
+    assert _unlabeled_note(plan(["timestamp_check", "visual_quality"], preflight=unlabelled)) is None
 
 
-def test_autolabel_with_a_subset_of_episodes():
+def test_unlabeled_episodes_still_cost_one_request():
+    """D73: an episode without a task text gets the picture-defect request instead of a
+    judgement, so the estimate counts one request per selected episode either way."""
     pf = X.preflight(64, without_task=10)
+    full = plan(["task_success"], preflight=X.preflight(64))["estimates"]["vlm_requests"]
     # exact knowledge: none of the selected episodes lacks a task text
     p = plan(["task_success"], preflight=pf, episodes=[0, 1, 2], unlabeled_episodes=[40, 41])
-    assert "autolabel" not in ids(p)
+    assert _unlabeled_note(p) is None and p["estimates"]["vlm_requests"] == 3
     p = plan(["task_success"], preflight=pf, episodes=[0, 1, 40], unlabeled_episodes=[40, 41])
-    assert ids(p)[0] == "autolabel"
+    assert _unlabeled_note(p).startswith("1 selected episode(s)") and p["estimates"]["vlm_requests"] == 3
     # only totals known: plan it, and say the count is an estimate
     p = plan(["task_success"], preflight=pf, episodes=range(32))
-    assert ids(p)[0] == "autolabel"
+    assert _unlabeled_note(p).startswith("5 selected episode(s)")
     assert any("estimated from the preflight" in n for n in p["estimates"]["notes"])
+    assert plan(["task_success"], preflight=pf)["estimates"]["vlm_requests"] == full
 
 
 # ---------------------------------------------------------------- D23: existing modules never merge
@@ -274,9 +279,8 @@ def test_caps_flow_into_the_plan():
     assert p["limits"]["vlm_parallelism"] == {"value": 16, "bound_by": "task"}
     assert p["vlm_parallelism"] == 16
     g = derive_gates(16)
-    assert stage(p, "vlm")["gates"] == {k: g[k] for k in
-                                        ("episode", "probe", "endstate", "arbitration", "guard_caption")}
-    assert stage(p, "profile")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
+    assert stage(p, "vlm")["gates"] == {**{k: g[k] for k in ("probe", "endstate", "arbitration")},
+                                        "episode": g["probe"]}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 
@@ -297,11 +301,16 @@ def test_site_gate_overrides_reach_the_plan():
     assert stage(p, "vlm")["gates"]["probe"] == 96
 
 
-def test_the_profile_takes_the_whole_selection():
-    """design doc 17 §3.2: a full-set stage of the vlm block, with or without dedup."""
-    for chosen in (["skill_profile"], ["dedup", "skill_profile"]):
-        profile = stage(plan(chosen), "profile")
-        assert (profile["episodes"], profile["full_set"], profile["block"]) == ("selected", True, "vlm")
+def test_dedup_is_a_streaming_segment_of_the_cpu_block():
+    """design doc 17 §3.2 (D70): it reads every selected episode, one at a time, after the frame
+    segment - no ``full_set``, so nothing in the block waits for the whole selection."""
+    alone = stage(plan(["dedup"]), "dedup")
+    assert (alone["episodes"], alone["block"]) == ("selected", "cpu")
+    assert "after" not in alone, "selected on its own it is the block's first segment"
+    with_frame = stage(plan(["visual_quality", "dedup"]), "dedup")
+    assert with_frame["after"] == "frame"
+    assert alone["concurrency"] == with_frame["concurrency"] == 1
+    assert "full_set" not in alone and "full_set" not in with_frame
 
 
 # ---------------------------------------------------------------- estimates
@@ -309,10 +318,10 @@ def test_the_profile_takes_the_whole_selection():
 def test_estimates_follow_v1_call_graph():
     pf = X.preflight(10, cameras=("a", "b", "c"))
     p = plan(["task_success"], preflight=pf)
-    assert p["estimates"]["vlm_requests"] == 10 * (1 + 3)           # video assessment + per-camera review
+    assert p["estimates"]["vlm_requests"] == 10                     # one judgement per episode (D71)
     assert p["estimates"]["wall_clock_s"] > 0
-    p = plan(["task_success", "skill_profile"], preflight=X.preflight(10, without_task=4))
-    assert p["estimates"]["vlm_requests"] == 4 + 10 * 4 + 6          # autolabel, video judge/review, profile
+    p = plan(["task_success"], preflight=X.preflight(10, without_task=4))
+    assert p["estimates"]["vlm_requests"] == 10                      # the 4 unlabeled get the picture-defect request (D73)
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10))
     assert p["estimates"]["vlm_requests"] == 10                      # merged: one request per episode
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10),

@@ -17,7 +17,7 @@ describe('数据包完整性 in Chinese (F6.2)', () => {
     expect(value(items, 'fps')).toBe('15 fps');
     expect(value(items, 'robot_type')).toBe('未读到，运动学极限未运行');
     expect(value(items, 'profile')).toBe('命中 droid_100（按 repo_id 匹配）');
-    expect(value(items, 'labels')).toBe('28 条有；22 条没有，没有的由模型补描述（来源记为「自产描述」）');
+    expect(value(items, 'labels')).toBe('28 条有；22 条没有，没有的不判任务成败（画面缺陷和其余检查照常）');
     expect(value(items, 'source')).toBe('204 个对象 · 1.42 GiB · sha256:9f3c…e21a（启动时固化）');
     expect(value(items, 'validation')).toBe('通过');
     expect(value(items, 'warnings')).toBe('无');

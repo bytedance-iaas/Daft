@@ -24,10 +24,9 @@ LOCAL = {
     "revisions/r0001/commit.json": '{"revision": 1}', "revisions/r0001/report.json": "{}",
     "checks/task_success/parts/0001.jsonl": "{}\n", "logs/numeric.jsonl": "{}\n",
     "details/evidence/task_success/ep000001_0.jpg": "jpg", "details/vlm_latency.csv": "a,b\n",
-    "checks/video_action_sync/curves/ep000001.json": "{}", "export/manifest.json": "{}",
+    "checks/video_action_sync/curves/ep000001.json": "{}",
 }
-DELIVERED_ONLY = {"_COMPLETE": "", "export/lerobot_curated/meta/info.json": "{}",
-                  "export/lerobot_curated/data/chunk-000/episode_000000.parquet": "p"}
+DELIVERED_ONLY = {"_COMPLETE": "", "latest": "20260921-120000\n"}
 
 
 @pytest.fixture
@@ -115,7 +114,7 @@ def test_what_keeps_a_directory(world):
     d = world
     now = now_ms()
     busy = _finished(d, ended_at=now - 10 * DAY, files=False)
-    sub = d.rt.repo.create_subtask(P.Subtask(id="", task_id=busy.id, kind="reexport", scope={},
+    sub = d.rt.repo.create_subtask(P.Subtask(id="", task_id=busy.id, kind="apply_adjudication", scope={},
                                              state="queued"))
     running = seed_task(d.rt.repo, state="created")
     for frm, to in (("created", "queued"), ("queued", "running")):

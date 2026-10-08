@@ -5,8 +5,8 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 **质检算法一行不改**，本期做的是骨架、契约和产品化能力。
 
 **能质检的数据格式**：LeRobot v2 / v3、mcap（一个 `.mcap` 文件一条 episode）、Lance（lerobot-lance-convert 0.3.0 起的三表布局），
-本地目录和 `tos://` 都行（TOS 上的 mcap / Lance 先拉到本地再读，D44）；`.rrd` 暂不支持。交付：LeRobot 源交 `lerobot_curated/`，
-mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原格式交付本版本未做），见 [06 篇 §1.1](docs/design/06-delivery-and-report.md)。
+本地目录和 `tos://` 都行（TOS 上的 mcap / Lance 先拉到本地再读，D44）；`.rrd` 暂不支持。
+交付的是质检报告与结果清单，三种格式一样（D69，不写交付数据集），见 [06 篇 §4](docs/design/06-delivery-and-report.md)。
 
 - 设计：[docs/design/](docs/design/)（12 篇，入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
 - 需求账本与进度：根目录的 `feature_list.md`、`claude-progress.txt`，只在开发机本地，不入库
@@ -18,7 +18,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 |---|---|
 | `backend/curation/` | 质检内核（从 v1 原样搬来）与 v1 的编排；v1 的测试在包内 `tests/` |
 | `backend/curation/cli/` | v2 命令行（W3）：`preflight`、`snapshot`、`verify`、`curation task …` 客户端；v1 的子命令经 `legacy.py` 原样转交。说明与手动验证见 [其 README](backend/curation/cli/README.md) |
-| `backend/curation/export/` | 导出器：v1 的全量导出（A 类，原样）+ 增量重新导出（W7）。说明与手动验证见 [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md) |
+| `backend/curation/export/` | 交付产物：质检报告正文、证据帧、同步曲线图、明细表、裁决痕迹与安全写入（D69 起不写交付数据集，导出器在 `release_v1` 分支） |
 | `backend/curation/planner/` | 执行计划与 VLM 请求合并框架（W6）：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发。说明与手动验证见 [其 README](backend/curation/planner/README.md) |
 | `backend/daemon/secrets/` | 密钥与资源管理（W8）：AES-GCM 加密存储与主密钥轮换、访问密钥与模型服务的校验、开始前三项检查、命令行子进程的环境、预签名；说明与手动验证见 [其 README](backend/daemon/secrets/README.md) |
 | `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块；D49 起先 CPU 后模型，判过 / 判废 / 转人工，参与判决；读 LeRobot 与 mcap 数据集，F5.13）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹、P-A 独立观测、五项指标与诊断、离线报告；接入 v2 的 `preflight` / `plan` / `check --param` / `aggregate` / `report`；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md)，离线评估器在 `tools/eef_eval/` |
@@ -55,29 +55,28 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
    浏览器打开 <http://localhost:4173/tasks.html>，逐页核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
 6. **v2 命令行（W3）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli`（约 10 秒），应全部通过；逐条手动核对见 [backend/curation/cli/README.md](backend/curation/cli/README.md) 的「手动验证步骤」。
 7. **planner 与 VLM 请求合并（W6）**：`cd backend && ../.venv/bin/python -m pytest -q tests/planner`（约 3 秒），应全部通过；逐项核对见 [backend/curation/planner/README.md](backend/curation/planner/README.md) 的「手动验证步骤」。
-8. **增量重新导出（W7）**：`cd backend && ../.venv/bin/python -m pytest -q tests/export`（约 30 秒；官方 loader 的 3 条用例在共享 venv 里跳过），再按 [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md) 的手动验证步骤跑一遍 v2、v3 的演示，并在两个独立 venv 里跑官方 loader，输出应为 `ok: true`、`warnings: []`。
-9. **Daemon 骨架（W4）**：`cd backend && ../.venv/bin/python -m pytest -q tests/daemon`（约 40 秒），应全部通过；真起进程的 11 步手动验证见 [backend/daemon/README.md](backend/daemon/README.md)。
-10. **密钥与资源管理（W8）**：`cd backend && ../.venv/bin/python -m pytest -q tests/secrets`（约 30 秒），应全部通过；再按 [backend/daemon/secrets/README.md](backend/daemon/secrets/README.md) 的 6 步手动核对。
-11. **读结果（W5b）**：`cd backend && ../.venv/bin/python -m pytest -q tests/results`（约 30 秒），应全部通过；真起 Daemon 用 curl 逐个接口核对的步骤见 [backend/daemon/results/README.md](backend/daemon/results/README.md)。
-12. **镜像与部署约定（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 1 秒）；本机没有 docker，镜像构建看 CI；Chart 在 rerun 仓库，按 [deploy/README.md](deploy/README.md) 第 10 节 lint 与渲染；集群上的安装、升级续跑与网关挂载按第 4–6 节核对。
-13. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
-14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
-15. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
+8. **Daemon 骨架（W4）**：`cd backend && ../.venv/bin/python -m pytest -q tests/daemon`（约 40 秒），应全部通过；真起进程的 11 步手动验证见 [backend/daemon/README.md](backend/daemon/README.md)。
+9. **密钥与资源管理（W8）**：`cd backend && ../.venv/bin/python -m pytest -q tests/secrets`（约 30 秒），应全部通过；再按 [backend/daemon/secrets/README.md](backend/daemon/secrets/README.md) 的 6 步手动核对。
+10. **读结果（W5b）**：`cd backend && ../.venv/bin/python -m pytest -q tests/results`（约 30 秒），应全部通过；真起 Daemon 用 curl 逐个接口核对的步骤见 [backend/daemon/results/README.md](backend/daemon/results/README.md)。
+11. **镜像与部署约定（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 1 秒）；本机没有 docker，镜像构建看 CI；Chart 在 rerun 仓库，按 [deploy/README.md](deploy/README.md) 第 10 节 lint 与渲染；集群上的安装、升级续跑与网关挂载按第 4–6 节核对。
+12. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
+13. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
+14. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
     再 `cd .. && PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests/test_containers_parity.py`（合成数据的 mcap / Lance 两份上 v1 对 v2 回放逐位一致），应全部通过；
     用 `python -m parity make-fixture --format mcap|lance` 做两份 8 条的数据，命令行逐条跑一遍见 [CLI README](backend/curation/cli/README.md) 手动验证第 10 步
-    （判决与 LeRobot 版本相同：passed 5、reject 3；mcap 交 `mcap_curated/` 逐字节拷贝，Lance 交 `lance_episodes/`），
+    （判决与 LeRobot 版本相同：passed 2、reject 6），
     真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
-16. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py tests/cli/test_eef_record.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
+15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py tests/cli/test_eef_record.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
     `tests/orchestr/test_eef_tasks.py`）、模型复核与判决（F5.9 / F5.10，固定 tape 下各分支与离线回放）、转人工进裁决（F5.11，
-    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决到重新导出的一条）、
+    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决执行到新版本的一条）、
     轨迹与数据集记录（F5.15，只报告：`tests/cli/test_eef_record.py`）
     的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)；界面上的 EEF 裁决卡片见前端测试
     `src/pages/adjudication/AdjudicationPage.test.tsx` 里「an EEF question」一条。
 
 ## 跑通一次完整质检（真数据）
 
-上面第 1–16 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
+上面第 1–15 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
 [frontend/README.md](frontend/README.md) 的「手动验证（模拟数据）」里有对应的模拟版本：
 
 1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节补主密钥、装 dataverse，
@@ -101,10 +100,8 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
    「同时播放」会等各机位都缓冲好才一起开始，任一路卡住就全部暂停。
 7. **人工裁决**：报告里点「去裁决」（或侧栏「质检 → 人工裁决」列出有待裁条目的任务），逐条判完点「执行裁决」；
    卡片每页 10 张，「来源模块」筛选在各页签里；被去重或任务成败判定拒掉的条目在「被拒复议」页签里可以恢复。
-8. **导出交付**：裁决的子任务跑完后，在任务详情点「导出」（已导出过的显示「重新导出」，
-   只补差异），产物用官方 LeRobot loader 验证，步骤见
-   [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md)。mcap / Lance 源每次都是全量导出（没变的文件不重传），
-   产物在 `export/mcap_curated/`、`export/lance_episodes/`。
+8. **看交付**：裁决的子任务跑完后，交付目录这一批的 `<run_id>/` 下有新的结果版本（`revisions/rNNNN/` 的清单、报告与明细）、
+   裁决的 CSV 副本和 `_COMPLETE`，`latest` 指向它。平台交付的就是这些（D69，不写交付数据集）。
 
 ## CI
 

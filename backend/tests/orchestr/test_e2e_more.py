@@ -33,11 +33,10 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     r = d.api("POST", f"/tasks/{task_id}/adjudication", json={"decisions": [   # W5b records
         {"episode_index": 3, "line": "task_verdict", "decision": "failure"}]})
     assert r.status_code == 200, r.text
-    # the fixture raises no label conflict to answer on the page; a relabel recorded all the
-    # same keeps the re-judging path covered (the CLI executes it as v1 does)
+    # a rewritten task text with the verdict left to the model keeps the re-judging path covered
     d.rt.repo.append_adjudication([
-        P.AdjudicationCreate(task_id=task_id, episode_index=4, line="label",
-                             decision="custom_label", new_label="wipe the table",
+        P.AdjudicationCreate(task_id=task_id, episode_index=4, line="task_verdict",
+                             decision="unsure", new_label="wipe the table",
                              decided_by="tester")], at=d.rt.clock())
     r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={"relabel_rerun": "nope"})
     assert r.status_code == 400
@@ -47,9 +46,9 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert r.json()["subtask"]["scope"] == {"relabel_rerun": "v1"}
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
-    # 3 judged failed; its byte copy 7 is delivered in its place (design doc 17 §4.5)
-    assert (done["summary"]["passed"], done["summary"]["rejected"]) == (5, 3)
-    assert done["delivery_stale"] is True                  # D9: no export, it is stale now
+    # 3 judged failed; its byte copy 7 is delivered in its place (design doc 17 §4.5); 4, judged for
+    # the first time with its new label, is rejected; 6 still has no text and stays (D72)
+    assert (done["summary"]["passed"], done["summary"]["rejected"]) == (3, 5)
     assert d.rt.repo.latest_adjudications(task_id, unapplied_only=True) == []
     queue = d.api("GET", f"/tasks/{task_id}/adjudication", params={"status": "all"}).json()
     assert {c["episode_index"]: c["status"] for c in queue["items"]}.get(3) == "applied"
@@ -57,10 +56,9 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     for where in (rd, d.delivery(done["run_id"])):          # every decision, and delivered
         with open(os.path.join(where, "human-decisions", "task_verdicts.csv"),
                   encoding="utf-8") as fh:
-            assert "ep000003" in fh.read()
-        with open(os.path.join(where, "human-decisions", "label_decisions.csv"),
-                  encoding="utf-8") as fh:
-            assert "wipe the table" in fh.read()
+            text = fh.read()
+        assert "ep000003" in text
+        assert "wipe the table" in text          # the rewritten text is a column of this copy
     sub_id = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"][0]["id"]
     with open(os.path.join(rd, ".orchestr", sub_id, "decisions.json"), encoding="utf-8") as fh:
         decisions = json.load(fh)
@@ -69,12 +67,10 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))
     assert [r["episode_index"] for r in part2] == [4]       # the relabelled one, re-judged
     assert os.listdir(os.path.join(rd, "checks", "dedup", "parts")) == ["0001.jsonl"]
-    export_before = os.path.getmtime(os.path.join(rd, "export", "manifest.json"))
-    r = d.api("POST", f"/tasks/{task_id}/reexport")
-    assert r.status_code == 202
-    exported = d.wait(task_id)
-    assert exported["delivery_stale"] is False
-    assert os.path.getmtime(os.path.join(rd, "export", "manifest.json")) > export_before
+    # the new revision reached the delivery: its report is there, read back, marked complete
+    batch = d.delivery(done["run_id"])
+    assert os.path.isfile(os.path.join(batch, "revisions", "r0002", "report.json"))
+    assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
 
 
 def test_a_dataset_changed_since_registration_stops_the_start_until_repreflight(daemon):
@@ -169,7 +165,7 @@ def test_publishing_into_one_delivery_is_serial(daemon, monkeypatch):
                     calls.append((self.task_id, t0, time.monotonic()))
         monkeypatch.setattr(runbase.Run, name, wrapper)
 
-    for name in ("export", "sync_and_verify"):       # both run under the delivery's lock
+    for name in ("sync_and_verify",):                # it runs under the delivery's lock
         timed(name)
     monkeypatch.setenv("CURATOR_MAX_RUNNING_TASKS", "2")
     d = daemon()

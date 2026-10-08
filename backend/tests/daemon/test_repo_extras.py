@@ -56,27 +56,6 @@ def test_adjudication_backlog(repo):
     assert repo.adjudication_backlog() == (2, 7)
     assert repo.adjudication_backlog(owner=OTHER) == (1, 9)
     assert e.summary is None
-
-
-def test_delivery_pending_count(repo):
-    never = seed_task(repo, "never exported")
-    stale = seed_task(repo, "stale")
-    fresh = seed_task(repo, "exported")
-    no_result = seed_task(repo, "no result yet")
-    running = seed_task(repo, "running")
-    for t in (never, stale, fresh, no_result):
-        _finish(repo, t.id, "completed_with_errors")
-    for t in (never, stale, fresh, running):
-        assert repo.switch_result_rev(t.id, 0, 1)
-    repo.set_export_fingerprint(stale.id, "sha256:old", delivery_stale=True)
-    repo.set_export_fingerprint(fresh.id, "sha256:now", delivery_stale=False)
-    repo.update_task_state(running.id, {"queued"}, "running", at=T0)
-    assert repo.delivery_pending_count() == 2                          # never + stale
-    repo.soft_delete_task(never.id, at=T0)
-    assert repo.delivery_pending_count() == 1
-    assert repo.delivery_pending_count(owner=OTHER) == 0
-
-
 def test_finished_results_since(repo):
     summary = {"total": 50, "passed": 40, "rejected": 5, "held": 5, "review": 0, "pass_rate": 0.8}
     old = seed_task(repo, "old")

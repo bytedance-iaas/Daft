@@ -27,9 +27,9 @@ from .test_dump_v1_e2e import kept_task_text, of_task, rewrite_tape
 pytestmark = pytest.mark.e2e
 
 #: the Daemon's two blocks one after the other, every stage on the whole selection (design doc 17 §3)
-STEPS = ["preflight", "plan", "snapshot", "autolabel", "check numeric", "check frame",
-         "check vlm", "check dedup", "check skill_profile",
-         "aggregate final", "report", "export", "verify"]
+STEPS = ["preflight", "plan", "snapshot", "check numeric", "check frame",
+         "check vlm", "check dedup",
+         "aggregate final", "report", "verify"]
 
 
 def run_v2(tmp, name: str, dataset: str, *mode: str):
@@ -75,11 +75,12 @@ def test_v2_replays_its_own_tape_exactly(v2_golden, mini_dataset, tmp_path_facto
     rc, report = compare(golden, out)
     assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
     assert report["conclusion"] == "pass"
-    assert {m: r["status"] for m, r in report["modules"].items()} == {
-        m: "pass" for m in report["modules"]}
+    # autolabel: v2 writes no captions since D72, so that comparison is skipped on both sides
+    assert {m: r["status"] for m, r in report["modules"].items() if m != "autolabel"} == {
+        m: "pass" for m in report["modules"] if m != "autolabel"}
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup", "autolabel", "skill_profile"}
+                                      "dedup"}
     assert report["replay"]["misses"] == 0
 
 
@@ -92,15 +93,13 @@ def test_two_live_runs_agree(v2_golden, mini_dataset, tmp_path):
 
 
 def kept_task_text_v2(golden: str, dataset: str) -> str:
-    """kept_task_text for a ``run-v2`` dump (autolabel/captions.jsonl, revisions/r0001)."""
+    """kept_task_text for a ``run-v2`` dump (the dataset's own texts, revisions/r0001; an
+    episode without one is not judged, D72, so it carries no request to lose)."""
     import collections
 
     with open(os.path.join(dataset, "meta", "episodes.jsonl"), encoding="utf-8") as fh:
         texts = {row["episode_index"]: (row.get("tasks") or [""])[0]
                  for row in map(json.loads, fh)}
-    with open(os.path.join(golden, "autolabel", "captions.jsonl"), encoding="utf-8") as fh:
-        texts.update({row["episode_index"]: row["caption"] for row in map(json.loads, fh)
-                      if row.get("caption")})
     with open(os.path.join(golden, "revisions", "r0001", "keep.txt"), encoding="utf-8") as fh:
         kept = [int(x) for x in fh.read().split()]
     shared = collections.Counter(texts.values())
@@ -141,7 +140,7 @@ RELABELS = {1: "stack the cups", 0: "wipe the table"}
 
 def _decisions(path: str, relabel_rerun: str | None = None) -> str:
     doc = {"schema_version": "1.0", "decisions": [
-        {"id": i, "episode_index": ep, "line": "label", "decision": "custom_label",
+        {"id": i, "episode_index": ep, "line": "task_verdict", "decision": "unsure",
          "new_label": label, "note": None, "decided_by": "alice", "decided_at": 1790000000000 + i}
         for i, (ep, label) in enumerate(RELABELS.items(), start=1)]}
     if relabel_rerun is not None:
@@ -178,41 +177,40 @@ def test_adjudication_replays_its_golden_exactly(v2_adj_golden, mini_dataset, tm
                                    os.path.join(golden, "vlm_tape.jsonl.gz"))
     assert proc.returncode == 0, proc.stderr[-4000:]
     assert [s["step"] for s in doc["steps"]] == [
-        "adjudicate-apply", "check task_success", "check skill_profile", "aggregate final", "report"]
+        "adjudicate-apply", "check task_success", "aggregate final", "report"]
     assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
     rc, report = compare(golden, out)
     assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
     ts = report["modules"]["task_success"]
     assert ts["status"] == "pass" and ts["judged_again"] == [0, 1] and ts["compared"] == 2
-    assert report["modules"]["skill_profile"]["status"] == "pass"
     assert report["final"]["status"] == "pass" and report["replay"]["status"] == "pass"
 
 
-def test_full_rerun_leaves_the_golden_tape(v2_adj_golden, mini_dataset, tmp_path):
-    """relabel_rerun "full" runs the first run's flow: requests the golden never recorded."""
+def test_both_rerun_modes_replay_the_golden_tape(v2_adj_golden, mini_dataset, tmp_path):
+    """D71: ``relabel_rerun`` "full" no longer picks another protocol - a relabel is judged in
+    the one request whatever mode was recorded - so a "full" rerun replays the golden's tape
+    exactly, like the default mode does."""
     out, proc, doc = adjudicate_v2(tmp_path, "v2-full", mini_dataset, v2_adj_golden[2]["from"],
                                    _decisions(str(tmp_path / "d.json"), "full"),
                                    os.path.join(v2_adj_golden[0], "vlm_tape.jsonl.gz"))
-    assert doc["tape"]["hooks"]["misses"] >= 1
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
     rc, report = compare(v2_adj_golden[0], out)
-    assert rc == 1 and report["replay"]["status"] == "fail"
-    # the full flow's rerun requests are not on the golden (v1-rerun-mode) tape, so both
-    # episodes error on the candidate side and are excluded: nothing is comparable, which
-    # is exactly the signal that "full" leaves the golden's protocol.
+    assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
     ts = report["modules"]["task_success"]
-    assert ts["judged_again"] == [] and sorted(ts["excluded_errors"]) == [0, 1]
+    assert ts["status"] == "pass" and ts["judged_again"] == [0, 1] and ts["compared"] == 2
 
 
 def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_dataset, tmp_path_factory):
     """design doc 14: v2's own first gate recorded into a golden of its own (``--modules``) and replayed;
     on the clean fixture it changes no list: passed / reject / held equal the default golden's."""
     modules = "data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality," \
-              "video_action_sync,task_success,dedup,skill_profile"
+              "video_action_sync,task_success,dedup"
     tmp = tmp_path_factory.mktemp("integrity")
     golden, proc, doc = run_v2(tmp, "golden", mini_dataset, "--fake-vlm", "--modules", modules)
     assert proc.returncode == 0, proc.stderr[-4000:]
     steps = [s["step"] for s in doc["steps"]]
-    assert steps == STEPS[:4] + ["check integrity"] + STEPS[4:]
+    assert steps == STEPS[:3] + ["check integrity"] + STEPS[3:]
     out, proc, doc = run_v2(tmp, "v2", mini_dataset, "--replay", os.path.join(golden, "vlm_tape.jsonl.gz"),
                             "--modules", modules)
     assert proc.returncode == 0, proc.stderr[-4000:]

@@ -10,7 +10,7 @@
 
 ## 给实施 agent 的开工指引（先读这一节）
 
-1. **分支与纪律**：直接在 `feat/curator-v2` 上做。A 类目录（`core/`、`registry/`、`ingest/`、`dataset_level/` 与 `export/` 里的 A 类文件，
+1. **分支与纪律**：直接在 `feat/curator-v2` 上做。A 类目录（`core/`、`registry/`、`ingest/`、`dataset_level/`，
    清单见设计 10 §2）一行不改：算法只调用，发现在编排壳里生成。新代码落在 `backend/curation/contracts/`（注册表与分类表）、
    `backend/curation/pipeline/`（壳、aggregate、report）、`backend/curation/extensions/`、`backend/curation/planner/`、`backend/daemon/`、
    `frontend/`、`tools/regression_samples/`。每个 feature 一个 commit；提交前在 `backend/` 下跑
@@ -109,7 +109,7 @@
 
 **数据集级发现**写在 `checks/<module>/dataset.json`（完整性模块已有这个文件），结构同上，多一个 `unit: "dataset"`；
 评估按子集计一次，报告放在模块小节的「数据集级」一栏。本期有数据集级发现的模块：完整性（多余文件、近黑相机、条目表重叠）、
-时间戳检查（时长离群）、运动质量（动作语义预检结论、活动占比均值）、技能画像（族分布、样本偏少的族）。
+时间戳检查（时长离群）、运动质量（动作语义预检结论、活动占比均值）。
 
 ### 1.3 细码与检测项
 
@@ -179,8 +179,8 @@ class ModuleSpec:
     level: Literal["episode", "dataset"]
     needs: frozenset[str]
     block: Literal["cpu", "vlm"]                 # 在哪个块（§3.1）
-    stage: str                                   # 块内的段：integrity / numeric / frame / dedup；autolabel / vlm / profile
-    depends_on: tuple[str, ...]                  # 只剩数据依赖：autolabel、captions；不再有 numeric_gates / frame_gates / funnel_verdict
+    stage: str                                   # 块内的段：integrity / numeric / frame / dedup；vlm（autolabel、profile 已下线）
+    depends_on: tuple[str, ...]                  # 只留数据依赖的位置（3.2 起为空）；不再有 numeric_gates / frame_gates / funnel_verdict
     codes: tuple[FindingCode, ...]               # 细码目录
     covers: tuple[str, ...]                      # 声明覆盖的检测项（codes 的 item 的并集，可以多）
     param_schema: dict; tables: tuple[TableSpec, ...]
@@ -193,8 +193,8 @@ class ModuleSpec:
 
 ```python
 BLOCKS = {"cpu": ("integrity", "numeric", "frame", "dedup"),
-          "vlm": ("autolabel", "vlm", "profile")}
-FULL_SET_STAGES = ("dedup", "profile")           # 全量步骤（§3.2）
+          "vlm": ("vlm",)}                       # profile 随技能画像下线（D68），autolabel 随补描述下线（D72）
+FULL_SET_STAGES = ()                             # D70 起没有全量步骤（§3.2）
 ```
 
 `export()` 多出 `blocks`、`taxonomy_version`、`taxonomy`（分类表的 id、name_zh、explain_zh、dimension、kind）、每个模块的 `codes` 与 `covers`、
@@ -300,8 +300,8 @@ A 类算法不动，壳里读 `details` 生成。
 | `failure` | TASK-4 | high | blocking，可复议 | 判失败；区间 = `evidence` 的时间段（P19） |
 | `uncertain` | TASK-4 | medium | review（task_verdict） | 弃权 |
 | `recovery` | TASK-10 | low | info | 中途回落后完成 |
-| `label_conflict_suspect` | LABEL-4 | medium | review（label） | 判废护栏 |
-| `task_text_missing` | LABEL-2 | low | info | 任务文本来源是「自产caption」（P20） |
+| `label_conflict_suspect` | LABEL-4 | medium | review（label） | 判废护栏（D73 起不再产生，细码留给旧记录） |
+| `task_text_missing` | LABEL-2 | low | info | 没有任务标注：D72 起这条不判成败（记录 `no_task_text`）；更早的任务里是「用了自产caption」（P20） |
 | `completion`（读数） | TASK-4 | — | 读数 | 完成度估计 |
 
 **镜头画面缺陷**（随任务成败）
@@ -319,15 +319,8 @@ A 类算法不动，壳里读 `details` 生成。
 |---|---|---|---|---|
 | `duplicate` | SET-1 | high | blocking，可复议 | 重复组；哪条留下由 aggregate 定（§4.5），模块只报组 |
 
-**技能画像**
-
-| 细码 | 项 | 严重度 | 默认级别 | 来源 |
-|---|---|---|---|---|
-| `label_disagreement` | LABEL-4 | medium（高置信）/ low（复核档） | review（label） | 标注分歧；「看法不稳」降级为 info |
-| `descriptions_conflict` | LABEL-1 | medium | info | 数据集自带多份描述归到不同族（P20）；只有一份时 unassessable `single_description` |
-| `task_text_missing` | LABEL-2 | low | info | 同任务成败（并集） |
-| `undersampled_family`（数据集级） | —（分类表 1.3 起不挂项） | low | info | 样本偏少的族（P20） |
-| 族分布（数据集级读数） | —（分类表 1.3 起不挂项） | — | 读数 | `family_tree` |
+**技能画像**（整节随技能画像下线，D68。LABEL-4 由任务成败判定的判废护栏报，细码 `label_conflict_suspect`，问在
+`task_verdict` 那一条线上；LABEL-1 暂时没有模块覆盖；SET-3 随分类表 1.3 删除）
 
 对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9 不是任何细码的 `item`，评估按它们守的项看误报（长时任务、跨数据集同源版本两个对照项在分类表 1.3 删了）。
 分类表其余没有细码的项是检测缺口，清单在设计 16 §3.10，归 F11.7。
@@ -352,39 +345,64 @@ A 类算法不动，壳里读 `details` 生成。
   选中的全部 episode
       │
       ├─ CPU 块（CPU 池）                                 ├─ VLM 块（VLM 闸门）
-      │   integrity   数据完整性                           │   autolabel  无标注补描述（只对无标注条目）
-      │       │ 传全部条目                                 │       │ 数据依赖：成败判定要先有描述
-      │   numeric     时间戳 · 运动学 · 运动质量             │   vlm        任务成败(+画面缺陷) · EEF
-      │       │ 传全部条目                                 │       │ 数据依赖：画像归纳要等全部描述
-      │   frame       视觉质量 · 视频-动作同步               │   profile    技能画像（全量步骤）
-      │       │ 块内全部段做完                              │
-      │   dedup       精确去重（全量步骤）                   │
+      │   integrity   数据完整性                           │   vlm        任务成败(+画面缺陷) · EEF
+      │       │ 传全部条目                                 │              （无标注条目不判成败，D72）
+      │   numeric     时间戳 · 运动学 · 运动质量             │
+      │       │ 传全部条目                                 │
+      │   frame       视觉质量 · 视频-动作同步               │
+      │       │ 传全部条目                                 │
+      │   dedup       精确去重（逐条，D70）                  │
       │                                                   │
       └──────────────────┬────────────────────────────────┘
                          ▼
-                  aggregate（策略判决，§4）→ report → export → verify
+                  aggregate（策略判决，§4）→ report → verify
 ```
 
 - **段只为效率**：帧档两个模块共享一次解码（D18 的这一半保留），各段有自己的并发宽度与内存准入；段之间传的是「本块的全部条目」，
   上一段的结果不过滤下一段。出错的条目照样进下一段（取代 P10）。
 - **块之间没有数据依赖**。EEF 是混合模块：放 VLM 块，它的 CPU 测量阶段照旧从 CPU 池拿名额（设计 14 §2.2 完整性 L3 的做法）。
-- **autolabel 不是模块**，仍是 VLM 块的第一段，只对无标注条目跑；`task_success` 对它的依赖是数据依赖（`depends_on`）。
+- **没有补描述这一段了**（D72）：原来 VLM 块第一段 `autolabel` 把全部无标注条目补完描述才放行 `vlm`（DROID 2000 条里 953 条无标注，
+  判定要等 7 小时）。现在无标注条目不判成败，`task_success` 写一条 `no_task_text` 记录；`depends_on` 清空。D72 之前的计划里的这一段 Daemon 记 skipped。
 - **坏文件上的模型调用**：VLM 块裁片失败在发请求之前，照 D33 记 `error`，不发模型请求、不烧重试；这一条若有完整性的 blocking 发现，
   照 D35 直接拒。不加「完整性判坏就跳过 VLM」的门，块之间保持独立。
 
-### 3.2 全量步骤
+### 3.2 去重也是逐条的（D70，2026-10-07 改）
 
-去重与技能画像各依赖全集：去重要全部条目的字节，画像归纳要全部描述。两者是各自块的最后一段，等本块前面的段对全集跑完才启动；
-进度里单独一行「全量步骤」。去重对全集找重复组（比只对通过集合找更准），**只报组**，哪条留下由 aggregate 按当前判决定（§4.5）；
-画像给全部条目归类，交付集的分布在 report 时按 `passed` 名单算，不多花模型调用。它们不再 `depends_on` 判决，上游判决变了也不 `stale`。
+去重**看起来**要全集：它判的是「这一条和别的某一条完全相同」。但做法可以是流式的，所以 2026-10-07 起它不再是全量步骤，
+而是 CPU 块的最后一个逐条段：
+
+- 一条 episode 从帧档出来就进去重，立刻算 action 哈希（`action_hash`，A 类不动），和前面的段交叠执行；
+- 段内保着「哈希 → 先看到的那条」的表。哈希撞车才算内容指纹（`episode_fingerprint`：action 字节 + 每路视频的内容身份与时间窗），
+  只读撞上的那两条，远端视频用对象的 ETag + size，不下载；
+- 后来的那条拿到 `duplicate` 发现（细码 SET-1），`readings.group_id` 是留下的那条。**只报组**，哪条留下仍由 aggregate
+  在人工决定之后选（§4.5），口径不变。
+- **组内留下标最小的那条，和改前一致**，而且不依赖到达顺序：
+  1. 段把条目看完之后再把每组定一次（`_dedup_settle`）——说法不对的那条补一条记录（最小的那条改回干净、其余指向它）。
+     只有真撞车才会发生，绝大多数任务这一步什么都不写；暂停、停止时也做，续跑、重试时和读回来的记录一起算。
+  2. **判决不依赖这一步**：`aggregate` 把组看成一个整体（`duplicate_of` 指针的连通分量），选下标最小、没因别的原因
+     被拒的那条留下，组里本来会留下的其余成员一律按副本判 —— 哪条记录带着指针都一样。所以进程被杀掉、没来得及定组，
+     判决也不会变（这正是 F12.4 那两条「被打断的任务与没被打断的结果一致」用例盯的事）。
+- 每条记录的 `details` 多一个 `action_hash`（撞车的还多 `fingerprint`）：续跑、重试时这一段先读回已有记录重建那张表，
+  再接着判剩下的条目。
+- `groups.json`（遍历顺序、撞车组、指纹、剔除清单）在这一段结束时写，报告的「重复组 N 组、剔除 M 条」照旧读它。
+
+**原来的「全量步骤」机制不再有人用**（`FULL_SET_STAGES` 空了）：新计划不写 `full_set`，`StageProgress` 不再有「全量步骤」那一行。
+`blocks.py` 里「整段跑完全集」那条路径只为 D70 之前排好计划的任务保留（它们还要能续跑、重试）；
+将来真需要一个只能看全集的模块，往 `FULL_SET_STAGES` 里加回来就行。
+去重不 `depends_on` 判决，上游判决变了也不 `stale`。（VLM 块原来的全量步骤是技能画像，D68 起下线。）
+
+**为什么改**：去重也要和前面的段交叠（需求方 2026-10-07 定）。不勾模型模块的任务（「快速质检」）里，去重这一段是串在关键路径末尾的，
+条数越多越明显；改成逐条之后，整条流水线没有栅栏了 —— 最后一条 episode 判完就能出报告。
 
 ### 3.3 Daemon 派发与 planner
 
-- **计划**（`plan.schema.json` 2.0）：每个 stage 多 `block`（cpu / vlm）、`after`（同块里前一段的 id，根段没有）、`full_set`（全量步骤）；
+- **计划**（`plan.schema.json` 2.0）：每个 stage 多 `block`（cpu / vlm）、`after`（同块里前一段的 id，根段没有）；
+  `full_set` 字段只在 D70 之前的计划里出现，新计划不写（契约里仍可选，旧任务的计划要读得懂）；
   `hard_gates` 删除；`episodes` 对每一段都是任务的选中集。planner 校验 `after` 不跨块。
 - **派发**（`daemon/orchestr/episode_pipeline.py`）：层从一条链改成两棵链，两个根同时启动；`_finish_stage` 写给下一段的名单 = 本段的输入
-  （不再 `store.survivors`）；一条 episode 在本段有记录（ok 或 error）就交给下一段；`held_by_downstream` 只在块内生效；全量步骤在前一段
-  完成全集后启动。CPU 池（D54）与 VLM 闸门（04 §2.2）不变；两块同时跑时 CPU 块按名额、VLM 块按闸门，互不影响。
+  （不再 `store.survivors`）；一条 episode 在本段有记录（ok 或 error）就交给下一段；`held_by_downstream` 只在块内生效。
+  D70 起新计划里全是逐条段，「等前一段跑完全集再整段启动」只对更早排的计划还走。CPU 池（D54）与 VLM 闸门（04 §2.2）不变；
+  两块同时跑时 CPU 块按名额、VLM 块按闸门，互不影响。
 - **即时结果**（C4 的 `PipelineEpisode`）：每条写各模块的状态与发现数，再给一个「临时判决」——用同一套策略函数对已有发现算，标明是临时的；
   最终判决只在 aggregate 时定。
 - **episode_state**：`survivors()` 退役，换成 `completed(modules)`。
@@ -394,7 +412,7 @@ A 类算法不动，壳里读 `details` 生成。
 - 暂停 / 停止 / 系统暂停不变（SIGTERM 收尾当前条目）；`check --resume` 不变。
 - **重试**只补跑出错的（模块 × episode）对：没有后段依赖它，不必「从出错的那一档接着往后跑」（D25 的这一句改成这样）。
 - **继续运行**复用已完成的（模块 × episode）结果，两块各自从未完成处继续。
-- 子任务「执行裁决」的链不变：`adjudicate-apply → check task_success（改标条目）→ aggregate → check skill_profile --incremental → report`。
+- 子任务「执行裁决」的链：`adjudicate-apply → check task_success（改了描述的条目）→ aggregate → report`（D68 起不再有画像同步）。
 
 ### 3.5 成本与资源
 
@@ -445,7 +463,7 @@ overrides:
 
 `verdicts.jsonl` 2.0 每行：`{episode_index, verdict: keep|drop|held, blocking: [{module, code, item}], review: [{module, code, item, line}],
 info_count, error_modules, reason}`。`passed / reject / held / review` 四份清单的结构不变，`reasons[]` 的条目多 `code`、`item`，`kind` 取
-`finding | human | execution_error | duplicate`。`keep.txt` 保留为交付名单（导出与画像的交付集分布用）。
+`finding | human | execution_error | duplicate`。`keep.txt` 保留为交付名单（报告里交付集的分布用）。
 
 ### 4.4 人工复核与复议
 
@@ -458,11 +476,13 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
   级别，再按 §4.3 重算（别的模块出错的仍 held，P11）。物理与结构硬门的拒绝仍是终局。
 - 已被拒的条目不再出 review 卡片（D42 延伸到所有裁决线）。
 
-### 4.5 去重与画像
+### 4.5 去重（原「去重与画像」）
 
-- 去重模块对全集报重复组（`group_id`、组内成员、`duplicate_of` 留作读数）。aggregate 在人工决定之后，对每个组选 canonical =
-  遍历顺序里第一条「没有因别的原因被拒」的；其余成员得到 `dedup.duplicate` 的 blocking 发现（可复议）。人工恢复过的条目不再被去重（v1 的规则）。
-- 画像的归类对全集算；报告给两份分布：全集与交付集（按 `passed`）。标注分歧对全集审计，但已被拒的条目不出卡片。
+- 去重模块报重复组（`group_id`、组内成员、`duplicate_of` 留作读数）。aggregate 在人工决定之后，对每个组选 canonical =
+  组内第一条「没有因别的原因被拒」的（下标升序）；其余成员得到 `dedup.duplicate` 的 blocking 发现（可复议）——
+  包括记录里没带这条发现的那个成员（§3.2：段可能是先看到它才指向它的），但**已经因别的原因被拒的成员不会因此多一条重复理由**。
+  人工恢复过的条目不再被去重（v1 的规则）。
+- ~~画像的归类对全集算；报告给两份分布：全集与交付集。~~ 技能画像下线（D68）；标注分歧改由判废护栏报，已被拒的条目仍不出卡片。
 
 ### 4.6 与今天不同的地方
 
@@ -471,8 +491,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 | 拒绝理由 | 第一个失败的硬门 | 全部 blocking 发现 |
 | 软分 | 加权均值 < 0.5 拒 | 退役；子项 info（P18） |
 | 复议 | 按归因模块 | 按发现 |
-| 去重的输入 | 通过集合 | 全集；留「未因别的原因被拒的第一条」 |
-| 画像 | 交付集 | 全集归类，双分布 |
+| 去重的输入 | 通过集合 | 全集；留「未因别的原因被拒的第一条」（D70 起逐条流式地找组，判决口径不变） |
 | 弃权 | `passed=None` | review 级发现 |
 | 判决能否不重跑而改 | 不能 | 换预设只重跑 aggregate |
 
@@ -497,7 +516,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 - 模块表换成**模块统计卡**（每行一个模块，可展开）：状态、评估 / 选中条数、出错条数，一条「检出项」条图（同 §5.2 的通用图，取自同一份 `summary.items`），
   有读数的给分数分布；「去报告」跳到小节。数据来自 `GET /tasks/{id}/report`，运行中每次结果版本刷新；运行中没有报告时显示即时结果（§3.3）的发现数。
-- 分档进度卡改成**两块**：CPU 块与 VLM 块两张并排卡片，每张里按段一根进度条，全量步骤单独一行；运行时间线按块画。
+- 分档进度卡改成**两块**：CPU 块与 VLM 块两张并排卡片，每张里按段一根进度条；运行时间线按块画。
   「进度条从 50/50 变成 49/49」的说明去掉——段之间不再减少条目。
 - 页头、Token、执行时间线、人工裁决入口不变。
 
@@ -510,7 +529,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.5 进度与 SSE
 
-- C3 的 stage id：`integrity`、`numeric`、`frame`、`dedup`、`autolabel`、`vlm`、`profile`（`post_verdict`、`profile_vlm` 退役）；进度行多一个可选的 `block`。
+- C3 的 stage id：`integrity`、`numeric`、`frame`、`dedup`、`vlm`（`post_verdict`、`profile_vlm` 退役；`profile` 随 D68、`autolabel` 随 D72 只在旧任务的进度里出现）；进度行多一个可选的 `block`。
 - C4 的 `StageProgress` 多 `block`、`full_set`；`PipelineEpisode` 的 `last_stage` / `next_stage` 改成 `stages: {stage: done|error|running|waiting}`
   与 `provisional`（临时判决）。
 
@@ -614,7 +633,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **报告 2.0**：`score_hist` 改成「读数 → 十格」（运动质量的综合分与五个子项分、视觉质量的综合分，`findings.SCORE_READINGS`），
   不再写 1.0 的单个十格；report.md 每个模块多一行「评估 N 条；检出：细码 条数（级别）」与评估不了的原因，总览多判决策略与覆盖的检测项。
 - **文字**：拒绝与待补跑的理由改用全角标点（「执行出错（…），不影响结论」「人工裁决判失败（任务未完成）」），理由多 `code / item / appealable`。
-- **旧任务（D59）**：Daemon 对 `run.json` 没有 `c2: "2.0"` 的任务拒绝再运行——继续运行、重试、执行裁决、重新导出都以 `legacy_task` 失败，
+- **旧任务（D59）**：Daemon 对 `run.json` 没有 `c2: "2.0"` 的任务拒绝再运行——继续运行、重试、执行裁决都以 `legacy_task` 失败，
   提示复制为新任务；升级时正在跑的任务也一样（写进部署说明）。aggregate 与 adjudicate-apply 遇到 1.0 记录以退出码 2 拒绝。
   控制台在 F12.5 之前经 `src/lib/records.ts` 把 2.0 的记录与报告按 1.0 的视图读。
 - **验收①**（离线，评估集基线 `1b30fb224` 的 89 个子集、1186 条：1.0 记录按同一推导升成 2.0，默认策略重判，与改前的
@@ -631,7 +650,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 
 - **计划 2.0**（`planner/plan.py`）：每段写 `block`、块内的 `after`、全量步骤的 `full_set`，`episodes` 只有 `selected` 与 `unlabeled`；
   没有 `hard_gates`、没有漏斗判决档（`verdict`），最后是 `final`。估时按两块取较长的一块再加判决。档名 `profile_vlm` 退役为 `profile`。
-- **Daemon**（`orchestr/blocks.py`）：一块一个线程；块内依次是 autolabel（整段，VLM 块的检查之前）、逐条交接的段（一条链，复用
+- **Daemon**（`orchestr/blocks.py`）：一块一个线程；块内是逐条交接的段（一条链，复用
   `episode_pipeline` / 外部 CLI 的批次路径）、全量步骤（整段，块内前面的段做完才启动）。一块失败、另一块经共享的中止信号停下；CPU 块的
   CPU 名额记在任务的键上，VLM 块的链另用一把键，免得一条链退出时把另一条的名额还掉。
 - **episode 状态库**：两块的运行在 `meta` 里登记各块的逐条段，`block_progress` 给每条在每块各记一个位置；一段有了记录（判完或出错）
@@ -674,7 +693,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
   有专用视图的模块接着放专用视图，综合分的分布只画一次（专用视图画）。
 - **任务详情**：两块的运行有 CPU 块、VLM 块两张卡片（逐条段沿用流水线小卡片与时间线，全量步骤单独一行，VLM 块的补任务描述在最上面），
   结尾几档放在「判决与交付」卡片里、与 Token 并排（2026-10-04 需求方改回一张「分档进度」：两块的逐条段画在同一个流水线视图里，
-  补任务描述、去重、技能画像、生成报告 & 产物交付各一根进度条，与 Token 并排，见设计 07 §4.2）；模块表换成每模块一行的统计卡（所在块、状态、评估 / 选中、检出与按级别条数、待补跑可展开、
+  补任务描述、去重、生成报告 & 产物交付各一根进度条，与 Token 并排，见设计 07 §4.2）；模块表换成每模块一行的统计卡（所在块、状态、评估 / 选中、检出与按级别条数、待补跑可展开、
   重试、「去报告」到 `?section=<模块>`），展开是同一份通用统计；运行中没有报告时显示即时结果的计数。旧任务（报告是 1.0，或计划里有
   `verdict` / `profile_vlm`）照旧是模块表和分档进度（D59）。
 - **Episode 明细**：判决概要列出全部发现（按级别分组，每条写模块、细码名、项、一句话、范围、区间），区间是秒的可以点，所有机位从这一刻一起播；

@@ -15,8 +15,8 @@ ep    what happens                                            where it ends (r1)
 1     timestamp fragment (a blocking finding)                 reject - final
 2     task_success judges it failed                           reject - appealable
 3     task_success abstains                                   passed + review (verdict)
-4     label conflict (skill_profile's audit)                  passed + review (label)
-5     label conflict and a task_success abstention            passed + review (both)
+4     label conflict (the kill guard)                         passed + review (verdict)
+5     label conflict, a second one                            passed + review (verdict)
 6     task_success execution error                            held
 7     byte-for-byte duplicate of ep 0                         reject - appealable (D42)
 8     motion_quality cannot score it                          passed (no review item, C2 1.4)
@@ -115,6 +115,9 @@ def task_details(ep: int, verdict: str) -> dict:
          "task_desc": TEXT[ep], "task_desc_source": "原始标注", "rules": ["probe"]}
     if verdict == "abstain":
         d["reason"] = "两层证据矛盾，进人工"
+    if ep in (4, 5):                       # the kill guard's suspected label conflict
+        d["verdict"] = "label_conflict_suspect"
+        d["label_check"] = {"annotation": TEXT[ep], "caption": CAPTION.get(ep, TEXT[ep])}
     if verdict == "fail":
         d["reason"] = "3 路复核一致判未完成"
     return d
@@ -142,7 +145,7 @@ def story(rd: RunDir) -> None:
         rd.put("video_action_sync", ep, "pass", details={
             "per_camera": {cam: {"lag_s": 0.01 * ep, "corr_peak": 0.8, "code": "aligned"}
                            for cam in CAMERAS}})
-        verdict = {2: "fail", 3: "abstain", 5: "abstain", 6: "error"}.get(ep, "pass")
+        verdict = {2: "fail", 3: "abstain", 4: "abstain", 5: "abstain", 6: "error"}.get(ep, "pass")
         evidence = [f"details/evidence/task_success/ep{ep:06d}_0.jpg"] \
             if verdict in ("fail", "abstain") else []
         rd.put("task_success", ep, verdict, details=task_details(ep, verdict)
@@ -152,16 +155,6 @@ def story(rd: RunDir) -> None:
             rd.put("dedup", ep, "fail", details={"duplicate_of": 0})
         else:
             rd.put("dedup", ep, "pass", details={})
-    for ep in (0, 3, 4, 5, 8):                         # likewise; the audit flags 4 and 5
-        rd.put("skill_profile", ep, "abstain" if ep in (4, 5) else "pass",
-               details={"family": "放置", "subskill": "放进容器", "caption": CAPTION.get(ep, TEXT[ep]),
-                        "grouping_text": TEXT[ep], "grouping_text_source": "原始标注"})
-    rd.write_json("checks/skill_profile/profile.json",
-                  {"families": {"放置": {"subskills": {"放进容器": {}}}}, "undersampled": []})
-    rd.write_json("checks/skill_profile/label_audit.json", {"high": [
-        {"id": f"ep{ep:06d}", "label": TEXT[ep], "caption": CAPTION[ep],
-         "reason": "分歧(文本对判官):描述的不是同一任务——自产描述由 VLM 生成,需人工判定"}
-        for ep in (4, 5)], "mid_for_review": []})
 
 
 def preflight_doc() -> dict:
@@ -261,10 +254,9 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
             if line["line"] == "reject_appeal" and line["decision"] != "unsure":
                 effective[int(line["episode_index"])] = line["decision"]
     rejected = {e["episode_index"] for e in reject["episodes"]}
-    line_of = {"label_conflict": "label"}                       # C2 1.5: items name their line
     by_ep: dict[int, dict] = {}
     for entry in review["episodes"]:
-        items = [{**i, "line": i.get("line") or line_of.get(i["kind"], i["kind"])}
+        items = [{**i, "line": i.get("line") or i["kind"]}                # C2 1.5: items name it
                  for i in entry["review"]
                  if not (i["kind"] == "task_verdict" and (i["source_module"] != "task_success"
                                                           or entry["episode_index"] in rejected))]
@@ -362,14 +354,6 @@ class World:
         path.write_text(json.dumps(doc), encoding="utf-8")
         out = cli("adjudicate-apply", "--run-dir", str(self.run_dir), "--decisions", str(path))
         self.repo.mark_adjudications_applied([a.id for a in rows], sub.id)
-        # stands in for ``check --modules skill_profile --incremental``: re-filed episodes
-        parts = self.run_dir / "checks" / "skill_profile" / "parts"
-        part = f"{len(list(parts.glob('*.jsonl'))) + 1:04d}"
-        with open(parts / f"{part}.jsonl", "w", encoding="utf-8") as fh:
-            for ep in out["profile_resync"]:
-                fh.write(json.dumps(record("skill_profile", ep, "pass", details={
-                    "family": "放置", "subskill": "放进容器", "caption": TEXT[ep]}),
-                    ensure_ascii=False, sort_keys=True) + "\n")
         return out
 
 

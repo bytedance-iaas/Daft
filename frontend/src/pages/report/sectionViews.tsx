@@ -414,27 +414,6 @@ function dedupModel(s: Summary): ViewModel {
   return { stats, charts, notes, fresh: hasAny(s, ['group_sizes']) };
 }
 
-function skillModel(s: Summary): ViewModel {
-  const Z = S().skill;
-  const c = countsOf(s);
-  const stats: StatSpec[] = [];
-  if (c) stats.push({ label: Z.covered, value: c.total, foot: Z.coveredFoot });
-  if (num(s.families) !== null) stats.push({ label: Z.families, value: num(s.families) });
-  if (num(s.subskills) !== null) stats.push({ label: Z.subskills, value: num(s.subskills) });
-  if (Array.isArray(s.undersampled)) stats.push({ label: Z.undersampled, value: s.undersampled.length, foot: s.undersampled.length ? s.undersampled.map(String).join('、') : undefined, tone: s.undersampled.length ? 'warn' : undefined });
-  if (num(s.label_disagreements) !== null) stats.push({ label: Z.disagreements, value: num(s.label_disagreements), foot: Z.disagreementFoot(num(s.disagreement_high) ?? 0, num(s.disagreement_review) ?? 0), tone: num(s.label_disagreements) ? 'warn' : undefined });
-  if (num(s.unstable) !== null) stats.push({ label: Z.unstable, value: num(s.unstable), foot: Z.unstableFoot });
-  const grouping = seriesOf(s.grouping_sources);
-  if (grouping?.length) stats.push({ label: Z.groupingSources, value: <span style={{ fontSize: 15 }}>{pieces(grouping, S().task.sourceNames)}</span> });
-  const charts: ChartSpec[] = [];
-  const families = seriesOf(s.family_distribution);
-  if (anyValue(families)) charts.push({ key: 'families', title: Z.familyChart, desc: Z.familyChartDesc, items: families, horizontal: true });
-  const tree = rowsOf<{ name: string; subskills?: { name: string; count: number }[] }>(s.family_tree) ?? [];
-  const subs = tree.flatMap((f) => (f.subskills ?? []).map((x) => ({ name: `${f.name} › ${x.name}`, value: x.count })));
-  if (anyValue(subs)) charts.push({ key: 'subskills', title: Z.subskillChart, desc: Z.subskillChartDesc, items: subs, horizontal: true, colors: subs.map(() => CHART_COLORS[1]) });
-  return { stats, charts, fresh: hasAny(s, ['family_distribution', 'family_tree']) };
-}
-
 function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   const Z = S().eef;
   const R = Z.review;
@@ -638,7 +617,6 @@ export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   video_action_sync: view('video_action_sync', syncModel),
   task_success: view('task_success', taskModel, { abstain: false }),
   dedup: view('dedup', dedupModel),
-  skill_profile: view('skill_profile', skillModel),
   eef_video_consistency: view('eef_video_consistency', eefModel),
 };
 

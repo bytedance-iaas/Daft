@@ -1,4 +1,4 @@
-# 06 交付布局、增量重导出与报告
+# 06 交付布局与报告
 
 ## 1. 交付目录布局
 
@@ -10,11 +10,9 @@ deliveries/<delivery-name>/
 │   ├── run.json                   任务快照：输入/模块/参数/预检/版本指纹
 │   ├── source_manifest.json       ★ 源文件清单与版本指纹（D27）
 │   ├── plan.json                  执行计划（04 篇），存档便于复现与调优
-│   ├── autolabel/captions.jsonl   无标注条目的补充描述
 │   ├── checks/                    ★ 模块级结果，子任务按模块覆盖
 │   │   ├── timestamp_check/{parts/*.jsonl, results.jsonl}
 │   │   ├── task_success/{parts/*.jsonl, results.jsonl}
-│   │   ├── skill_profile/{captions.jsonl, taxonomy.json, assignments.jsonl, label_audit.json}
 │   │   └── ...
 │   ├── revisions/r0001/           ★ 一个结果版本 = 一套判决清单 + 一份报告，不可变，旧版本保留
 │   │   ├── verdicts.jsonl  keep.txt                           漏斗判决（aggregate --phase funnel）
@@ -28,15 +26,12 @@ deliveries/<delivery-name>/
 │   │   └── reject_appeals.csv
 │   ├── details/                   明细 CSV、证据帧、同步曲线、裁决视频片段、vlm_latency.csv
 │   ├── logs/<stage>.jsonl         各 stage 的完整日志
-│   ├── export/
-│   │   ├── manifest.json          ★ 产物清单，增量导出的依据
-│   │   └── lerobot_curated/       交付数据集（mcap 源是 mcap_curated/，Lance 源是 lance_episodes/，D44，见 §1.1）
 │   └── _COMPLETE                  完整性标志，交付核验通过后最后写
 └── latest                         指向最近一次发布成功的完整版本
 ```
 
-★ 是本期的关键新增：`checks/` 让模块结果可独立覆盖，`export/manifest.json` 让导出可增量，
-`source_manifest.json` 钉住源数据版本，`revisions/` 让结果的替换是原子的 ——
+★ 是本期的关键新增：`checks/` 让模块结果可独立覆盖，`source_manifest.json` 钉住源数据版本，
+`revisions/` 让结果的替换是原子的 ——
 对象存储没有跨文件事务，所以不去改已有的文件，而是写一个新版本目录、最后落 `commit.json`，
 再由 Daemon 用 CAS 把库里的 `result_rev` 指过去。读方只认有 `commit.json` 的版本。
 
@@ -44,29 +39,20 @@ deliveries/<delivery-name>/
 目录名撞了就换一个，绝不写进别人的批次目录。
 
 **`latest` 只指向完整成功的版本**。一个批次要同时满足：任务状态是已完成（没有失败的模块、没有待补跑的条目）、
-交付数据集已导出且不是过期状态、交付核验通过（`_COMPLETE` 在）。满足时才把 `latest` 原子地改过去；
-补跑、裁决之后要重新导出并核验通过，才会再动它。它指向的是**最近一次发布成功**的版本，不是最近一次启动的任务。
+交付核验通过（`_COMPLETE` 在）。满足时才把 `latest` 原子地改过去；补跑、裁决产生新版本并核验通过，才会再动它。
+它指向的是**最近一次发布成功**的版本，不是最近一次启动的任务。
 这和 v1 不同：v1 的 `latest` 只表示「最近跑的是哪一次」。
 
-**同一交付目录的发布串行**：导出、核验、写 `_COMPLETE`、改 `latest` 这一段，Daemon 按交付目录加锁，一次只让一个任务做。
+**同一交付目录的发布串行**：同步、核验、写 `_COMPLETE`、改 `latest` 这一段，Daemon 按交付目录加锁，一次只让一个任务做。
 
 v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/info.json` → `passed.json` → `latest`」的
 上传顺序来保证读方看不到半成品。v2 改用显式的 `_COMPLETE`，但**上传顺序的纪律保留**：
 `_COMPLETE` 和 `latest` 永远最后传，且不参与按大小跳过的续传判断。
 
-### 1.1 mcap 与 Lance 源的交付数据集（D44）
+### 1.1 mcap 与 Lance 源（D44）
 
-判决清单、报告、版本目录与 LeRobot 源完全一样，只有交付数据集照 v1 PR #155 的做法换了形态，
-`export/manifest.json` 的 `dataset_dir` 写明是哪个目录（核验与 Daemon 的同步、视频查找都按它找文件）：
-
-| 源格式 | 交付目录 | 内容 |
-|---|---|---|
-| mcap | `export/mcap_curated/` | v1 的 `export/mcap_writer.export_mcap_curated` 原样：passed 各条的 `.mcap` 逐字节拷贝（源文件不叫 `episode_<N>.mcap` 的改成这个名字），`index.json` 列每条的任务文本、来源与原文件。自产描述、人工改标只写进 `index.json`，文件本体不动（改 mcap 要重写整个容器，v1 不做） |
-| Lance | `export/lance_episodes/` | **Lance 原格式交付本版本未做**。交的是 v1 的 `episodes_parquet/`：passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`；视频存到 `videos/`，指针改写到交付位置；`index.json`、导出结果的 `note` 和报告的「数据包」一节都写明这一点 |
-
-这两种都没有增量重导出（§4 的算法只认 LeRobot 的两种布局）：每次全量导出，`--incremental` 在 `full_reason` 里说明；
-内容没变的文件不重新上传。交付数据集里的任务文本来源与 LeRobot 源一样取自本任务（原始标注 / 自产描述 / 人工改标），
-用词沿用 v2 的 `自产caption`、`人工改标`，与 v1 PR #155 的 `自产caption补标` 略有不同。
+判决清单、报告、版本目录与 LeRobot 源完全一样 —— 三种格式的交付都是报告与结果清单（D69 起不写交付数据集），
+所以源格式只影响怎么读，不影响交付长什么样。报告的「数据包」一节仍按格式各有一段体检。
 
 ## 2. 版本指纹
 
@@ -82,8 +68,7 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 }}
 ```
 
-`module_impl` 是该模块实现文件的哈希，`prompt` 是提示词全文哈希（v1 已有这个做法，
-`skill_profile.taxonomy_guideline` 换 sha256 存档）。子任务重跑时把新指纹并排记下，
+`module_impl` 是该模块实现文件的哈希，`prompt` 是提示词全文哈希（v1 已有这个做法）。子任务重跑时把新指纹并排记下，
 报告里明确标注「本模块结果来自子任务，代码/提示词版本为 X」。
 
 ## 3. 判决聚合
@@ -131,9 +116,9 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
   补跑成功后它回到正常的判决流程，该通过通过、该拒绝拒绝。
   口径取宽（D33）：只要有一次调用重试用尽或一路机位解码失败就算，哪怕 v1 的降级逻辑还能给出结论。
   补跑仍失败的（例如视频文件本身损坏）继续留在 `held`，报告里写明是哪一路、什么原因。
-  规则对所有已勾选的模块一视同仁：哪怕只是技能画像给它打标失败了，这一条也先不交付 ——
-  交付出去的每一条，报告里每个模块对它都有结论。技能画像整个模块失败（例如归纳技能的文本调用最终失败）时也一样：
-  全部条目待补跑、一条都不交付，等「重试」成功（D41；v1 从不因画像挡交付）。开始前的 VLM 检查（D30）会拦住
+  规则对所有已勾选的模块一视同仁：哪怕只是一个不判废的模块对它出错，这一条也先不交付 ——
+  交付出去的每一条，报告里每个模块对它都有结论。某个模块整体失败（例如模型调用最终失败）时也一样：
+  全部条目待补跑、一条都不交付，等「重试」成功。开始前的 VLM 检查（D30）会拦住
   大部分模型不可用的情况，跑到一半失败的点「重试」即可。
 - 例外（D35）：拒绝理由来自正常判完的模块时，直接拒绝，不进 `held`。「正常判完」指某个硬门确定失败，
   或者所有已勾选的软分模块都给了分、加权分低于阈值。出错的模块照样记在这一条上，报告里写「另有某模块执行出错，
@@ -149,129 +134,53 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
 任务汇总和报告概览给出条数，补齐文件后另建任务即可。
 
 使用文档里那次实跑：输入 50 = 判废 7 + 交付 43，交付的 43 条里有 10 条待人工确认。
-**待裁决的条目计入交付、会被导出**，人工判失败或弃用之后，再经一次重新导出剔除。
+**待裁决的条目计入 passed**（保守放行，与 v1 一致）；人工判失败或弃用之后，下一个结果版本把它们移出。
 `aggregate` 每次全量重算，天然保证这些关系。
 
-## 4. 增量重新导出
+## 4. 交付的是报告（D69）
 
-### 4.1 为什么需要
+2026-10-07 需求方定：**平台交付质检报告，不再写交付数据集**。原话是「我们是做报告的，不可能等几万条数据
+传完才出报告」—— 一次几万条的任务，重编码视频再上传是几个小时，而报告在判定结束时就已经齐了。
 
-子任务或人工裁决改了判决 → `passed.json` 变化（条目增减，或任务文本被人工改标）→ 交付数据集需要同步。
-需求明确：**不自动重建，显式提示用户点「重新导出」，且导出要增量、不要全量**（D9）。
+所以交付目录里就是任务的运行目录：结果版本（`revisions/rNNNN/` 的清单、报告、明细表）、人工裁决的 CSV 副本、
+证据帧与曲线图、各档日志。Daemon 随产随传（每档产物封口就传），发布时再整体同步一次，`curation verify`
+逐文件回读，全部读得回来才最后写 `_COMPLETE`（§1）。同步和回读都是 8 路并行：交付的是几十个小文件，
+耗时在往返次数上，串行时几百 KB 要几十秒。判决变了就生成新的结果版本，同步上去，没有「重新导出」这件事。
 
-### 4.2 两种源格式的代价差一个数量级
-
-这是 v1 `export/lerobot_writer.py` 里已经写明的事实，增量方案必须分开设计：
-
-| 源格式 | 布局 | 全量导出代价 | 增量可行性 |
-|---|---|---|---|
-| **v2** | 每条 episode 独立 parquet + 独立 mp4 | 文件拷贝，零视频重编码 | **高**：mp4 整文件复用 |
-| **v3** | 多条 episode 合并进同一 parquet/mp4 | 视频要重编码拼接 | **中**：按 chunk 粒度重编码 |
-
-### 4.3 manifest 驱动的增量算法
-
-```jsonc
-// export/manifest.json
-{"schema_version": "1.0",
- "source_format": "lerobot_v2",
- "episodes": [
-   {"episode_index": 34, "new_index": 0,
-    "content_key": "sha256:<源文件内容指纹>",
-    "task_key": "sha256:<写入的任务文本 + 来源>",      // 人工改标后它会变
-    "artifacts": {"parquet": "data/chunk-000/episode_000000.parquet",
-                  "videos": {"wrist": "videos/chunk-000/wrist/episode_000000.mp4"}}}
- ],
- "meta_files": ["meta/info.json", "meta/episodes.jsonl", "meta/tasks.jsonl", "meta/stats.json"]}
-```
-
-重新导出时：
-
-```
-① 算新的 passed 名单（不含 held）→ 新 episode 序列
-② 与 manifest.episodes 做 diff：
-     keep     内容相同且编号不变  → 一个字节都不动
-     relabel  只有任务文本变了    → 只改 parquet 的 task_index 列与 meta/tasks，视频不动
-     renumber 内容相同但编号变了  → v2: parquet 改编号列 + 文件改名（视频整文件 mv/copy）
-                                    v3: 落入受影响 chunk，该 chunk 重建
-     add      新进来的           → 从源导出
-     drop     被剔除的           → 删除产物
-③ meta 文件总是重建（KB 级，不值得增量）
-④ 远端同步：删掉不在新 manifest 上的旧对象（v1 sync_back 已有此逻辑，搬运）
-⑤ 写新 manifest → 交付核验（curation verify）→ 写 _COMPLETE
-```
-
-任务文本按来源写入交付数据集，并带 `instruction_source`：原始标注 / 自产 caption（autolabel 补的）/ 人工改标。
-这是 v1 的既有行为 —— 客户拿到的成品包里，无标注的条目有了描述，被人工纠正的标注是纠正后的。
-
-**交付是否过期，按指纹算，不按「名单变没变」算。** 指纹 = 通过名单及其顺序 + 每条的任务文本与来源 +
-源数据指纹 + 导出格式与参数。它和上次成功导出时记下的 `export_fingerprint` 不一样，`delivery_stale` 就是 1。
-只改了标、名单一条没动，同样是过期 —— 成品包里的任务文本还是旧的。
-
-**关键约束：LeRobot 要求 `episode_index` 和全局 `index` 连续。**
-所以「剔除中间一条」必然引发后续所有 episode 的重新编号。
-但重新编号 ≠ 重新编码：
-- v2：只改 parquet 的编号列（廉价，几 MB/条）+ 视频文件重命名（零成本），
-  这是增量导出的主要收益来源。
-- v3：编号列同样廉价，但视频在合并 mp4 里，**只重编码 drop/add 命中的 chunk**，
-  未受影响的 chunk 原样保留。
-
-W7 实现时定下的几条（2026-09-21）：
-
-- 全量导出与 v1 的 `export_lerobot_v2` / `export_lerobot_v3` 逐字节一致，写字节的地方都原样调用 v1 的 A 类代码。
-  多出的只有一个旁挂文件 `meta/curation_episodes.jsonl`（新编号、源编号、任务文本、`instruction_source`），
-  不往 LeRobot 的标准文件里加字段。
-- 增量需要的更多细节（每个文件的大小与 sha256、帧布局、导出参数）写在 `export/manifest.detail.json`，
-  与 `manifest.json` 共用同一个指纹；它是导出器自己的文件，不是契约。契约 1.1 给 `manifest.json` 加了可选的
-  `files`（大小与 sha256，`verify` 用）和每条的 `task`。
-- 任务表在增量导出时保留上一版的编号，否则改一条标注就会让后面所有帧表跟着重写（DROID 规模下是几万个文件）；
-  所以「任务编号变了」极少发生，发生时也按 relabel 处理。
-- v2 里只改了编号的视频直接改名，不拷字节（结果里记为 `videos_renamed`）；v3 只重编码被剔除条目所在的视频文件，
-  新增的条目编进新文件，帧表文件保持原来的归属。
-- 上次导出中断（留着 `_EXPORTING`）、产物缺失或大小变了、格式或参数变了，`--incremental` 自动退回全量，
-  原因写进结果的 `full_reason`。
-- 和 v1 的两处有意差异：v2.1 的源没有 `episodes_stats.jsonl` 时由导出器补算（官方 v2.1 loader 必须读它，
-  v1 这种情况下导出的数据集打不开）；交付文件的权限跟随所在目录（v1 的写法会留下 0600）。
-
-### 4.4 原子性
-
-- 所有写入先写临时前缀，完成后再发布（搬 v1 `export/publish.py` + `safe_write.py`）。
-- ⚠️ 已知坑（v1 注释里有实锤）：TOS 的 FSX 挂载**拒绝随机写**，PyAV 复用编码器要 seek 回
-  文件头改写 moov → EINVAL。所以视频必须**先写本地临时文件，再整文件拷贝到交付目录**。
-  增量导出同样受此约束，不得图省事直接往远端写。
-- `_COMPLETE` 最后写。读方（报告页、下游训练）只认带 `_COMPLETE` 的批次。
-- 增量重新导出是**就地**改这个批次的 `export/`（对象存储没有原子的目录切换，整份另存一遍又要翻倍占空间）。
-  所以顺序是：先删 `_COMPLETE` → 改 → 核验 → 再写 `_COMPLETE`。这段时间里顺着 `latest` 找过来的读方会看到
-  「没有 `_COMPLETE`」，应当稍后再来，而不是读一个改到一半的数据集。读方的正确姿势写进交付目录的 README。
+随导出一起去掉的（D69 列全）：三个格式的写出器、增量重导出、`export/manifest.json`、边出边传的发布器、
+`curation export` 命令、C2 的 `export` 与 `export-manifest`、Daemon 的导出档与 `reexport` 子任务、
+任务上的 `export_fingerprint` 与 `delivery_stale`、总览的「待交付」、前端的导出入口。
+**导出下线之前跑的批次**：它们的 `<run_id>/export/` 还留在交付目录里，读方照旧能打开，平台不再更新它。
+要重新生成交付数据集，用 `release_v1` 分支的 v1 流水线。
 
 ## 5. 人工裁决
 
-### 5.1 三条线（原样搬运 v1 语义）
+### 5.1 问题线（一张卡片一个问题，D68）
 
 | 线 | 来源模块 | 人可以做的判断 | 执行后果 |
 |---|---|---|---|
-| 标注分歧 | 技能画像 ③ | 采纳建议改标（可自行改写）/ 维持原标注 / 拿不准 / 整条弃用 | 改标的按新标注**重跑任务成败判定**（例外见纪律 4，口径见纪律 5）；弃用直接进 reject |
-| 任务成败弃权 | 任务成败判定 | 判成功 / 判失败 / 拿不准 | **不跑 VLM**，人说了算 |
+| 任务成败 | 任务成败判定（弃权，以及判废护栏拦下的「标注与画面疑似不符」） | 判成功 / 判失败 / 拿不准 / 整条弃用；答案可带 `new_label`（改写后的任务描述） | 给了成败结论就**不跑 VLM**，人说了算；只改描述、成败答「拿不准」的按新描述**重跑任务成败判定**（口径见纪律 5）；弃用直接进 reject |
 | 被拒复议 | 只归因于任务成败判定的 reject；去重的 reject（D42） | 恢复为可用 / 维持拒绝 / 拿不准 | 恢复为可用则推翻那个模块的结论、回到 passed |
 
-一条 episode 可能同时有标注分歧和成败弃权，裁决页把它们放在同一张卡片里，视频只看一次。
+v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_check`）。一条 episode 的每条线只问一次、
+只有一个答案；改写标注不是独立的一问，而是成败答案上的一个可选字段。
 
-四条纪律不能丢：
+六条纪律不能丢：
 
-1. **「整条弃用」压过成败裁决**：点了弃用就是弃用，不管另一块点了什么。
-   v1 在入口处先把被弃用的条目从成败裁决里滤掉，否则「判成功」会把它重新写回 passed。
+1. **「整条弃用」压过别的答案**：点了弃用就是弃用。它是成败那一问的一个答案（D68），
+   所以同一条线上后来的答案才能撤销它；别的线上的答案不改变弃用。
 2. **复议只受理归因于可复议模块的拒绝**（v1 只认任务成败判定；v2 加上去重，D42）：时间戳、残段、运动学、同步这些物理/结构硬门和软分拒绝是终局，
    界面不给入口，后端再校验一次（裁决记录是可被手改的数据，不能只靠界面把门）。
 3. **「拿不准」是合法答案**：只记一笔，条目保留在队列里，仍计为待裁，执行时不动它。
-4. **改标通常要重跑模型，但人已经给了成败结论的不重跑**：同一条既改了标、又被人判了成功/失败，
-   就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。
-5. **改标重判默认用 v1 的两层**（D39）：v1 的 `rejudge` 只跑多视角打分和逐机位复核，不跑任务类型判定、
-   机位提示、判废护栏和取证仲裁（它的注释写「全协议」，但首轮加了护栏和仲裁之后这里没跟着更新）。
-   v2 默认照它，结论和调用与 v1 一致、能逐位对账；「执行裁决」对话框写明这一点，并提供「按首轮的完整流程重判」的选项
-   （判得更全，但同样的裁决可能得出和 v1 不同的结论）。选了什么记在子任务的 `scope.relabel_rerun` 和每条改标上，
-   之后重试这几条沿用同一口径。
+4. **改写描述通常要重跑模型，但人已经给了成败结论的不重跑**：同一个答案既带了新描述、又判了成功/失败，
+   就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。只带新描述、成败答「拿不准」的按新描述重跑。
+5. **改标重判就是再判一次**（D39 → D71）：改了标的条目用新描述发一次判定请求（含逐机位结论），过判废护栏，
+   拿不准转人工 —— 和首轮一样。D39 时 v2 有两种口径（`v1`：v1 的 `rejudge`，只跑多视角打分和逐机位复核；
+   `full`：首轮的完整流程），单次判决之后两者没有区别了；`scope.relabel_rerun` 和每条改写上记的口径暂留，
+   对话框里的选项也暂留，行为合一。
 6. **已被拒绝的条目不再问成败**（D42）：被去重或任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
    去重拒掉的可以在「被拒复议」里恢复：卡片写明与哪条重复，恢复为可用就推翻去重的结论、回到 passed；
-   它若有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
+   它若还有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
    这是和 v1 的一处差异：v1 的重复项仍进成败裁决队列，人判成功就交付。
 
 ### 5.2 与任务状态机的关系（D10）
@@ -285,16 +194,12 @@ W7 实现时定下的几条（2026-09-21）：
          ├─ curation adjudicate-apply          把裁决落到判决上，幂等：已应用的自动跳过
          ├─ check --modules task_success        只跑「改了标且没有人工成败结论」的那几条，按选定的口径
          ├─ aggregate                           重算三份清单
-         ├─ check --modules skill_profile --incremental
-         │                                      被裁决的条目按新标注重新归位，被剔除的从画像里移除
          ├─ report                              生成新版本报告，追加「人工裁决」小节
-         └─ 判决或任务文本变了 → 置 delivery_stale=1
-               └─ UI 提示「判决已更新，交付数据集待重新导出」+「重新导出」按钮
+         └─ UI 提示「判决已更新」，报告与清单随新版本同步到交付目录
 ```
 
-裁决**只改判决和报告，不动交付数据集** —— 数据集的更新永远是用户显式发起的一次导出（D9）。
-这样「我点一下裁决」和「几百 GB 的数据集被重写」之间隔着一道明确的确认。
-这是和 v1 的一处有意差异：v1 的 `rejudge` 执行完会顺手重新导出。
+裁决只改判决和报告（D69 起本来也没有交付数据集可动）。这是和 v1 的一处有意差异：
+v1 的 `rejudge` 执行完会顺手重新导出。
 
 ### 5.3 裁决只属于本任务
 
@@ -317,7 +222,7 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 > 项、未覆盖的项、评估不了的项与原因计数）、`findings_by_item`（每项的条数与按级别的拆分），`reject_reasons` 按细码与检测项计；
 > 模块小节去掉 `gate`，`summary` 多通用统计 `assessed_episodes`、`items`（每个细码的条数、占比、可选按相机）、`unassessable`、
 > `score_hist`（2.0 改为「读数 → 十格」：运动质量的综合分与各子项分、视觉质量的综合分）、`dataset_findings`，1.0 的汇总键照留；
-> 技能画像多 `delivered_family_distribution`（交付集的分布，按 `passed` 算）。前端按 `schema_version` 分流（D59）。
+> 前端按 `schema_version` 分流（D59）。
 > F12.5 再加三项（可选，C2 报告 2.0 的增补）：`overview.reject_items`（被拒条目按检测项计，一条每项只记一次；人工整条弃用没有项，记 null）、
 > 每个小节的 `summary.flagged_episodes`（评估过的条目里有发现的条数）与 `summary.levels`（有 blocking / review / info 级发现的条数）。
 > 下面是 1.0 的结构。
@@ -343,13 +248,13 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
     {"id": "task_success", "state": "succeeded", "gate": "hard",
      "summary": {...},
      "adjudication": {"pending": 32, "url": "/tasks/<id>/adjudication?source=task_success"}},
-    {"id": "skill_profile", "state": "failed",
-     "error": "VLM endpoint unreachable", "retry": {"modules": ["skill_profile"]}}
+    {"id": "dedup", "state": "failed",
+     "error": "worker crashed", "retry": {"modules": ["dedup"]}}
   ],
   "skipped_modules": [{"id": "kinematic_limits",
                        "reason": "机器人型号 umi_dual_handheld_gripper 不在规格库"}],
   "integrity": {...,                 // 数据包完整性：格式、缺失字段、无标注条数、语义 profile / 动作语义预检结论
-                "container": {"format": "mcap", "delivery": "mcap_curated/（…）",   // mcap / Lance 源才有（D44）：交付形态与
+                "container": {"format": "mcap",                      // mcap / Lance 源才有（D44）：
                               "findings": [{"项": "机器人型号", "状态": "正常", "说明": "…"}]},  // v1 的数据包体检（型号、时间轴、任务文本）
                 "skipped_episodes": [{"episode_index": 12,
                                       "missing": ["videos/chunk-000/observation.images.wrist/episode_000012.mp4"]}]},
@@ -403,9 +308,8 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 | 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
 | 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
-| 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
+| 任务成败判定 | `judgements`（判定代码分布，D71 起只出 `success`、`failure`、`uncertain`；更早的任务还有 `recovery`、`endstate_success`、`arbitration_success`、`arbitration_failure`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
 | 精确去重 | `group_sizes`（按组大小数重复组） |
-| 技能画像 | `family_distribution`；`delivered_family_distribution`（报告 2.0：交付集的分布）；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
 CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。

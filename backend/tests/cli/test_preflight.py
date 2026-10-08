@@ -61,7 +61,7 @@ def test_v2_fixture_matches_the_contract(cli, dataset):
 
 def test_no_vlm_backend_means_needs_input(cli, dataset):
     doc = cli("preflight", "--input", dataset).doc
-    for mid in ("task_success", "skill_profile"):
+    for mid in ("task_success",):
         m = _mod(doc, mid)
         assert m["availability"] == "needs_input"
         assert m["input_hint"] == {"field": "vlm"}
@@ -81,10 +81,11 @@ def test_a_rider_is_exactly_as_available_as_its_host(cli, dataset):
 
 def test_missing_task_text_does_not_grey_out_vlm_modules(cli, dataset):
     doc = _valid(cli("preflight", "--input", dataset, "--vlm-backend", "ark-prod").doc)
-    for mid in ("task_success", "skill_profile"):
+    for mid in ("task_success",):
         m = _mod(doc, mid)
         assert m["availability"] == "available"
-        assert m["notes"] == ["2 episodes have no task text; the model will caption them first"]
+        assert m["notes"] == ["2 episodes have no task text; task_success will not judge them, "
+                              "their cameras are still checked for picture defects"]
 
 
 def test_fully_unlabelled_dataset_still_runs_vlm_modules(cli, dataset):
@@ -203,7 +204,7 @@ def test_missing_videos(cli, dataset):
     assert _mod(doc, "visual_quality")["availability"] == "available"
     shutil.rmtree(f"{dataset}/videos")
     doc = _valid(cli("preflight", "--input", dataset, "--vlm-backend", "ark").doc)
-    for mid in ("visual_quality", "video_action_sync", "task_success", "skill_profile"):
+    for mid in ("visual_quality", "video_action_sync", "task_success"):
         m = _mod(doc, mid)
         assert m["availability"] == "unsupported"
         assert m["reason"] == "no video files were found for the declared cameras"

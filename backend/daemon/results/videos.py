@@ -4,10 +4,7 @@ For every camera the first of these that exists wins:
 
 1. **clip** - ``details/audit_clips/ep<NNNNNN>__<camera>.mp4``, pre-cut for the
    adjudication page (v1's layout), in the task's run directory (``scope=delivery``);
-2. **delivery_dataset** - the exported dataset, from ``export/manifest.json``
-   (``export/lerobot_curated/<file>``, ``scope=delivery``); skipped while an export is
-   changing the dataset in place (``export/_EXPORTING``);
-3. **source_dataset** - the input dataset (``scope=input``); rejected episodes only
+2. **source_dataset** - the input dataset (``scope=input``); rejected episodes only
    exist there. For an mcap dataset, whose cameras are inside the episode file, this
    origin is a virtual path (``stream/cameras/ep<NNNNNN>__<camera>.mp4``) that
    ``GET /media/sign`` resolves to this Daemon's own streaming URL: the episode is
@@ -43,9 +40,6 @@ from .revision import Revision
 log = logging.getLogger("daemon.results")
 
 CLIP_DIR = "details/audit_clips"
-EXPORT_DIR = "export"
-DATASET_DIR = "export/lerobot_curated"
-JOURNAL = "export/_EXPORTING"
 SOURCE_MANIFEST = "source_manifest.json"
 PREFLIGHT = "preflight.json"
 #: after a failed read of the input metadata, how long the source stays out
@@ -147,7 +141,7 @@ class _Failed:
         self.at = time.monotonic()
 
 
-# -- the three origins --------------------------------------------------------------------
+# -- the two origins ---------------------------------------------------------------------
 
 def clip_videos(run_dir: Path, episode: int, cameras: Iterable[str]) -> dict[str, str]:
     out = {}
@@ -156,65 +150,6 @@ def clip_videos(run_dir: Path, episode: int, cameras: Iterable[str]) -> dict[str
         if (run_dir / rel).is_file():
             out[cam] = rel
     return out
-
-
-def delivered_videos(rev: Revision, episode: int) -> dict[str, Window]:
-    """``export/manifest.json`` of the task's last export, when the episode is in it."""
-    run_dir = rev.run_dir
-    if (run_dir / JOURNAL).exists():
-        return {}
-    try:
-        manifest = cached_json(rev.store.docs, run_dir / EXPORT_DIR / "manifest.json")
-    except (FileNotFoundError, ValueError):
-        return {}
-    entry = next((e for e in manifest.get("episodes") or []
-                  if isinstance(e, dict) and e.get("episode_index") == int(episode)), None)
-    if entry is None:
-        return {}
-    videos = ((entry.get("artifacts") or {}).get("videos") or {})
-    if manifest.get("source_format") in ("mcap", "lance"):
-        # D44: an mcap delivery has no mp4 (the files are the source's); a lance one keeps
-        # each episode's window of its video file in the manifest
-        root = f"{EXPORT_DIR}/{manifest.get('dataset_dir') or 'lance_episodes'}"
-        windows = (entry.get("artifacts") or {}).get("windows") or {}
-        out = {}
-        for vk, rel in videos.items():
-            win = windows.get(vk)
-            if isinstance(rel, str) and isinstance(win, list) and len(win) == 2:
-                out[M.short_camera(vk)] = (f"{root}/{rel}", _num(win[0]), _num(win[1]))
-        return out
-    if manifest.get("source_format") != "lerobot_v3":
-        return {M.short_camera(vk): (f"{DATASET_DIR}/{rel}", None, None)
-                for vk, rel in videos.items() if isinstance(rel, str)}
-    index = _delivered_index(rev)
-    windows = index.of(int(entry.get("new_index", -1))) if index is not None else {}
-    out = {}
-    for vk, rel in videos.items():
-        cam = M.short_camera(vk)
-        if isinstance(rel, str) and cam in windows:        # a v3 file without its window is no use
-            out[cam] = (f"{DATASET_DIR}/{rel}", windows[cam][1], windows[cam][2])
-    return out
-
-
-def _delivered_index(rev: Revision) -> LeRobotVideos | None:
-    from curation.cli.storage import LocalStorage
-
-    root = rev.run_dir / DATASET_DIR
-    info = root / M.INFO_KEY
-    key = ("delivered", str(root), identity(info),
-           identity(rev.run_dir / EXPORT_DIR / "manifest.json"))
-
-    def make():
-        storage = LocalStorage(str(root), role="output")
-        try:
-            keys = [k for k in storage.list() if k.startswith("meta/")]
-            return read_lerobot(storage, keys)
-        except Exception as exc:  # noqa: BLE001 - a broken local copy just loses the origin
-            log.info("delivered dataset of %s unreadable: %s", rev.task.id, exc)
-            return _Failed(str(exc))
-
-    index = rev.store.derived.get_or_make(key, make)
-    return index if isinstance(index, LeRobotVideos) else None
 
 
 def source_videos(rev: Revision, episode: int) -> dict[str, Window]:
@@ -283,17 +218,15 @@ def preflight_cameras(rev: Revision) -> list[str]:
 
 def episode_videos(rev: Revision, episode: int) -> list[dict]:
     """C4 ``EpisodeView.videos``: one entry per camera, from the first origin that has it."""
-    delivered = delivered_videos(rev, episode)
     source = source_videos(rev, episode)
-    cameras = list(dict.fromkeys([*preflight_cameras(rev), *delivered, *source]))
+    cameras = list(dict.fromkeys([*preflight_cameras(rev), *source]))
     clips = clip_videos(rev.run_dir, episode, cameras)
     out = []
     for cam in cameras:
         if cam in clips:
             out.append({"camera": cam, "scope": "delivery", "origin": "clip", "path": clips[cam]})
             continue
-        for origin, scope, found in (("delivery_dataset", "delivery", delivered),
-                                     ("source_dataset", "input", source)):
+        for origin, scope, found in (("source_dataset", "input", source),):
             if cam in found:
                 path, start, end = found[cam]
                 item = {"camera": cam, "scope": scope, "origin": origin, "path": path}

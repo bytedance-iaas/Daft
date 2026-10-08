@@ -99,7 +99,7 @@ def test_the_vlm_check_runs_only_when_a_vlm_module_is_selected(secret_client, vl
     assert [r.id for r in report.results] == ["input", "output"]
     assert len(vlm_stub.chats()) == chats
     rt = runtime(c)
-    for module in ("task_success", "skill_profile"):
+    for module in ("task_success", "eef_video_consistency"):
         other = seed_task(rt.repo, selected=(module,), input_uri=INPUT, delivery=OUTPUT,
                           input_cred_id=task.input_cred_id, output_cred_id=task.output_cred_id,
                           vlm_model_id=task.vlm_model_id)

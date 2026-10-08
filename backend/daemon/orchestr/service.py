@@ -59,8 +59,7 @@ PREFLIGHT_TTL_MS = taskspec.PREFLIGHT_MAX_AGE_MS
 _UNFINISHED_SUB = ("queued", "running", "pausing", "paused", "stopping")
 #: which pre-start checks each subtask kind runs (03 §3: "与它相关的检查")
 SUBTASK_CHECKS = {"retry": ("input", "output", "vlm"), "resume": ("input", "output", "vlm"),
-                  "apply_adjudication": ("input", "output", "vlm"),
-                  "reexport": ("input", "output")}
+                  "apply_adjudication": ("input", "output", "vlm")}
 
 
 def conflict(task_or_state, message: str, **details: Any) -> ApiError:
@@ -479,8 +478,7 @@ class Orchestrator:
         if task.state not in allowed:
             what = {"retry": "只有「错误」状态的任务可以重试",
                     "resume": "只有已停止或失败的任务可以继续运行",
-                    "apply_adjudication": "只有已完成（含错误）的任务可以执行裁决",
-                    "reexport": "只有已完成（含错误）的任务可以导出"}[kind]
+                    "apply_adjudication": "只有已完成（含错误）的任务可以执行裁决"}[kind]
             raise conflict(task, what)
         if not WorkDir(self.work_root, task_id).started():
             raise conflict(task, "这个任务的工作目录不完整，没法接着做：请复制为新任务")
@@ -501,12 +499,9 @@ class Orchestrator:
                 raise conflict(task, "没有出错的条目或整体失败的模块，不需要重试")
             scope = {"modules": [m for m in registry.ids() if m in wanted], "episodes": "errors"}
         elif kind == "apply_adjudication":
-            if not self.decisions_to_apply(task)[0]:
+            if not self.decisions_to_apply(task):
                 raise conflict(task, "没有待执行的裁决：先在裁决页做出判断")
             scope = {"relabel_rerun": scope.get("relabel_rerun") or "v1"}
-        elif kind == "reexport":
-            if int(task.result_rev or 0) < 1:
-                raise conflict(task, "这个任务还没有结果，没什么可导出的")
         self.checks.require(Draft.of_task(self.repo, task), SUBTASK_CHECKS[kind])
         try:
             sub = self.repo.create_subtask(P.Subtask(id="", task_id=task_id, kind=kind,
@@ -522,18 +517,12 @@ class Orchestrator:
         self.scheduler.enqueue(task_id, sub.id, owner=task.owner_id)
         return sub
 
-    def decisions_to_apply(self, task: P.Task) -> tuple[list, list]:
-        """``(to execute, lapsed)``: what an adjudication run hands to ``curation
-        adjudicate-apply`` is W5b's ``Queue.executable()`` - the latest unapplied decisions
-        that still stand, oldest first; follow-up answers whose opening answer changed since
-        have lapsed (C4 1.5.1) and are only reported."""
+    def decisions_to_apply(self, task: P.Task) -> list:
+        """What an adjudication run hands to ``curation adjudicate-apply``: W5b's
+        ``Queue.executable()`` - the latest unapplied decisions, oldest first."""
         from ..results import Queue, store_of
 
-        todo = Queue(store_of(self.rt), self.repo, task).executable()
-        ids = {a.id for a in todo}
-        lapsed = [a for a in self.repo.latest_adjudications(task.id, unapplied_only=True)
-                  if a.id not in ids]
-        return todo, lapsed
+        return Queue(store_of(self.rt), self.repo, task).executable()
 
     # ================================================================== D37 again
     def compatibility(self, task: P.Task, preflight: dict) -> list[dict]:
@@ -660,7 +649,6 @@ class Orchestrator:
                 forget_sync(wd.sync_state)
                 wd.ensure()
                 write_json_atomic(wd.purged_mark, {"at": self.clock(), "path": path})
-                self.repo.set_export_fingerprint(task_id, None, True)
                 log.info("purged %s (%d objects, %d bytes)", path, len(listing), total)
             except Exception:  # noqa: BLE001
                 log.exception("purging %s failed", path)

@@ -11,7 +11,7 @@ Still metadata only, still seconds:
   is the action topic's ``log_time``, so there is no fps to configure (``fps`` is null).
   A dataset whose episodes all lack the action or every camera cannot be read by v1:
   ``metadata_invalid``. Files without a summary section are read in full by the checks;
-  preflight says so and counts them as unlabelled (autolabel then decides per episode).
+  preflight says so and counts them as unlabelled (task_success then decides per episode).
 * **lance** - lerobot-lance-convert (>= 0.3.0) writes LeRobot v3.0 metadata into ``meta/``
   (mirrored in ``meta.lance``) with ``storage_format: "lance"``; preflight reads it like a
   LeRobot v3 dataset's, v1's ``validate_info`` included. Videos live in ``videos.lance``,

@@ -1,15 +1,14 @@
 """The two blocks of a plan 2.0 run, side by side (design doc 17 §3, D57).
 
-The CPU block (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm ->
-profile) run in two threads and never filter each other. Inside a block the stages run in the
-plan's order:
+The CPU block (integrity -> numeric -> frame -> dedup) and the VLM block (vlm)
+run in two threads and never filter each other. Inside a block the stages run in the plan's order:
 
-* ``autolabel`` - one command over the selection's unlabeled episodes, before the block's checks
-  (task_success reads the captions: a data dependency);
 * the per-episode stages - one chain of the episode pipeline (:func:`.pipeline.run_funnel`):
-  every episode with a record of a stage goes on to the next one, findings and errors stop nothing;
-* the full-set stages (``full_set``: dedup, profile) - one command over the whole selection once the
-  block's earlier stages are done (§3.2).
+  every episode with a record of a stage goes on to the next one, findings and errors stop nothing.
+  Since D70 that is every stage of a block, dedup included; a plan from before it marks dedup
+  ``full_set`` and that stage then runs as one command over the whole selection;
+* ``autolabel`` - the caption pass plans from before D72 carry before the VLM block's checks: it is
+  gone (an episode without a task text is not judged), so such a stage is marked skipped.
 
 Either block failing stops the other (a shared abort event, :meth:`Run.check_intent`); a pause or a
 stop reaches every process of both. The CPU block books its CPU-pool slots to the run's key
@@ -64,8 +63,10 @@ def run_block(run, block: str, stages: list[dict], selection: list[int], abort: 
         run.check_intent()
         st = stages[i]
         if st.get("command") == "autolabel":
-            run.autolabel(selection)
-            run.sync_quietly(st["id"])
+            if not run.journal.done(st["id"]):
+                run.log(st["id"], "info", "补描述这一步已经取消：没有任务标注的条目不做任务成败判定，"
+                                          "其余检查照常")
+                run.stage_done(st["id"], "skipped")
             i += 1
         elif st.get("full_set"):
             run.check_stage(st, selection, fresh=True)

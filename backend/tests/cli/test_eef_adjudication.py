@@ -90,7 +90,7 @@ def test_the_answers_act_as_the_gates_result(tmp_path):
                                    (2, "reject_appeal", "restore", None),
                                    (6, "eef_check", "inconsistent", None), (6, "task_verdict", "success", None),
                                    (7, "eef_check", "consistent", None), (7, "task_verdict", "failure", None)))
-    assert out["rerun_task_success"] == [] and out["profile_resync"] == [0, 2, 3, 6, 7]
+    assert out["rerun_task_success"] == []
     after = final(run_dir, "0-8", revision=2)
     assert sorted(after["passed"]) == [0, 1, 2, 4] and sorted(after["reject"]) == [3, 5, 6, 7, 8]
     assert _asked(after) == {4: [("eef_check", "eef_consistency", EEF)],          # unsure: still asked

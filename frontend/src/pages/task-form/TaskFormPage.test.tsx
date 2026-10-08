@@ -454,7 +454,7 @@ describe('新建任务 · 两屏与提交', () => {
     await waitFor(() => expect(fieldErrors(s2())).toEqual(['请选择机器人型号']));
     await user.click(within(needs).getByRole('button', { name: '跳过该模块' }));
     expect(within(s2()).getByText('已跳过')).toBeInTheDocument();
-    expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 7 个模块');
+    expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 6 个模块');
   });
 
   it('a plain new task starts with the default access key too (C4 1.17)', async () => {

@@ -53,7 +53,7 @@ def test_the_choice_is_recorded_with_every_relabel(vlm_stage, tmp_path):
     shutil.copytree(vlm_stage["reference_dir"], rd)
     first = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                 _decisions(str(tmp_path / "d1.json"),
-                           [(1, "label", "custom_label", LABEL),
+                           [(1, "task_verdict", "unsure", LABEL),
                             (3, "task_verdict", "success", None)]))
     assert first.rc == 0 and first.doc["relabel_rerun"] == "v1"      # the default
     lines = {d["id"]: d for d in read_jsonl(os.path.join(rd, "adjudication",
@@ -63,25 +63,15 @@ def test_the_choice_is_recorded_with_every_relabel(vlm_stage, tmp_path):
     # a later application with the other choice leaves the earlier relabel as it was
     second = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                  _decisions(str(tmp_path / "d2.json"),
-                            [(4, "label", "adopt_suggestion", "wipe the table")],
+                            [(4, "task_verdict", "unsure", "wipe the table")],
                             relabel_rerun="full", first_id=3))
     assert second.rc == 0 and second.doc["relabel_rerun"] == "full"
     assert second.doc["rerun_task_success"] == [4]
     assert {k: v["relabel_rerun"] for k, v in _labels(rd).items()} == {"1": "v1", "4": "full"}
     bad = run("adjudicate-apply", "--run-dir", rd, "--decisions",
-              _decisions(str(tmp_path / "d3.json"), [(6, "label", "custom_label", "x")],
+              _decisions(str(tmp_path / "d3.json"), [(6, "task_verdict", "unsure", "x")],
                          relabel_rerun="all", first_id=4))
     assert bad.rc == 2 and "relabel_rerun" in bad.doc["error"]["message"]
-
-
-def _v1_rerun(vlm_stage, url: str, episode: int, label: str) -> dict:
-    """v1's own re-judge (``rejudge._build_rerun``) against the fake model at ``url``."""
-    from curation.pipeline.config import apply_vlm_direct, load_config
-    from curation.pipeline.rejudge import _build_rerun
-
-    cfg = load_config(None)
-    apply_vlm_direct(cfg, endpoint=url, model="fake-vlm", api_key_env=None)
-    return _build_rerun(cfg)(vlm_stage["dataset"], f"ep{episode:06d}", label)
 
 
 def _relabel_and_check(vlm_stage, tmp_path, name: str, episode: int, label: str,
@@ -90,7 +80,7 @@ def _relabel_and_check(vlm_stage, tmp_path, name: str, episode: int, label: str,
     shutil.copytree(vlm_stage["reference_dir"], rd)
     applied = run("adjudicate-apply", "--run-dir", rd, "--decisions",
                   _decisions(str(tmp_path / f"{name}.json"),
-                             [(episode, "label", "custom_label", label)],
+                             [(episode, "task_verdict", "unsure", label)],
                              relabel_rerun=relabel_rerun))
     assert applied.rc == 0 and applied.doc["rerun_task_success"] == [episode]
     with FakeVlmServer() as vlm:
@@ -101,32 +91,30 @@ def _relabel_and_check(vlm_stage, tmp_path, name: str, episode: int, label: str,
     return latest_results(rd, "task_success")[episode], vlm
 
 
-def test_v1_relabels_send_v1s_requests_and_reach_v1s_verdict(vlm_stage, tmp_path):
-    for episode in (1, 3):
-        rec, v2 = _relabel_and_check(vlm_stage, tmp_path, f"v1-{episode}", episode, LABEL,
-                                     "v1")
-        with FakeVlmServer() as v1:
-            ref = _v1_rerun(vlm_stage, v1.url, episode, LABEL)
-        assert _posts(v2) == _posts(v1), episode                  # byte for byte
-        assert not any(p in c["text"] for c in v2.calls for p in ARBITRATION)
-        assert passed_of(rec) == ref["passed"]
-        details = {k: v for k, v in rec["details"].items() if k not in BOOKKEEPING}
-        assert details == {k: v for k, v in json.loads(ref["detail"]).items() if k not in BOOKKEEPING}
+REVIEW = "Independently review ONLY this camera"
+
+
+def test_relabels_are_judged_in_one_request_whatever_mode_was_recorded(vlm_stage, tmp_path):
+    """D71: the recorded mode (D39's ``v1`` / ``full``) no longer picks a protocol - a relabel is
+    judged with its new text in the one request, with no review per camera and no arbitration -
+    but it is still written on the record for aggregate."""
+    for episode, mode in ((1, "v1"), (3, "v1"), (1, "full")):
+        rec, vlm = _relabel_and_check(vlm_stage, tmp_path, f"{mode}-{episode}", episode, LABEL, mode)
+        texts = [c["text"] for c in vlm.calls]
+        assert sum("Assess the robot manipulation task" in t for t in texts) == 1, episode
+        assert not any(REVIEW in t for t in texts)
+        assert not any(p in t for t in texts for p in ARBITRATION)
+        assert rec["details"]["protocol"] == "video-task/2"
         assert (rec["details"]["task_desc"], rec["details"]["task_desc_source"],
-                rec["details"]["relabel_rerun"]) == (LABEL, "人工改标", "v1")
+                rec["details"]["relabel_rerun"]) == (LABEL, "人工改标", mode)
 
 
-def test_full_relabels_run_the_first_runs_flow(vlm_stage, tmp_path):
-    """Episode 1 relabelled with its own annotation: the first run abstained after the
-    two layers and arbitration rescued it. v1's re-judge stops at the abstention;
-    the full flow is the first run again - the same decision, another verdict."""
-    two_layers, _ = _relabel_and_check(vlm_stage, tmp_path, "v1-same", 1, ORIGINAL, "v1")
-    full, v2 = _relabel_and_check(vlm_stage, tmp_path, "full-same", 1, ORIGINAL, "full")
-    assert verdict_of(two_layers) == "abstain"
-    assert verdict_of(full) == "pass" and full["details"]["verdict"] == "arbitration_success"
-    assert any(p in c["text"] for c in v2.calls for p in ARBITRATION)
-    first_run = vlm_stage["reference"][1]
-    assert {k: v for k, v in full["details"].items() if k not in BOOKKEEPING} == \
-        {k: v for k, v in first_run["details"].items() if k not in BOOKKEEPING}
-    assert (full["details"]["task_desc_source"], full["details"]["relabel_rerun"]) == \
-        ("人工改标", "full")
+def test_both_recorded_modes_give_the_same_judgement(vlm_stage, tmp_path):
+    """Episode 1 relabelled with its own annotation, once as ``v1`` and once as ``full``: the same
+    request, the same record (bookkeeping aside) - and the first run's, since the judgement is a
+    function of the text and the video."""
+    v1, _ = _relabel_and_check(vlm_stage, tmp_path, "v1-same", 1, ORIGINAL, "v1")
+    full, _ = _relabel_and_check(vlm_stage, tmp_path, "full-same", 1, ORIGINAL, "full")
+    strip = lambda rec: {k: v for k, v in rec["details"].items() if k not in BOOKKEEPING}  # noqa: E731
+    assert verdict_of(v1) == verdict_of(full) == "fail"
+    assert strip(v1) == strip(full) == strip(vlm_stage["reference"][1])

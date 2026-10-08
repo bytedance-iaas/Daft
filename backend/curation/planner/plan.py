@@ -12,17 +12,15 @@ takes the whole selection, a stage without modules is left out:
     cpu block   integrity  the data integrity module            cpu (mostly I/O)
                 numeric    parquet-only checks                  cpu
                 frame      checks sharing one full-rate decode  cpu
-                dedup      exact duplicates (full set)          cpu, concurrency always 1
-    vlm block   autolabel  captions for episodes without a task text
-                vlm        the VLM checks                       vlm gates, merge proposal
-                profile    the skill profile (full set)         vlm gates
+                dedup      exact duplicates                     cpu, concurrency always 1
+    vlm block   vlm        the VLM checks                       vlm gates, merge proposal
     final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
-A full-set stage (``full_set``) needs the whole selection at once and starts when the
-stages before it in its block are done (§3.2). autolabel runs only if a selected module
-reads the task text (task_success; v1 captions unlabeled episodes only when it is on) and
-some selected episode may lack one. Modules the preflight marked unsupported stay out, and
-the plan says why.
+Every segment is per-episode since D70: no stage waits for the whole selection, and a plan
+no longer carries ``full_set`` (a plan from before that still may). Since D72 there is no
+``autolabel`` stage either: an episode without a task text is not judged by task_success
+(the plan notes how many there are); a plan from before still carries the stage, which the
+Daemon now skips. Modules the preflight marked unsupported stay out, and the plan says why.
 """
 from __future__ import annotations
 
@@ -36,8 +34,8 @@ from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
 from .merge import declared_frame_policy
 
 SCHEMA_VERSION = "2.0"
-#: the stages that hand episodes on one at a time (the Daemon's episode pipeline); the others of a block
-#: run as one command: autolabel before its block's checks, the full-set stages after them
+#: the stages that hand episodes on one at a time (the Daemon's episode pipeline); a plan from before
+#: D70 / D72 may also carry whole-set stages and an autolabel stage, which ran as one command
 STREAM_STAGES = ("integrity", "numeric", "frame", "vlm")
 
 
@@ -159,8 +157,8 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
     selected ids (or ``{"id": ...}`` choices); ``episodes`` the selected indices
     (default: all); ``limits`` a :class:`PlanLimits` or mapping;
     ``site_config`` a :class:`SiteConfig` or mapping. ``unlabeled_episodes``
-    makes the autolabel decision exact when the caller knows which episodes lack
-    a task text. ``registry`` defaults to C1 (tests pass extra example modules).
+    makes the count of episodes task_success will not judge exact when the caller
+    knows which lack a task text. ``registry`` defaults to C1 (tests pass extra example modules).
     ``validate=True`` checks the result against the contract (needs jsonschema
     and ``docs/contracts``).
     """
@@ -204,34 +202,31 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
 
     stages: list[dict[str, Any]] = []
     unlabeled = _unlabeled(dataset, selected, count, unlabeled_episodes, notes)
-    captions = bool(unlabeled) and any(
-        s.stage not in registry_mod.FULL_SET_STAGES and "autolabel" in s.depends_on for s in chosen)
+    if unlabeled and any(s.id == "task_success" for s in chosen):
+        notes.append(f"{unlabeled} selected episode(s) have no task text: task_success does not "
+                     "judge them (their cameras are still checked for picture defects, one request "
+                     "each), every other check still runs on them")
     for block, block_stages in registry_mod.BLOCKS.items():
         previous = None
         for stage_id in block_stages:
-            if stage_id == "autolabel":
-                if not captions:
-                    continue
-                stage: dict[str, Any] = {"id": "autolabel", "kind": "vlm", "command": "autolabel",
-                                         "block": block, "episodes": "unlabeled",
-                                         "gates": stage_gates("autolabel", gates)}
-            else:
-                members = [s for s in chosen if s.stage == stage_id]
-                if not members:
-                    continue
-                kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
-                stage = {"id": stage_id, "kind": kind, "command": "check", "block": block}
-                if previous:
-                    stage["after"] = previous
-                if stage_id in registry_mod.FULL_SET_STAGES:
-                    stage["full_set"] = True
-                if kind == "cpu":
-                    stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
-                stage["modules"] = [s.id for s in members]
-                stage["episodes"] = "selected"
-                if kind == "vlm":
-                    stage["gates"] = stage_gates(stage_id, gates)
-                    stage["merge"] = _merge_proposal(members, site, notes)
+            members = [s for s in chosen if s.stage == stage_id]
+            if not members:
+                continue
+            kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
+            stage: dict[str, Any] = {"id": stage_id, "kind": kind, "command": "check", "block": block}
+            if previous:
+                stage["after"] = previous
+            if kind == "cpu":
+                stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
+            stage["modules"] = [s.id for s in members]
+            stage["episodes"] = "selected"
+            if kind == "vlm":
+                stage["gates"] = stage_gates(stage_id, gates)
+                # one request per episode (D71): an episode in flight is one probe in flight,
+                # so the episode gate is the probe gate (v1's half, for its 2-3 requests per
+                # episode, stays in derive_gates for v1's own configuration)
+                stage["gates"]["episode"] = stage["gates"]["probe"]
+                stage["merge"] = _merge_proposal(members, site, notes)
             stages.append(stage)
             previous = stage_id
     stages.append({"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"})

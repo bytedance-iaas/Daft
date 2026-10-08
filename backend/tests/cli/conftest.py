@@ -50,8 +50,8 @@ def mini_dataset(tmp_path_factory) -> str:
 def vlm_stage(tmp_path_factory, mini_dataset) -> dict:
     """A run directory ready for the VLM stage, and that stage's records when it runs.
 
-    ``base`` went through preflight, plan, snapshot, autolabel and the numeric and
-    frame stages against the fake model; ``reference`` holds the task_success
+    ``base`` went through preflight, plan, snapshot and the numeric and
+    frame stages; ``reference`` holds the task_success
     records of ``check --modules task_success`` run with default options on a
     copy of it; ``episodes`` is the frame stage's survivors (``@file``). Tests copy
     ``base`` before changing anything.

@@ -17,30 +17,33 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert created["state"] == "queued"
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
-    # the fixture: 2 captions, 2 rejected on their timestamps, 7 a copy of 3 -> 5 / 3 / 0 / 2
-    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
-    assert task["result_rev"] == 1 and task["delivery_stale"] is False
+    # the fixture under the one judgement (D71): 2 rejected on their timestamps, 2 the judgement
+    # rejects (1 5), 7 a copy of 3, 4 and 6 have no task text and are not judged (D72) -> 4 / 4 / 0;
+    # 0 and 3 abstain, 1 and 7 can be appealed
+    assert task["summary"] == {"total": 8, "passed": 4, "rejected": 4, "held": 0, "review": 4,
+                               "pass_rate": 0.5}
+    assert task["result_rev"] == 1
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]
     assert [s["id"] for s in stages] == [
-        "numeric", "frame", "dedup", "autolabel", "vlm", "profile", "final", "report", "export", "verify"]
+        "numeric", "frame", "dedup", "vlm", "final", "report", "verify"]     # D72: no caption stage
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
-        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "autolabel": "vlm", "vlm": "vlm", "profile": "vlm"}
-    assert [s["id"] for s in stages if s.get("full_set")] == ["dedup", "profile"]
+        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "vlm": "vlm"}
+    assert not [s["id"] for s in stages if s.get("full_set")], "D70: no stage waits for the whole set"
     assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}
     assert mods["timestamp_check"]["state"] == "succeeded"
     assert mods["timestamp_check"]["episodes_total"] == 8
     # every module judges every episode (D57): task_success too on the two rejected on their timestamps
     assert mods["task_success"]["episodes_total"] == 8 and mods["task_success"]["episodes_error"] == 0
-    assert mods["dedup"]["episodes_total"] == 8 and mods["skill_profile"]["episodes_total"] == 8
+    assert mods["dedup"]["episodes_total"] == 8
     assert task["usage"]["requests"] > 0 and task["usage"]["prompt_tokens"] > 0
     run_id = task["run_id"]
     batch = d.delivery(run_id)
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
     assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "commit.json"))
-    assert os.path.isfile(os.path.join(batch, "export", "manifest.json"))
+    assert os.path.isfile(os.path.join(batch, "revisions", "r0001", "report.json"))
+    assert not os.path.isdir(os.path.join(batch, "export"))      # D69: no dataset is delivered
     with open(os.path.join(d.delivery(), "latest"), encoding="utf-8") as fh:
         assert fh.read().strip() == run_id
     plan = d.api("GET", f"/tasks/{task['id']}/plan")
@@ -59,7 +62,9 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert set(results(rd, "task_success")) == set(range(8))
     page = d.api("GET", f"/tasks/{task['id']}/pipeline/episodes").json()
     assert page["started"] == page["finished"] == 8
-    assert all(set(r["stages"]) == {"numeric", "frame", "vlm"} and set(r["stages"].values()) == {"done"}
+    # dedup is a segment of the CPU block like the others since D70, so it has a per-episode position too
+    assert all(set(r["stages"]) == {"numeric", "frame", "dedup", "vlm"}
+               and set(r["stages"].values()) == {"done"}
                and r["provisional"] for r in page["items"])
     counts = {m["id"]: m for m in page["modules"]}            # the live module cards (C4 2.3.0)
     assert {"timestamp_check", "visual_quality", "task_success"} <= set(counts)

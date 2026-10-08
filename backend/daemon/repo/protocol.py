@@ -52,7 +52,7 @@ PauseReason = Literal["user", "system"]
 ModuleRunState = Literal["pending", "running", "succeeded", "completed_with_errors", "failed",
                          "skipped", "stale"]
 Availability = Literal["available", "needs_input", "unsupported"]
-SubtaskKind = Literal["retry", "resume", "apply_adjudication", "reexport"]
+SubtaskKind = Literal["retry", "resume", "apply_adjudication"]
 CredentialKind = Literal["tos", "ark", "custom_vlm"]
 VerifyState = Literal["unverified", "ok", "failed"]
 BackendKind = Literal["ark", "custom"]
@@ -96,7 +96,6 @@ SUBTASK_PARENT_STATES: dict[str, frozenset[str]] = {
     "retry": frozenset({"completed_with_errors"}),
     "resume": frozenset({"stopped", "failed"}),
     "apply_adjudication": frozenset({"succeeded", "completed_with_errors"}),
-    "reexport": frozenset({"succeeded", "completed_with_errors"}),
 }
 
 
@@ -310,11 +309,9 @@ class Task:
     preflight: dict | None = None            # frozen at start
     source_fingerprint: dict | None = None   # source manifest summary, frozen at start (D27)
     result_rev: int = 0                      # switched by CAS once a revision is complete (D25)
-    export_fingerprint: str | None = None
     run_id: str | None = None
     progress: dict | None = None
     summary: dict | None = None
-    delivery_stale: bool = False             # computed: export fingerprint != current one
     started_at: int | None = None
     finished_at: int | None = None
     deleted_at: int | None = None            # soft delete, purged after 30 days
@@ -622,7 +619,7 @@ class Repository(Protocol):
         """Newest first. ``state='deleted'`` lists soft-deleted tasks; ``modules`` keeps tasks that
         selected every one of them. ``state`` is the task's own state, except that with
         ``running_subtasks`` (what ``GET /tasks`` asks for, D46) ``state='running'`` also keeps
-        finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+        finished tasks whose subtask (retry, resume, adjudication run) is queued or
         running: the console shows those as running while their own state stays terminal.
         ``has_result`` keeps tasks with a committed result (``result_rev >= 1``);
         ``pending_adjudication`` those whose summary counts pending adjudication items, counted
@@ -646,9 +643,6 @@ class Repository(Protocol):
 
     def switch_result_rev(self, task_id: str, expected: int, new: int) -> bool:
         """CAS on result_rev: readers see either the old or the new revision (D25)."""
-
-    def set_export_fingerprint(self, task_id: str, fingerprint: str | None,
-                               delivery_stale: bool) -> None: ...
 
     def freeze_task_inputs(self, task_id: str, *, run_id: str, preflight: dict,
                            source_fingerprint: dict, vlm_snapshot: dict | None) -> None:
@@ -745,10 +739,6 @@ class Repository(Protocol):
     def adjudication_backlog(self, *, owner: str = DEFAULT_OWNER) -> tuple[int, int]:
         """(tasks, episodes) waiting for human judgement: tasks whose
         ``summary.pending_adjudication`` is positive, and the sum of those numbers."""
-
-    def delivery_pending_count(self, *, owner: str = DEFAULT_OWNER) -> int:
-        """Finished tasks with a result (``result_rev >= 1``) whose delivered dataset is
-        stale or was never exported (``export_fingerprint`` is null)."""
 
     def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
         """Tasks that ended succeeded or completed_with_errors at or after ``since`` (epoch

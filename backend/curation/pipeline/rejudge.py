@@ -860,14 +860,6 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
 
-    # 技能画像同步(2026-08-16 标注优先方针的第③条):裁决改变了交付集合与标注,
-    # 画像不跟着动 = 技能分布里数着已被剔除的数据、错格子的条目继续错 —— 报告在
-    # 骗人。必须排在下面那遍三件套落盘**之前**(它要改 files["passed"]["skills"],
-    # 与延时入账同一条纪律:同一个产物一次只落一遍)。
-    _ps = _sync_profile(delivery, files, summary, decisions, cfg)
-    if _ps is not None:
-        summary["profile_sync"] = _ps
-
     # 重判段延时增量入账(整写非追加——FSX 拒绝 O_APPEND)+ 刷新汇总快照
     # ⚠️ 这一段**必须排在下面那遍落盘之前**:它要往 files["passed"] 里塞
     # vlm_latency,原来放在落盘之后 ⇒ 同一个 passed.json 两秒内被写了两遍。
@@ -1033,10 +1025,10 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 # + 非原始标注的任务覆写);新包在同级临时目录写好再原子换位。
                 curated = os.path.join(delivery, "lerobot_curated")
                 if os.path.isdir(curated):
-                    from ..export import lerobot_writer as _lw
+                    from ..export import retired as _lw        # D69：导出已退役
                     from ..ingest.lerobot_reader import _load_info
                     is_v3 = str(_load_info(input_dir).get("codebase_version", "")).startswith("v3")
-                    exporter = _lw.export_lerobot_v3 if is_v3 else _lw.export_lerobot_v2
+                    exporter = _lw.retired                 # D69：v1 的重导出已退役
                     keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
                     ov = {int(r["episode_id"][2:]): r["instruction"]
                           for r in out_rows
@@ -1069,7 +1061,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                 # 几个文件,与数据集大小无关。sync_back 对
                                 # lerobot_curated/ 前缀视而不见,远端的新旧对账
                                 # 在下面 _finalize_remote_curated 里按产物清单做
-                                from ..export import publish as _publish
+                                from ..export import retired as _publish
                                 _pub = _publish.Publisher(_staging,
                                                           curated_publish[0],
                                                           curated_publish[1])
@@ -1097,7 +1089,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 #  "采纳改标 → 用新标注重跑成败判定"与 LeRobot 走同一条路。)
                 rrd_curated = os.path.join(delivery, "rrd_curated")
                 if os.path.isdir(rrd_curated):
-                    from ..export.rrd_writer import export_rrd_curated
+                    from ..export.retired import retired as export_rrd_curated
                     keep_eids = [r["episode_id"] for r in out_rows]
                     rrd_ov = {r["episode_id"]: r["instruction"] for r in out_rows
                               if r.get("instruction_source") not in (None, "", "原始标注")
@@ -1132,7 +1124,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                         "instruction_source": r.get("instruction_source") or "",
                     } for r in out_rows}
                     _gen = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    from ..export.mcap_writer import export_mcap_curated
+                    from ..export.retired import retired as export_mcap_curated
                     _staging_name = "mcap_curated.staging"
                     _sh.rmtree(os.path.join(delivery, _staging_name),
                                ignore_errors=True)
@@ -1232,164 +1224,6 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     return summary
 
 
-def _sync_profile(delivery: str, files: dict, summary: dict,
-                  decisions: dict, cfg: dict) -> dict | None:
-    """裁决 → 技能画像与 skill_assignment.csv 同步(2026-08-16 标注优先方针③)。
-
-    判据一句话:**画像描述的是"我们交付的那批数据"**。三条裁决线对画像各自的动作:
-    - 采纳改标重判通过/弃权(仍在交付)→ 用**新标注**对现有体系重新归类;
-      重判仍失败(进 reject)→ 与"弃用"同款移除;
-    - 弃用该条 / 成败裁决判失败 → 从画像与 CSV 移除(已被剔出交付,继续数着
-      = 报告在骗人);
-    - 维持原标注 → 用**原始标注**重新归类(老交付按旧策略是 caption 归的,26 条
-      正躺在错误格子里);幂等:已是标注归的重算结果相同,零变化;
-    - 复议捞回 → 归类补回:有原始标注按标注;只有质检时的自产 caption 就按 caption
-      (task_details 里现成的,**绝不重跑 VLM**);两样都没有留「未归类」并如实报数。
-
-    **不重跑 caption、不重新归纳体系**:全部动作 = 纯文本对既有体系再分配,归不进
-    去的才(配了 VLM 时)问一次 LLM 补漏。老交付没画像 / 降级扁平画像 → 返回 None
-    (体系都没有,无从归类,不硬造)。
-    """
-    import csv as _csv
-
-    from ..dataset_level.reassign import (NO_SUBSKILL, SRC_CAPTION, SRC_LABEL,
-                                          SRC_NONE, UNASSIGNED, member_map_of,
-                                          reassign_texts, rebuild_profile,
-                                          taxonomy_from_profile)
-
-    removals = set(summary.get("dropped", []) + summary.get("adopted_reject", [])
-                   + summary.get("verdict_fail", [])
-                   + summary.get("retry_fail", []))    # 弃权补判判失败的同样出画像
-    # 「改标 + 人工成败结论」条目(adopted_human)只取仍在交付里的:人工判失败的
-    # 已进 reject,再按新标注归进画像就是在数一条不存在的数据
-    human_kept = [e for e in summary.get("adopted_human", [])
-                  if e in ((files.get("passed") or {}).get("episodes") or {})
-                  or e in ((files.get("review") or {}).get("episodes") or {})]
-    relabel = {e: str(decisions[e].get("new_label", "")).strip()
-               for e in (summary.get("adopted_pass", [])
-                         + summary.get("adopted_review", [])
-                         + human_kept) if e in decisions}
-    kept = list(summary.get("kept", []))
-    restored = list(dict.fromkeys(summary.get("appeal_restored", [])
-                                  + summary.get("verdict_pass", [])
-                                  + summary.get("retry_pass", [])))
-    if not removals and not relabel and not kept and not restored:
-        return None
-
-    profile = (files.get("passed") or {}).get("skills") or {}
-    csv_path = os.path.join(delivery, "details", "skill_assignment.csv")
-    if not profile.get("families") or not os.path.exists(csv_path):
-        return {"note": "画像未同步:该交付没有两级技能体系或缺 "
-                        "skill_assignment.csv(老交付/降级画像),体系不重新归纳"}
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        rows = list(_csv.DictReader(f))
-
-    captions: dict = {}
-    cap_json = os.path.join(delivery, "details", "captions.json")
-    if os.path.exists(cap_json):
-        try:
-            with open(cap_json, encoding="utf-8") as f:
-                captions = json.load(f)
-        except Exception:  # noqa: BLE001
-            captions = {}
-    # 质检时的判定痕迹:维持原标注/捞回条目的标注与自产 caption 都在这里现成躺着
-    task_recs: dict = {}
-    td = os.path.join(delivery, "details", "task_details.json")
-    if os.path.exists(td):
-        try:
-            with open(td, encoding="utf-8") as f:
-                task_recs = json.load(f).get("episodes") or {}
-        except Exception:  # noqa: BLE001
-            task_recs = {}
-    queue_label = {q.get("id"): str(q.get("label") or "")
-                   for q in (files.get("review") or {}).get("标注-画面分歧复核队列")
-                   or []}
-
-    old = {str(r.get("episode_id") or ""): r for r in rows}
-    old.pop("", None)
-    member_map = member_map_of(rows)
-    tax = taxonomy_from_profile(profile)
-
-    assignment: dict = {}
-    new_text: dict = {}
-    new_src: dict = {}
-    for eid, r in old.items():
-        if eid in removals:
-            continue
-        assignment[eid] = (str(r.get("family") or UNASSIGNED),
-                           str(r.get("subskill") or NO_SUBSKILL))
-        t = str(r.get("grouping_text") or r.get("caption") or "")
-        new_text[eid] = t
-        # 老 CSV 没有来源列:旧策略的归类输入就是 caption,如实回填而非臆造
-        new_src[eid] = (str(r.get("grouping_text_source") or "")
-                        or (SRC_CAPTION if t else SRC_NONE))
-
-    to_assign: dict = {}
-    label_missing: list = []
-    for eid, lab in relabel.items():
-        if eid in removals or not lab:
-            continue
-        to_assign[eid] = lab
-        new_text[eid], new_src[eid] = lab, SRC_LABEL
-        assignment.setdefault(eid, (UNASSIGNED, NO_SUBSKILL))
-    for eid in kept:
-        if eid in removals or eid not in assignment:
-            continue
-        rec = task_recs.get(eid) or {}
-        lab = queue_label.get(eid, "")
-        if not lab and str(rec.get("instruction_source") or "") == SRC_LABEL:
-            lab = str(rec.get("instruction") or "").strip()
-        if lab:
-            to_assign[eid] = lab
-            new_text[eid], new_src[eid] = lab, SRC_LABEL
-        else:
-            label_missing.append(eid)      # 取不到原始标注:维持原归类,不许猜
-    for eid in restored:
-        if eid in assignment:
-            continue                       # 已在画像里(异常态),不重复补
-        rec = task_recs.get(eid) or {}
-        src = str(rec.get("instruction_source") or "")
-        txt = str(rec.get("instruction") or "").strip()
-        if txt and src in (SRC_LABEL, "人工裁决改标"):
-            to_assign[eid] = txt
-            new_text[eid], new_src[eid] = txt, SRC_LABEL
-        elif txt and src == SRC_CAPTION:   # 质检时的自产 caption,现成的,不重跑 VLM
-            to_assign[eid] = txt
-            new_text[eid], new_src[eid] = txt, SRC_CAPTION
-        else:
-            assignment[eid] = (UNASSIGNED, NO_SUBSKILL)
-            new_text[eid], new_src[eid] = "", SRC_NONE
-        assignment.setdefault(eid, (UNASSIGNED, NO_SUBSKILL))
-
-    from .reprofile import build_llm_ask_from_cfg
-    assignment.update(reassign_texts(to_assign, member_map, tax,
-                                     build_llm_ask_from_cfg(cfg)))
-
-    cap_of = {eid: str(captions.get(eid)
-                       or (old.get(eid) or {}).get("caption") or "")
-              for eid in assignment}
-    instr_of = {eid: new_text[eid] for eid in assignment
-                if new_src.get(eid) == SRC_LABEL}
-    new_profile = rebuild_profile(assignment, profile, cap_of, instr_of)
-    # ⚠️ 只动 skills 段:成败判定字段(判决/checks)一个字不碰,由 apply_* 独管。
-    files["passed"]["skills"] = new_profile
-    from ..dataset_level.profile import write_skill_assignment_csv
-    os.makedirs(os.path.join(delivery, "details"), exist_ok=True)
-    write_skill_assignment_csv(os.path.join(delivery, "details"), new_profile,
-                               cap_of, new_text, new_src)
-
-    out = {"removed": sorted(e for e in removals if e in old),
-           "reassigned": sorted(to_assign),
-           "restored": sorted(e for e in restored if e in assignment and e not in old),
-           "unassigned": sorted(e for e, a in assignment.items()
-                                if a[0] == UNASSIGNED),
-           "label_missing_kept": sorted(label_missing)}
-    print(f"[rejudge] 画像同步:重归类 {len(out['reassigned'])} 条,"
-          f"移除 {len(out['removed'])} 条,补回 {len(out['restored'])} 条"
-          f"(未归类 {len(out['unassigned'])} 条)", flush=True)
-    return out
-
-
 def _episode_row_reader(input_dir: str, cfg: dict) -> Callable:
     """"按 episode 号回源重读行"的**格式无关**分派(与 run.py 的输入嗅探同一套)。
 
@@ -1453,7 +1287,8 @@ def rerun_task_success(cfg: dict, video: dict, new_label: str, vlm, voter,
     if getattr(vlm, "media_input", None) == "video":
         from .video_task import judge_video_episode
 
-        return judge_video_episode(cfg, video, new_label, vlm, voter, task_src="人工改标")
+        # video input: the one judgement request (D71); ``voter`` is the image path's reviewer
+        return judge_video_episode(cfg, video, new_label, vlm, task_src="人工改标")
 
     if decode is None:
         from ..adapters.decode import decode_window as decode

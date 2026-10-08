@@ -1,5 +1,5 @@
 {
- "registry_version": "3.0",
+ "registry_version": "4.0",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -16,9 +16,7 @@
    "id": "vlm",
    "title_zh": "VLM 块",
    "stages": [
-    "autolabel",
-    "vlm",
-    "profile"
+    "vlm"
    ]
   }
  ],
@@ -27,14 +25,9 @@
   "numeric",
   "frame",
   "dedup",
-  "autolabel",
-  "vlm",
-  "profile"
+  "vlm"
  ],
- "full_set_stages": [
-  "dedup",
-  "profile"
- ],
+ "full_set_stages": [],
  "finding_levels": [
   {
    "id": "blocking",
@@ -81,53 +74,13 @@
   {
    "id": "not_applicable",
    "title_zh": "对本数据集不适用"
+  },
+  {
+   "id": "no_task_text",
+   "title_zh": "没有任务标注，没有做任务成败判定"
   }
  ],
  "review_lines": [
-  {
-   "id": "label",
-   "review_kind": "label_conflict",
-   "title_zh": "标注分歧",
-   "applies_to": "passed",
-   "counts_as_pending": true,
-   "decisions": [
-    {
-     "const": "adopt_suggestion",
-     "title": "采纳新标注"
-    },
-    {
-     "const": "custom_label",
-     "title": "自行改写标注"
-    },
-    {
-     "const": "keep_label",
-     "title": "维持原标注"
-    },
-    {
-     "const": "unsure",
-     "title": "拿不准"
-    },
-    {
-     "const": "discard",
-     "title": "其它原因，整条弃用"
-    }
-   ],
-   "follow_ups": [
-    {
-     "after": [
-      "adopt_suggestion",
-      "custom_label"
-     ],
-     "line": "task_verdict",
-     "decisions": [
-      "success",
-      "failure",
-      "unsure"
-     ],
-     "optional": true
-    }
-   ]
-  },
   {
    "id": "task_verdict",
    "review_kind": "task_verdict",
@@ -151,8 +104,7 @@
      "const": "discard",
      "title": "其它原因，整条弃用"
     }
-   ],
-   "follow_ups": []
+   ]
   },
   {
    "id": "reject_appeal",
@@ -173,8 +125,7 @@
      "const": "unsure",
      "title": "拿不准"
     }
-   ],
-   "follow_ups": []
+   ]
   },
   {
    "id": "eef_check",
@@ -195,8 +146,7 @@
      "const": "unsure",
      "title": "拿不准"
     }
-   ],
-   "follow_ups": []
+   ]
   },
   {
    "id": "integrity_check",
@@ -217,8 +167,7 @@
      "const": "unsure",
      "title": "拿不准"
     }
-   ],
-   "follow_ups": []
+   ]
   }
  ],
  "taxonomy": {
@@ -1965,9 +1914,7 @@
    ],
    "block": "vlm",
    "stage": "vlm",
-   "depends_on": [
-    "autolabel"
-   ],
+   "depends_on": [],
    "codes": [
     {
      "code": "failure",
@@ -2005,12 +1952,12 @@
      "level": "review",
      "scope_kind": "episode",
      "appealable": false,
-     "review_line": "label"
+     "review_line": "task_verdict"
     },
     {
      "code": "task_text_missing",
      "item": "LABEL-2",
-     "name_zh": "没有任务标注，用的是自产描述",
+     "name_zh": "没有任务标注，没有做任务成败判定",
      "severity": "low",
      "level": "info",
      "scope_kind": "episode",
@@ -2072,9 +2019,7 @@
    ],
    "block": "vlm",
    "stage": "vlm",
-   "depends_on": [
-    "autolabel"
-   ],
+   "depends_on": [],
    "codes": [
     {
      "code": "glitch",
@@ -2168,73 +2113,6 @@
      "sortable": [
       "episode_index",
       "duplicate_of"
-     ],
-     "default_sort": "episode_index"
-    }
-   ],
-   "mergeable": false
-  },
-  {
-   "id": "skill_profile",
-   "name_zh": "技能画像",
-   "summary_zh": "归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-   "level": "dataset",
-   "needs": [
-    "video",
-    "vlm"
-   ],
-   "block": "vlm",
-   "stage": "profile",
-   "depends_on": [
-    "autolabel"
-   ],
-   "codes": [
-    {
-     "code": "label_disagreement",
-     "item": "LABEL-4",
-     "name_zh": "标注与画面不符",
-     "severity": "medium",
-     "level": "review",
-     "scope_kind": "episode",
-     "appealable": false,
-     "review_line": "label"
-    },
-    {
-     "code": "descriptions_conflict",
-     "item": "LABEL-1",
-     "name_zh": "多份描述彼此不一致",
-     "severity": "medium",
-     "level": "info",
-     "scope_kind": "episode",
-     "appealable": false
-    },
-    {
-     "code": "undersampled_family",
-     "item": null,
-     "name_zh": "样本偏少的技能族",
-     "severity": "low",
-     "level": "info",
-     "scope_kind": "dataset",
-     "appealable": false
-    }
-   ],
-   "covers": [
-    "LABEL-4",
-    "LABEL-1"
-   ],
-   "param_schema": {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": false
-   },
-   "tables": [
-    {
-     "id": "skill_assignment",
-     "title_zh": "技能归属",
-     "sortable": [
-      "episode_index",
-      "family",
-      "subskill"
      ],
      "default_sort": "episode_index"
     }

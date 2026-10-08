@@ -119,7 +119,10 @@ def derive(module: str, passed: bool | None, score: float | None, details: dict 
     if passed is False and fail and not any(levels.get(f["code"]) == "blocking" for f in out.findings):
         why = str(details.get("reason") or details.get("why") or "").strip()
         out.add(module, fail, f"「{spec.name_zh}」判定不通过" + (f"：{why}" if why else ""))
-    if passed is None and defer and not any(levels.get(f["code"]) == "review" for f in out.findings) \
+    # a record that says ``skipped`` holds no judgement to defer to a person (task_success on an
+    # episode without a task text, D72): the deriver already said what it could not assess
+    if passed is None and defer and not details.get("skipped") \
+            and not any(levels.get(f["code"]) == "review" for f in out.findings) \
             and not any(levels.get(f["code"]) == "blocking" for f in out.findings):
         why = str(details.get("reason") or "").strip()
         out.add(module, defer, f"「{spec.name_zh}」需要人工确认" + (f"：{why}" if why else ""))
@@ -427,6 +430,14 @@ def _task_success(passed, score, d, p) -> Derived:
     failure's interval (P19)."""
     out = Derived()
     m = "task_success"
+    if d.get("skipped") == "no_task_text":
+        # D72: the episode has no task text, so there was no judgement to derive from
+        text = "没有任务标注，没有做任务成败判定"
+        out.add(m, "task_text_missing", text, readings={"task_text_source": "无"})
+        for item in ("TASK-4", "LABEL-4"):
+            out.cannot(item, "no_task_text", text)
+        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        return out
     verdict = str(d.get("verdict") or "")
     completion = d.get("video_completion", d.get("completion_final"))
     if completion is not None:
@@ -458,8 +469,9 @@ def _task_success(passed, score, d, p) -> Derived:
         out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
     source = str(d.get("task_desc_source") or "")
     if source in ("自产caption", "无"):
-        out.add(m, "task_text_missing", "没有任务标注，用的是平台自动生成的描述" if source == "自产caption"
-                else "没有任务标注，也没有生成出描述", readings={"task_text_source": source})
+        # "自产caption": a record from before D72, judged with a caption the platform wrote
+        out.add(m, "task_text_missing", "没有任务标注，用的是当时平台生成的描述" if source == "自产caption"
+                else "没有任务标注，也没有描述", readings={"task_text_source": source})
     elif not source:
         out.cannot("LABEL-2", "not_applicable", "记录里没有任务描述的来源")
     return out
@@ -623,21 +635,6 @@ def _dedup(passed, score, d, p) -> Derived:
     return out
 
 
-@deriver("skill_profile", defer="label_disagreement")
-def _skill_profile(passed, score, d, p) -> Derived:
-    """The family an episode is filed under (a reading) and the label audit's flag (passed None: the audit
-    queued it; its tier lives in ``label_audit.json``). Datasets keep one description per episode, so
-    descriptions cannot be compared (LABEL-1)."""
-    out = Derived()
-    m = "skill_profile"
-    for key in ("family", "subskill", "grouping_text_source"):
-        if d.get(key):
-            out.readings[key] = d.get(key)
-    if passed is None:
-        out.add(m, "label_disagreement", "标注与画面不一致，或画面描述与标注归到了不同的技能")
-    out.cannot("LABEL-1", "single_description", "每条只有一份任务描述，无从比较")
-    return out
-
 
 # ---------------------------------------------------------------- dataset-level findings
 
@@ -653,11 +650,11 @@ def _quartiles(values: list[float]) -> tuple[float, float]:
 
 
 def dataset_level(module: str, records: dict[int, dict], params: dict | None = None, *,
-                  integrity: dict | None = None, profile: dict | None = None) -> tuple[list[dict], dict]:
+                  integrity: dict | None = None) -> tuple[list[dict], dict]:
     """(dataset-level findings, dataset-level readings) of ``module`` over a task's records (design doc 17
     §1.2: counted once per dataset): the integrity module's own (``integrity``: its ``dataset.json``), the
-    timestamps' duration outliers, the action semantics nobody could settle, the families the skill profile
-    found undersampled (``profile``: its ``profile.json``). Every finding carries ``unit: dataset``."""
+    timestamps' duration outliers, the action semantics nobody could settle. Every finding carries
+    ``unit: dataset``."""
     p = params_of(module, params)
     ok = {e: r for e, r in records.items() if isinstance(r, dict) and r.get("status") == "ok"}
     found: list[dict] = []
@@ -697,14 +694,4 @@ def dataset_level(module: str, records: dict[int, dict], params: dict | None = N
                 found.append(finding(module, "action_semantics_undetermined",
                                      f"判断不了动作数据的含义（{len(unsure)} / {len(sem)} 条）：运动学极限与依赖动作语义的子项没有评估",
                                      unit="dataset", readings={"episodes": len(unsure)}))
-    elif module == "skill_profile":
-        prof = profile or {}
-        fams = prof.get("families") or {}
-        if fams:
-            readings["families"] = {f: (v or {}).get("count") for f, v in fams.items() if isinstance(v, dict)}
-        for fam in prof.get("undersampled") or []:
-            name = ((fams.get(fam) or {}).get("name_zh") if isinstance(fams.get(fam), dict) else None) or fam
-            found.append(finding(module, "undersampled_family", f"技能族「{name}」样本偏少（不足 5%）",
-                                 unit="dataset", readings={"family": fam, "pct": (fams.get(fam) or {}).get("pct")
-                                                           if isinstance(fams.get(fam), dict) else None}))
     return found, readings

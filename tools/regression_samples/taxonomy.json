@@ -1861,11 +1861,9 @@
    "name": "一条有多份描述，彼此不一致",
    "origin": "具",
    "samples": "真实：A2（原任务名 `Clothes Folding` 对重标注的指令）、C3",
-   "platform": "部分：技能画像的标注分歧检出（要模型）",
-   "platform_status": "有读数",
-   "platform_codes": [
-    "skill_profile.descriptions_conflict"
-   ],
+   "platform": "没有：技能画像下线后失去唯一覆盖，待定",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "一条有多份描述，彼此不一致",
@@ -1946,8 +1944,7 @@
    "platform": "能判：进「标注分歧」的人工复核（要模型）",
    "platform_status": "能判",
    "platform_codes": [
-    "task_success.label_conflict_suspect",
-    "skill_profile.label_disagreement"
+    "task_success.label_conflict_suspect"
    ],
    "kind": "defect",
    "level": "episode",

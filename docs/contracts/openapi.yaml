@@ -1,13 +1,14 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.8.0
+  version: 4.2.0
   description: |
     ## Overview
 
     The REST API of the Physical AI Kit data quality-check platform: register robot datasets (LeRobot
     v2 / v3, mcap, Lance), run quality-check tasks over their episodes, read the verdicts, findings and
-    reports, adjudicate what needs a person, and export the episodes that pass as a delivery dataset.
+    reports, and adjudicate what needs a person. The delivery is the report: the platform does not
+    write a curated dataset.
     The web console is built on this same API, so whatever it does can be done here. JSON in, JSON out,
     UTF-8. Each endpoint does one whole thing a user would name; no task needs a chain of calls.
 
@@ -24,7 +25,7 @@ info:
        `GET /tasks/{id}/episodes` and `GET /tasks/{id}/episodes/{index}`.
     5. Adjudicate: `GET /tasks/{id}/adjudication` lists what a person has to decide, `POST` on the same
        path records decisions, and `POST /tasks/{id}/adjudication/apply` executes them as a subtask that
-       makes a new result revision. It does not export; `POST /tasks/{id}/reexport` does.
+       makes a new result revision.
 
     The `credentials` and `vlm` groups hold the TOS access keys and the VLM backends a task names,
     `uploads` takes the input files of module parameters, `viz` is the data visualizer and `overview`
@@ -109,10 +110,36 @@ info:
     LABEL-1 to LABEL-4, SET-4 and SET-5 are SET-2 and SET-3. Results of tasks run before keep the numbers they
     were run with. The time-length outlier and the undersampled skill family are still reported as
     dataset-level findings, without an item.
+
+    **3.0.0** (2026-10-06): the skill profile is gone, and with it the module `skill_profile`, the
+    `profile_vlm` stage and the `profile` plan stage. One adjudication card now asks one question: the
+    `label` review line is gone, and a suspected conflict between a task text and the picture is part
+    of the `task_verdict` question. An answer on that line may carry `new_label`, the task text the
+    person rewrote while judging; it replaces the decisions `adopt_suggestion`, `custom_label` and
+    `keep_label`. Follow-up questions are gone (`follow_ups` on a review line, `follow_up_of` on a
+    question).
+
+    **4.0.0** (2026-10-07): the platform delivers the quality report, not a curated dataset. Gone with
+    the export: `POST /tasks/{id}/reexport`, the subtask kind `reexport`, `delivery_stale` on a task,
+    `params.export`, the overview's `todo.delivery_pending`, and the episode video origin
+    `delivery_dataset` (an episode's cameras now play from the source dataset, or from a clip cut for
+    the adjudication page). The delivery directory itself stays: a task's run directory - the result
+    revisions, the report and its details - is synced into `<delivery>/<run_id>/`, read back, and marked
+    `_COMPLETE`; `latest` still points at the newest complete batch.
+
+    **4.1.0** (2026-10-07): no stage waits for the whole selection any more. Exact dedup is a streaming
+    segment of the CPU block like the other checks, so a task's `progress.stages` no longer carries
+    `full_set` (a task planned before this still does, and the field stays in the contract), and the
+    module registry's `full_set_stages` is empty.
+
+    **4.2.0** (2026-10-08): the two lines above meet - every 2.6.0-2.8.0 addition (EEF overlay,
+    viz segments, depth and display configuration, taxonomy 2.0) and every 3.0.0-4.1.0 removal are in
+    the one API; the task_success items are the taxonomy 2.0 numbers (TASK-4, TASK-10, LABEL-2, LABEL-4).
+
   x-description-zh: |
     ## 概览
 
-    Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对其中的 episode 跑质检任务，读取判决、发现与质检报告，人工裁决需要人来判断的条目，再把通过的 episode 导出为交付数据集。网页控制台用的就是这套 API，控制台能做的事都能通过它完成。请求与响应都是 JSON，UTF-8 编码。每个接口完成一件完整的事，不需要连着调几个接口才办成一件事。
+    Physical AI Kit 数据质检平台的 REST API：登记机器人数据集（LeRobot v2 / v3、mcap、Lance），对其中的 episode 跑质检任务，读取判决、发现与质检报告，人工裁决需要人来判断的条目。交付的是质检报告，平台不再写交付数据集。网页控制台用的就是这套 API，控制台能做的事都能通过它完成。请求与响应都是 JSON，UTF-8 编码。每个接口完成一件完整的事，不需要连着调几个接口才办成一件事。
 
     一次典型的质检：
 
@@ -120,7 +147,7 @@ info:
     2. 建任务：`POST /tasks` 带上预检得到的 `preflight_id` 创建任务，`params.start_now` 为 true 时建完就开始，否则再调 `POST /tasks/{id}/actions/start`。
     3. 跟进度：订阅 SSE `GET {base}/events/tasks/{id}`，或每 5 秒轮询一次 `GET /tasks/{id}`。
     4. 看结果：`GET /tasks/{id}/report` 是质检报告，每条 episode 的判决与发现用 `GET /tasks/{id}/episodes` 和 `GET /tasks/{id}/episodes/{index}` 读取。
-    5. 人工裁决：`GET /tasks/{id}/adjudication` 列出需要人来判断的条目，对同一路径 `POST` 记录决定，`POST /tasks/{id}/adjudication/apply` 以子任务执行这些决定并产生新的结果版本。它不导出数据，需要时再调 `POST /tasks/{id}/reexport`。
+    5. 人工裁决：`GET /tasks/{id}/adjudication` 列出需要人来判断的条目，对同一路径 `POST` 记录决定，`POST /tasks/{id}/adjudication/apply` 以子任务执行这些决定并产生新的结果版本。
 
     `credentials`、`vlm` 两组管理任务用到的 TOS 访问密钥和 VLM 后端，`uploads` 上传模块参数需要的文件，`viz` 是数据可视化，`overview` 是控制台首页的数据。
 
@@ -173,6 +200,25 @@ info:
     删掉了五项（跨数据集的同源版本、长时任务两个对照项，数据集统计、同源派生、任务描述的形态），各维度重新编号、去掉空号：MV-5 改为 MV-4，
     TASK-5 到 TASK-8 改为 TASK-4 到 TASK-7，TASK-10 到 TASK-12 改为 TASK-8 到 TASK-10，LABEL-2 到 LABEL-5 改为 LABEL-1 到 LABEL-4，SET-4、SET-5 改为 SET-2、SET-3。
     这一版之前跑的任务，结果里仍是原来的编号。时长离群、样本偏少的技能族仍作为数据集级的发现报出，不挂检测项。
+
+    **3.0.0**（2026-10-06）：技能画像下线，模块 `skill_profile`、`profile_vlm` 档与 `profile` 阶段一并移除。
+    裁决改成一张卡片只问一个问题：`label` 这条问题线去掉，「标注与画面疑似不符」并入 `task_verdict` 的问题；
+    判成败时可以顺带带上 `new_label`，就是人改写的任务描述，原来的 `adopt_suggestion`、`custom_label`、
+    `keep_label` 三个决定不再需要。追加问题机制去掉（问题线上的 `follow_ups`、问题上的 `follow_up_of`）。
+
+    **4.0.0**（2026-10-07）：平台交付的是质检报告，不再写交付数据集。随导出一起去掉的有：
+    `POST /tasks/{id}/reexport`、子任务种类 `reexport`、任务上的 `delivery_stale`、`params.export`、
+    总览的 `todo.delivery_pending`，以及 episode 视频的来源 `delivery_dataset`（相机现在从源数据集放，
+    或者放裁决页裁好的片段）。交付目录本身保留：任务的运行目录（结果版本、报告与明细）同步到
+    `<交付>/<run_id>/`，回读无误后写 `_COMPLETE`；`latest` 仍指向最新的完整一批。
+
+    **4.1.0**（2026-10-07）：没有「等全集」的档了。精确去重和别的检查一样是 CPU 块里逐条跑的一段，
+    所以任务 `progress.stages` 里不再出现 `full_set`（这之前排好计划的任务仍带着它，字段保留在契约里），
+    模块注册表的 `full_set_stages` 是空数组。
+
+    **4.2.0**（2026-10-08）：两条线合到一起——2.6.0 到 2.8.0 的新增（EEF 叠加、可视化切片 / 深度 / 展示配置、分类表 2.0）
+    与 3.0.0 到 4.1.0 的删减都在这一份接口里；任务成败判定的检测项用分类表 2.0 的编号（TASK-4、TASK-10、LABEL-2、LABEL-4）。
+
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -210,9 +256,9 @@ tags:
     description: >-
       Quality-check tasks: create (one or a batch), edit (any field before it starts, name and note
       after), start / pause / resume / stop, delete and restore, delete its run directory on TOS,
-      re-preflight, rebind keys, and the subtasks that retry, continue and re-export; a task's
+      re-preflight, rebind keys, and the subtasks that retry and continue; a task's
       subtasks, plan, timeline, logs and token usage.
-    x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行、重新导出这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
+    x-description-zh: 质检任务：创建（单个或批量）、修改（开始前可改任何字段，开始后只能改名称和备注）、开始 / 暂停 / 继续 / 停止、删除与恢复、删除它在 TOS 上的运行目录、重新预检、重新绑定密钥，以及重试、继续运行这些子任务；任务的子任务、执行计划、时间线、日志和 Token 用量。
   - name: report
     description: >-
       What a task found: the report and its detail tables, the episodes with their verdicts and
@@ -541,7 +587,6 @@ paths:
                     todo:
                       error_tasks: 1
                       adjudication: {tasks: 2, episodes: 15}
-                      delivery_pending: 1
                       datasets_changed: 1
                       credentials_failed: 0
                       backends_failed: 0
@@ -586,7 +631,6 @@ paths:
                     todo:
                       error_tasks: 0
                       adjudication: {tasks: 0, episodes: 0}
-                      delivery_pending: 0
                       datasets_changed: 0
                       credentials_failed: 0
                       backends_failed: 0
@@ -1329,12 +1373,6 @@ paths:
                           input_hint: {field: vlm}
                           notes: []
                         - {id: dedup, availability: available}
-                        - id: skill_profile
-                          availability: needs_input
-                          reason: no VLM backend selected
-                          reason_code: vlm_backend_missing
-                          input_hint: {field: vlm}
-                          notes: []
                       meta_fingerprint: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                       warnings: []
         default: {$ref: "#/components/responses/Error"}
@@ -1510,7 +1548,7 @@ paths:
           in: query
           description: >-
             a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also
-            lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+            lists finished tasks whose subtask (retry, resume, adjudication run) is queued or
             running: the console shows them as running (D46); their `state` stays terminal and
             `active_subtask` names the subtask
           schema:
@@ -1594,18 +1632,15 @@ paths:
                             - {id: vlm, state: running, done: 410, total: 631, elapsed_s: 1102, eta_s: 1440}
                             - {id: verdict, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: dedup, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: profile_vlm, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: export, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: verify, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                         summary: null
                         pending_adjudication: 0
-                        delivery_stale: false
                         active_subtask: null
-                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
-                          skill_profile]
-                        module_counts: {succeeded: 5, running: 1, pending: 2}
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
+                          dedup]
+                        module_counts: {succeeded: 5, running: 1, pending: 1}
                         usage:
                           prompt_tokens: 1700000
                           completion_tokens: 120000
@@ -1641,29 +1676,15 @@ paths:
                               note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
                             - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - {id: dedup, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
-                            - id: profile_vlm
-                              state: succeeded
-                              done: 41
-                              total: 41
-                              elapsed_s: 131
-                              eta_s: null
                             - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                            - id: export
-                              state: skipped
-                              done: 0
-                              total: 0
-                              elapsed_s: null
-                              eta_s: null
-                              note: 主流程结束时没有可交付的条目，没有导出
                             - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                             - {id: verify, state: skipped, done: 0, total: 0, elapsed_s: null, eta_s: null}
                         summary: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82}
                         pending_adjudication: 10
-                        delivery_stale: true
                         active_subtask: null
-                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup,
-                          skill_profile]
-                        module_counts: {succeeded: 7, completed_with_errors: 1}
+                        modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
+                          dedup]
+                        module_counts: {succeeded: 6, completed_with_errors: 1}
                         usage:
                           prompt_tokens: 2010000
                           completion_tokens: 67500
@@ -1716,12 +1737,10 @@ paths:
                     - visual_quality
                     - task_success
                     - dedup
-                    - skill_profile
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
                     vlm_retry: 3
-                    export: true
                     start_now: true
                     limits: {cpu_concurrency: 4, vlm_parallelism: 32}
               public:
@@ -1753,12 +1772,10 @@ paths:
                     - visual_quality
                     - task_success
                     - dedup
-                    - skill_profile
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
                     vlm_retry: 3
-                    export: true
                     start_now: true
                     limits: {cpu_concurrency: 4, vlm_parallelism: 32}
       responses:
@@ -1841,7 +1858,6 @@ paths:
                     vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                     params:
                       start_now: true
-                      export: true
                       vlm_retry: 3
                       vlm_hedge: true
                       clips: false
@@ -1915,7 +1931,6 @@ paths:
                           block: vlm
                           full_set: true
                         - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                        - {id: export, state: succeeded, done: 41, total: 41, elapsed_s: 64, eta_s: null}
                         - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                         - {id: verify, state: succeeded, done: 1, total: 1, elapsed_s: 9, eta_s: null}
                     modules:
@@ -1969,7 +1984,6 @@ paths:
                       requests: 912
                       requests_unknown_usage: 12
                     pending_adjudication: 10
-                    delivery_stale: false
                     active_subtask: null
                     created_at: 1791231708043
                     updated_at: 1791231768043
@@ -2174,22 +2188,6 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/SubtaskCreated"}
         default: {$ref: "#/components/responses/Error"}
-  /tasks/{id}/reexport:
-    parameters:
-      - $ref: "#/components/parameters/PathId"
-    post:
-      tags: [tasks]
-      operationId: reexportTask
-      summary: Incremental re-export of the delivered dataset (also the first export when export=false)
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: subtask created
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/SubtaskCreated"}
-        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/subtasks:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -2329,7 +2327,7 @@ paths:
                         run:
                           run_dir: 20260920-130514
                           revision: 1
-                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup, skill_profile]
+                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup]
                           adjudications_applied: 0
                         counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
                         pass_rate: 0.82
@@ -3000,20 +2998,10 @@ paths:
                       - episode_index: 29
                         status: pending
                         questions:
-                          - line: label
-                            source_module: skill_profile
-                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
-                            annotation: pour rice into the cup
-                            caption: pour rice into the green bowl
-                            suggestion: pour rice into the green bowl
-                            priority: 重点
-                            latest_decision: null
-                            codes: [label_disagreement]
-                            items: [LABEL-4]
-                            follow_up_of: null
+
                           - line: task_verdict
                             source_module: task_success
-                            reason: 证据不足，弃权：打分层拿不准 → 复核分歧 → 仲裁拿不准 → 转人工
+                            reason: 证据不足，弃权：画面看不出米有没有倒进杯子里
                             annotation: pour rice into the cup
                             caption: null
                             suggestion: null
@@ -3021,21 +3009,19 @@ paths:
                             latest_decision: null
                             codes: [uncertain]
                             items: [TASK-4]
-                            follow_up_of: null
                       - episode_index: 4
                         status: pending
                         questions:
-                          - line: label
-                            source_module: skill_profile
-                            reason: 这条标注和画面对不上：原始标注与画面描述归进了不同的技能族
+                          - line: task_verdict
+                            source_module: task_success
+                            reason: 这条标注和画面对不上：标注说开柜门，画面是叠衣服
                             annotation: Open the cabinet door
                             caption: fold the cloth and put it on the table
                             suggestion: fold the cloth and put it on the table
                             priority: 高置信
                             latest_decision: null
-                            codes: [label_disagreement]
+                            codes: [label_conflict_suspect]
                             items: [LABEL-4]
-                            follow_up_of: null
                     next_cursor: null
                     has_more: false
                     counts: {decided: 0, pending: 10, unapplied: 0}
@@ -3061,15 +3047,14 @@ paths:
                   items: {$ref: "#/components/schemas/DecisionInput"}
             examples:
               decisions:
-                summary: Adopt a suggested label, judge the task a success, write a label of one's own
-                x-summary-zh: 采纳建议的标注、判定任务成功、自己写一条标注
+                summary: Judge the task a success; rewrite the task text while judging
+                x-summary-zh: 判定任务成功；判定时顺带改写标注
                 value:
                   decisions:
-                    - {episode_index: 29, line: label, decision: adopt_suggestion}
                     - {episode_index: 29, line: task_verdict, decision: success, note: 杯子里确实倒进了米}
                     - episode_index: 4
-                      line: label
-                      decision: custom_label
+                      line: task_verdict
+                      decision: success
                       new_label: fold the cloth on the table
       responses:
         "200":
@@ -3089,7 +3074,7 @@ paths:
     post:
       tags: [report]
       operationId: applyAdjudication
-      summary: Execute the recorded decisions as a subtask (D10); never exports (D9)
+      summary: Execute the recorded decisions as a subtask (D10)
       description: |
         The body is optional; without one (or with `{}`) relabelled episodes are judged again the
         way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
@@ -3722,7 +3707,7 @@ components:
         full_set_stages:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
-          description: stages that need the whole selection and start once the earlier stages of their block are done
+          description: "stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it"
         finding_levels:
           type: array
           description: blocking (rejects), review (asks a person), info (reported only), with the console's titles
@@ -3796,7 +3781,7 @@ components:
               depends_on:
                 type: array
                 items: {enum: [autolabel]}
-                description: "data only: the captions autolabel writes for episodes without a task text"
+                description: "data only; empty for every module now that no caption is written for episodes without a task text"
               codes:
                 type: array
                 minItems: 1
@@ -3855,14 +3840,14 @@ components:
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
-      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check
+      description: a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check
     ReviewLine:
       type: object
       additionalProperties: false
       required: [id, review_kind, title_zh, applies_to, counts_as_pending, decisions]
       properties:
         id: {$ref: "#/components/schemas/ReviewLineId"}
-        review_kind: {type: string, description: "the kind of its review.json items (C2); label_conflict for label"}
+        review_kind: {type: string, description: "the kind of its review.json items (C2)"}
         title_zh: {type: string}
         applies_to: {enum: [passed, reject], description: "the list its episodes are in when asked"}
         counts_as_pending: {type: boolean, description: "an open item must be decided; false = a person may act (appeals)"}
@@ -3876,25 +3861,6 @@ components:
             properties:
               const: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
               title: {type: string}
-        follow_ups:
-          type: array
-          default: []
-          description: >-
-            Questions a card gains once its answer on this line is one of `after` - only on a
-            card that does not ask that line already. v1: after adopting a new label a person
-            may give the task verdict (the machine takes it, no re-judging); left open, the
-            episode is judged again with the new label. An optional follow-up never counts as
-            pending, and its answer lapses (not executed, not counted) once the answer that
-            opened it changes.
-          items:
-            type: object
-            additionalProperties: false
-            required: [after, line, decisions, optional]
-            properties:
-              after: {type: array, minItems: 1, items: {type: string}}
-              line: {$ref: "#/components/schemas/ReviewLineId"}
-              decisions: {type: array, minItems: 1, items: {type: string}}
-              optional: {type: boolean}
     BrowsedDataset:
       type: object
       additionalProperties: false
@@ -4055,7 +4021,7 @@ components:
         todo:
           type: object
           additionalProperties: false
-          required: [error_tasks, adjudication, delivery_pending, datasets_changed, credentials_failed, backends_failed]
+          required: [error_tasks, adjudication, datasets_changed, credentials_failed, backends_failed]
           properties:
             error_tasks: {type: integer, minimum: 0, description: "completed_with_errors, can be retried"}
             adjudication:
@@ -4065,7 +4031,6 @@ components:
               properties:
                 tasks: {type: integer, minimum: 0}
                 episodes: {type: integer, minimum: 0}
-            delivery_pending: {type: integer, minimum: 0, description: "tasks whose delivered dataset is stale or was never exported"}
             datasets_changed: {type: integer, minimum: 0}
             credentials_failed: {type: integer, minimum: 0}
             backends_failed: {type: integer, minimum: 0}
@@ -4305,7 +4270,6 @@ components:
       description: task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31)
       properties:
         start_now: {type: boolean, default: true}
-        export: {type: boolean, default: true}
         batch_size: {type: integer, minimum: 1, maximum: 256, description: "Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections."}
         vlm_retry: {type: integer, minimum: 0, maximum: 5, default: 3}
         vlm_hedge: {type: boolean, default: true}
@@ -4419,9 +4383,9 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
-        full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
+        full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
         done: {type: integer, minimum: 0}
         total: {type: integer, minimum: 0}
@@ -4531,7 +4495,7 @@ components:
     TaskListItem:
       type: object
       additionalProperties: false
-      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, delivery_stale, modules,
+      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, modules,
                  module_counts, usage]
       properties:
         id: {type: string}
@@ -4548,7 +4512,6 @@ components:
             stages: {type: array, items: {$ref: "#/components/schemas/StageProgress"}}
         summary: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Summary"}]}
         pending_adjudication: {type: integer, minimum: 0}
-        delivery_stale: {type: boolean}
         active_subtask: {type: [string, "null"]}
         modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}, description: "selected modules, registry order"}
         module_counts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: "selected modules per ModuleState state"}
@@ -4558,7 +4521,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, name, state, input, output, episodes, modules, params, progress, result_rev,
-                 pending_adjudication, delivery_stale, usage, created_at, updated_at, links]
+                 pending_adjudication, usage, created_at, updated_at, links]
       properties:
         id: {type: string}
         name: {type: string}
@@ -4594,7 +4557,6 @@ components:
         result_rev: {type: integer, minimum: 0}
         usage: {$ref: "#/components/schemas/UsageTotals"}
         pending_adjudication: {type: integer, minimum: 0}
-        delivery_stale: {type: boolean}
         active_subtask: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Subtask"}]}
         created_at: {type: integer}
         updated_at: {type: integer}
@@ -4609,7 +4571,7 @@ components:
       properties:
         id: {type: string}
         task_id: {type: string}
-        kind: {enum: [retry, resume, apply_adjudication, reexport]}
+        kind: {enum: [retry, resume, apply_adjudication]}
         scope:
           type: object
           properties:
@@ -4758,7 +4720,7 @@ components:
             properties:
               camera: {type: string}
               scope: {enum: [delivery, input]}
-              origin: {enum: [clip, delivery_dataset, source_dataset]}
+              origin: {enum: [clip, source_dataset]}
               path: {type: string}
               from_ts: {type: number}
               to_ts: {type: number}
@@ -4942,15 +4904,9 @@ components:
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
         duplicate_of: {type: [integer, "null"], minimum: 0, description: "an appeal of a dedup reject: the episode it duplicates"}
-        follow_up_of:
-          oneOf: [{type: "null"}, {$ref: "#/components/schemas/ReviewLineId"}]
-          description: >-
-            set on a question the card gained as a follow-up of its answer on that line
-            (registry follow_ups), absent or null on the card's own questions; a follow-up whose
-            opening answer changed is left out of the card
         annotation: {type: [string, "null"]}
         caption: {type: [string, "null"]}
-        suggestion: {type: [string, "null"], description: "suggested new label"}
+        suggestion: {type: [string, "null"], description: "a task text the model read off the video: what a person may send back as new_label"}
         priority: {type: [string, "null"]}
         latest_decision: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Decision"}]}
         codes:
@@ -4993,12 +4949,11 @@ components:
           type: string
           pattern: "^[a-z][a-z0-9_]*$"
           description: >-
-            one of the line's decisions in the registry, on a question the episode's card has or
-            a follow-up the card's answer on another line opened (registry follow_ups); anything
-            else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
-            keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
+            one of the line's decisions in the registry, on a question the episode's card has;
+            anything else is 400 validation_failed. One card asks one question. Today:
+            task_verdict - success, failure, unsure, discard;
             reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure
-        new_label: {type: [string, "null"], description: "custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken"}
+        new_label: {type: [string, "null"], description: "task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it"}
         note: {type: [string, "null"]}
     AdjudicationApply:
       type: object

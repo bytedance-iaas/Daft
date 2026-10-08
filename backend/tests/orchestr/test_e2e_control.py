@@ -19,7 +19,7 @@ from .conftest import comparable, read_jsonl, results
 pytestmark = pytest.mark.slow
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup", "skill_profile"]
+           "video_action_sync", "task_success", "dedup"]
 
 
 def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:
@@ -68,7 +68,7 @@ def _snapshot(run_dir: str) -> dict:
 
 
 #: model parallelism 2: the VLM stage judges one episode at a time (episode gate N // 2)
-ONE_AT_A_TIME = {"start_now": True, "export": True, "vlm_hedge": False,
+ONE_AT_A_TIME = {"start_now": True, "vlm_hedge": False,
                  "limits": {"vlm_parallelism": 2}}
 
 
@@ -154,7 +154,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert r.json()["subtask"]["kind"] == "resume"
     task = d.wait(task_id)
     assert task["state"] == "succeeded", task
-    assert task["summary"]["total"] == 8 and task["summary"]["passed"] == 5
+    assert task["summary"]["total"] == 8 and task["summary"]["passed"] == 4
     run_dir = d.run_dir(task_id)
     for module in ("timestamp_check", "visual_quality"):     # finished stages were not re-run
         assert set(os.listdir(os.path.join(run_dir, "checks", module, "parts"))) == \

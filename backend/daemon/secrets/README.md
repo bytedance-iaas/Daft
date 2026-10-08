@@ -56,7 +56,7 @@ from daemon.secrets import service_of, prechecks_for_task, run_prechecks, cli_en
 
 svc = service_of(runtime)
 
-# 开始 / 重试 / 继续运行 / 重新导出 / 执行裁决之前（checks 取与之相关的几项）
+# 开始 / 重试 / 继续运行 / 执行裁决之前（checks 取与之相关的几项）
 report = prechecks_for_task(svc, task, checks=("input", "output", "vlm"), need_vlm=None)
 report.raise_for_failure()          # 422 precheck_failed，details.checks 逐项列出
 

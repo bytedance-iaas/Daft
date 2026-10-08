@@ -1,4 +1,4 @@
-"""``curation verify`` - read the delivery back before calling it complete (doc 02 §3.10).
+"""``curation verify`` - read the delivery back before calling it complete (doc 02 §3.9).
 
 Writing is not the same as being readable: v1 once reported a 10853-byte
 all-zero ``passed.json`` as delivered (``pipeline/run.py``
@@ -8,17 +8,15 @@ the delivery) and checks it against the local ``--run-dir``:
 
 * it exists (``missing``); it is listed but cannot be read yet after the
   visibility window (``not_visible_in_time``);
-* its size equals the local file (``size_mismatch``) - artifacts that exist
-  only remotely (listed in ``export/manifest.json``) are not size-checked;
+* its size equals the local file (``size_mismatch``);
 * its head is not all zero bytes (``zero_filled``) and it parses
   (``unparseable``): JSON / JSON Lines as a whole, parquet by its magic bytes
   and footer, mp4 by finding the ``moov`` box, JPEG and PNG by their magic.
 
 Key files are every file of the run directory except work-in-progress ones
-(``logs/``, ``inflight.json``, hidden and temporary files) plus every artifact
-of ``export/manifest.json`` under ``export/lerobot_curated/``. Only when all of
-them pass is ``_COMPLETE`` written, last; a stale ``_COMPLETE`` is removed when
-they do not. Output: ``docs/contracts/cli/verify.schema.json``. Failed files
+(``logs/``, ``inflight.json``, hidden and temporary files): the result revisions,
+the report and its details. Only when all of them pass is ``_COMPLETE`` written,
+last; a stale ``_COMPLETE`` is removed when they do not. Output: ``docs/contracts/cli/verify.schema.json``. Failed files
 do not change the exit code (0) - the Daemon reads ``failed``.
 """
 from __future__ import annotations
@@ -28,6 +26,7 @@ import io
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from .errors import UsageError
@@ -37,11 +36,11 @@ from .storage import ObjectInfo, ObjectMissing, Storage, open_storage
 SCHEMA_VERSION = "1.0"
 STAGE = "verify"
 COMPLETE = "_COMPLETE"
-EXPORT_MANIFEST = "export/manifest.json"
-EXPORT_ROOT = "export/lerobot_curated"
 _HEAD_BYTES = 4096
 _MCAP_MAGIC = b"\x89MCAP0\r\n"
 _POLL_S = 2.0
+#: files read back at the same time: they are small, the round trips are what costs
+_READERS = 8
 _TEXT_EXT = {"md", "txt", "csv", "tsv", "yaml", "yml", "html", "log"}
 
 
@@ -79,7 +78,7 @@ def is_delivered(rel: str) -> bool:
     return not (name.endswith((".tmp", ".partial", ".lock")) or ".tmp-" in name)
 
 
-def collect_expected(run_dir: str, output: Storage) -> dict[str, Expected]:
+def collect_expected(run_dir: str) -> dict[str, Expected]:
     out: dict[str, Expected] = {}
     for dirpath, dirnames, filenames in os.walk(run_dir):
         dirnames.sort()
@@ -90,55 +89,7 @@ def collect_expected(run_dir: str, output: Storage) -> dict[str, Expected]:
                 out[rel] = Expected(rel, os.path.getsize(full))
     if not out:                      # no reference at all: nothing may be declared complete
         raise UsageError(f"--run-dir {run_dir} holds no delivered file to verify")
-    manifest = _export_manifest(run_dir, output)
-    sizes = _manifest_sizes(manifest)
-    root = EXPORT_ROOT
-    if isinstance(manifest, dict) and isinstance(manifest.get("dataset_dir"), str) \
-            and manifest["dataset_dir"].strip("/"):
-        root = f"export/{manifest['dataset_dir'].strip('/')}"     # mcap / lance (D44)
-    for rel in _manifest_artifacts(manifest) + sorted(sizes):
-        key = f"{root}/{rel}"
-        if key in out and out[key].size is not None:
-            continue                      # a local copy: its size is the reference
-        out[key] = Expected(key, sizes.get(rel))
     return out
-
-
-def _manifest_sizes(manifest) -> dict[str, int]:
-    """``files`` of export/manifest.json (C2 1.1): every delivered file with its size."""
-    files = manifest.get("files") if isinstance(manifest, dict) else None
-    if not isinstance(files, dict):
-        return {}
-    return {str(rel).strip("/"): int(rec["size"]) for rel, rec in files.items()
-            if isinstance(rec, dict) and isinstance(rec.get("size"), int)}
-
-
-def _export_manifest(run_dir: str, output: Storage) -> dict | None:
-    local = os.path.join(run_dir, *EXPORT_MANIFEST.split("/"))
-    try:
-        if os.path.isfile(local):
-            with open(local, encoding="utf-8") as fh:
-                return json.load(fh)
-        return json.loads(output.read_bytes(EXPORT_MANIFEST).decode("utf-8"))
-    except (ObjectMissing, OSError, ValueError):
-        return None                      # a broken manifest is reported by its own check
-
-
-def _manifest_artifacts(manifest) -> list[str]:
-    if not isinstance(manifest, dict):
-        return []
-    rels: list[str] = []
-    for ep in manifest.get("episodes") or []:
-        art = ep.get("artifacts") if isinstance(ep, dict) else None
-        if not isinstance(art, dict):
-            continue
-        if isinstance(art.get("parquet"), str):
-            rels.append(art["parquet"])
-        if isinstance(art.get("file"), str):                   # an mcap episode (D44)
-            rels.append(art["file"])
-        rels += [v for v in (art.get("videos") or {}).values() if isinstance(v, str)]
-    rels += [m for m in manifest.get("meta_files") or [] if isinstance(m, str)]
-    return [r.strip("/") for r in rels if r.strip("/")]
 
 
 # ---------------------------------------------------------------- content checks
@@ -261,15 +212,21 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.visibility_timeout < 0:
         raise UsageError("--visibility-timeout must not be negative")
     output = open_storage(args.output, role="output", region=ctx.output_region)
-    expected = collect_expected(run_dir, output)
+    expected = collect_expected(run_dir)
     listing = output.list()
     total = len(expected)
     ctx.log("info", f"verifying {total} files under {output.uri}")
     results: dict[str, str | None] = {}
-    for n, key in enumerate(sorted(expected), 1):
-        ctx.check_stop("while reading the delivery back")
-        results[key] = check_file(output, listing, expected[key])
-        ctx.progress(STAGE, n, total)
+    pool = ThreadPoolExecutor(max_workers=_READERS, thread_name_prefix="verify")
+    try:
+        futures = {pool.submit(check_file, output, listing, expected[key]): key
+                   for key in sorted(expected)}
+        for n, fut in enumerate(as_completed(futures), 1):
+            ctx.check_stop("while reading the delivery back")
+            results[futures[fut]] = fut.result()
+            ctx.progress(STAGE, n, total)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
     deadline = time.monotonic() + float(args.visibility_timeout)
     waiting = [k for k, r in results.items() if r in ("missing", "not_visible")]

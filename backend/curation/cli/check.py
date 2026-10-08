@@ -5,7 +5,7 @@ The most important command. One call runs the modules of **one** stage (D18):
 ``visual_quality,video_action_sync`` (frame: one shared decode per camera),
 ``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or one
 dataset-level module, ``dedup`` or
-``skill_profile`` (the whole kept set in one call). Mixing stages is a usage
+the whole kept set in one call. Mixing stages is a usage
 error. The modules v2 runs itself (``data_integrity``, ``eef_video_consistency``)
 take their parameters as ``--param``.
 Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
@@ -28,7 +28,7 @@ from . import modparams, runctx
 from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
 
-DATASET_MODULES = ("dedup", "skill_profile")
+DATASET_MODULES = ("dedup",)
 
 
 def add_parser(sub, parents) -> None:
@@ -50,14 +50,12 @@ def add_parser(sub, parents) -> None:
                    help="skip episodes that already have a result that is not an error")
     p.add_argument("--plan-stage", metavar="FILE",
                    help="this stage of plan.json (gates, concurrency, merge proposal)")
-    p.add_argument("--incremental", action="store_true",
-                   help="skill_profile: keep the taxonomy, re-file only what changed")
     p.add_argument("--survivors-out", metavar="FILE",
                    help="write the episodes that go on to the next stage, one per line")
     p.add_argument("--pipeline-state", metavar="SQLITE",
                    help=argparse.SUPPRESS)
-    p.add_argument("--pipeline-next", metavar="STAGE", choices=("numeric", "frame", "vlm", "done"),
-                   default="done",
+    p.add_argument("--pipeline-next", metavar="STAGE",
+                   choices=("numeric", "frame", "vlm", "dedup", "done"), default="done",
                    help=argparse.SUPPRESS)
     runctx.add_vlm(p)
     runctx.add_behaviour(p)
@@ -85,9 +83,6 @@ def _modules(raw: str) -> tuple[list[str], str]:
             raise UsageError(f"{m} is answered inside {host}'s model requests and runs with it: "
                              f"--modules {host} brings it along; it cannot run on its own")
     mods = registry.with_riders(mods)                  # a host's riders always run with it
-    if stage in registry.FULL_SET_STAGES and len(mods) != 1:
-        raise UsageError("dedup and skill_profile run one at a time (profile reads the "
-                         "kept set after dedup)")
     ordered = [m for m in registry.ids() if m in mods]
     return ordered, stage
 
@@ -101,8 +96,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
     runctx.apply_thread_limit()
-    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm"):
-        raise UsageError("--pipeline-state is only valid for funnel stages")
+    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm", "dedup"):
+        raise UsageError("--pipeline-state is only valid for a block's segments")
     src = runctx.open_source(ctx, args)
     storage = src.storage
     available, info = runctx.dataset_episodes(ctx, src)
@@ -124,17 +119,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if stage == "integrity":
         payload, survivors = _integrity(ctx, args, modules, run_dir, src, episodes, part,
                                         plan_stage, guard)
-    elif stage in ("numeric", "frame"):
+    elif stage in ("numeric", "frame", "dedup"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
-    elif stage == "vlm":
+    else:
         payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard)
-    elif modules == ["dedup"]:
-        payload, survivors = _dedup(ctx, args, run_dir, src, episodes, part, guard)
-    else:
-        payload, survivors = _profile(ctx, args, run_dir, src, episodes, part,
-                                      plan_stage, guard)
     if args.survivors_out:
         records.write_text_atomic(os.path.abspath(args.survivors_out),
                                   "".join(f"{e}\n" for e in survivors))
@@ -188,7 +178,9 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
-                        concurrency=runctx.cpu_workers(args, plan_stage),
+                        # dedup keeps its streaming state in one process, so it judges one at a
+                        # time (D70); its cost is the read, which overlaps the other segments
+                        concurrency=1 if "dedup" in modules else runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
                         verify_source=guard, pipeline_state=args.pipeline_state,
                         pipeline_next=args.pipeline_next,
@@ -296,24 +288,17 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         try:
             if judge is not None:
                 judge.open()
-            from ..adapters.vlm_client import vlm_completion_from_config
+            from ..adapters.vlm_client import camera_check_from_config, vlm_completion_from_config
 
             vlm_completion = vlm_completion_from_config(cfg)
-            try:
-                cam_voter = funnel.build_endstate_voter(cfg, gates)
-            except Exception as e:  # noqa: BLE001 - v1: warn and judge on the score alone
-                cam_voter = None
-                ctx.log("warn", f"per-camera review unavailable ({type(e).__name__}: {e}); "
-                                "task_success judges on the score layer alone")
-            try:
-                arb_deps = funnel.build_arbitration_deps(cfg, gates)
-            except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people
-                arb_deps = None
-                ctx.log("warn", f"evidence arbitration unavailable ({type(e).__name__}: {e})")
+            # D71 / D73: the judgement answers for every camera in its one request; there is no
+            # review client and no label guard (the slots stay for v1's shape of TaskClients).
+            # An episode without a task text gets the picture-defect request instead.
+            cameras = camera_check_from_config(cfg)
         except BaseException:
             session.__exit__(*sys.exc_info())
             raise
-        clients = TaskClients(vlm_completion, cam_voter, arb_deps)
+        clients = TaskClients(vlm_completion, None, None, cameras=cameras)
         if cache is not None:
             cache["vlm"] = {"gates": gates, "cfg": cfg, "task_text": task_text,
                             "session": session, "clients": clients, "eef": judge}
@@ -349,114 +334,6 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         # the file, seeds, template, configuration and model are part of the module's input
         payload["modules"][judge.module]["input_digest"] = judge.input_digest(list(opts.episodes))
     return payload, stage.survivors()
-
-
-def _dedup(ctx, args, run_dir, src, episodes, part, guard):
-    from ..pipeline.dataset_stages import run_dedup
-
-    if args.resume:
-        ctx.log("info", "--resume: dedup always runs on the whole kept set")
-    if guard is not None:
-        guard(episodes)
-    src.fetch(episodes)
-    payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
-                        embodiment_id=args.embodiment_id)
-    from ..pipeline.policy import load as load_policy
-    from ..pipeline.records import passes_funnel, two_blocks
-
-    # the copies the task's policy rejects (default: every duplicate but its group's first; report_only: none);
-    # plan 2.0 hands the profile every episode (design doc 17 §3.2): dedup only reports its groups
-    policy = load_policy(run_dir)
-    dups = set() if two_blocks(run_dir) else \
-        {e for e, rec in _latest(run_dir, "dedup").items() if not passes_funnel(rec, policy)}
-    errors = set(payload["modules"]["dedup"]["error_episodes"])
-    left_out = {s["episode_index"] for s in
-                payload["modules"]["dedup"].get("skipped_missing_source") or []}
-    return payload, [e for e in episodes if e not in dups and e not in errors
-                     and e not in left_out]
-
-
-def _latest(run_dir, module):
-    from ..pipeline.records import latest_results
-
-    return latest_results(run_dir, module)
-
-
-def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
-    from ..adapters import vlm_client
-    from ..dataset_level.caption import make_vlm_captioner
-    from ..pipeline.dataset_stages import run_skill_profile
-    from ..pipeline.tasktext import load_autolabel, load_relabels, precomputed_captions
-
-    gates = runctx.vlm_gates(args, plan_stage)
-    cfg = runctx.stage_config(ctx, ["skill_profile"], gates=gates, args=args)
-    episodes, restored = _profile_members(ctx, run_dir, episodes)
-    if guard is not None:
-        guard(episodes)
-    rows = runctx.meta_rows(src, episodes, args, what="check:skill_profile")
-    from ..pipeline.dataset_stages import leave_out_missing_source
-    from ..pipeline.rows import index_of
-    from ..pipeline.skipped import as_list
-
-    got = {index_of(r["episode_id"]) for r in rows}
-    missing = leave_out_missing_source(ctx, run_dir, src.input_dir,
-                                       [e for e in episodes if e not in got])
-    from ..dataset_level.caption import VIDEO_CAPTION_PROTOCOL, VideoCaptionCache
-    auto_lines = load_autolabel(run_dir)
-    auto_caps = VideoCaptionCache({f"ep{i:06d}": c
-                 for i, c in precomputed_captions(auto_lines).items()
-                 if auto_lines[i].get("media_protocol") == VIDEO_CAPTION_PROTOCOL})
-    sp = cfg.get("skill_profile") or {}
-    with runctx.VlmSession(ctx, args, cfg, "skill_profile", run_dir):
-        v = cfg["checks"]["task_success"]["vlm"]
-        captioner = make_vlm_captioner(v["endpoint"], v["model"],
-                                       timeout_s=vlm_client.timeout_for("caption", v),
-                                       api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(sp.get("caption_concurrency", 8)),
-                                       video_options=v.get("video"),
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
-        llm_ask = vlm_client.make_llm_ask(
-            v["endpoint"], v["model"], timeout_s=vlm_client.timeout_for("llm", v),
-            api_key_env=v.get("api_key_env"),
-            thinking=cfg.get("pipeline", {}).get("thinking"),
-            max_in_flight=max(int(sp.get("llm_concurrency", 16)),
-                              int(sp.get("audit_concurrency", 16))))
-        payload = run_skill_profile(ctx, run_dir, rows, cfg, captioner, llm_ask, auto_caps,
-                                    part, incremental=args.incremental,
-                                    relabels=load_relabels(run_dir), restored=restored)
-    if missing:
-        payload["modules"]["skill_profile"]["skipped_missing_source"] = as_list(missing)
-    errors = set(payload["modules"]["skill_profile"]["error_episodes"])
-    return payload, [e for e in episodes if e not in errors and e not in missing]
-
-
-def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int], set[int]]:
-    """The given episodes skill_profile files, and the ones a person restored.
-
-    Plan 2.0 (design doc 17 §3.2): every given episode - the profile files the whole selection, and the
-    report gives the delivered set's distribution next to it. A funnel run leaves out the byte copies dedup
-    found: after an adjudication ``--episodes`` is the new ``keep.txt`` and dedup is not run again, its
-    first result stands (v1's rejudge); an episode a person brought into the delivery is never
-    deduplicated and is filed from its text (v1's ``_sync_profile``).
-    """
-    from ..pipeline import aggregate as agg
-    from ..pipeline.adjudication import Decisions
-    from ..pipeline.records import latest_results, two_blocks
-
-    if two_blocks(run_dir):
-        return list(episodes), set()
-    decisions = Decisions.of(run_dir)
-    if not latest_results(run_dir, "dedup") and not decisions.applied:
-        return list(episodes), set()
-    task = [m for m in runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
-            if m != "skill_profile"]
-    state = agg.RunState(run_dir, task, episodes)
-    members, restored = agg.profile_members(state, decisions)
-    left_out = len(episodes) - len(members)
-    if left_out:
-        ctx.log("info", f"skill_profile: {left_out} episode(s) dedup found to be byte copies "
-                        f"are left out")
-    return members, restored
 
 
 def render(payload: dict) -> str:

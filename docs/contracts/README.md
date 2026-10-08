@@ -25,7 +25,6 @@ C2 各文件对应的命令与产物：
 | `check` | `check --json`：逐模块的计数（2.0：ok / error 与按细码的发现数；1.0：逐状态），Daemon 据此定模块状态 |
 | `verdict-line`、`final-list`、`aggregate` | 判决行（2.0：按策略的 blocking / review；1.0：漏斗）、四份终判清单、`aggregate --json` |
 | `commit` | 结果版本的 `commit.json`，最后写 |
-| `export-manifest`、`export` | 交付数据集清单与 `export --json` |
 | `report`、`report-output` | `report.json` 与 `report --json` |
 | `decisions`、`adjudicate-apply` | 裁决的输入与 `adjudicate-apply --json` |
 | `verify` | `verify --json` |

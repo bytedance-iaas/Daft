@@ -17,11 +17,9 @@ FRAME_S_PER_EPISODE = 3.0     # 640 episodes took ~31 min serially (04 §2.1)
 DEDUP_S_PER_EPISODE = 0.02    # action hashes; video hashes only for collisions
 AGGREGATE_S = 1.0
 
-#: v1's call graph per episode (04 §4.1) for the two existing VLM modules.
-TASK_SUCCESS_PROBES = 1       # one multi-camera video assessment
-ENDSTATE_PER_CAMERA = 1       # one independent video review per camera
+#: the call graph per episode (04 §4.1, D71) for the two existing VLM modules.
+TASK_SUCCESS_PROBES = 1       # one multi-camera video judgement, answering for every camera too
 MAX_ENDSTATE_CAMS = 4         # pipeline.max_endstate_cams
-CAPTIONS_PER_EPISODE = 1
 
 
 def _units_per_episode(spec: Any) -> int:
@@ -37,20 +35,16 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
              selected: int, unlabeled: int, cameras: int,
              max_units: int, notes: list[str]) -> dict[str, Any]:
     """Requests and seconds for ``stages``; appends what it could not count to ``notes``. The two
-    blocks run side by side (design doc 17 §3): the wall clock is the longer block's, then aggregate."""
+    blocks run side by side (design doc 17 §3): the wall clock is the longer block's, then aggregate.
+    ``unlabeled`` episodes are not judged by task_success (D72) but get the picture-defect request
+    instead (D73), so they cost one request each like the others."""
     requests = 0
     per_block: dict[str, float] = {}
-    cams = max(1, min(cameras or 1, MAX_ENDSTATE_CAMS))
-    autolabelled = 0
     uncounted: list[str] = []
     for stage in stages:
         sid, gates = stage["id"], stage.get("gates", {})
         seconds = 0.0
-        if sid == "autolabel":
-            autolabelled = unlabeled
-            requests += unlabeled * CAPTIONS_PER_EPISODE
-            seconds += _vlm_seconds(unlabeled * CAPTIONS_PER_EPISODE, gates["caption"])
-        elif sid == "integrity":
+        if sid == "integrity":
             seconds += selected * INTEGRITY_S_PER_EPISODE / stage["concurrency"]
         elif sid == "numeric":
             seconds += selected * NUMERIC_S_PER_EPISODE / stage["concurrency"]
@@ -73,10 +67,8 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     seconds += _vlm_seconds(n, gates["probe"])
                 elif module == "task_success":
                     probes = selected * TASK_SUCCESS_PROBES
-                    reviews = selected * ENDSTATE_PER_CAMERA * cams
-                    requests += probes + reviews
+                    requests += probes
                     seconds += _vlm_seconds(probes, gates["probe"])
-                    seconds += _vlm_seconds(reviews, gates["endstate"])
                 elif getattr(specs[module], "rides_on", None):
                     pass                              # answered inside its host's requests
                 else:
@@ -85,14 +77,6 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
             seconds += AGGREGATE_S
         elif sid == "dedup":
             seconds += selected * DEDUP_S_PER_EPISODE
-        elif sid == "profile":
-            for module in stage["modules"]:
-                if module == "skill_profile":
-                    n = max(0, selected - autolabelled) * CAPTIONS_PER_EPISODE
-                    requests += n
-                    seconds += _vlm_seconds(n, gates.get("caption", 1))
-                elif stage["kind"] == "vlm":
-                    uncounted.append(module)
         block = stage.get("block") or "final"
         per_block[block] = per_block.get(block, 0.0) + seconds
     blocks = [t for b, t in per_block.items() if b != "final"]
@@ -100,12 +84,6 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
     notes.append(f"rough estimate: every selected episode goes through both blocks, which run side by side; "
                  f"{VLM_LATENCY_S:g} s per request at {GATE_UTILISATION:.0%} gate use "
                  "(image-request baseline from v1, 2026-09-07; video latency is not calibrated)")
-    if any(s["id"] == "vlm" and "task_success" in s.get("modules", ()) for s in stages):
-        notes.append("task_success arbitration and label-guard calls depend on the data "
-                     "and are not counted")
-    if any(s["id"] == "profile" and "skill_profile" in s.get("modules", ()) for s in stages):
-        notes.append("skill_profile text calls (taxonomy, label audit) are per dataset "
-                     "and not counted")
     if any(s["id"] == "integrity" for s in stages):
         notes.append("data_integrity: its decode test (decode_test), when on, is not counted - "
                      "about one more decode of every frame")

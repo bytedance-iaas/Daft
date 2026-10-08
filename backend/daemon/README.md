@@ -48,7 +48,7 @@ W5b 的接口（读已提交的结果版本，见 [`results/README.md`](results/
 `GET /tasks/{id}/report/tables/{table}`、`GET /tasks/{id}/episodes/{index}`、`GET /tasks/{id}/perf`、
 `GET/POST /tasks/{id}/adjudication`（裁决队列与记录裁决；执行裁决归 W5a）。
 
-W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.md)）：建任务、开始 / 暂停 / 恢复 / 停止 / 继续运行、重试、执行裁决、重新导出、清理交付产物、计划、预检与重新预检、登记数据集与重新核对、浏览数据集与 episode 列表，共 16 个操作。
+W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.md)）：建任务、开始 / 暂停 / 恢复 / 停止 / 继续运行、重试、执行裁决、清理交付产物、计划、预检与重新预检、登记数据集与重新核对、浏览数据集与 episode 列表，共 16 个操作。
 
 数据可视化的接口（C4 2.4.0，见 [`viz/README.md`](viz/README.md)）：`GET /datasets/{id}/viz`、`GET /datasets/{id}/viz/episodes|meta`、
 `GET /datasets/{id}/episodes/{index}/viz|series`、`GET /datasets/{id}/episodes/{index}/cameras/{camera}.mp4`、`PUT /datasets/{id}/annotations`、
@@ -136,7 +136,7 @@ for i in range(23):
         name=f"droid 抽检 {i:02d}", input_source="tos", input_region="cn-beijing",
         input_uri="tos://bucket/datasets/droid_100", output_uri="tos://bucket/deliveries/droid",
         delivery_key="tos://bucket/deliveries/droid", episode_selector={"mode": "head", "n": 50},
-        params={"export": True}, modules=rows, dataset_id=ds.id))
+        params={"vlm_hedge": False}, modules=rows, dataset_id=ds.id))
     if i == 0:
         repo.update_task_state(t.id, {"queued"}, "running", at=now)
         repo.update_task_state(t.id, {"running"}, "completed_with_errors", at=now)
@@ -294,7 +294,7 @@ EOF
     c localhost:18080/curation/api/v1/overview | python3 -m json.tool
     ```
 
-    预期：`todo` 里 `error_tasks` 1、`adjudication` 为 `{"tasks": 1, "episodes": 4}`、`delivery_pending` 1（有结果但从没导出过）、
+    预期：`todo` 里 `error_tasks` 1、`adjudication` 为 `{"tasks": 1, "episodes": 4}`、
     `datasets_changed` 1；`running` 里 `queued` 22（对账后运行中的那条也回到了排队）；
     `recent` 的 `days` 7、`bucket` `day`，`tasks_finished` 1、`episodes_checked` 50、`pass_rate` 0.82，
     `tokens_per_bucket` 列出 7 天、最早的在前（`label` 形如 `09-23`），今天是 188400（只算实际调用账的 `prompt + completion`）；

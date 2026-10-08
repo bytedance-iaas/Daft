@@ -706,8 +706,9 @@ def task_check_episode(cfg: dict, registry, deps: TaskDeps, video, task_desc, ta
     if getattr(deps.vlm_completion, "media_input", None) == "video":
         from .video_task import judge_video_episode
 
+        # D73: no label guard - ``deps.arb_deps`` is v1's bundle and plays no part here
         return result_to_struct(judge_video_episode(
-            cfg, video, task_desc, deps.vlm_completion, deps.cam_voter, deps.arb_deps,
+            cfg, video, task_desc, deps.vlm_completion,
             task_src=str(task_src), hints=str(semantics_extras or "")))
 
     pcfg = cfg.get("pipeline", {})

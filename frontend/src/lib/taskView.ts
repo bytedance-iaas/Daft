@@ -62,9 +62,10 @@ export function stagePercent(s: StageProgress | undefined): number {
 type StageState = StageProgress['state'];
 
 /**
- * Stages that progress views show as one: 终判、报告、导出、交付核验 read as 「生成报告 & 产物交付」
- * (sixth round; requester item 11 had made them two rows). The log filter and the execution plan
- * keep the raw stages, which mirror the CLI output.
+ * Stages that progress views show as one: 终判、报告、交付核验 read as 「生成报告 & 产物交付」
+ * (sixth round; requester item 11 had made them two rows). A task that ran before the export was
+ * retired (D69) also has an `export` stage, which joins the same group. The log filter and the
+ * execution plan keep the raw stages, which mirror the CLI output.
  */
 export const STAGE_GROUPS: readonly { key: string; members: readonly string[] }[] = [
   { key: 'report_delivery', members: ['final', 'report', 'export', 'verify'] },
@@ -192,15 +193,6 @@ export function moduleProblems(counts: Record<string, number>): { errors: number
   };
 }
 
-/**
- * Has the delivered dataset ever been exported? Decides 「导出」 vs 「重新导出」 (07 §4.2).
- * C4 has no flag for it; the main run's export stage and finished reexport subtasks tell.
- */
-export function exportedBefore(stages: readonly StageProgress[], subtasks: readonly Subtask[] = []): boolean {
-  if (stages.some((s) => s.id === 'export' && s.state === 'succeeded')) return true;
-  return subtasks.some((s) => s.kind === 'reexport' && s.state === 'succeeded');
-}
-
 export type TaskActionKey =
   | 'start'
   | 'edit'
@@ -216,7 +208,6 @@ export type TaskActionKey =
   | 'report'
   | 'view'
   | 'adjudicate'
-  | 'export'
   | 'purge';
 
 const TERMINAL: TaskState[] = ['stopped', 'succeeded', 'completed_with_errors', 'failed'];
@@ -289,7 +280,6 @@ export interface ActionSubject {
   state: TaskState;
   pause_reason?: TaskListItem['pause_reason'];
   pending_adjudication: number;
-  delivery_stale: boolean;
   summary?: TaskListItem['summary'];
   /** Only the detail page's Task has it; a list row has `summary`. */
   result_rev?: number;
@@ -312,7 +302,6 @@ export function actionsFor(t: ActionSubject): ActionPlan {
   // D47: 人工裁决 stands as soon as there is a result, pending items or not (appeals of rejected
   // episodes are there too); the label carries the count when there are pending ones.
   if (hasReport) common.push('adjudicate');
-  if (terminal && t.delivery_stale) common.push('export');
   if (terminal) common.push('copy', 'purge', 'delete');
   const busy = Boolean(t.active_subtask);
   switch (t.state) {

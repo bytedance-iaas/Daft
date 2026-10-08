@@ -78,7 +78,10 @@ def test_pipeline_thinking_setting_reaches_visual_request(monkeypatch):
     answer = {'verdict': 'success', 'task_type': 'transient', 'completion': 0.5,
               'reason': 'the cup is visibly lifted',
               'evidence': [{'camera': 'cam', 'start_s': 0.0, 'end_s': 1.0,
-                            'observation': 'the gripper lifts the cup'}]}
+                            'observation': 'the gripper lifts the cup'}],
+              # the one judgement answers per camera too (D71)
+              'cameras': {'cam': {'verdict': 'success', 'reason': 'the cup is lifted',
+                                  'camera_check': {}}}}
 
     class Response:
         ok = True

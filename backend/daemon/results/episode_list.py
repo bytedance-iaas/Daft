@@ -73,7 +73,7 @@ def open_questions(store: ResultStore, repo: P.Repository, task: P.Task,
             for card in queue.cards("review"):
                 if card.status in ("pending", "unsure") and card.counts_as_pending():
                     out[card.episode] = list(dict.fromkeys(
-                        q.source_module for q in card.questions if not q.optional and q.source_module))
+                        q.source_module for q in card.questions if q.source_module))
             return out
     pending = set(C.pending_lines())
     out = {}

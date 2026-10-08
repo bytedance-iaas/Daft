@@ -25,10 +25,9 @@ describe('任务列表 (07 §4.1)', () => {
     expect(within(widowx).getByText('已暂停')).toBeInTheDocument();
     expect(within(widowx).getByLabelText('系统将自动恢复')).toBeInTheDocument();
     expect(within(row('agibot 预检回归')).queryByLabelText('系统将自动恢复')).toBeNull();
-    // Badges: pending adjudication links to the adjudication page; never exported → 「交付待导出」
+    // Badges: pending adjudication links to the adjudication page
     const droid = row('droid 前 50 条质检');
     expect(within(droid).getByRole('link', { name: '待裁决 10' })).toHaveAttribute('href', '/tasks/task_01HXR2D8/adjudication');
-    expect(within(droid).getByText('交付待导出')).toBeInTheDocument();
     expect(within(droid).getByText('通过 41 · 拒绝 7 · 待补跑 2')).toBeInTheDocument();
     expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
   });
@@ -72,7 +71,7 @@ describe('任务列表 (07 §4.1)', () => {
     }
   });
 
-  it('待裁决 and 交付待重新导出 sit by the state; the name cell keeps the name and the id (fourth round)', async () => {
+  it('待裁决 sits by the state; the name cell keeps the name and the id (fourth round)', async () => {
     renderApp('/tasks');
     const link = await screen.findByRole('link', { name: 'droid 前 50 条质检' });
     const state = row('droid 前 50 条质检').querySelector('.state-cell') as HTMLElement;
@@ -118,7 +117,7 @@ describe('任务列表 (07 §4.1)', () => {
     renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });
     const droid = within(row('droid 前 50 条质检')).getByTestId('module-summary');
-    expect(droid).toHaveTextContent('8 项');                                   // data_integrity is in every preset
+    expect(droid).toHaveTextContent('7 项');                                   // data_integrity is in every preset
     expect(droid).toHaveTextContent('1 项错误');
     expect(droid).toHaveTextContent('完整质检');
     expect(within(row('libero-10 抽检')).getByTestId('module-summary')).toHaveTextContent('快速质检');

@@ -7,16 +7,11 @@ import { clock, db, decisionsOf, findTask } from './db';
 /** Dev and demo builds switch it on (browser.ts); timings in ms. */
 export const SUBTASK_SIM = { enabled: false, queuedMs: 3_000, runMs: 30_000 };
 
-const KIND_NAME: Record<Subtask['kind'], string> = { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决', reexport: '重新导出' };
+const KIND_NAME: Record<Subtask['kind'], string> = { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决' };
 
 /** The stages a subtask of this kind runs through, with their totals (02 §5: from the first stage it redoes). */
 function plan(t: Task, s: Subtask): { id: string; total: number }[] {
   switch (s.kind) {
-    case 'reexport':
-      return [
-        { id: 'export', total: t.summary?.passed ?? 1 },
-        { id: 'verify', total: 1 },
-      ];
     case 'resume': {
       const left = t.progress.stages.filter((x) => x.state !== 'succeeded' && x.state !== 'skipped' && x.state !== 'completed_with_errors');
       const ids = left.length ? left.map((x) => x.id) : ['final', 'report', 'verify'];
@@ -79,7 +74,6 @@ function applyOutcome(t: Task, s: Subtask, at: number): void {
         t.summary = { ...t.summary, passed, held: 0, pass_rate: t.summary.total ? passed / t.summary.total : null };
       }
       newRevision();
-      t.delivery_stale = true;
       t.state = recompute(t);
       break;
     }
@@ -88,11 +82,7 @@ function applyOutcome(t: Task, s: Subtask, at: number): void {
       t.pending_adjudication = 0;
       if (t.summary) t.summary = { ...t.summary, review: 0 };
       newRevision();
-      t.delivery_stale = true;
       t.state = recompute(t);
-      break;
-    case 'reexport':
-      t.delivery_stale = false;
       break;
     case 'resume': {
       t.progress = { stages: t.progress.stages.map((x) => (x.state === 'skipped' ? x : { ...x, state: 'succeeded', done: x.total, eta_s: null })) };

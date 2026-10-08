@@ -11,8 +11,8 @@ import { zh } from '../../locales/zh';
 export type RelabelRerun = 'v1' | 'full';
 
 function describe(v: CardView, catalog: ReviewCatalog | undefined): string {
-  const text = (line: string, d: DecisionValue) => (d === 'custom_label' ? zh.adjudication.decisionText.custom_label : decisionTitle(catalog, line, d));
-  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${text(u.line, u.decision)}「${u.new_label}」` : text(u.line, u.decision)));
+  const text = (line: string, d: DecisionValue) => decisionTitle(catalog, line, d);
+  const parts = v.unapplied.map((u) => (u.new_label ? `${text(u.line, u.decision)}，${zh.adjudication.relabelTo(u.new_label)}` : text(u.line, u.decision)));
   const effect = v.discarded || v.unapplied.every((u) => u.line === 'reject_appeal') ? '' : v.rerunsModel ? zh.adjudication.rerun : zh.adjudication.noRerun;
   return `${zh.report.episode(v.ep)}：${parts.join('，')}${effect ? ` → ${effect}` : ''}`;
 }

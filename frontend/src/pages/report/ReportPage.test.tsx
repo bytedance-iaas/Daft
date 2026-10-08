@@ -147,9 +147,9 @@ describe('质检报告 (07 §5)', () => {
       expect.stringContaining('出错停在哪一步：取证仲裁 2'),
     ]);
     expect(charts('dedup')).toEqual([expect.stringContaining('重复组大小：2 条一组 1')]);
-    expect(figures('skill_profile')).toContain('标注分歧5高置信 3 · 人工复核 2');
-    expect(charts('skill_profile')[1]).toContain('子技能分布：放置 › 放入容器 8');
-    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']) {
+    // skill_profile left the registry (3.0): this task ran before, so its section falls back to the
+    // generic view - no key figures of its own, and no raw keys either.
+    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup']) {
       const section = screen.getByTestId(`section-${id}`);
       expect(section.textContent, id).not.toMatch(/[{}"]|ep \d+/);
       expect(within(section).queryByRole('link', { name: /^ep \d+$/ })).toBeNull();
@@ -172,13 +172,13 @@ describe('质检报告 (07 §5)', () => {
     await screen.findByTestId('report-equation');
     expect(await screen.findByRole('button', { name: '展开：视觉质量' })).toBeInTheDocument();
     await second.user.click(screen.getByRole('button', { name: '全部折叠' }));
-    for (const id of ['timestamp_check', 'task_success', 'skill_profile']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
+    for (const id of ['timestamp_check', 'task_success', 'dedup']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
     expect(screen.getByTestId('report-equation')).toBeInTheDocument(); // the overview never folds
     // Jumping from 本次质检范围 unfolds the section it jumps to.
     await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: '精确去重' }));
     expect(await screen.findByTestId('summary-dedup')).toBeInTheDocument();
     await second.user.click(screen.getByRole('button', { name: '全部展开' }));
-    for (const id of ['timestamp_check', 'visual_quality', 'skill_profile']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
+    for (const id of ['timestamp_check', 'visual_quality', 'dedup']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
   });
 
   it('a report written before the chart-ready aggregates still shows what it has (06 §6.2)', async () => {
@@ -211,9 +211,9 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=29#episodes`);
     const summary = await screen.findByTestId('episode-summary');
     expect(within(summary).getByTestId('episode-list')).toHaveTextContent('通过');
-    expect(within(summary).getByTestId('episode-review')).toHaveTextContent('技能画像 · 标注与画面归入不同技能族');
+    expect(within(summary).getByTestId('episode-review')).toHaveTextContent('任务成败判定 · 标注与画面疑似不符；证据不足，弃权');
     const asks = within(summary).getAllByRole('link', { name: '去裁决' }).map((a) => a.getAttribute('href'));
-    expect(asks.sort()).toEqual([`/tasks/${MAIN_TASK}/adjudication?source=skill_profile`, `/tasks/${MAIN_TASK}/adjudication?source=task_success`]);
+    expect(asks).toEqual([`/tasks/${MAIN_TASK}/adjudication?source=task_success`]);
     expect(within(summary).getByTestId('episode-task-text')).toHaveTextContent('任务文本：pour rice into the cup（来源：自产描述）');
     await waitFor(() => expect(within(summary).getByText('待裁')).toBeInTheDocument());
     const blocks = [...document.querySelectorAll('[data-testid^="episode-module-"]')].map((e) => e.getAttribute('data-testid')!.replace('episode-module-', ''));

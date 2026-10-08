@@ -8,7 +8,7 @@ Owner(预留) ──┬── Credential (TOS 访问密钥；VLM 后端的 API K
               ├── Dataset (登记的数据集：来源、地址、预检结果、指纹及其变化记录，D36)
               │
               ├── Task ──┬── TaskModule (任务 × 模块，本期 8 行/任务)
-              │          ├── Subtask (重试 / 继续运行 / 执行裁决 / 重新导出)
+              │          ├── Subtask (重试 / 继续运行 / 执行裁决)
               │          └── TokenUsage (按子任务/模块/调用种类聚合)
               │
               │          ├── Adjudication (人工裁决记录，只属于本任务)
@@ -130,12 +130,10 @@ CREATE TABLE task (
   preflight      TEXT,                    -- JSON: 预检快照，任务启动时固化
   source_fingerprint TEXT,                -- JSON: 源文件清单的摘要（对象数、总字节、清单哈希），启动时固化
   result_rev     INTEGER NOT NULL DEFAULT 0,  -- 当前生效的结果版本（判决清单 + 报告）；完整生成后才 +1
-  export_fingerprint TEXT,                -- 上次成功导出时的指纹，见下
 
   run_id         TEXT,                    -- 交付目录下的批次名（时间戳）
   progress       TEXT,                    -- JSON: {"stages":[{id,state,done,total,elapsed_s,eta_s}]}
   summary        TEXT,                    -- JSON: 报告概览快照（总数/通过/拒绝/待裁决/通过率，缺源跳过数），列表页直接用
-  delivery_stale INTEGER NOT NULL DEFAULT 0,  -- 1 = 判决已变，交付数据集待重新导出
   started_at     INTEGER,
   finished_at    INTEGER,
   deleted_at     INTEGER                  -- 软删除；30 天后清除，见 03 篇 §8
@@ -152,7 +150,7 @@ CREATE INDEX idx_task_list ON task(owner_id, created_at DESC);
 - `summary` 让列表页和「已完成任务的报告概览」不必每次去 TOS 读报告。其中的待裁决条数（`pending_adjudication`）
   由编排层维护：每次聚合出新的结果版本、每次提交或执行裁决之后重算，列表和详情页都读它。
 - `source_fingerprint` 对应交付目录里的 `source_manifest.json`（逐个对象的键、大小、ETag）。
-  任务的每一步读源数据都按它校验，几天后的重试和重新导出也一样；对不上就是源数据被改过了，
+  任务的每一步读源数据都按它校验，几天后的重试和执行裁决也一样；对不上就是源数据被改过了，
   任务（或子任务）以 `source_changed` 失败，提示重新预检后另建任务。一个任务不混用两个版本的数据（D27）。
 - `result_rev`：判决清单和报告作为一个整体按版本存放（`revisions/r0001/…`，见 06 篇 §1）。
   新版本写完、上传、核验、最后写下 `commit.json` 之后，才用 CAS 把 `result_rev` +1。
@@ -160,8 +158,6 @@ CREATE INDEX idx_task_list ON task(owner_id, created_at DESC);
 - `vlm_snapshot`：任务启动时把 VLM 的有效配置抄一份。之后有人在密钥管理页改了模型的思考强度或并行度，
   已有任务的重试、继续运行仍按快照来，一个任务里不会混进两套模型参数。只有 API Key 每次实时取 ——
   换 Key 不改变模型语义。后端被删了，走和访问密钥一样的重新绑定。
-- `delivery_stale` 不是手工置位的，是算出来的：当前应导出内容的指纹（通过名单及顺序、每条的任务文本与来源、
-  源数据指纹、导出格式与参数）≠ `export_fingerprint` 就是过期。名单没变、只改了标，同样算过期。
 
 ### 2.4 task_module — 任务 × 模块
 
@@ -193,10 +189,9 @@ CREATE TABLE task_module (
   例外是已被正常判完的模块确定拒绝的条目：直接拒绝，不用补跑，但仍计入出错那个模块的 `episodes_error`（D35）。
 - `input_digest` 记下这份结果对应的输入集合。数据集级模块靠它判断自己是否过期：
   当前 keep 集合的哈希和它对不上，就是 `stale`。
-- **`stale`** 只表示一件事：**这个模块的输入集合变了，结果待同步**。去重和技能画像吃的是判决后的
-  keep 集合（见 05 篇 §1），上游模块被重试、或人工裁决改了判决，它们就变 `stale`，
-  由同一个子任务接着做增量同步，同步完回到 `succeeded`。
-  「交付数据集待重新导出」是另一回事，只看 `task.delivery_stale`。
+- **`stale`** 只表示一件事：**这个模块的输入集合变了，结果待同步**。去重自 F12.3 起吃的是全集、不看判决
+  （设计 17 §3.2），所以人工裁决改了判决不会让它过期；输入集合真变了（补跑出了新条目）时，
+  由同一个子任务把缺的条目补上，补完回到 `succeeded`。
 
 ### 2.5 subtask — 子任务
 
@@ -204,7 +199,7 @@ CREATE TABLE task_module (
 CREATE TABLE subtask (
   id         TEXT PRIMARY KEY,            -- sub-<9 位小写字母>
   task_id    TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
-  kind       TEXT NOT NULL,               -- 'retry' | 'resume' | 'apply_adjudication' | 'reexport'
+  kind       TEXT NOT NULL,               -- 'retry' | 'resume' | 'apply_adjudication'
   scope      TEXT NOT NULL,               -- JSON: {"modules":[...], "episodes":"errors"|"all"}，仅 retry 有意义
   state      TEXT NOT NULL,               -- 与 task 同一套状态机（没有 created）
   state_reason TEXT,
@@ -213,14 +208,13 @@ CREATE TABLE subtask (
 );
 ```
 
-四种子任务覆盖了所有「在已有任务上再做一件事」的场景，共用一套状态机和一套 worker 池：
+三种子任务覆盖了所有「在已有任务上再做一件事」的场景，共用一套状态机和一套 worker 池：
 
 | kind | 做什么 | 允许的父任务状态 |
 |---|---|---|
 | `retry` | 只补跑出错的 episode，从出错的那一档接着往后跑（模块整体失败则全量），再同步下游 | completed_with_errors |
 | `resume` | 从断点接着跑主流程里没完成的部分（D20） | stopped / failed |
 | `apply_adjudication` | 执行人工裁决 | succeeded / completed_with_errors |
-| `reexport` | 重新导出交付数据集（增量）；任务创建时选了不导出的，也用它补做 | succeeded / completed_with_errors |
 
 三条约束：
 
@@ -502,8 +496,7 @@ DB 存**索引和状态**，TOS 存**产物**。判断标准：这条数据交�
 | 任务配置、状态、进度、Token 统计 | DB | 平台自身的运行状态，不属于交付物 |
 | 模块判决结果 `checks/<module>/results.jsonl` | TOS（交付目录内） | 报告的原始依据，要跟着交付走 |
 | 判决清单 passed/reject/review | TOS | 同上 |
-| 交付数据集 `lerobot_curated/` | TOS | 交付物本体 |
-| 报告 md/json、性能剖析 | TOS | 交付物 |
+| 报告 md/json、明细表、性能剖析 | TOS | 交付物本体（D69 起平台只交付报告） |
 | 人工裁决记录 | DB（权威）+ TOS CSV（副本，在该任务的批次目录里） | 平台要查，交付也要自包含 |
 | 源文件清单 `source_manifest.json` | TOS + 工作目录 | 说明这份交付对应源数据的哪个版本 |
 | 结果各版本 `revisions/r<NNNN>/` | TOS | 补跑、裁决前后的清单与报告都留着；当前版本由 DB 的 `result_rev` 指定 |

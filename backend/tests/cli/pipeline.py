@@ -25,7 +25,7 @@ REPO = os.path.dirname(BACKEND)
 SCHEMA_OF = {"preflight": "cli/preflight.schema.json", "plan": "cli/plan.schema.json",
              "snapshot": "cli/source-manifest.schema.json",
              "autolabel": "cli/autolabel.schema.json", "check": "cli/check.schema.json",
-             "aggregate": "cli/aggregate.schema.json", "export": "cli/export.schema.json",
+             "aggregate": "cli/aggregate.schema.json",
              "report": "cli/report-output.schema.json",
              "adjudicate-apply": "cli/adjudicate-apply.schema.json",
              "verify": "cli/verify.schema.json"}
@@ -114,9 +114,8 @@ def comparable(rec: dict) -> dict:
 
 class Chain:
     """The commands of the Daemon's main run on one run directory (plan 2.0, design doc 17 §3): the two blocks
-    one after the other - autolabel, the CPU checks, the VLM checks, then the full-set steps dedup and
-    skill_profile - every stage on the whole selection, then the final verdicts. The Daemon runs the blocks
-    side by side; the records do not depend on it."""
+    one after the other - the CPU checks, the VLM check, dedup - every stage on the whole selection,
+    then the final verdicts. The Daemon runs the blocks side by side; the records do not depend on it."""
 
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
     FRAME = "visual_quality,video_action_sync"
@@ -147,7 +146,7 @@ class Chain:
             json.dump(pf.doc, fh)
         self.step("plan", "plan", "--preflight", self.path("preflight.json"), "--modules",
                   "timestamp_check,kinematic_limits,motion_quality,visual_quality,"
-                  "video_action_sync,task_success,dedup,skill_profile",
+                  "video_action_sync,task_success,dedup",
                   "--episodes", episodes, "--out", self.path("plan.json"))
         self.step("snapshot", "snapshot", "--input", self.ds, "--episodes", episodes,
                   "--out", self.path("source_manifest.json"))
@@ -157,9 +156,8 @@ class Chain:
                 "--source-manifest", self.path("source_manifest.json"), *self.extra_source]
 
     def before_vlm(self, episodes: str = "0-7") -> None:
-        """autolabel, check numeric, check frame: every stage on the whole selection."""
+        """check numeric, check frame: every stage on the whole selection."""
         os.makedirs(self.path("stages"), exist_ok=True)
-        self.step("autolabel", "autolabel", *self.common(), "--episodes", episodes, *self.vlm)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
                   "--episodes", episodes, "--survivors-out", self.path("stages", "numeric.txt"))
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),
@@ -175,21 +173,14 @@ class Chain:
         """The full-set steps on the whole selection, the final verdicts and the report."""
         r = str(revision)
         self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes", episodes)
-        self.step("profile", "check", "--modules", "skill_profile", *self.common(),
-                  "--episodes", episodes, *self.vlm)
         self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)
 
     def deliver(self, delivery: str, *extra) -> None:
+        """What the Daemon delivers (D69: the reports, no dataset): the run directory, then verify."""
         import shutil
 
-        self.step("export", "export", "--run-dir", self.rd, "--input", self.ds,
-                  "--output", delivery, *extra)
-        skip = {os.path.join(self.rd, "export", name)            # export uploads them itself
-                for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
-        shutil.copytree(self.rd, delivery, dirs_exist_ok=True,
-                        ignore=lambda d, names: [n for n in names
-                                                 if os.path.join(d, n) in skip])
+        shutil.copytree(self.rd, delivery, dirs_exist_ok=True)
         self.step("verify", "verify", "--run-dir", self.rd, "--output", delivery,
                   "--visibility-timeout", "0")

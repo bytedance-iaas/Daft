@@ -14,12 +14,12 @@ from curation.contracts import schemas
 def test_modules_in_block_and_stage_order():
     assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
                        "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
-                       "camera_defects", "dedup", "skill_profile")
+                       "camera_defects", "dedup")
     for block, stages in M.BLOCKS.items():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
     assert M.STAGES == M.BLOCKS["cpu"] + M.BLOCKS["vlm"]
-    assert set(M.FULL_SET_STAGES) == {"dedup", "profile"}
+    assert M.FULL_SET_STAGES == (), "D70: every stage judges one episode at a time"
     assert all(s in M.STAGES for s in M.FULL_SET_STAGES)
 
 
@@ -28,7 +28,7 @@ def test_module_spec(spec):
     assert spec.needs <= M.NEEDS
     assert set(spec.depends_on) <= M.DEPENDENCIES
     assert spec.block in M.BLOCKS and spec.stage in M.BLOCKS[spec.block]
-    assert spec.stage != "autolabel", "autolabel is a stage, not a module"
+    assert spec.stage != "autolabel", "the caption pass is gone (3.2); no stage of that name"
     jsonschema.Draft202012Validator.check_schema(spec.param_schema)
     for table in spec.tables:
         assert table.default_sort in table.sortable
@@ -107,18 +107,18 @@ def test_the_taxonomy_matches_the_sample_sets():
 
 
 def test_v1_facts():
-    """Design doc 05 section 1 / 17 §3: the funnel checks, then dedup and the profile on the whole set."""
+    """Design doc 05 section 1 / 17 §3: the funnel checks, then dedup on the whole set."""
     assert {m.id for m in M.by_stage("dedup")} == {"dedup"}
-    assert {m.id for m in M.by_stage("profile")} == {"skill_profile"}
-    assert {m.id for m in M.by_block("vlm")} == {"eef_video_consistency", "task_success", "camera_defects",
-                                                 "skill_profile"}
-    assert M.get("dedup").level == "dataset" and M.get("skill_profile").level == "dataset"
+    assert "profile" not in M.STAGES, "the skill profile and its stage were removed"
+    assert {m.id for m in M.by_block("vlm")} == {"eef_video_consistency", "task_success",
+                                                 "camera_defects"}
+    assert M.get("dedup").level == "dataset"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
-                                                                    "skill_profile", "eef_video_consistency",
+                                                                    "eef_video_consistency",
                                                                     "data_integrity"}
-    assert {m.id for m in M.MODULES if "autolabel" in m.depends_on} == {"task_success", "camera_defects",
-                                                                        "skill_profile"}
-    assert "autolabel" not in M.ids()
+    assert not any(m.depends_on for m in M.MODULES), "3.2: no data dependency is left"
+    assert "autolabel" not in M.ids() and "autolabel" not in M.STAGES and M.BLOCKS["vlm"] == ("vlm",)
+    assert dict(M.UNASSESSABLE_REASONS)["no_task_text"]
 
 
 def test_the_default_policy_reproduces_todays_gates():
@@ -130,18 +130,19 @@ def test_the_default_policy_reproduces_todays_gates():
     for soft in ("motion_quality", "visual_quality", "camera_defects"):
         assert {c.level for c in M.get(soft).codes} == {"info"}, soft
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
-    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict", "label"}
+    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {
         ("task_success", "failure"), ("eef_video_consistency", "inconsistent"), ("dedup", "duplicate")}
 
 
 def test_p20_items_have_codes():
-    """P20: the items that needed only a mapping are covered from the first stage on (the eighth, the task and
-    skill statistics item, was dropped in taxonomy 1.3; its readings stay as the platform's own dataset-level findings)."""
+    """P20: the items that needed only a mapping are covered from the first stage on.
+
+    LABEL-1 (one episode with several descriptions that disagree) left the list with the skill
+    profile: it was the only module that read the descriptions against each other."""
     covered = {item for m in M.MODULES for item in m.covers}
-    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "LABEL-1", "ACT-6"} <= covered
-    assert {M.get("timestamp_check").code("duration_outlier").item,
-            M.get("skill_profile").code("undersampled_family").item} == {None}
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "ACT-6"} <= covered
+    assert "LABEL-1" not in covered
 
 
 def test_the_eef_module_takes_part_in_the_verdict():
@@ -180,9 +181,11 @@ def test_the_data_integrity_module_is_the_first_stage():
 
 
 def test_review_lines():
-    """D42 / D43: the review catalog is v1's three lines, the EEF module's (C1 1.9) and the data
-    integrity module's (1.11); modules name the lines they raise."""
-    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal", "eef_check",
+    """D42 / D43: the review catalog, modules naming the lines they raise.
+
+    The label line went with the skill profile (registry 3.0): a label conflict the kill guard
+    finds now asks the task verdict, so one card asks one question."""
+    assert [line.id for line in M.REVIEW_LINES] == ["task_verdict", "reject_appeal", "eef_check",
                                                     "integrity_check"]
     for line in M.REVIEW_LINES:
         assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
@@ -190,7 +193,7 @@ def test_review_lines():
     assert M.review_line("reject_appeal").applies_to == "reject"
     assert not M.review_line("reject_appeal").counts_as_pending     # an appeal is optional
     assert all(M.review_line(x).counts_as_pending
-               for x in ("label", "task_verdict", "eef_check", "integrity_check"))
+               for x in ("task_verdict", "eef_check", "integrity_check"))
     integ = M.review_line("integrity_check")
     assert (integ.review_kind, integ.applies_to) == ("integrity_suspect", "passed")
     assert [c for c, _ in integ.decisions] == ["intact", "broken", "unsure"]
@@ -201,21 +204,16 @@ def test_review_lines():
     raised = {x for m in M.MODULES for x in m.review_lines}
     assert raised <= {line.id for line in M.REVIEW_LINES}
     assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup", "eef_video_consistency"}
-    assert M.get("task_success").review_lines == ("task_verdict", "label")
+    assert M.get("task_success").review_lines == ("task_verdict",)
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
-    # v1: after adopting a new label a person may give the task verdict (no re-judge)
-    f = M.follow_up("label", "adopt_suggestion", "task_verdict")
-    assert f is not None and f.optional and set(f.decisions) == {"success", "failure", "unsure"}
-    assert M.follow_up("label", "keep_label", "task_verdict") is None
-    for line in M.REVIEW_LINES:
-        for fu in line.follow_ups:
-            target = {c for c, _ in M.review_line(fu.line).decisions}
-            assert set(fu.decisions) <= target and set(fu.after) <= {c for c, _ in line.decisions}
+    # one card asks one question: the label line and the follow-up it owned are both gone
+    assert not hasattr(M, "follow_up") and not hasattr(M, "FollowUp")
+    assert all(not hasattr(line, "follow_ups") for line in M.REVIEW_LINES)
     # physical and structural gates are final; info-only modules reject nothing
     assert not any(M.appealable(m.id) for m in M.MODULES
                    if m.id in ("timestamp_check", "kinematic_limits", "video_action_sync", "data_integrity",
-                               "motion_quality", "visual_quality", "camera_defects", "skill_profile"))
+                               "motion_quality", "visual_quality", "camera_defects"))
 
 
 def test_params_validate():

@@ -128,8 +128,8 @@ def test_one_attempt_per_request_unless_retry_is_given(vlm_stage, tmp_path):
 
 
 def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
-    """--vlm-reasoning-effort puts reasoning_effort into every model request of check
-    and autolabel; without it no request has the field (v1 never sent one)."""
+    """--vlm-reasoning-effort puts reasoning_effort into every model request of check;
+    without it no request has the field (v1 never sent one)."""
     rd = _copy(vlm_stage, tmp_path, "plain")
     with FakeVlmServer() as vlm:
         assert _vlm_check(vlm_stage, rd, vlm.url).rc == 0
@@ -139,13 +139,7 @@ def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
     rd = _copy(vlm_stage, tmp_path, "effort")
     with FakeVlmServer() as vlm:
         assert _vlm_check(vlm_stage, rd, vlm.url, "--vlm-reasoning-effort", "minimal").rc == 0
-        os.remove(os.path.join(rd, "autolabel", "captions.jsonl"))
-        al = run("autolabel", "--input", vlm_stage["dataset"], "--run-dir", rd, "--episodes",
-                 "0-7", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm",
-                 "--vlm-reasoning-effort", "minimal")
-        assert al.rc == 0, al.doc
     posts = _posts(vlm)
-    assert any("All cameras show the SAME robot episode" in c["text"] for c in posts)
     assert posts and all(c["payload"]["reasoning_effort"] == "minimal" for c in posts)
     assert requests.post is before                      # restored after each command
 
@@ -187,19 +181,19 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
     assert abstained and all(ref[e]["error"] is None for e in abstained)   # "can't tell"
 
     rd = _copy(vlm_stage, tmp_path)
-    review = "Independently review ONLY this camera"
-    with FakeVlmServer(fail=lambda text, payload: 500 if review in text else None) as vlm:
+    judge = "Assess the robot manipulation task"          # the one judgement request (D71)
+    with FakeVlmServer(fail=lambda text, payload: 500 if judge in text else None) as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0                          # an episode's error is not the command's
     recs = results(rd, "task_success")
     hit = sorted(e for e, r in recs.items() if r["status"] == "error")
-    assert hit and vlm.count(review) >= len(hit)
+    assert hit and vlm.count(judge) >= len(hit)
     for e in hit:
         incidents = recs[e]["error"]["incidents"]
         assert recs[e]["error"]["kind"] == "execution"
-        assert incidents and all(i["call_kind"] == "endstate" and i["cause"] == "server_error"
+        assert incidents and all(i["call_kind"] == "probe" and i["cause"] == "server_error"
                                  for i in incidents), incidents
-    for e in set(recs) - set(hit):              # never reviewed: untouched
+    for e in set(recs) - set(hit):              # never judged: untouched
         assert comparable(recs[e]) == comparable(ref[e])
     entry = res.doc["modules"]["task_success"]
     assert entry["error_episodes"] == hit and entry["episodes"]["error"] == len(hit)
@@ -232,106 +226,27 @@ def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
         assert res.doc["modules"][m]["error_episodes"] == [1]
 
 
-def test_a_failed_caption_is_an_error_down_to_the_verdict(vlm_stage, tmp_path):
+def test_an_episode_without_a_task_text_is_not_judged(vlm_stage, tmp_path):
+    """D72: 4 and 6 have no annotation. No caption is written for them and no judgement request
+    is sent: their record says ``no_task_text`` (an info finding, nothing to review), they are
+    not held, and every other check still counts for them."""
     rd = _copy(vlm_stage, tmp_path)
-    caption = "All cameras show the SAME robot episode"
-    with FakeVlmServer(fail=lambda text, payload: 500 if caption in text else None) as vlm:
-        al = run("autolabel", "--input", vlm_stage["dataset"], "--run-dir", rd,
-                 "--episodes", "0-7", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-    assert al.rc == 0, al.doc
-    assert al.doc["counts"] == {"total": 2, "ok": 0, "unclear": 0, "error": 2}
-    assert al.doc["error_episodes"] == [4, 6]
-    lines = {ln["episode_index"]: ln
-             for ln in read_jsonl(os.path.join(rd, "autolabel", "captions.jsonl"))}
-    for e in (4, 6):
-        assert lines[e]["status"] == "error" and lines[e]["caption"] in (None, "")
-    with FakeVlmServer() as vlm:                         # the model is back for the check
+    with FakeVlmServer() as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0
+    assert len(_posts(vlm)) == vlm_stage["reference_posts"]
+    assert not os.path.exists(os.path.join(rd, "autolabel"))
     recs = results(rd, "task_success")
     for e in (4, 6):
-        assert recs[e]["status"] == "error"
-        assert [i["step"] for i in recs[e]["error"]["incidents"]] == ["autolabel"]
-    for e in (0, 1, 3, 7):
-        assert comparable(recs[e]) == comparable(vlm_stage["reference"][e])
+        assert recs[e]["status"] == "ok" and recs[e]["error"] is None
+        assert recs[e]["details"]["skipped"] == "no_task_text"
+        assert [f["code"] for f in recs[e]["findings"]] == ["task_text_missing"]
+        assert {u["reason"] for u in recs[e]["unassessable"]} >= {"no_task_text"}
     verdicts = _funnel(rd)
     for e in (4, 6):
-        assert verdicts[e]["verdict"] == "held"
-        assert verdicts[e]["error_modules"] == ["autolabel"]
+        assert verdicts[e]["verdict"] == "keep" and verdicts[e]["error_modules"] == []
+    assert verdicts[5]["verdict"] == "drop"                        # its timestamps, as ever
 
-
-def test_a_failed_taxonomy_call_fails_the_skill_profile_module(vlm_stage, tmp_path):
-    """The taxonomy is one dataset-level result: when a text call it needs fails for
-    good no episode can be filed, and the module fails as a whole (exit 4)."""
-    rd = str(tmp_path / "run")
-    shutil.copytree(vlm_stage["reference_dir"], rd)
-    _funnel(rd)
-    keep = os.path.join(rd, "revisions", "r0001", "keep.txt")
-    res = run("check", "--modules", "dedup", "--input", vlm_stage["dataset"], "--run-dir", rd,
-              "--episodes", "@" + keep, "--survivors-out", str(tmp_path / "dedup.txt"))
-    assert res.rc == 0, res.doc
-    taxonomy = "Build a TWO-LEVEL skill taxonomy"
-    with FakeVlmServer(fail=lambda text, payload: 503 if taxonomy in text else None) as vlm:
-        res = run("check", "--modules", "skill_profile", "--input", vlm_stage["dataset"],
-                  "--run-dir", rd, "--episodes", "@" + str(tmp_path / "dedup.txt"),
-                  "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-    assert res.rc == 4 and res.doc["error"]["code"] == "module_failed", res.doc
-    assert res.doc["error"]["details"]["incidents"][0] == {
-        "step": "llm", "call_kind": "llm", "cause": "server_error", "attempts": 1}
-    assert vlm.count(taxonomy) == 1                     # one request: no retry by default
-
-
-def test_a_failed_skill_profile_module_holds_every_episode_until_a_retry(vlm_stage, tmp_path):
-    """D41: when skill_profile fails as a whole, every episode it should have filed is
-    held and none is delivered; a retry that succeeds releases them all."""
-    rd = str(tmp_path / "run")
-    shutil.copytree(vlm_stage["reference_dir"], rd)
-    _funnel(rd)
-    keep = os.path.join(rd, "revisions", "r0001", "keep.txt")
-    survivors_file = str(tmp_path / "dedup.txt")
-    res = run("check", "--modules", "dedup", "--input", vlm_stage["dataset"], "--run-dir", rd,
-              "--episodes", "@" + keep, "--survivors-out", survivors_file)
-    assert res.rc == 0, res.doc
-    survivors = [int(x) for x in open(survivors_file, encoding="utf-8").read().split()]
-    assert survivors
-    assert not os.path.exists(module_dir(rd, "skill_profile"))    # no earlier results
-
-    def profile(**server):
-        with FakeVlmServer(**server) as vlm:
-            return run("check", "--modules", "skill_profile", "--input", vlm_stage["dataset"],
-                       "--run-dir", rd, "--episodes", "@" + survivors_file,
-                       "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-
-    def final():
-        res = run("aggregate", "--run-dir", rd, "--phase", "final", "--revision", "1",
-                  "--episodes", "0-7", "--input", vlm_stage["dataset"])
-        assert res.rc == 0, res.doc
-        lists = {}
-        for name in ("passed", "held", "reject"):
-            with open(os.path.join(rd, "revisions", "r0001", f"{name}.json"),
-                      encoding="utf-8") as fh:
-                lists[name] = {e["episode_index"]: e for e in json.load(fh)["episodes"]}
-        return lists
-
-    taxonomy = "Build a TWO-LEVEL skill taxonomy"
-    res = profile(fail=lambda text, payload: 503 if taxonomy in text else None)
-    assert res.rc == 4 and res.doc["error"]["code"] == "module_failed", res.doc
-    lists = final()
-    assert lists["passed"] == {}                        # nothing is delivered
-    kept = [e for e in survivors if e not in lists["reject"]]   # 7, a byte copy of 3, is rejected as one
-    assert sorted(lists["held"]) == kept and 7 in survivors and 7 in lists["reject"]
-    for e in kept:
-        assert [(r["module"], r["kind"]) for r in lists["held"][e]["reasons"]] == \
-            [("skill_profile", "execution_error")]
-        assert "技能画像" in lists["held"][e]["reasons"][0]["text"]
-
-    assert profile().rc == 0                             # the retry succeeds
-    lists = final()
-    assert lists["held"] == {}
-    assert sorted(lists["passed"]) == kept
-
-
-# ---------------------------------------------------------------- source guard
 
 def test_a_changed_source_stops_the_commands(dataset, tmp_path):
     rd = str(tmp_path / "run")
@@ -341,12 +256,13 @@ def test_a_changed_source_stops_the_commands(dataset, tmp_path):
     guard = ["--input", dataset, "--run-dir", rd, "--source-manifest", sm]
     vlm_args = ["--vlm-model", "fake-vlm", "--vlm-endpoint"]
 
-    # an unlabelled episode's video: autolabel stops before any model call ...
+    # an episode's video: the VLM check stops before any model call ...
     with open(os.path.join(dataset, "videos", "chunk-000", WRIST, "episode_000004.mp4"),
               "ab") as fh:
         fh.write(b"\0")
     with FakeVlmServer() as vlm:
-        res = run("autolabel", *guard, "--episodes", "0-7", *vlm_args, vlm.url)
+        res = run("check", "--modules", "task_success", *guard, "--episodes", "0-7",
+                  *vlm_args, vlm.url)
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     assert res.doc["error"]["details"]["key"].endswith("episode_000004.mp4")
     assert not _posts(vlm)
@@ -361,7 +277,8 @@ def test_a_changed_source_stops_the_commands(dataset, tmp_path):
     res = run("check", "--modules", Chain.NUMERIC, *guard, "--episodes", "5-7")
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     with FakeVlmServer() as vlm:
-        res = run("autolabel", *guard, "--episodes", "6", *vlm_args, vlm.url)
+        res = run("check", "--modules", "task_success", *guard, "--episodes", "6",
+                  *vlm_args, vlm.url)
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
     # without the manifest the broken file ends the stage: no episode can be judged
     res = run("check", "--modules", Chain.NUMERIC, "--input", dataset, "--run-dir", rd,

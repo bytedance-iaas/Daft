@@ -37,7 +37,7 @@ def test_batches_overlap_and_episode_result_is_readable_before_revision(daemon, 
 
     monkeypatch.setattr(episode_pipeline, "_start_worker", traced)
     d = daemon()
-    task_id = d.create(params={"start_now": True, "export": True,
+    task_id = d.create(params={"start_now": True,
                                "vlm_hedge": False, "batch_size": 2})["id"]
     assert d.get(task_id)["params"]["batch_size"] == 2
 
@@ -81,7 +81,7 @@ def test_resume_routes_each_episode_from_its_saved_stage(daemon, fake_vlm, monke
     judge = "Assess the robot manipulation task"
     asked, hold = fake_vlm.count(judge), fake_vlm.hold(judge)
     try:
-        task_id = d.create(params={"start_now": True, "export": True, "vlm_hedge": False,
+        task_id = d.create(params={"start_now": True, "vlm_hedge": False,
                                    "limits": {"vlm_parallelism": 2}})["id"]
         d.wait_for(lambda: fake_vlm.count(judge) > asked, what="the VLM block to ask about its first episode")
         assert d.action(task_id, "pause").status_code == 200
@@ -109,7 +109,7 @@ def test_streaming_results_and_requests_match_batch_execution(daemon, monkeypatc
     from .conftest import comparable, results
 
     d = daemon()
-    params = {"start_now": True, "export": False, "vlm_hedge": False, "batch_size": 1}
+    params = {"start_now": True, "vlm_hedge": False, "batch_size": 1}
     streamed = d.wait(d.create(params=params)["id"])
     assert streamed["state"] == "succeeded", streamed
     with monkeypatch.context() as patch:
@@ -160,7 +160,7 @@ def test_persistent_worker_crash_preserves_completed_episodes(daemon, monkeypatc
     monkeypatch.setattr(StageWorker, "poll", crash)
     d = daemon()
     task = d.wait(d.create(modules=["timestamp_check", "motion_quality"],
-                           params={"batch_size": 1, "export": False,
+                           params={"batch_size": 1,
                                    "limits": {"cpu_concurrency": 1}})["id"])
     assert task["state"] == "succeeded", task
     assert len(killed) == 1

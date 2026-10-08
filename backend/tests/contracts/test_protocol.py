@@ -42,7 +42,7 @@ def test_state_machine_invariants():
     assert P.can_transition("stopped", "succeeded")               # a resume subtask finished
     assert not P.can_transition("stopped", "succeeded", subtask=True)  # subtasks are never resumed
     assert not P.can_transition("failed", "completed_with_errors", subtask=True)
-    assert set(P.SUBTASK_PARENT_STATES) == {"retry", "resume", "apply_adjudication", "reexport"}
+    assert set(P.SUBTASK_PARENT_STATES) == {"retry", "resume", "apply_adjudication"}
     for kind, parents in P.SUBTASK_PARENT_STATES.items():
         assert parents <= P.TERMINAL_STATES, kind
 
@@ -51,7 +51,7 @@ def test_state_enums_agree_with_the_api():
     api = schemas.load("openapi.yaml")["components"]["schemas"]
     assert set(api["TaskState"]["enum"]) == set(P.TASK_TRANSITIONS)
     task_fields = {f.name for f in dataclasses.fields(P.Task)}
-    assert {"result_rev", "delivery_stale", "pause_reason", "vlm_snapshot",
+    assert {"result_rev", "pause_reason", "vlm_snapshot",
             "source_fingerprint", "deleted_at", "owner_id"} <= task_fields
 
 

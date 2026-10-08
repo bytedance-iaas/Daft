@@ -82,7 +82,7 @@ curator:
       className: ebs-essd       # ⚠️ 必须是块存储（EBS）。NAS / TOS-FSX 这类网络盘会损坏 SQLite
       size: 100Gi
       existingClaim: ""         # 接管一块已有的盘（从独立 release 并入时用，不拷数据）
-    scratch:                    # /scratch：导出时的视频临时文件、TOS 上 mcap / Lance 数据集的本地副本；可丢
+    scratch:                    # /scratch：TOS 上 mcap / Lance 数据集的本地副本、可视化缓存；可丢
       className: ebs-essd
       size: 500Gi
   resources:
@@ -107,7 +107,6 @@ dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Da
 | `CURATOR_PUBLIC_BASE_URL` | `https://<对外域名>` | `curator.publicBaseUrl`，为空则不设 |
 | `CURATOR_DATA_DIR` | `/data` | 写死，数据盘的挂载点 |
 | `CURATOR_SCRATCH_DIR` | `/scratch` | 写死，临时盘的挂载点 |
-| `CURATION_EXPORT_SCRATCH` | `/scratch` | 写死，导出的视频临时文件 |
 | `CURATOR_SOURCE_CACHE_DIR` | `/scratch/source-cache` | 写死，mcap / Lance 的本地副本（D44） |
 | `CURATION_CONFIG` | `/etc/curator/site/site.yaml` | ConfigMap `<fullname>-curation-site` 挂成文件 |
 | `TOS_ENDPOINT` | `https://tos-s3-<region>.ivolces.com` | 由 `tos.region` 推导的内网端点；Daemon 只从中取地域和内外网 |
@@ -136,7 +135,7 @@ Daemon 自己 −500；帧档按 RSS 准入（04 篇 §7）；`limits.memory` �
 
 数据卷从 20Gi 调到 100Gi，是因为任务工作目录也放在这里（00 篇 §4.2）：每个任务的结果、证据帧、日志，
 MB 到 GB 级，终态 7 天后清理。原设计里的 200Gi 帧缓存卷已经取消（D18，不再有帧缓存），
-同样大小的空间改作临时盘：导出时的视频临时文件，以及 TOS 上 mcap / Lance 数据集的本地副本（D44）。
+同样大小的空间改作临时盘：TOS 上 mcap / Lance 数据集的本地副本（D44）与可视化缓存。
 dataverse 里它也是块存储盘，不用 emptyDir：VCI 的系统盘固定 40 GiB，而且不认 `ephemeral-storage` 上限。
 
 ### 2.2 探针

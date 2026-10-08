@@ -82,8 +82,9 @@ function episodesValue(report: Report, task: Task | undefined, dataset: Record<s
 }
 
 /**
- * mcap / lance (D44): how the run's dataset is delivered and v1's container findings
- * ([{项, 状态, 说明}], export/report.container_findings) as one line.
+ * mcap / lance (D44): v1's container findings ([{项, 状态, 说明}],
+ * export/report.container_findings) as one line. A report written before the export was
+ * retired (D69) also carries `delivery`, which then stays in the line.
  */
 export function containerValue(v: unknown): string | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
@@ -94,7 +95,8 @@ export function containerValue(v: unknown): string | null {
         .map((f) => zh.report.containerFinding(f))
         .join(zh.report.containerFindingSep)
     : '';
-  return zh.report.containerValue(String(o.format ?? ''), String(o.delivery ?? '—'), findings);
+  const delivery = typeof o.delivery === 'string' && o.delivery ? o.delivery : '';
+  return zh.report.containerValue(String(o.format ?? ''), delivery, findings);
 }
 
 const KNOWN = new Set(['format', 'validation', 'warnings', 'labels', 'profile', 'robot_type', 'skipped_episodes', 'container']);
@@ -126,7 +128,7 @@ export function integrityItems(report: Report, task?: Task): IntegrityItem[] {
   }
   const labels = integ.labels as { with_task?: number; without_task?: number } | null | undefined;
   if (labels && typeof labels.with_task === 'number' && typeof labels.without_task === 'number') {
-    const captioned = labels.without_task > 0 && (modules.has('task_success') || modules.has('skill_profile'));
+    const captioned = labels.without_task > 0 && modules.has('task_success');
     items.push({ key: 'labels', label: L.labels, value: P().labelsValue(labels.with_task, labels.without_task) + (captioned ? P().labelsCaptioned : '') });
   } else if ('labels' in integ) {
     items.push({ key: 'labels', label: L.labels, value: P().notRead });

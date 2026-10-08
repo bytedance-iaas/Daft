@@ -121,6 +121,17 @@ class FakeVlm:
     def answer(self, payload: dict) -> str:
         text = _texts(payload)
         n = int(self.answer_key(payload).split(":")[1][:8], 16)
+        if "Inspect the supplied continuous videos for picture defects only" in text:
+            # an episode without a task text (D73): the defect report per camera, no verdict - a
+            # pure function of each camera's name and window, as in the judgement below
+            cams = re.findall(r"Camera: (.+?)\. Same episode", text)
+            ends = [float(x) for x in re.findall(r"episode window ends at ([\d.]+)s", text)]
+            starts = [float(x) for x in re.findall(r"episode time ([\d.]+)s", text)]
+            block = {}
+            for i, name in enumerate(cams):
+                k = int(round(ends[i] * 10)) + sum(map(ord, name))
+                block[name] = {"camera_check": _fake_camera_check(k, starts[i], ends[i])}
+            return json.dumps({"cameras": block})
         if "Assess the robot manipulation task from the supplied continuous videos" in text:
             camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
             start = float(re.search(r"episode time ([\d.]+)s", text).group(1))
@@ -137,7 +148,25 @@ class FakeVlm:
                    "evidence": [{"camera": camera, "start_s": start,
                                  "end_s": min(end, start + 0.5),
                                  "observation": "synthetic object trajectory"}]}
-            if 'extra field "camera_check"' in text:
+            if 'more field "cameras"' in text:
+                # single pass (video-task/2): one answer for the episode and for every camera.
+                # Still a pure function of the request text: each camera's own name and window
+                # pick its verdict and its defect levels, so the fixture sees every branch.
+                cams = re.findall(r"Camera: (.+?)\. Same episode", text)
+                ends = [float(x) for x in re.findall(r"episode window ends at ([\d.]+)s", text)]
+                starts = [float(x) for x in re.findall(r"episode time ([\d.]+)s", text)]
+                block = {}
+                for i, name in enumerate(cams):
+                    c_start = starts[i] if i < len(starts) else start
+                    c_end = ends[i] if i < len(ends) else end
+                    k = int(round(c_end * 10)) + sum(map(ord, name))
+                    block[name] = {
+                        "verdict": ("uncertain" if k % 5 == 0 else verdict),
+                        "reason": "synthetic per-camera observation",
+                        "camera_check": _fake_camera_check(k, c_start, c_end),
+                    }
+                out["cameras"] = block
+            elif 'extra field "camera_check"' in text:
                 # the camera_defects report: a pure function of the camera name and the
                 # window, so every level, an omitted item and an omitted report all occur
                 # over the fixture without touching the verdict above
@@ -247,3 +276,23 @@ class FakeVlm:
 
     def transport(self) -> dict:
         return {"post": self.post, "get": self.get}
+
+
+def _fake_camera_check(k: int, start: float, end: float) -> dict:
+    """The three picture-defect items, a pure function of ``k`` - every level, an omitted item
+    and an omitted report all occur over the fixture without touching any verdict."""
+    levels = ("none", "minor", "severe")
+    kinds = ("dirt", "smudge", "water", "obstruction", "other")
+
+    def item(level):
+        return {"level": level, "note": f"synthetic {level}",
+                "times": [] if level == "none" else [[start, min(end, start + 0.5)]]}
+
+    if k % 11 == 0:
+        return {}
+    check = {"glitch": item(levels[k % 3]),
+             "contamination": dict(item(levels[(k // 9) % 3]),
+                                   kind="none" if levels[(k // 9) % 3] == "none" else kinds[k % 5])}
+    if k % 7:
+        check["shake"] = item(levels[(k // 3) % 3])
+    return check

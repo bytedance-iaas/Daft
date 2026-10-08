@@ -10,8 +10,8 @@
 4. **不重试、不并发**，除非显式要求。默认参数下就是一次直来直去的执行；
    `--concurrency` / `--retry` / `--hedge` 是可选行为开关。这条是需求的硬要求。
 5. **两类命令，界线分明**（D22）：
-   - **原子命令**（§3.1–3.10）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
-   - **客户端命令**（§3.11，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
+   - **原子命令**（§3.1–3.9）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
+   - **客户端命令**（§3.10，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
 
 ## 2. 全局参数
 
@@ -46,7 +46,7 @@ episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,
 
 **mcap / Lance 数据集**（D44）另有两处约定：
 
-- 读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
+- 读源数据的命令（`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
   v1 用所选 episode 的前 100 条判定这两种数据集的语义（控制模式、单位等），而 v2 的一条命令只读某一档的幸存者，
   所以 Daemon 把整个任务的所选另外传进来；不传时取 `--episodes`。LeRobot 数据集的语义样本是数据集本身的前 100 条，不看它。
 - v1 的两个读取器只认本地目录，`tos://` 上的数据先拉到本地副本再读：环境变量 `CURATION_SOURCE_CACHE` 指定副本放在哪
@@ -164,24 +164,17 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 带这份清单的命令都不读它们，它们不进任何清单、不计入总数，报告的完整性一节列出来。
 之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
 
-### 3.4 `curation autolabel` — 给没有任务标注的条目补描述
+**对象清单只列一次**（2026-10-08）：远端数据集的对象清单列起来不便宜（DROID 一万个对象 11.6 秒，十万条的数据集要按分钟算），
+而每档 worker 原来各列三遍（命令自己、源文件守卫、v1 的读端）。现在 `snapshot` 把它列到的清单存在清单文件旁边的
+`.source_listing.json`（隐藏文件，不交付、不回灌），带 `--source-manifest` 的命令直接读它、交给守卫、喂给读端，不再向 TOS 列；
+没有缓存的命令列一次并存下来给下一条。缓存一小时过期，用之前先 HEAD 一下 `meta/` 下的几个对象（变了就重新列），Daemon 续跑、重试前把它删掉，
+所以隔了很久才起的 worker 仍在新清单上做守卫；一小时内只改了某个数据文件的情况，要到下一次重新列清单才会被发现。
 
-```bash
-curation autolabel --input tos://... --run-dir <dir> --episodes @unlabeled.txt \
-                   --vlm-backend <name> [--vlm-reasoning-effort <档位>] \
-                   [--concurrency N] [--retry N] [--hedge] --json
-```
+### 3.4 ~~`curation autolabel`~~ — 已删除（D72）
 
-v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有任务标注的条目，VLM 无从判断任务成败，
-所以先由模型看画面写一句任务描述。结果写 `<run-dir>/autolabel/captions.jsonl`：
-
-```jsonc
-{"episode_index": 17, "caption": "put the orange box into the bin", "source": "自产caption"}
-```
-
-下游三处用它：`task_success` 拿它当任务文本（**有原始标注就用标注，没有才用它**）；
-`skill_profile` 直接复用，不再重打；`export` 把它写进交付数据集的任务文本，并标明来源。
-抽帧与提示词原样搬运 `dataset_level/caption.py`。
+没有任务标注的条目不再由模型补描述：`check --modules task_success` 碰到这样的条目写一条「没判」的记录
+（`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-2 的 `task_text_missing` 仅报告），不发模型请求；
+这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。v1 的 `pipeline/run.py` 仍有漏斗前补 caption 的兜底，那是 v1 的事。
 
 ### 3.5 `curation check` — 跑检查
 
@@ -204,8 +197,9 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 - `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑、重试补跑都靠它。
 - 进程每开始处理一条 episode，就把它记进 `<run-dir>/checks/<module>/inflight.json`，处理完抹掉。
   进程被杀或自己崩了，Daemon 从这个文件知道「出事时手上是哪几条」（04 篇 §7）。
-- 数据集级模块（`dedup`、`skill_profile`）不分批，一次调用吃整个 keep 集合；
-  `skill_profile --incremental` 在已有技能体系上只处理变动的条目（搬 v1 的 `reassign` / `reprofile`）。
+- 数据集级模块（`dedup`）也是逐条判的（D70）：一条 episode 进来就算它的 action 哈希，和已经判过的比；
+  哈希撞上了才读视频算内容指纹。并发恒为 1（状态在一个进程里），`--resume` 跳过已有记录的条目，
+  再把它们的哈希读回来重建状态。
 
 > **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
 > `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、
@@ -263,13 +257,13 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 `--plan-stage <file>` 传入 planner 为这一档生成的 VLM 请求合并分组；不传就逐模块单发。
 
-`--vlm-reasoning-effort <档位>`（`autolabel` 同样接受）：给了才在每个请求里带 `reasoning_effort`，
+`--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，
 不给什么都不发 —— v1 从不发思考参数，对账固定不给。档位是否在模型的有效档位内，由 Daemon 建任务时校验（03 篇）。
 
 **改了标的条目怎么重判**（D39）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用改标时记下的口径判：
 `v1`（缺省）照 v1 `rejudge._build_rerun`，只跑多视角打分和逐机位复核两层，结论与调用和 v1 一致；
 `full` 走首轮的完整判定（多了任务类型判定、机位提示、判废护栏和取证仲裁）。口径由 `adjudicate-apply` 从
-`decisions.json` 读进来、随每条改标记在批次目录里（§3.9），之后重试这几条沿用同一口径。
+`decisions.json` 读进来、随每条改标记在批次目录里（§3.8），之后重试这几条沿用同一口径。
 
 没带 `--source-manifest` 时，读到才发现缺源文件的 episode 同样剔除（D40）：不写结果行，
 列在输出的 `skipped_missing_source` 里；带了清单的，清单的 `skipped_episodes` 已经把它们排除在外。
@@ -297,7 +291,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 | 阶段 | 读 | 写 |
 |---|---|---|
 | `funnel` | 六项漏斗检查的结果 | `verdicts.jsonl`（每条 keep / drop、硬门失败项、软分、弃权项）和 `keep.txt` |
-| `final` | 上一步 + `dedup`、`skill_profile` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
+| `final` | 上一步 + `dedup` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
 
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
@@ -308,25 +302,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
 就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。
 
-### 3.7 `curation export` — 导出交付数据集
-
-```bash
-curation export --run-dir <dir> --input tos://... --output tos://... \
-                [--revision N] [--incremental] [--concurrency N] --json
-```
-
-按 `passed.json` 导出 `lerobot_curated/`，**含待裁决条目**（v1 的保守放行），不含 `held` 里待补跑的条目。
-任务文本按来源写入：原始标注、自产 caption、人工改标，各带 `instruction_source`。
-`--incremental` 时对比上一次的产物清单，只处理变动部分，详见 `06-delivery-and-report.md` §4。
-`--revision` 省略时取编号最大、带 `commit.json` 的结果版本。上次导出中断、产物缺失或格式参数变了，
-`--incremental` 会自动退回全量导出，原因写在输出的 `full_reason` 里。
-
-mcap / Lance 源照 v1 交付（D44），输出的 `dataset_dir` 写明交付目录：mcap 是 `export/mcap_curated/`（passed 各条的 `.mcap`
-逐字节拷贝，`index.json` 列任务文本与来源，改标只写进清单）；Lance 原格式交付本版本未做，交的是 `export/lance_episodes/`
-（v1 的 `episodes_parquet/` 加 `videos/`），输出带 `note` 说明。这两种每次都是全量导出，`--incremental` 在 `full_reason` 里说明；
-内容没变的文件不重新上传。
-
-### 3.8 `curation report` — 生成报告
+### 3.7 `curation report` — 生成报告
 
 ```bash
 curation report --run-dir <dir> --revision N [--format md,json] --json
@@ -339,41 +315,41 @@ curation report --run-dir <dir> --revision N [--format md,json] --json
 明细表一律写成 Parquet（按 episode 下标排序），供报告页分页读取，见 03 篇 §6。
 延迟明细是追加式的（v1 的 rejudge 已如此），子任务跑过之后重新生成，性能剖析自然包含历次调用。
 
-### 3.9 `curation adjudicate-apply` — 执行人工裁决
+### 3.8 `curation adjudicate-apply` — 执行人工裁决
 
 ```bash
 curation adjudicate-apply --run-dir <dir> --decisions decisions.json --json
 ```
 
-v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型、不导出数据集**。
+v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型**。
 `decisions.json` 由 Daemon 从库里导出，只含**本任务**尚未执行的裁决；裁决不跨任务（D32）。三条裁决线的优先级规则原样保留
 （「整条弃用」压过成败裁决等，见 06 篇 §5）。输出里带两份名单，交给后续步骤：
 
 ```jsonc
 {"applied": 14, "skipped_already_applied": 0,
  "rerun_task_success": [17, 29],     // 改了标、且没有人工成败结论的条目，要按新标注重跑
- "profile_resync": [14, 17, 29, 31], // 技能画像里要重新归位或移除的条目
  "relabel_rerun": "v1"}             // 这一批改标的重判口径（D39），照抄 decisions.json
 ```
 
-`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体，
+`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体（D71 起两种口径行为相同，字段暂留），
 随本次应用的每条改标记在批次目录里；`check --modules task_success` 重判 `rerun_task_success` 时照它选流程（§3.5）。
 
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
-`aggregate` → `check --modules skill_profile --incremental` → `report`。
+`aggregate` → `report`。
 
-### 3.10 `curation verify` — 交付核验
+### 3.9 `curation verify` — 交付核验
 
 ```bash
 curation verify --run-dir <dir> --output tos://... --json
 ```
 
 逐个回读交付目录里的关键文件：存在、大小对、能解析（JSON / parquet 头 / mp4 的 moov / JPEG 魔数）。
-交付数据集的文件按 `export/manifest.json` 的 `files` 与 `dataset_dir`（mcap / Lance 源，D44）去找。
+关键文件就是运行目录里除在产物（`logs/`、`inflight.json`、隐藏与临时文件）之外的全部文件：
+结果版本、报告与明细、证据帧与曲线图。
 搬 v1 的 `_verify_delivery_visible`：写成功不等于读得到，读回来全零的文件 v1 见过六次。
 核验通过才写 `_COMPLETE`。
 
-### 3.11 客户端命令：`curation task …`
+### 3.10 客户端命令：`curation task …`
 
 给 Agent 和脚本用。只做一件事：调 Daemon 的 REST API，把响应原样（`--json`）或渲染后打出来。
 响应里带 `links`，见 §6。连接信息只从参数或环境变量来：`CURATOR_URL`、`CURATOR_USER`、`CURATOR_PASSWORD`。

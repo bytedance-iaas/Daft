@@ -14,6 +14,9 @@ from daemon.orchestr import blocks
 from daemon.orchestr import episode_pipeline as ep
 from daemon.orchestr.workdir import WorkDir
 
+#: A plan from before D70, so that the whole-set path (``full_set``: dedup as one command over the
+#: selection) stays covered - tasks planned then can still be resumed and retried. Dedup as a streaming
+#: segment is covered by ``tests/cli/test_dedup_stream.py`` and the end-to-end runs.
 PLAN = {"schema_version": "2.0", "stages": [
     {"id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 4,
      "modules": ["timestamp_check"], "episodes": "selected"},
@@ -25,8 +28,6 @@ PLAN = {"schema_version": "2.0", "stages": [
      "gates": {"caption": 2}},
     {"id": "vlm", "kind": "vlm", "command": "check", "block": "vlm", "after": "autolabel",
      "modules": ["task_success"], "episodes": "selected", "gates": {"episode": 2}},
-    {"id": "profile", "kind": "vlm", "command": "check", "block": "vlm", "after": "vlm", "full_set": True,
-     "modules": ["skill_profile"], "episodes": "selected", "gates": {"caption": 2}},
     {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"},
 ]}
 
@@ -101,13 +102,6 @@ class Run:
         return {}
 
     # the whole-stage steps (StageRun's): what they did, in order
-    def autolabel(self, selection):
-        if self.journal.done("autolabel"):
-            return
-        self.note("autolabel", "start", None)
-        self.note("autolabel", "done", None)
-        self.stage_done("autolabel", "succeeded")
-
     def check_stage(self, st, episodes, *, fresh, incremental=False):
         if self.journal.done(st["id"]):
             return []
@@ -187,12 +181,12 @@ def test_the_blocks_run_side_by_side_and_never_filter_each_other(tmp_path, monke
     last_vlm = max(at(events, "vlm", "done", e) for e in selection)
     last_frame = max(at(events, "frame", "done", e) for e in selection)
     assert last_vlm < last_frame
-    # autolabel before the block's checks, the full-set steps after them, on the whole selection
-    assert at(events, "autolabel", "done", None) < min(at(events, "vlm", "start", e) for e in selection)
-    assert at(events, "profile", "start", tuple(selection)) > last_vlm
+    # this plan is from before D70 / D72: its autolabel stage is skipped (the caption pass is gone),
+    # its dedup is a whole-set step after the block's checks
+    assert ("autolabel", "start", None) not in events
     assert at(events, "dedup", "start", tuple(selection)) > last_frame
     assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "dedup": "succeeded",
-                          "autolabel": "succeeded", "vlm": "succeeded", "profile": "succeeded"}
+                          "autolabel": "skipped", "vlm": "succeeded"}
     # the store knows where every episode is in each block
     store = EpisodeState(state_path(run.wd.root))
     try:
@@ -235,13 +229,13 @@ def test_a_failing_block_stops_the_other(tmp_path, monkeypatch):
     install_workers(monkeypatch, run, frame_every=50)
 
     def broken(st, episodes, *, fresh, incremental=False):
-        raise RuntimeError("profile went wrong")
+        raise RuntimeError("the full-set stage went wrong")
 
     run.check_stage = broken
     try:
         blocks.run_blocks(run, PLAN, list(range(4)))
     except RuntimeError as exc:
-        assert "profile went wrong" in str(exc)
+        assert "the full-set stage went wrong" in str(exc)
     else:
         raise AssertionError("the failure was not raised")
     assert run._pipeline_abort is None

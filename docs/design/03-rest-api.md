@@ -104,7 +104,6 @@
 | POST | `/api/v1/tasks/{id}/repreflight` | 开始时指纹对不上、用户确认之后调：重新预检，相容就直接开始（D37，§12） |
 | POST | `/api/v1/tasks/{id}/retry` | 重试 → 建子任务，见 §3.2 |
 | POST | `/api/v1/tasks/{id}/continue` | stopped / failed 的任务继续运行 → 建子任务 |
-| POST | `/api/v1/tasks/{id}/reexport` | 重新导出交付数据集 → 建子任务 |
 | GET | `/api/v1/tasks/{id}/subtasks` | 子任务列表 |
 | GET | `/api/v1/tasks/{id}/timeline` | 执行时间线：主流程、子任务、暂停与恢复、结果版本（任务详情页用，W2 补） |
 | GET | `/api/v1/tasks/{id}/plan` | planner 生成的执行计划，**只读** |
@@ -155,11 +154,11 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
               {"id": "video_action_sync", "params": {"sync_plots": "all"}},
-              "visual_quality", "task_success", "dedup", "skill_profile"],
+              "visual_quality", "task_success", "dedup"],
   "embodiment_id": "franka",
   "vlm": {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
           "reasoning_effort": null},              // null = 用模型上的配置；都为空则请求里不带该字段
-  "params": {"vlm_retry": 3, "export": true, "start_now": true,
+  "params": {"vlm_retry": 3, "start_now": true,
              "limits": {"cpu_concurrency": 4, "vlm_parallelism": 32}}   // 上限，可省略
 }
 
@@ -189,14 +188,13 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
    第 5 步取到的源文件清单（`source_manifest.json`，D27）。
 7. 入队。交付目录下已经有别的输入数据集跑出来的批次时，不拦，只在 `warnings` 里提醒一句。
 
-`retry` / `continue` / `reexport` / 执行裁决 在建子任务之前同样走第 4 步里与它相关的检查。
+`retry` / `continue` / 执行裁决 在建子任务之前同样走第 4 步里与它相关的检查。
 
 ### 3.1 `params` 全表
 
 | 键 | 类型 | 默认 | 含义 | 对应 v1 |
 |---|---|---|---|---|
 | `start_now` | bool | true | false 则停在「待启动」 | — |
-| `export` | bool | true | 是否导出交付数据集；false 时之后可用「导出」补做 | `--report-only` 取反 |
 | `vlm_retry` | int 0–5 | 3 | VLM 调用的外层重试次数上限，间隔 1s / 2s / 4s | 新增 |
 | `limits.cpu_concurrency` | int ≥1 | 不设 | CPU 档并发的上限 | 新增 |
 | `limits.vlm_parallelism` | int ≥1 | 不设 | VLM 并行度 N 的上限 | v1 界面上的三个并发输入框 |
@@ -210,7 +208,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
 模块自己的参数走 `modules[].params`，可用的键由 `GET /modules` 给出
 （例：`video_action_sync.sync_plots = flagged | all | off`，取值沿用 v1 的 `pipeline.sync_plots`）。
 
-### 3.2 重试、继续运行、重新导出
+### 3.2 重试与继续运行
 
 ```jsonc
 // POST /api/v1/tasks/{id}/retry
@@ -221,13 +219,12 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   出错但已被别的模块确定拒绝的条目不在其中，它们聚合时就直接拒绝了（D35）。
   出错的条目当初没有进后面的档，所以补跑是从它出错的那一档接着往后跑，把该跑的都跑完。
   模块整体失败（从未产出结果）时，该模块全量跑。
-- 补跑完成后，下游的去重和技能画像如果输入变了，会在同一个子任务里增量同步，不用再点一次。
+- 补跑完成后，下游的去重如果输入变了，会在同一个子任务里增量同步，不用再点一次。
 - **新结果完整生成、上传并核验之后才替换旧的**：判决清单和报告作为一个结果版本整体存放，
   切换的只是库里的 `result_rev`（CAS）。补跑失败或被停止，用户看到的仍是上一版，不会出现清单是新的、报告是旧的。
 - **补跑后任务的终态按当前结果重算**：出错的条目都救回来了，列表和报告上就从「错误」变为「已完成」；
   原先的失败和这次补跑留在任务详情的执行时间线里。
 - `continue` 没有请求体：从断点接着跑主流程里没完成的部分。因 `source_changed` 失败的任务不能继续，只能复制为新任务。
-- `reexport` 没有请求体：走增量导出；创建时 `export=false` 的任务也用它补做首次导出。
 - 三者都建子任务。同一任务已有未结束的子任务时返回 409。
 
 ### 3.3 任务详情的响应
@@ -252,7 +249,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
                                     // 有缺源文件被剔除的条目时另带 "skipped": N（D40），不计入 total
   "usage": {"prompt_tokens": 1820000, "completion_tokens": 64000,
             "reasoning_tokens": 41000, "cached_tokens": 903000, "requests": 742},
-  "pending_adjudication": 10, "delivery_stale": false,
+  "pending_adjudication": 10,
   "active_subtask": null,
   "links": [
     {"rel": "report", "title": "Open QA report", "url": "https://<host>/curation/tasks/task-kqzmrtbwe/report"},
@@ -273,8 +270,8 @@ GET /api/v1/tasks?page=1&page_size=20&state=running&q=droid
 ```
 
 - 页码 + 每页条数 + 总数，与火山控制台的表格一致（D21）。`page_size` 取 10 / 20 / 50 / 100。
-- `state` 按任务自己的状态筛，只有一处例外（D46，C4 1.10.0）：`state=running` 同时列出子任务（重试、继续运行、执行裁决、
-  重新导出）正在排队或运行的已结束任务 —— 界面上它们显示为「运行中」。这些行的 `state` 仍是任务自己的终态，
+- `state` 按任务自己的状态筛，只有一处例外（D46，C4 1.10.0）：`state=running` 同时列出子任务（重试、继续运行、执行裁决）
+  正在排队或运行的已结束任务 —— 界面上它们显示为「运行中」。这些行的 `state` 仍是任务自己的终态，
   `active_subtask` 是那个子任务；按终态筛（如 `state=completed_with_errors`）照样列出它们。子任务暂停时不算运行中。
   概览的运行情况照旧按「任务或子任务」逐份工作计数（§12），不受这条影响。
 - 按创建时间倒序（同一毫秒建的按建的先后）。列表行里带 `progress`、`summary`、`pending_adjudication` 和各状态的模块数，
@@ -501,7 +498,7 @@ GET /api/v1/tasks/{id}/logs?stage=vlm&subtask=&level=warn&cursor=…&limit=200
   重新预检并判断与任务配置是否相容（所选模块仍可用、自选的 episode 仍在数据集里、需要补充的输入都有）。
   自选的编号按数据集自己的编号核对：预检写了 `episode_indices` 时提示写「数据集的编号是 …」，否则写「数据集现在只有 N 条」（F12.8）。
   相容就直接开始，不用再点一次；不相容则任务留在待启动，`incompatibilities` 逐项说明，前端带用户回编辑页。
-- **概览**（`GET /overview`）一次返回：待处理事项（错误的任务、待裁决、交付待导出、有变化的数据集、
+- **概览**（`GET /overview`）一次返回：待处理事项（错误的任务、待裁决、有变化的数据集、
   验证失败的密钥与后端）、运行情况、所选时间段的统计（Token 只算实际调用账）。概览页 2026-09-23 起只用运行情况和时间段两块（07 篇 §4.3），
   待处理事项和数据集计数仍在响应里，给 Agent 用。
 - **时间段**（C4 1.10.0）：`?days=` 取 7、30、90、365，缺省 7，其它值 400 `validation_failed`。7、30 按天切；90 按周切，

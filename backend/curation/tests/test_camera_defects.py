@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from curation.adapters.video_vlm import CAMERA_CHECK_PROTOCOL
 from curation.extensions import camera_defects as CD
 
 
@@ -23,14 +24,14 @@ def _check(glitch="none", shake="none", contamination="none", kind="none", times
 
 def _task(reviews, cams=None):
     return {"passed": None, "score": None,
-            "detail": json.dumps({"cams": cams or sorted(reviews), "video_reviews": reviews})}
+            "detail": json.dumps({"cams": cams or sorted(reviews), "cameras": reviews})}
 
 
 def test_all_cameras_clean():
     s = CD.struct_from_task(_task({"a": _review(_check()), "b": _review(_check())}))
     assert s["passed"] is None and s["score"] is None
     d = json.loads(s["detail"])
-    assert d["protocol"] == "camera-check/1" and d["reason"] == "" and d["clean_ratio"] == 1.0
+    assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["reason"] == "" and d["clean_ratio"] == 1.0
     assert d["items"] == {"glitch": "none", "shake": "none", "contamination": "none"}
     assert d["per_camera"]["a"]["answered"] is True
 
@@ -51,7 +52,7 @@ def test_unknown_when_the_review_failed_or_the_model_did_not_answer():
     assert d["per_camera"]["a"]["error"] == "boom" and d["per_camera"]["b"]["answered"] is False
     assert d["reason"] == "模型未回答 camera_check" and d["clean_ratio"] is None
     d = json.loads(CD.struct_from_task({"passed": None, "score": None, "detail": json.dumps({"cams": ["a"]})})["detail"])
-    assert d["reason"].startswith("未运行逐机位复核")
+    assert d["reason"].startswith("判定请求没有按相机作答")
     d = json.loads(CD.struct_from_task(None)["detail"])
     assert d["reason"].startswith("任务成败判定没有产生结果") and set(d["items"]) == set(CD.CAMERA_CHECK_ITEMS)
 

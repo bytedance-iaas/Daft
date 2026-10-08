@@ -6,7 +6,7 @@ Where each of the three steps happens:
   ``plan.json`` (``stages[].merge``); ``check --plan-stage`` hands it over;
 * **execution** - here, inside the ``check`` process: the units that are ready
   now are grouped (:mod:`curation.planner.merge`) and sent. A unit still waiting
-  for a prerequisite (the task text from autolabel) is simply not passed in yet;
+  for a prerequisite is simply not passed in yet;
   it goes in a later :meth:`MergeExecutor.run` and is never waited for;
 * **receipt** - every unit records how it went out: ``merged``, ``split`` (its
   group broke a limit), ``fallback`` (its part of a merged answer did not parse,

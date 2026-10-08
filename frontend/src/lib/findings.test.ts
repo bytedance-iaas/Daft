@@ -34,12 +34,12 @@ describe('the findings views read the registry and the report 2.0', () => {
     expect(itemLabel(reg, null)).toBe('平台自有项');
     expect(itemLabel(reg, 'XX-9')).toBe('XX-9');
     expect(placeLabel(reg, spec('timestamp_check'))).toBe('CPU 块 · 数值档');
-    expect(placeLabel(reg, spec('skill_profile'))).toBe('VLM 块 · 技能画像');
+    expect(placeLabel(reg, spec('task_success'))).toBe('VLM 块 · VLM 档');
   });
 
   it('a module rejects, asks or only reports by its codes; under report_only only data integrity rejects', () => {
     expect(moduleRole(spec('timestamp_check'))).toBe('blocking');
-    expect(moduleRole(spec('skill_profile'))).toBe('review');
+    expect(moduleRole(spec('eef_video_consistency'))).toBe('blocking');
     expect(moduleRole(spec('visual_quality'))).toBe('info');
     expect(moduleRole(spec('task_success'), 'report_only')).toBe('info');
     expect(moduleRole(spec('timestamp_check'), 'report_only')).toBe('info');

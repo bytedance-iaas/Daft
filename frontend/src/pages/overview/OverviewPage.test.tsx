@@ -72,7 +72,7 @@ describe('概览 (07 §4.3, D36; F6.1)', () => {
       total: 10,
     }));
     const body: Overview = {
-      todo: { error_tasks: 0, adjudication: { tasks: 0, episodes: 0 }, delivery_pending: 0, datasets_changed: 0, credentials_failed: 0, backends_failed: 0 },
+      todo: { error_tasks: 0, adjudication: { tasks: 0, episodes: 0 }, datasets_changed: 0, credentials_failed: 0, backends_failed: 0 },
       running: { running: 7, queued: 0, paused: 0, active },
       recent: { days: 7, bucket: 'day', since: spans[0].start, tasks_finished: 0, episodes_checked: 0, pass_rate: null, tokens_per_bucket: spans.map((s) => ({ ...s, tokens: 0 })) },
       datasets: { total: 0, changed: 0 },

@@ -30,7 +30,7 @@ over while a policy is installed).
 
 Token usage: ``vlm_client`` hands every HTTP request it sends to a sink
 (:func:`vlm_client.set_usage_sink`); here it is booked on W6's two ledgers
-under the command's module (``autolabel``, ``task_success``, ``skill_profile``)
+under the command's module (``task_success``, the EEF module)
 and the request's latency tag as ``call_kind``, and every line is emitted as a
 C3 ``usage`` event and appended to the run directory's ``usage.jsonl``.
 

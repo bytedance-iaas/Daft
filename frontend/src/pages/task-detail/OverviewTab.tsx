@@ -174,7 +174,12 @@ type TokenView = 'module' | 'subtask';
  */
 function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   const reg = useModules();
-  const usage = useQuery({ queryKey: qk.usage(task.id), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })) });
+  const usage = useQuery({
+    queryKey: qk.usage(task.id),
+    queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })),
+    // the per-module rows must follow the totals above while the model is being called
+    refetchInterval: task.state === 'running' || task.active_subtask ? 5000 : false,
+  });
   const [view, setView] = useState<TokenView>('module');
   const u = task.usage;
   const moduleLabel = (id: string) =>
@@ -511,7 +516,7 @@ function MoreInfo({ task }: { task: Task }) {
     { label: zh.taskDetail.cfgEffort, value: task.vlm ? task.vlm.reasoning_effort ?? zh.taskDetail.cfgEffortDefault : '—' },
     { label: zh.taskDetail.cfgRetry, value: task.vlm ? zh.taskDetail.cfgRetryValue(p.vlm_retry ?? 3, p.vlm_hedge !== false) : '—' },
     { label: zh.taskDetail.cfgLimits, value: `CPU ${p.limits?.cpu_concurrency ?? zh.taskForm.cpuLimitPlaceholder} · VLM ${p.limits?.vlm_parallelism ?? zh.common.unlimited}` },
-    { label: zh.taskDetail.cfgExport, value: `${p.export === false ? zh.taskDetail.noExport : zh.taskDetail.yesExport}${p.clips ? ` · ${zh.taskDetail.clipsOn}` : ''}` },
+    ...(p.clips ? [{ label: zh.taskDetail.cfgClips, value: zh.taskDetail.clipsOn }] : []),
   ];
   return (
     <Collapse>

@@ -14,7 +14,7 @@ import { TaskStateTag } from '../../components/StateTag';
 import { RebindKeysBanner } from '../../features/tasks/RebindKeys';
 import { actionLabel, TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
-import { actionsFor, activeSubtask, exportedBefore, isTerminalState, subtaskLabel, type ActionPlan } from '../../lib/taskView';
+import { actionsFor, activeSubtask, isTerminalState, subtaskLabel, type ActionPlan } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { LogsTab } from './LogsTab';
 import { OverviewTab } from './OverviewTab';
@@ -80,13 +80,12 @@ export function TaskDetailPage() {
   if (!task.data) return <Spin style={{ display: 'block', margin: '80px auto' }} />;
   const t = task.data;
   const subs = subtasks.data?.items ?? [];
-  const exported = exportedBefore(t.progress.stages, subs);
   const running = activeSubtask(t);
   const adjudicable = actionsFor(t).more.includes('adjudicate');
   const plan = headerPlan(t);
   // 查看报告 comes first and blue, then 人工裁决 (requester, third round).
   const reportFirst = plan.primary === 'report';
-  const run = (key: Parameters<typeof actions.run>[0]) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, deliveryUri: t.output.uri, exported });
+  const run = (key: Parameters<typeof actions.run>[0]) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, deliveryUri: t.output.uri });
 
   return (
     <div>
@@ -102,7 +101,6 @@ export function TaskDetailPage() {
                 <Tag color="arcoblue">{zh.taskList.pendingBadge(t.pending_adjudication)}</Tag>
               </Link>
             ) : null}
-            {t.delivery_stale ? <Tag color="orange">{exported ? zh.taskList.deliveryStale : zh.taskList.deliveryNeverExported}</Tag> : null}
           </Space>
         }
         description={
@@ -139,7 +137,6 @@ export function TaskDetailPage() {
             <TaskActionButtons
               plan={reportFirst ? { ...plan, primary: null } : plan}
               held={t.summary?.held}
-              exported={exported}
               primaryType={adjudicable && t.pending_adjudication ? 'secondary' : 'primary'}
               size="default"
               onAction={run}
@@ -153,19 +150,6 @@ export function TaskDetailPage() {
           <Alert type="error" content={`${zh.taskDetail.stateReason}${t.state_reason}`} />
         ) : null}
         {running ? <Alert type="info" content={zh.taskDetail.subtaskRunning(subtaskLabel(running, subs), zh.state[running.state])} /> : null}
-        {t.delivery_stale ? (
-          <Alert
-            type="warning"
-            title={exported ? zh.taskDetail.stale : zh.taskDetail.staleNever}
-            content={exported ? zh.taskDetail.staleDesc : zh.taskDetail.staleNeverDesc}
-            action={
-              <Button size="small" type="primary" disabled={Boolean(t.active_subtask)} onClick={() => run('export')}>
-                {exported ? zh.actions.reexport : zh.actions.export}
-              </Button>
-            }
-            data-testid="delivery-banner"
-          />
-        ) : null}
         <RebindKeysBanner task={t} />
         {live ? (
           <Typography.Text type="secondary" style={{ fontSize: 12 }} data-testid="live-mode" data-mode={mode}>

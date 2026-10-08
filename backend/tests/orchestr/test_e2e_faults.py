@@ -73,14 +73,12 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     d = daemon()
     first = d.wait(d.create()["id"])
     assert first["state"] == "completed_with_errors", json.dumps(first)[:2000]
-    assert first["summary"]["held"] == 1 and first["delivery_stale"] is False
+    assert first["summary"]["held"] == 1
     ts = {m["id"]: m for m in first["modules"]}["task_success"]
     assert (ts["state"], ts["episodes_error"]) == ("completed_with_errors", 1)
     rd = d.run_dir(first["id"])
     assert 0 not in _passed(rd, 1)                          # not delivered ...
     assert 0 in results(rd, "dedup") and 0 in results(rd, "visual_quality")   # ... the rest judged it (D57)
-    manifest = json.load(open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8"))
-    assert 0 not in {e["episode_index"] for e in manifest["episodes"]}
     batch = d.delivery(first["run_id"])
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
     assert not os.path.exists(os.path.join(d.delivery(), "latest"))   # not a complete success
@@ -93,22 +91,17 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     assert r.json()["subtask"]["scope"] == {"modules": ["task_success"], "episodes": "errors"}
     done = d.wait(first["id"])
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
-    assert done["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
-                               "pass_rate": 0.625}
+    assert done["summary"] == {"total": 8, "passed": 4, "rejected": 4, "held": 0, "review": 4,
+                               "pass_rate": 0.5}
     assert 0 in _passed(rd, 2) and 0 not in _passed(rd, 1)  # r0001 is kept as it was
     new_parts = set(os.listdir(parts_dir)) - parts_before
     rerun = [r for part in new_parts for r in read_jsonl(os.path.join(parts_dir, part))]
     assert [r["episode_index"] for r in rerun] == [0]       # only the held one ran again
-    assert done["delivery_stale"] is True                   # the verdicts changed: re-export
     timeline = d.api("GET", f"/tasks/{first['id']}/timeline").json()["items"]
     assert [e["revision"] for e in timeline if e["kind"] == "revision"] == [1, 2]
     subs = d.api("GET", f"/tasks/{first['id']}/subtasks").json()["items"]
     assert [(s["kind"], s["state"], s["result_rev"]) for s in subs] == [("retry", "succeeded", 2)]
 
-    r = d.api("POST", f"/tasks/{first['id']}/reexport")
-    assert r.status_code == 202, r.text
-    exported = d.wait(first["id"])
-    assert exported["delivery_stale"] is False and exported["state"] == "succeeded"
     with open(os.path.join(d.delivery(), "latest"), encoding="utf-8") as fh:
         assert fh.read().strip() == first["run_id"]     # now complete: latest moves
 
@@ -122,12 +115,12 @@ def test_the_two_blocks_overlap_and_an_error_in_one_stops_nothing(daemon, faulty
     faulty("FAKE_ERROR", "timestamp_check:3")
     faulty("FAKE_SLOW", "visual_quality:0.5")
     d = daemon()
-    task = d.wait(d.create(params={"start_now": True, "export": False, "vlm_hedge": False,
+    task = d.wait(d.create(params={"start_now": True, "vlm_hedge": False,
                                    "limits": {"cpu_concurrency": 1}})["id"], timeout=240)
     assert task["state"] == "completed_with_errors", json.dumps(task)[:2000]
     rd = d.run_dir(task["id"])
     assert results(rd, "timestamp_check")[3]["status"] == "error"
-    for module in ("visual_quality", "video_action_sync", "dedup", "task_success", "skill_profile"):
+    for module in ("visual_quality", "video_action_sync", "dedup", "task_success"):
         assert 3 in results(rd, module), module
     with open(os.path.join(rd, "revisions", "r0001", "held.json"), encoding="utf-8") as fh:
         assert [e["episode_index"] for e in json.load(fh)["episodes"]] == [3]
@@ -158,7 +151,7 @@ def test_a_module_that_fails_as_a_whole_leaves_the_rest_running_and_a_retry_runs
     assert r.status_code == 202, r.text
     done = d.wait(first["id"])
     assert done["state"] == "succeeded", json.dumps(done)[:2000]
-    assert done["summary"]["passed"] == 5 and done["summary"]["held"] == 0
+    assert done["summary"]["passed"] == 4 and done["summary"]["held"] == 0
     assert {m["id"]: m["state"] for m in done["modules"]}["task_success"] == "succeeded"
 
 

@@ -7,8 +7,7 @@ Checks (all on by default):
   groups must match.
 * **verdict-only** modules (model-driven, not reproducible):
     - ``autolabel``     : whether each unlabeled episode got a caption;
-    - ``task_success``  : final verdict + the rules it went through;
-    - ``skill_profile`` : whether each episode got a family + its label-audit tier.
+    - ``task_success``  : final verdict + the rules it went through.
   The share of differing episodes must stay under ``--max-diff-rate`` and, with
   ``--noise-floor`` (a second v1 dump of the same data), under
   ``--noise-multiplier`` x v1's own difference rate.
@@ -40,7 +39,7 @@ from . import records as R
 
 STRICT_DEFAULT = ("timestamp_check", "kinematic_limits", "motion_quality",
                   "visual_quality", "video_action_sync", "dedup", "camera_defects")
-VERDICT_DEFAULT = ("autolabel", "task_success", "skill_profile")
+VERDICT_DEFAULT = ("autolabel", "task_success")
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +95,6 @@ class Side:
     def dedup(self) -> dict:
         return self._json("dedup.json", {})
 
-    def skill_profile(self) -> dict:
-        return self._json("skill_profile.json", {})
-
     def final(self) -> dict:
         return self._json("final.json", {})
 
@@ -125,9 +121,6 @@ class V2Side(Side):
     * ``autolabel.jsonl``     <- ``autolabel/captions.jsonl`` (an ``unclear`` or failed
       caption is v1's empty caption);
     * ``dedup.json``          <- ``checks/dedup/groups.json``;
-    * ``skill_profile.json``  <- ``checks/skill_profile/assignments.jsonl`` and the result
-      revision's ``label_audit.json`` (skill_profile's audit with the kill guard's holds
-      and the task line merged in, as v1's report has it);
     * ``final.json``          <- the revision's ``passed`` / ``reject`` / ``held`` and the
       ``review`` view without pure appeal entries (v1 has no appeal queue in review.json);
     * ``dump.json`` ``tape``  <- ``parity.json`` written by ``python -m parity run-v2``.
@@ -175,22 +168,6 @@ class V2Side(Side):
 
     def dedup(self) -> dict:
         return self._json(os.path.join("checks", "dedup", "groups.json"), {})
-
-    def skill_profile(self) -> dict:
-        from .dump_v1 import _normalize_audit
-
-        p = os.path.join(self.path, "checks", "skill_profile", "assignments.jsonl")
-        if not os.path.isfile(p):
-            return {"ran": False, "assignments": [], "label_audit_queue": []}
-        keys = ("family", "subskill", "caption", "grouping_text", "grouping_text_source")
-        rows = [{"episode_index": int(r["episode_index"]), **{k: r.get(k, "") for k in keys}}
-                for r in R.read_jsonl(p)]
-        audit = {}
-        if self.revision_dir:
-            audit = self._json(os.path.relpath(os.path.join(self.revision_dir,
-                                                            "label_audit.json"), self.path), {})
-        return {"ran": True, "assignments": sorted(rows, key=lambda r: r["episode_index"]),
-                "label_audit_queue": _normalize_audit(audit)}
 
     def final(self) -> dict:
         if not self.revision_dir:
@@ -242,16 +219,6 @@ def _strict_rows(side: Side, module: str) -> dict[int, dict] | None:
     if module == "autolabel":
         rows = side.autolabel()
         return rows or None
-    if module == "skill_profile":
-        sp = side.skill_profile()
-        if not sp.get("ran"):
-            return None
-        rows: dict[int, dict] = {}
-        for a in sp.get("assignments") or []:
-            rows.setdefault(a["episode_index"], {})["assignment"] = a
-        for q in sp.get("label_audit_queue") or []:
-            rows.setdefault(q["episode_index"], {}).setdefault("audit", []).append(q)
-        return rows
     if not side.has_records(module):
         return None
     return {i: R.comparable(r) for i, r in side.records(module).items()}
@@ -339,30 +306,24 @@ def compare_adjudicated_task_v2(g: Side, c: Side, max_diffs: int,
                                 exclude: set[int] = frozenset()) -> dict:
     """Plan A (2026-09-24): both sides are ``run-v2`` directories, the golden one recorded
     with ``--fake-vlm --decisions``. The re-judged records (parts after the first run's) are
-    compared exactly, bookkeeping fields included — same decisions file, so they match."""
+    compared exactly, bookkeeping fields included — same decisions file, so they match. The
+    one exception is ``relabel_rerun``: under the single judgement the recorded mode changes
+    nothing, so a candidate run with the other mode is still an exact replay."""
     g_eps = g.judged_again("task_success") - set(exclude)
     c_eps = c.judged_again("task_success") - set(exclude)
-    gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
-    cr = {i: R.comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
+
+    def comparable(rec: dict) -> dict:
+        details = dict(rec.get("details") or {})
+        details.pop("relabel_rerun", None)
+        return R.comparable({**rec, "details": details})
+
+    gr = {i: comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
+    cr = {i: comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
     out = _strict_diff(gr, cr, max_diffs)
     out["judged_again"] = sorted(set(gr) | set(cr))
     out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
                                                    | c.judged_again("task_success")))
     return out
-
-
-def compare_assignments(g: Side, c: Side, max_diffs: int) -> dict:
-    """The skill assignments after the decisions (v1's ``_sync_profile``), exactly."""
-    def rows(side):
-        sp = side.skill_profile()
-        if not sp.get("ran"):
-            return None
-        return {a["episode_index"]: a for a in sp.get("assignments") or []}
-
-    ga, ca = rows(g), rows(c)
-    if ga is None and ca is None:
-        return {"mode": "strict", "status": "skipped", "note": "no profile on either side"}
-    return _strict_diff(ga or {}, ca or {}, max_diffs)
 
 
 # ---------------------------------------------------------------------------
@@ -380,16 +341,6 @@ def verdict_keys(side: Side, module: str) -> dict[int, object]:
         return {i: _task_key(r) for i, r in side.records("task_success").items()}
     if module == "autolabel":
         return {i: bool(r.get("has_caption")) for i, r in side.autolabel().items()}
-    if module == "skill_profile":
-        sp = side.skill_profile()
-        tiers = {r["episode_index"]: r["tier"] for r in sp.get("label_audit_queue") or []}
-        out = {}
-        for a in sp.get("assignments") or []:
-            fam = a.get("family") or ""
-            out[a["episode_index"]] = (fam not in ("", "未归类"), tiers.get(a["episode_index"]))
-        for idx, tier in tiers.items():
-            out.setdefault(idx, (False, tier))
-        return out
     raise ValueError(f"no verdict-level rule for module {module!r}")
 
 
@@ -534,13 +485,11 @@ def run_compare(args) -> dict:
         strict, verdict_only = [], []
         result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs,
                                                                      exclude)
-        result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
     elif g_v2_adj:
         # plan A: the golden is a recorded v2 adjudication (run-v2 --fake-vlm --decisions)
         strict, verdict_only = [], []
         result["modules"]["task_success"] = compare_adjudicated_task_v2(g, c, args.max_diffs,
                                                                         exclude)
-        result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
     for module in strict:
         result["modules"][module] = compare_strict_module(g, c, module, args.max_diffs)
     for module in verdict_only:

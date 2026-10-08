@@ -1,16 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "curation adjudicate-apply --json (schema 1.0)",
-  "description": "Applies decisions to the verdicts without calling a model or exporting (design doc 02, section 3.9). The two lists tell the Daemon what to rerun: task_success for relabelled episodes without a human verdict, then the skill profile resync.",
+  "description": "Applies decisions to the verdicts without calling a model or exporting (design doc 02, section 3.9). rerun_task_success tells the Daemon what to judge again: the relabelled episodes without a human verdict.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "applied", "skipped_already_applied", "rerun_task_success", "profile_resync", "label_changes"],
+  "required": ["schema_version", "applied", "skipped_already_applied", "rerun_task_success", "label_changes"],
   "properties": {
     "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
     "applied": {"type": "integer", "minimum": 0},
     "skipped_already_applied": {"type": "integer", "minimum": 0},
     "rerun_task_success": {"$ref": "common.schema.json#/$defs/episode_list"},
-    "profile_resync": {"$ref": "common.schema.json#/$defs/episode_list"},
     "relabel_rerun": {"enum": ["v1", "full"], "description": "the protocol recorded for this application's relabels (D39); check --modules task_success judges rerun_task_success with it. A relabel listed again because its follow-up verdict lapsed keeps the protocol recorded when it was applied"},
     "label_changes": {
       "type": "array",

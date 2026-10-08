@@ -82,14 +82,14 @@ const INTEGRITY = {
 };
 
 describe('the report sections (06 §6.2, F6.2)', () => {
-  it('has a view for the eight v1 modules, the EEF module and the data integrity module', () => {
+  it('has a view for v1\'s seven modules, the EEF module and the data integrity module', () => {
     expect(Object.keys(SECTION_VIEWS).sort()).toEqual(
-      ['data_integrity', 'dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'skill_profile', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
+      ['data_integrity', 'dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
     );
   });
 
   const cases: [string, Record<string, unknown>][] = [
-    ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
+    ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
     ['eef_video_consistency', EEF],
     ['data_integrity', INTEGRITY],
   ];

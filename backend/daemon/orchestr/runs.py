@@ -1,10 +1,11 @@
 """The main run and the four subtasks (design doc 00 §4 and §4.1, 17 §3).
 
 Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's two blocks side by side
-(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame on the episode pipeline, then dedup on the
-whole selection; the VLM block's autolabel, vlm on the episode pipeline, then the skill profile on the
-whole selection - no stage filters another (D57). Then ``final`` (aggregate: the policy verdicts into
-revision N), ``report`` (commit.json last), ``export`` when the task exports, and ``verify``: the run
+(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame -> dedup and the VLM block's vlm, every
+stage on the episode pipeline (an episode without a task text is not judged by task_success, D72; plans
+from before carry an autolabel stage, now skipped) - no stage filters another (D57). Then ``final``
+(aggregate: the policy verdicts into
+revision N), ``report`` (commit.json last) and ``verify``: the run
 directory is synced to ``<delivery>/<run_id>/``, read back, ``_COMPLETE`` written; only then does
 ``result_rev`` switch (D25) and ``latest`` move for a complete batch (D29, P13). Every per-episode stage
 runs with ``--resume``: after a pause or a crash nothing finished is done twice.
@@ -15,11 +16,9 @@ runs with ``--resume``: after a pause or a crash nothing finished is done twice.
   whole on every episode - then dedup / the skill profile when they erred or were asked for, into a new
   revision (design doc 17 §3.4; D35).
 * ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
-  relabelled episodes without a human verdict -> skill_profile ``--incremental`` on the whole selection
-  when it has something to re-file -> aggregate final -> report -> verify. dedup is not run again (its
-  groups stand; aggregate picks each group's keeper after the decisions). It never exports (D9); the
-  delivery becomes stale.
-* ``reexport``: ``export --incremental`` of the current revision, then verify.
+  relabelled episodes without a human verdict
+  -> aggregate final -> report -> verify. dedup is not run again (its groups stand; aggregate picks
+  each group's keeper after the decisions).
 """
 from __future__ import annotations
 
@@ -35,10 +34,8 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
-#: the per-episode stages (the episode pipeline); dedup and profile take the whole selection
-EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: the full-set stages (design doc 17 §3.2)
-FULL_SET = tuple(registry.FULL_SET_STAGES)
+#: the stages the episode pipeline runs, dedup included since D70 (design doc 17 §3.2)
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm", "dedup")
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"
@@ -52,8 +49,7 @@ class StageRun(Run):
     """The stage runners the main run and the retry share."""
 
     # -- a check stage --------------------------------------------------------------
-    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool,
-                    incremental: bool = False) -> list[int]:
+    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool) -> list[int]:
         """Run one plan stage of ``check`` over ``episodes``; returns the survivors.
 
         ``fresh``: the main run (modules without episodes become succeeded with 0);
@@ -63,7 +59,6 @@ class StageRun(Run):
         out_file = self.wd.episodes_file(self.run_key, f"{sid}.out")
         if self.journal.done(sid):
             return read_lines(out_file) or []
-        post = sid in FULL_SET
         self.progress(sid, state="running", done=0, total=len(episodes))
         if not episodes:
             if fresh:
@@ -80,10 +75,7 @@ class StageRun(Run):
                 "--run-dir", str(self.wd.root),
                 "--episodes", self.episodes_arg(f"{sid}.in", episodes),
                 "--plan-stage", str(self.wd.plan), "--survivors-out", str(out_file)]
-        if not post:
-            argv.append("--resume")
-        if incremental:
-            argv.append("--incremental")
+        argv.append("--resume")
         if vlm:
             argv += self.vlm_args()
         argv += self.module_param_args(mods)
@@ -92,18 +84,14 @@ class StageRun(Run):
         with self.cpu_slots(st, len(episodes)) as workers:
             if workers is not None and sid in EPISODE_STAGES:
                 argv += ["--concurrency", str(workers)]
-            outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
+            outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=True,
                                inflight_modules=mods, episodes=len(episodes))
         if outcome.ok:
             doc = outcome.doc.get("modules") or {}
             any_error = False
             for m in mods:
                 entry = doc.get(m) or {}
-                if post:
-                    counts = entry.get("episodes") or {}
-                    total, errors = int(counts.get("total") or 0), int(counts.get("error") or 0)
-                else:
-                    total, errors = self.counts_from_records(m)
+                total, errors = self.counts_from_records(m)
                 any_error |= errors > 0
                 self.module_result(m, "completed_with_errors" if errors else "succeeded",
                                    total=total, errors=errors, digest=entry.get("input_digest"))
@@ -117,7 +105,7 @@ class StageRun(Run):
         if outcome.status == "module_failed":
             msg = outcome.message or outcome.reason()
             for m in mods:
-                total, errors = (0, 0) if post else self.counts_from_records(m)
+                total, errors = self.counts_from_records(m)
                 self.module_result(m, "failed", total=total, errors=errors,
                                    digest=input_digest(episodes), error=msg[:2000])
             self.log(sid, "error", f"{names(mods)}整体失败：{msg}。别的模块照常跑；这些条目都待补跑，等「重试」")
@@ -183,33 +171,6 @@ class StageRun(Run):
                 out += ["--param", f"{mid}.{key}={value}"]
         return out
 
-    # -- autolabel ------------------------------------------------------------------
-    def autolabel(self, episodes: list[int]) -> None:
-        sid = "autolabel"
-        if self.journal.done(sid) or not episodes:
-            if not self.journal.done(sid):
-                self.stage_done(sid, "skipped")
-            return
-        self.progress(sid, state="running", done=0, total=0)
-        argv = ["autolabel", *self.source_args(), "--run-dir", str(self.wd.root),
-                "--episodes", self.episodes_arg("autolabel.in", episodes), "--resume",
-                "--plan-stage", str(self.wd.plan), *self.vlm_args()]
-        outcome = self.cli(sid, argv, need_input=True, need_vlm=True, crash_retry=True,
-                           episodes=len(episodes))
-        if outcome.ok:
-            c = outcome.doc.get("counts") or {}
-            self.log(sid, "info", f"给 {c.get('total', 0)} 条没有任务标注的 episode 补描述："
-                                  f"{c.get('ok', 0)} 条补上、{c.get('unclear', 0)} 条看不清、"
-                                  f"{c.get('error', 0)} 条出错")
-            self.stage_done(sid, "completed_with_errors" if c.get("error") else "succeeded")
-            return
-        if outcome.status == "module_failed":
-            self.log(sid, "error", f"补描述整体失败：{outcome.message or outcome.reason()}。"
-                                   "没有标注的条目，任务成败判定会待补跑")
-            self.stage_done(sid, "failed")
-            return
-        self.fail_on(outcome, sid)
-
     # -- aggregate ------------------------------------------------------------------
     def aggregate(self, sid: str, phase: str, rev: int, modules: list[str],
                   selection: list[int]) -> dict:
@@ -256,23 +217,16 @@ class StageRun(Run):
         self.stage_done(sid, "succeeded")
 
     # -- publishing -------------------------------------------------------------------
-    def publish(self, rev: int, *, export: bool) -> None:
-        """Export (optional), sync, verify, then switch the revision - one delivery at a time."""
+    def publish(self, rev: int) -> None:
+        """Sync, verify, then switch the revision - one delivery directory at a time."""
         with self.orch.locks.lock(self.task.delivery_key):
             with self.delivery() as d:
-                if export and not self.journal.done("export"):
-                    incremental = (self.wd.root / "export" / "manifest.json").is_file()
-                    doc = self.export("export", d, rev, incremental=incremental)
-                    self.stage_done("export", "succeeded", fingerprint=doc.get("fingerprint"))
                 if not self.journal.done("verify"):
                     vdoc = self.sync_and_verify("verify", d)
                     self.log("verify", "info", f"交付核验通过：回读 {vdoc.get('checked', 0)} 个文件，"
                                                "写了 _COMPLETE")
                     self.stage_done("verify", "succeeded")
                 self.switch_revision(rev)
-                fingerprint = self.journal.stage("export").get("fingerprint")
-                if export and fingerprint:
-                    self.repo.set_export_fingerprint(self.task_id, fingerprint, False)
                 self.refresh_results(rev)
                 self.maybe_latest(d, "verify")
 
@@ -291,10 +245,7 @@ class MainRun(StageRun):
             self.repo.set_subtask_progress(self.sub_id, doc)
 
     def stage_ids(self, plan: dict) -> list[str]:
-        ids = [s["id"] for s in plan["stages"]] + ["report"]
-        if (self.task.params or {}).get("export", True):
-            ids.append("export")
-        return ids + ["verify"]
+        return [s["id"] for s in plan["stages"]] + ["report", "verify"]
 
     def execute(self) -> str:
         from .blocks import run_blocks
@@ -302,6 +253,7 @@ class MainRun(StageRun):
         self.reload()
         if self.sub_id is not None:                      # a resume, maybe days later
             self.ensure_local()
+            self.forget_listing()
         self.require_current_format()
         plan = planning.ensure_plan(self)
         self.plan_progress(self.stage_ids(plan), plan)
@@ -314,7 +266,7 @@ class MainRun(StageRun):
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=bool((self.task.params or {}).get("export", True)))
+        self.publish(rev)
         return self.recomputed_state(rev)
 
 
@@ -334,6 +286,7 @@ class RetryRun(StageRun):
 
         self.reload()
         self.ensure_local()
+        self.forget_listing()
         self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
@@ -344,8 +297,7 @@ class RetryRun(StageRun):
         selection = self.selection()
         left_out = set(all_skipped(str(self.wd.root)))        # missing source files (D40)
         judged = [e for e in selection if e not in left_out]
-        stream = [s for s in plan["stages"] if s.get("command") == "check" and not s.get("full_set")]
-        full = [s for s in plan["stages"] if s.get("full_set")]
+        stream = [s for s in plan["stages"] if s.get("command") == "check"]
         todo: dict[str, tuple[list[str], list[int]]] = {}
         for st in stream:
             mods, eps = [], set()
@@ -362,11 +314,7 @@ class RetryRun(StageRun):
                     eps |= need
                     mods += [x for x in (host, m) if x not in mods]
             todo[st["id"]] = ([m for m in st["modules"] if m in mods], sorted(eps))
-        vlm = todo.get("vlm", ([], []))
-        captions = vlm[1] if "task_success" in vlm[0] and any(
-            s.get("command") == "autolabel" for s in plan["stages"]) else []
-        ids = (["autolabel"] if captions else []) + [s["id"] for s in stream] + [s["id"] for s in full] \
-            + ["final", "report", "verify"]
+        ids = [s["id"] for s in stream] + ["final", "report", "verify"]
         self.plan_progress(ids, plan)
         pairs = sum(len(m) * len(e) for m, e in todo.values())
         self.journal.set(retry={sid: {"modules": m, "episodes": e} for sid, (m, e) in todo.items()},
@@ -375,8 +323,6 @@ class RetryRun(StageRun):
                                    f"出错或没有结果的模块（共 {pairs} 对）"
                  + (f"，整体失败的模块全量重跑：{names(sorted(failed))}" if failed else ""))
         rev = self.allocate_revision()
-        if captions:
-            self.autolabel(captions)
         for st in stream:
             self.check_intent()
             mods, eps = todo[st["id"]]
@@ -385,31 +331,12 @@ class RetryRun(StageRun):
             elif not self.journal.done(st["id"]):
                 self.stage_done(st["id"], "skipped")
                 self.progress(st["id"], note="没有需要补跑的条目", force=True)
-        for st in full:
-            self.check_intent()
-            self.sync_full_set(st, selection, scope, rows)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=False)
+        self.publish(rev)
         return self.recomputed_state(rev)
-
-    def sync_full_set(self, st: dict, episodes: list[int], scope: set, rows: dict) -> None:
-        """dedup / the profile again when they erred, failed, went stale or were asked for (full selection)."""
-        sid = st["id"]
-        module = st["modules"][0]
-        row = rows.get(module)
-        if self.journal.done(sid):
-            return
-        erred = row is None or row.state in ("failed", "stale") or row.episodes_error > 0
-        if not (erred or module in scope):
-            self.stage_done(sid, "skipped")
-            self.progress(sid, note="没有出错，沿用上一版结果", force=True)
-            return
-        # --incremental builds on an existing profile; without one (never ran, failed, empty) it runs in full
-        incremental = sid == "profile" and not (row is None or row.state == "failed" or row.episodes_total == 0)
-        self.check_stage(st, episodes, fresh=True, incremental=incremental)
 
 
 class AdjudicationRun(StageRun):
@@ -425,7 +352,7 @@ class AdjudicationRun(StageRun):
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
         ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) \
-            + (["profile"] if "profile" in stages else []) + ["final", "report", "verify"]
+            + ["final", "report", "verify"]
         self.plan_progress(ids, plan)
         rev = self.allocate_revision()
         selection = self.selection()
@@ -434,22 +361,10 @@ class AdjudicationRun(StageRun):
         if "vlm" in stages and "task_success" in stages["vlm"].get("modules", []):
             self.rejudge(stages["vlm"], rerun)
         self.check_intent()
-        rows = self.module_rows()
-        if "profile" in stages and not self.journal.done("profile"):
-            # the profile files the whole selection (design doc 17 §3.2): a relabel is filed again
-            row = rows.get("skill_profile")
-            if applied.get("resync") or row is None or row.state in ("failed", "stale"):
-                self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
-                full = row is None or row.state == "failed"
-                self.check_stage(stages["profile"], selection, fresh=True, incremental=not full)
-            else:
-                self.stage_done("profile", "skipped")
-                self.progress("profile", note="画像没有需要重新归类的条目", force=True)
-        self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
-        self.publish(rev, export=False)
+        self.publish(rev)
         ids_applied = applied.get("ids") or []
         if ids_applied:
             self.repo.mark_adjudications_applied(ids_applied, self.sub_id)
@@ -462,10 +377,7 @@ class AdjudicationRun(StageRun):
         if entry.get("done"):
             return entry.get("applied") or {}
         self.progress(sid, state="running", done=0, total=1)
-        rows, lapsed = self.orch.decisions_to_apply(self.reload())
-        if lapsed:
-            self.log(sid, "info", f"{len(lapsed)} 条追问的回答已作废（打开它的标注判断后来改了），不执行："
-                     + "、".join(f"ep{a.episode_index:06d}" for a in lapsed[:20]))
+        rows = self.orch.decisions_to_apply(self.reload())
         rerun_how = (self.subtask.scope or {}).get("relabel_rerun") or "v1"
         doc = {"schema_version": "1.0", "relabel_rerun": rerun_how, "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
@@ -479,8 +391,7 @@ class AdjudicationRun(StageRun):
             self.fail_on(outcome, sid)
         self.copy_decisions()
         res = outcome.doc
-        applied = {"ids": [a.id for a in rows], "rerun": list(res.get("rerun_task_success") or []),
-                   "resync": list(res.get("profile_resync") or [])}
+        applied = {"ids": [a.id for a in rows], "rerun": list(res.get("rerun_task_success") or [])}
         self.log(sid, "info", f"执行裁决：应用 {res.get('applied', 0)} 条（{res.get('skipped_already_applied', 0)} "
                               f"条之前已应用）；按新标注重跑任务成败判定 {len(applied['rerun'])} 条")
         self.stage_done(sid, "succeeded", applied=applied)
@@ -547,38 +458,8 @@ class AdjudicationRun(StageRun):
         self.stage_done(sid, "completed_with_errors" if errors else "succeeded")
 
 
-class ReexportRun(StageRun):
-    """``export --incremental`` of the current revision, then verify (06 §4; D9)."""
-
-    kind = "reexport"
-
-    def execute(self) -> str:
-        self.reload()
-        rev = int(self.task.result_rev or 0)
-        if rev < 1:
-            raise TaskFailure("no_result", "这个任务还没有结果，没什么可导出的")
-        self.ensure_local()
-        self.require_current_format()
-        self.plan_progress(["export", "verify"])
-        with self.orch.locks.lock(self.task.delivery_key):
-            with self.delivery() as d:
-                if not self.journal.done("export"):
-                    doc = self.export("export", d, rev, incremental=True)
-                    self.stage_done("export", "succeeded", fingerprint=doc.get("fingerprint"))
-                if not self.journal.done("verify"):
-                    self.sync_and_verify("verify", d)
-                    self.stage_done("verify", "succeeded")
-                fingerprint = self.journal.stage("export").get("fingerprint")
-                current = self.current_fingerprint(rev)
-                self.repo.set_export_fingerprint(self.task_id, fingerprint,
-                                                 current is None or current != fingerprint)
-                self.maybe_latest(d, "verify")
-        self.reload()
-        return self.recomputed_state(rev)
-
-
 RUNS = {"main": MainRun, "resume": ResumeRun, "retry": RetryRun,
-        "apply_adjudication": AdjudicationRun, "reexport": ReexportRun}
+        "apply_adjudication": AdjudicationRun}
 
 
 def run_for(orch, task, subtask=None) -> Run:

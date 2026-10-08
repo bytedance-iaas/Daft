@@ -178,10 +178,6 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
         ) : null}
         <Space size={40} className="adv-switches">
           <label className="switch-label">
-            <Switch checked={v.exportDataset} onChange={(x) => set({ exportDataset: x })} aria-label={zh.taskForm.exportDataset} />
-            {zh.taskForm.exportDataset}
-          </label>
-          <label className="switch-label">
             <Switch checked={v.clips} onChange={(x) => set({ clips: x })} aria-label={zh.taskForm.clips} />
             {zh.taskForm.clips}
           </label>

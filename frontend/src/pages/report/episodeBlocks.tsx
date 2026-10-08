@@ -376,20 +376,6 @@ function DedupBlock({ record, onEpisode }: BlockProps) {
   );
 }
 
-function SkillBlock({ record }: BlockProps) {
-  const d = details(record);
-  const K = E().skill;
-  const facts: Fact[] = [];
-  if (str(d.family)) facts.push({ label: K.family, value: str(d.family)! });
-  if (str(d.subskill)) facts.push({ label: K.subskill, value: str(d.subskill)! });
-  if (str(d.caption)) facts.push({ label: K.caption, value: str(d.caption)! });
-  if (str(d.grouping_text)) {
-    const src = str(d.grouping_text_source);
-    facts.push({ label: K.grouping, value: `${str(d.grouping_text)}${src ? K.groupingSource(zh.sections.task.sourceNames[src] ?? src) : ''}` });
-  }
-  return <Facts facts={facts} />;
-}
-
 /**
  * EEF–视频一致性 (D49, F5.12): the conclusion and why, the CPU's sub-item readings per camera, every
  * review window with the model's answer and the marked crops it was shown, and the CPU's own frames
@@ -592,7 +578,6 @@ export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
   task_success: TaskBlock,
   camera_defects: CameraDefectsBlock,
   dedup: DedupBlock,
-  skill_profile: SkillBlock,
   eef_video_consistency: EefBlock,
 };
 

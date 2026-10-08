@@ -49,7 +49,7 @@ describe('subtask simulation (dev only)', () => {
     expect(s).toMatchObject({ state: 'succeeded', result_rev: 3 });
     expectValid('Subtask', s);
     // The two held episodes came back: nothing waits for a retry any more.
-    expect(t).toMatchObject({ state: 'succeeded', active_subtask: null, result_rev: 3, delivery_stale: true });
+    expect(t).toMatchObject({ state: 'succeeded', active_subtask: null, result_rev: 3 });
     expect(t.summary).toMatchObject({ passed: 43, held: 0 });
     expect(t.modules.find((m) => m.id === 'task_success')).toMatchObject({ state: 'succeeded', episodes_error: 0 });
     const tl = db.timelines.get(MAIN_TASK)!;

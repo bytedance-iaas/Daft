@@ -7,11 +7,10 @@ where a module runs, its finding codes and tunable parameters from here (the fro
 Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 
 * **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
-  (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm -> profile). Stages
+  (integrity -> numeric -> frame -> dedup) and the VLM block (vlm). Stages
   inside a block exist to share a decode and to size their own concurrency; every stage gets every
-  selected episode. ``dedup`` and ``profile`` need the whole selection and start once the stages
-  before them in their block are done (``FULL_SET_STAGES``). ``depends_on`` is data only: the
-  captions ``autolabel`` writes for episodes without a task text.
+  selected episode, one at a time (no stage waits for the whole selection: ``FULL_SET_STAGES`` is
+  empty). ``depends_on`` names data dependencies only; since 3.2 no module has one.
 * **What it can find.** Every module carries its catalogue of finding codes (``codes``). A code maps
   to one item of the taxonomy (C6, ``docs/contracts/taxonomy.json``, bound version
   ``TAXONOMY_VERSION``) and has a default severity and a default level under the default policy:
@@ -24,8 +23,9 @@ Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
   what it assessed and what it could not, with a reason from ``UNASSESSABLE_REASONS``, so "found
   nothing" and "did not look" are told apart.
 
-``autolabel`` (captioning episodes without a task text) is not a module; it is the first stage of
-the VLM block and a data dependency of ``task_success`` and ``skill_profile``.
+An episode without a task text is not judged by ``task_success`` (3.2, D72): its record says so
+(``no_task_text``) and the episode goes through every other check. The platform no longer writes a
+caption for it; the ``autolabel`` stage of earlier plans is gone.
 
 ``param_schema`` drives the second screen of the new-task form (D38), so every parameter carries
 ``title`` (the field label), ``description`` (help text) and ``default``; a choice lists its
@@ -60,20 +60,23 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "3.0"
+REGISTRY_VERSION = "4.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
-Stage = Literal["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile"]
+Stage = Literal["integrity", "numeric", "frame", "dedup", "vlm"]
 
-#: The two blocks and their stages in order (design doc 17 §3.1).
+#: The two blocks and their stages in order (design doc 17 §3.1). The VLM block is one stage since
+#: 3.2: the caption pass before it (``autolabel``) is gone.
 BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup"),
-                                      "vlm": ("autolabel", "vlm", "profile")}
+                                      "vlm": ("vlm",)}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
-FULL_SET_STAGES: tuple[str, ...] = ("dedup", "profile")
+#: No stage needs the whole selection at once since D70 (dedup streams like the others);
+#: the tuple stays so a future whole-set module has a place to say so.
+FULL_SET_STAGES: tuple[str, ...] = ()
 #: Every stage, the CPU block's first.
 STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 
@@ -81,9 +84,9 @@ STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
                                    "embodiment_profile", "vlm", "raw_bytes", "eef_input"})
 
-#: What a module's input depends on, data only (2.0): the captions of episodes without a task text.
-#: A change upstream (a relabel) makes the module's results stale.
-DEPENDENCIES: frozenset[str] = frozenset({"autolabel"})
+#: What a module's input may depend on, data only (2.0). Empty since 3.2: the captions of episodes
+#: without a task text (``autolabel``) are no longer made. A change upstream makes results stale.
+DEPENDENCIES: frozenset[str] = frozenset()
 
 #: A finding's severity, the module's own measure (design doc 17 §1.2).
 SEVERITIES: tuple[str, ...] = ("high", "medium", "low")
@@ -103,6 +106,7 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("model_no_answer", "模型没有回答这一项"),
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
+    ("no_task_text", "没有任务标注，没有做任务成败判定"),
 )
 
 #: v1's evidence modes (``pipeline.sync_plots`` / ``pipeline.evidence_frames``).
@@ -124,26 +128,6 @@ class TableSpec:
 
 
 @dataclass(frozen=True)
-class FollowUp:
-    """A question a card gains once one of ``after`` is its answer on the owning line.
-
-    v1's relabel card: after adopting a new label a person may also give the task
-    verdict right away (the machine then takes it and does not re-judge); left open,
-    the episode is judged again with the new label. Only on cards that do not ask
-    ``line`` already; the answer lapses when the decision that opened it changes.
-    """
-
-    after: tuple[str, ...]               # decisions of the owning line that open it
-    line: str                            # the REVIEW_LINES id it answers on
-    decisions: tuple[str, ...]           # the subset of that line's decisions it offers
-    optional: bool = True                # may stay open; never counts as pending
-
-    def to_json(self) -> dict:
-        return {"after": list(self.after), "line": self.line, "decisions": list(self.decisions),
-                "optional": self.optional}
-
-
-@dataclass(frozen=True)
 class ReviewLine:
     """One kind of question a person answers on the adjudication page (design doc 06 §5)."""
 
@@ -153,24 +137,16 @@ class ReviewLine:
     applies_to: Literal["passed", "reject"]   # the list its episodes are in when asked
     counts_as_pending: bool              # an open item must be decided (vs. may be appealed)
     decisions: tuple[tuple[str, str], ...]    # (value, button title), in display order
-    follow_ups: tuple[FollowUp, ...] = ()
 
     def to_json(self) -> dict:
         return {"id": self.id, "review_kind": self.review_kind, "title_zh": self.title_zh,
                 "applies_to": self.applies_to, "counts_as_pending": self.counts_as_pending,
-                "decisions": [{"const": c, "title": title} for c, title in self.decisions],
-                "follow_ups": [f.to_json() for f in self.follow_ups]}
+                "decisions": [{"const": c, "title": title} for c, title in self.decisions]}
 
 
 #: The review lines of v1 (design doc 06 §5.1). ``discard`` drops the whole
 #: episode and wins over any task verdict; ``unsure`` is recorded and changes nothing.
 REVIEW_LINES: tuple[ReviewLine, ...] = (
-    ReviewLine("label", "label_conflict", "标注分歧", "passed", True,
-               (("adopt_suggestion", "采纳新标注"), ("custom_label", "自行改写标注"),
-                ("keep_label", "维持原标注"), ("unsure", "拿不准"),
-                ("discard", "其它原因，整条弃用")),
-               follow_ups=(FollowUp(("adopt_suggestion", "custom_label"), "task_verdict",
-                                    ("success", "failure", "unsure")),)),
     ReviewLine("task_verdict", "task_verdict", "任务成败弃权", "passed", True,
                (("success", "判成功"), ("failure", "判失败"), ("unsure", "拿不准"),
                 ("discard", "其它原因，整条弃用"))),
@@ -584,12 +560,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
-        depends_on=("autolabel",),
+        depends_on=(),
         codes=(_blocking("failure", "TASK-4", "任务失败", appealable=True),
                _review("uncertain", "TASK-4", "任务成败拿不准", "task_verdict"),
                _info("recovery", "TASK-10", "中途失误后完成"),
-               _review("label_conflict_suspect", "LABEL-4", "标注与画面疑似不符", "label"),
-               _info("task_text_missing", "LABEL-2", "没有任务标注，用的是自产描述")),
+               _review("label_conflict_suspect", "LABEL-4", "标注与画面疑似不符", "task_verdict"),
+               _info("task_text_missing", "LABEL-2", "没有任务标注，没有做任务成败判定")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
@@ -599,7 +575,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="camera_defects", name_zh="镜头画面缺陷",
         summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
-        depends_on=("autolabel",),
+        depends_on=(),
         # minor -> low, severe -> medium
         codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
                _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),
@@ -615,16 +591,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_blocking("duplicate", "SET-1", "与另一条完全重复", appealable=True),),
         param_schema=_no_params(),
         tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
-    ModuleSpec(
-        id="skill_profile", name_zh="技能画像",
-        summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-        level="dataset", needs=frozenset({"video", "vlm"}), block="vlm", stage="profile",
-        depends_on=("autolabel",),
-        codes=(_review("label_disagreement", "LABEL-4", "标注与画面不符", "label"),
-               _info("descriptions_conflict", "LABEL-1", "多份描述彼此不一致", "medium"),
-               _info("undersampled_family", None, "样本偏少的技能族", scope_kind="dataset")),
-        param_schema=_no_params(),
-        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),
+
 )
 
 
@@ -707,14 +674,6 @@ def review_line_of_kind(review_kind: str) -> ReviewLine:
         if line.review_kind == review_kind:
             return line
     raise KeyError(f"unknown review kind {review_kind!r}")
-
-
-def follow_up(line_id: str, decision: str, target: str) -> FollowUp | None:
-    """The follow-up ``decision`` on ``line_id`` opens for ``target``, if any."""
-    for f in review_line(line_id).follow_ups:
-        if f.line == target and decision in f.after:
-            return f
-    return None
 
 
 def appealable(module_id: str) -> bool:

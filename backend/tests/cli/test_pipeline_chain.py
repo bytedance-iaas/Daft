@@ -19,7 +19,7 @@ from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, read_jsonl, results
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "camera_defects", "dedup", "skill_profile"]
+           "video_action_sync", "task_success", "camera_defects", "dedup"]
 
 
 @pytest.fixture(scope="module")
@@ -41,38 +41,14 @@ def chain(tmp_path_factory, mini_dataset):
 
 
 def test_every_step_ran_and_fits_its_contract(chain):
-    assert list(chain.steps) == ["preflight", "plan", "snapshot", "autolabel", "numeric",
-                                 "frame", "vlm", "dedup", "profile", "final",
-                                 "report", "export", "verify"]
+    assert list(chain.steps) == ["preflight", "plan", "snapshot", "numeric",
+                                 "frame", "vlm", "dedup", "final", "report", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
-
-
-def test_incremental_profile_rebuilds_historical_image_outputs(chain, tmp_path):
-    import shutil
-    from curation.dataset_level.caption import VIDEO_CAPTION_PROTOCOL
-    from curation.pipeline.dataset_stages import load_profile
-    from .pipeline import run
-
-    rd = str(tmp_path / "video-migration")
-    shutil.copytree(chain.rd, rd)
-    path = os.path.join(rd, "checks", "skill_profile", "profile.json")
-    with open(path, encoding="utf-8") as fh:
-        profile = json.load(fh)
-    profile.pop("media_protocol", None)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(profile, fh)
-    with FakeVlmServer() as vlm:
-        res = run("check", "--modules", "skill_profile", "--input", chain.ds,
-                  "--run-dir", rd, "--episodes", "@" + os.path.join(rd, "revisions", "r0001", "keep.txt"),
-                  "--incremental", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
-        assert res.rc == 0, res.doc
-        assert vlm.count("All cameras show the SAME robot episode") > 0
-    assert load_profile(rd)["profile"]["media_protocol"] == VIDEO_CAPTION_PROTOCOL
 
 
 def test_by_default_one_model_request_at_a_time(chain):
     """No --concurrency anywhere in the chain: never two model requests in flight."""
-    assert len(chain.vlm_calls) > 20 and chain.max_in_flight == 1
+    assert len(chain.vlm_calls) >= 8 and chain.max_in_flight == 1   # one judgement per episode, plus the label guard
 
 
 def test_every_stage_judges_every_episode(chain):
@@ -85,10 +61,13 @@ def test_every_stage_judges_every_episode(chain):
     assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 8
     task = s["vlm"].doc["modules"]["task_success"]
     assert task["episodes"] == {"total": 8, "ok": 8, "error": 0}
-    assert task["findings"] == {"uncertain": 4, "task_text_missing": 2}  # 0 2 3 7; 4 and 6: captions
-    assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
+    # 0 2 3 7 uncertain, 1 5 failure; 4 and 6 have no task text and are not judged (D72)
+    assert task["findings"] == {"uncertain": 4, "failure": 2, "task_text_missing": 2}
+    skipped = {e: r["details"].get("skipped") for e, r in results(chain.rd, "task_success").items()
+               if r["details"].get("skipped")}
+    assert skipped == {4: "no_task_text", 6: "no_task_text"}
+    assert not os.path.exists(os.path.join(chain.rd, "autolabel"))
     assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
-    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 8
 
 
 def test_files_fit_their_contracts(chain):
@@ -98,8 +77,6 @@ def test_files_fit_their_contracts(chain):
         assert rows, m
         for r in rows:
             assert schemas.errors("cli/result-record.schema.json", r) == [], (m, r)
-    for line in read_jsonl(os.path.join(rd, "autolabel", "captions.jsonl")):
-        assert schemas.errors("cli/autolabel-line.schema.json", line) == []
     rev = os.path.join(rd, "revisions", "r0001")
     for line in read_jsonl(os.path.join(rev, "verdicts.jsonl")):
         assert schemas.errors("cli/verdict-line.schema.json", line) == []
@@ -110,55 +87,56 @@ def test_files_fit_their_contracts(chain):
                       ("report.json", "cli/report.schema.json")):
         doc = json.load(open(os.path.join(rev, name), encoding="utf-8"))
         assert schemas.errors(ref, doc) == [], name
-    man = json.load(open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8"))
-    assert schemas.errors("cli/export-manifest.schema.json", man) == []
     plan = json.load(open(os.path.join(rd, "plan.json"), encoding="utf-8"))
     assert schemas.errors("cli/plan.schema.json", plan) == []
 
 
-def test_final_lists_are_v1s_verdicts(chain):
+def test_final_lists_follow_the_one_judgement(chain):
     rev = os.path.join(chain.rd, "revisions", "r0001")
 
     def eps(name):
         doc = json.load(open(os.path.join(rev, f"{name}.json"), encoding="utf-8"))
         return [e["episode_index"] for e in doc["episodes"]]
 
-    assert eps("passed") == [0, 1, 3, 4, 6]
-    assert eps("reject") == [2, 5, 7]
+    # 1 and 5 fail the judgement (D71); 4 and 6 have no task text and are not judged (D72), so
+    # they pass on their other checks and are delivered without a task text
+    assert eps("passed") == [0, 3, 4, 6]
+    assert eps("reject") == [1, 2, 5, 7]
     assert eps("held") == []
-    assert eps("review") == [0, 3, 7]                 # 0 and 3 abstained, 7 is a copy
+    assert eps("review") == [0, 1, 3, 7]               # 0 and 3 abstained; 1 rejected by the judgement, 7 a copy: appealable
     reject = json.load(open(os.path.join(rev, "reject.json"), encoding="utf-8"))
     dup = [e for e in reject["episodes"] if e["episode_index"] == 7][0]
     assert dup["reasons"][0]["kind"] == "duplicate" and dup["reasons"][0]["duplicate_of"] == 3
     passed = json.load(open(os.path.join(rev, "passed.json"), encoding="utf-8"))
-    sources = {e["episode_index"]: e["task_text"]["source"] for e in passed["episodes"]}
-    assert sources == {0: "原始标注", 1: "原始标注", 3: "原始标注", 4: "自产caption",
-                       6: "自产caption"}
+    sources = {e["episode_index"]: (e.get("task_text") or {}).get("source") for e in passed["episodes"]}
+    assert sources == {0: "原始标注", 3: "原始标注", 4: None, 6: None}
 
 
-def test_export_delivers_passed_and_verify_writes_complete(chain):
-    exp = chain.steps["export"].doc
-    assert exp["episodes"] == 5 and exp["incremental"] is False
+def test_the_delivery_holds_the_results_and_verify_writes_complete(chain):
+    """D69: the delivery is the run directory - the result revisions and the report, no dataset."""
     assert chain.steps["verify"].doc["failed"] == []
     assert chain.steps["verify"].doc["complete_marker"] is True
     assert os.path.isfile(os.path.join(chain.delivery, "_COMPLETE"))
-    assert os.path.isfile(os.path.join(chain.delivery, "export", "manifest.json"))
-    man = json.load(open(os.path.join(chain.rd, "export", "manifest.json"), encoding="utf-8"))
-    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 3, 4, 6]
-    assert {e["episode_index"]: e["task"]["source"] for e in man["episodes"]}[4] == "自产caption"
+    rev = os.path.join(chain.delivery, "revisions", "r0001")
+    assert os.path.isfile(os.path.join(rev, "report.json"))
+    assert os.path.isfile(os.path.join(rev, "passed.json"))
+    assert not os.path.isdir(os.path.join(chain.delivery, "export"))
 
 
 def test_usage_is_booked_per_module_on_both_ledgers(chain):
-    lines = []
-    for name in ("autolabel", "vlm", "profile"):
-        lines += [e for e in chain.steps[name].events if e["kind"] == "usage"]
-    assert {e["module"] for e in lines} == {"autolabel", "task_success", "skill_profile"}
+    lines = [e for e in chain.steps["vlm"].events if e["kind"] == "usage"]
+    assert {e["module"] for e in lines} == {"task_success"}
     assert {e["ledger"] for e in lines} == {"actual", "attributed"}
     actual = [e for e in lines if e["ledger"] == "actual"]
     posts = [c for c in chain.vlm_calls if c["path"].endswith("/chat/completions")]
     assert sum(e["requests"] for e in actual) == len(posts)          # every request, once
     assert sum(e["requests_unknown_usage"] for e in actual) == 0
-    assert {e["call_kind"] for e in actual} >= {"probe", "endstate", "caption", "llm"}
+    # "llm" was the skill profile's taxonomy induction and left with it (registry 3.0)
+    kinds = {e["call_kind"] for e in actual}
+    # llm here is the label guard's annotation-vs-caption comparison on the episodes the judgement
+    # rejected (the skill profile's induction, the other llm caller, left with registry 3.0)
+    assert kinds == {"probe"}, "one request per episode - the judgement, or the picture-defect request (D73)"
+    assert not kinds & {"endstate", "arbitration"}, "no review request per camera, no arbitration (D71)"
     report = json.load(open(os.path.join(chain.rd, "revisions", "r0001", "report.json"),
                             encoding="utf-8"))
     tu = report["overview"]["token_usage"]
@@ -174,12 +152,13 @@ def test_report_follows_the_registry(chain):
     assert [m["id"] for m in report["modules"]] == MODULES
     assert all(m["state"] == "succeeded" for m in report["modules"])
     by_id = {m["id"]: m for m in report["modules"]}
-    # 7 is a copy (D42): no task question; dedup's appeal candidate never counts as pending
-    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 0}
+    # 7 is a copy (D42): no task question; 1 was rejected by the judgement and can be appealed
+    # (5 is rejected on its timestamps too, so not); dedup's appeal candidate never counts as pending
+    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 1}   # D72: 4 and 6 not judged
     assert by_id["dedup"]["adjudication"] == {"pending": 0, "appealable": 1}
     assert by_id["timestamp_check"]["adjudication"] is None
-    assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
-                                            "held": 0, "review": 3, "skipped": 0}
+    assert report["overview"]["counts"] == {"total": 8, "passed": 4, "rejected": 4,
+                                            "held": 0, "review": 4, "skipped": 0}
     assert report["integrity"]["skipped_episodes"] == []
     for m in report["modules"]:
         for t in m["tables"]:
@@ -188,7 +167,7 @@ def test_report_follows_the_registry(chain):
     assert commit["parts"]["task_success"] == ["0001"]
     assert "report.json" in commit["files"] and "passed.json" in commit["files"]
     md = open(os.path.join(rev, "report.md"), encoding="utf-8").read()
-    assert "通过 5" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
+    assert "通过 4" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
     assert "- 评估 8 条;检出:丢帧跳变(STRM-3) 1 条(判废)、残段：短于最短时长(STRM-5) 1 条(判废)" in md
     assert "判决策略:默认" in md
 
@@ -226,11 +205,6 @@ def test_report_summaries_are_chart_ready(chain):
     assert "arbitration" in task and "abstain_reasons" in task                # kept as in 1.0
     assert s["dedup"]["group_sizes"] == [{"name": "2", "count": 1}]
     assert (s["dedup"]["collision_groups"], s["dedup"]["removed"]) == (1, 1)
-    sp = s["skill_profile"]
-    assert sum(f["count"] for f in sp["family_distribution"]) == sp["counts"]["total"]
-    assert sp["families"] == len([f for f in sp["family_tree"] if f["name"] != "未归类"])
-    # the delivered set's distribution next to the profiled set's (design doc 17 §4.5): 5 passed
-    assert sum(f["count"] for f in sp["delivered_family_distribution"]) == 5
 
 
 def test_a_committed_revision_is_never_rewritten(chain):

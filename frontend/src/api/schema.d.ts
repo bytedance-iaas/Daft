@@ -1031,25 +1031,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tasks/{id}/reexport": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["PathId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Incremental re-export of the delivered dataset (also the first export when export=false) */
-        post: operations["reexportTask"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/tasks/{id}/subtasks": {
         parameters: {
             query?: never;
@@ -1595,7 +1576,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Execute the recorded decisions as a subtask (D10); never exports (D9)
+         * Execute the recorded decisions as a subtask (D10)
          * @description The body is optional; without one (or with `{}`) relabelled episodes are judged again the
          *     way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
          */
@@ -1876,7 +1857,7 @@ export interface components {
             }[];
             /** @description every stage, the CPU block's first */
             stages: components["schemas"]["RegistryStage"][];
-            /** @description stages that need the whole selection and start once the earlier stages of their block are done */
+            /** @description stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it */
             full_set_stages: components["schemas"]["RegistryStage"][];
             /** @description blocking (rejects), review (asks a person), info (reported only), with the console's titles */
             finding_levels: {
@@ -1920,7 +1901,7 @@ export interface components {
                 /** @enum {unknown} */
                 block: "cpu" | "vlm";
                 stage: components["schemas"]["RegistryStage"];
-                /** @description data only: the captions autolabel writes for episodes without a task text */
+                /** @description data only; empty for every module now that no caption is written for episodes without a task text */
                 depends_on: "autolabel"[];
                 /** @description the finding codes the module reports (design doc 17 §2.2) */
                 codes: components["schemas"]["FindingCode"][];
@@ -1965,11 +1946,11 @@ export interface components {
             appealable: boolean;
             review_line?: components["schemas"]["ReviewLineId"];
         };
-        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check */
+        /** @description a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check */
         ReviewLineId: string;
         ReviewLine: {
             id: components["schemas"]["ReviewLineId"];
-            /** @description the kind of its review.json items (C2); label_conflict for label */
+            /** @description the kind of its review.json items (C2) */
             review_kind: string;
             title_zh: string;
             /**
@@ -1982,16 +1963,6 @@ export interface components {
             decisions: {
                 const: string;
                 title: string;
-            }[];
-            /**
-             * @description Questions a card gains once its answer on this line is one of `after` - only on a card that does not ask that line already. v1: after adopting a new label a person may give the task verdict (the machine takes it, no re-judging); left open, the episode is judged again with the new label. An optional follow-up never counts as pending, and its answer lapses (not executed, not counted) once the answer that opened it changes.
-             * @default []
-             */
-            follow_ups?: {
-                after: string[];
-                line: components["schemas"]["ReviewLineId"];
-                decisions: string[];
-                optional: boolean;
             }[];
         };
         BrowsedDataset: {
@@ -2108,8 +2079,6 @@ export interface components {
                     tasks: number;
                     episodes: number;
                 };
-                /** @description tasks whose delivered dataset is stale or was never exported */
-                delivery_pending: number;
                 datasets_changed: number;
                 credentials_failed: number;
                 backends_failed: number;
@@ -2279,8 +2248,6 @@ export interface components {
         TaskParams: {
             /** @default true */
             start_now?: boolean;
-            /** @default true */
-            export?: boolean;
             /** @description Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections. */
             batch_size?: number;
             /** @default 3 */
@@ -2364,14 +2331,14 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, profile, final; funnel plans (tasks made before): also verdict and profile_vlm; then report, export, verify; subtasks add adjudicate; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
              * @enum {unknown}
              */
             block?: "cpu" | "vlm";
-            /** @description a full-set stage: it starts once the earlier stages of its block are done (dedup, profile) */
+            /** @description a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it */
             full_set?: boolean;
             /** @enum {unknown} */
             state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
@@ -2465,7 +2432,6 @@ export interface components {
             };
             summary: null | components["schemas"]["Summary"];
             pending_adjudication: number;
-            delivery_stale: boolean;
             active_subtask?: string | null;
             /** @description selected modules, registry order */
             modules: components["schemas"]["ModuleId"][];
@@ -2507,7 +2473,6 @@ export interface components {
             result_rev: number;
             usage: components["schemas"]["UsageTotals"];
             pending_adjudication: number;
-            delivery_stale: boolean;
             active_subtask?: null | components["schemas"]["Subtask"];
             created_at: number;
             updated_at: number;
@@ -2520,7 +2485,7 @@ export interface components {
             id: string;
             task_id: string;
             /** @enum {unknown} */
-            kind: "retry" | "resume" | "apply_adjudication" | "reexport";
+            kind: "retry" | "resume" | "apply_adjudication";
             scope: {
                 modules?: components["schemas"]["ModuleId"][];
                 /** @enum {unknown} */
@@ -2651,7 +2616,7 @@ export interface components {
                 /** @enum {unknown} */
                 scope: "delivery" | "input";
                 /** @enum {unknown} */
-                origin?: "clip" | "delivery_dataset" | "source_dataset";
+                origin?: "clip" | "source_dataset";
                 path: string;
                 from_ts?: number;
                 to_ts?: number;
@@ -2800,11 +2765,9 @@ export interface components {
             reason: string;
             /** @description an appeal of a dedup reject: the episode it duplicates */
             duplicate_of?: number | null;
-            /** @description set on a question the card gained as a follow-up of its answer on that line (registry follow_ups), absent or null on the card's own questions; a follow-up whose opening answer changed is left out of the card */
-            follow_up_of?: null | components["schemas"]["ReviewLineId"];
             annotation?: string | null;
             caption?: string | null;
-            /** @description suggested new label */
+            /** @description a task text the model read off the video: what a person may send back as new_label */
             suggestion?: string | null;
             priority?: string | null;
             latest_decision?: null | components["schemas"]["Decision"];
@@ -2828,9 +2791,9 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. One card asks one question. Today: task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
             decision: string;
-            /** @description custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken */
+            /** @description task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it */
             new_label?: string | null;
             note?: string | null;
         };
@@ -3859,7 +3822,7 @@ export interface components {
             }[];
         };
         stage: {
-            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; autolabel, vlm, profile) and final; stages of new modules follow the same pattern */
+            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; vlm) and final - autolabel and profile only in plans made while those stages existed; stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";
@@ -3881,7 +3844,7 @@ export interface components {
             block?: "cpu" | "vlm";
             /** @description 2.0: the stage before it in its block; a block's first stage has none */
             after?: string;
-            /** @description 2.0: needs the whole selection at once (dedup, profile) */
+            /** @description 2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired) */
             full_set?: boolean;
         } & (unknown & unknown);
         stage_2: {
@@ -5756,7 +5719,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: 10 | 20 | 50 | 100;
-                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
+                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
                 state?: components["schemas"]["TaskState"] | "deleted";
                 /** @description search by name or id */
                 q?: string;
@@ -6114,32 +6077,6 @@ export interface operations {
         };
     };
     continueTask: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                id: components["parameters"]["PathId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description subtask created */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubtaskCreated"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    reexportTask: {
         parameters: {
             query?: never;
             header?: {

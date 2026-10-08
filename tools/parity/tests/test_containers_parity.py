@@ -6,8 +6,8 @@ and v2 sends continuous videos, so v1's tape answers none of v2's requests. As f
 (``test_v2_parity.py``), ``run-v2 --fake-vlm`` records a golden and a tape of every model
 call, and ``run-v2 --replay`` of that tape must reproduce it exactly (``compare
 --all-strict``): every module's records, the final lists and the call graph. Read from
-either container, the eight episodes end in the LeRobot fixture's final lists, and the
-export keeps the input's format. Deselect with ``-m "not e2e"``.
+either container, the eight episodes end in the LeRobot fixture's final lists. Deselect
+with ``-m "not e2e"``.
 """
 from __future__ import annotations
 
@@ -64,12 +64,10 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     golden, doc = run_v2(tmp, "golden", dataset, "--fake-vlm")
     assert doc["tape"]["mode"] == "record"
     assert final_lists(golden) == lerobot_final
-    assert lerobot_final["passed"] == [0, 1, 3, 4, 6] and lerobot_final["reject"] == [2, 5, 7]
+    assert lerobot_final["passed"] == [0, 3, 4, 6] and lerobot_final["reject"] == [1, 2, 5, 7]   # D71, D72
 
     out, doc = run_v2(tmp, "v2", dataset, "--replay", os.path.join(golden, "vlm_tape.jsonl.gz"))
     assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
-    export = next(s["output"] for s in doc["steps"] if s["step"] == "export")
-    assert export["format"] == fmt
     assert doc["steps"][-1]["output"]["complete_marker"] is True
 
     res = run_parity("compare", "--golden", golden, "--candidate", out, "--all-strict", "--json")
@@ -78,6 +76,7 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     assert report["conclusion"] == "pass"
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup", "autolabel", "skill_profile"}
-    assert {m: r["status"] for m, r in report["modules"].items()} == {
-        m: "pass" for m in report["modules"]}
+                                      "dedup"}
+    # autolabel: neither side writes captions any more (D72), so that comparison has nothing to say
+    assert {m: r["status"] for m, r in report["modules"].items() if m != "autolabel"} == {
+        m: "pass" for m in report["modules"] if m != "autolabel"}

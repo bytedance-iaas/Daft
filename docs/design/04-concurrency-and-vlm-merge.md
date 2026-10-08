@@ -25,15 +25,16 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
 ## 2. 分档执行模型
 
 > **两块并行（2026-10-01，设计 17 §3，D57；2026-10-01 F12.4 已实现）**：漏斗的执行短路取消，改成 CPU 块
-> （integrity → numeric → frame → dedup）与 VLM 块（autolabel → vlm → profile）并行、互不过滤；块内的段只为共享解码与各自的并发宽度，
-> 段之间传全部条目；去重与技能画像是各自块的全量步骤，等本块前面的段跑完全集才启动。计划 2.0 的段带 `block`、`after`、`full_set`，
+> （integrity → numeric → frame → dedup）与 VLM 块（vlm）并行、互不过滤；块内的段只为共享解码与各自的并发宽度，
+> 段之间传全部条目；去重是 CPU 块最后一个逐条段，和前面的段交叠（D70 起不再是全量步骤；VLM 块原来的 `profile` 段随技能画像下线，D68；
+> 原来排在 `vlm` 前面、补完全部无标注条目才放行的 `autolabel` 段随补描述下线，D72——无标注条目不判成败）。计划 2.0 的段带 `block`、`after`，
 > 没有 `hard_gates` 和幸存者集合。CPU 名额池（D54）与 VLM 闸门（§2.2）不变；Daemon 一块一个线程（`orchestr/blocks.py`），
 > 落地细节见设计 17 §7「F12.4 落地时的细化」。下文是漏斗的写法，只对旧任务的计划成立。
 
 档的划分与顺序**照搬 v1 的漏斗**（D18），不是重新设计的：
 
 ```
-  autolabel   无标注条目补任务描述（VLM；漏斗之前，对无标注条目全量）
+  autolabel   无标注条目补任务描述（VLM；漏斗之前，对无标注条目全量——D72 起没有这一步，无标注条目不判成败）
       │
   数值档      timestamp_check · kinematic_limits · motion_quality        只读 parquet，秒级
       │ 硬门①  时间戳、运动学
@@ -43,7 +44,7 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
       │
   判决        六项检查合成 keep / drop
       │
-  判决之后    dedup → skill_profile                                       只对 keep 集合，数据集级
+  判决之后    dedup                                                      只对 keep 集合，数据集级
 ```
 
 **档内并发，档间串行**。一档是一个 CLI 进程，吃完上一档的全部幸存者才轮到下一档 —— v1 就是这样。
@@ -91,14 +92,16 @@ v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门�
 
 | 闸门 | 管什么 | v1 配置键 | v1 默认 | 由 N 推导 |
 |---|---|---|---|---|
-| episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2 |
+| episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2（v1 一条 2–3 次请求）；**v2 的计划里 = N**：D71 起一条只发一次请求，在途的条数就是在途的请求数（2026-10-08） |
 | probe | 打分请求，进程级一把，所有 episode 共用 | `checks.task_success.vlm.max_concurrency` | 64 | N |
-| endstate | 逐机位复核 | episode 并发 × 2 | 64 | N |
-| arbitration | 取证仲裁链（四个工厂共用一把） | = episode 并发 | 32 | N/2 |
-| 护栏 caption | 判废护栏里的 caption | = episode 并发 | 32 | N/2 |
-| caption | 技能画像与 autolabel 的打标 | `skill_profile.caption_concurrency` | 32 | N/2 |
-| llm | 技能归纳的纯文本调用 | `skill_profile.llm_concurrency` | 16 | N/4 |
-| audit | 标注分歧的配对判断 | `skill_profile.audit_concurrency` | 16 | N/4 |
+| endstate | 逐机位复核（**D71 起 v2 不发这类请求**，闸门与配置键留给 v1 的 `rejudge`） | episode 并发 × 2 | 64 | N |
+| arbitration | 取证仲裁链（**同上，D71 起 v2 不发**） | = episode 并发 | 32 | N/2 |
+| 护栏 caption | 判废护栏里的 caption（**D73 起 v2 不发，闸门不再下发到 vlm 段**，名字留给 v1 配置） | = episode 并发 | 32 | N/2 |
+| caption | v1 的补描述打标（D72 起 v2 没有段用它，闸门名保留给 v1 配置） | `skill_profile.caption_concurrency` | 32 | N/2 |
+| llm | 纯文本调用（v1 的技能归纳；v2 没有模块用，闸门保留为参数位）| `skill_profile.llm_concurrency` | 16 | N/4 |
+| audit | 配对判断（同上）| `skill_profile.audit_concurrency` | 16 | N/4 |
+
+> 技能画像下线后（D68）这三个配置键仍叫原名：v1 的流水线（`curation run`、对账用的 dump）还在读它们，改名会动 A 类之外的兼容面。
 
 产品上只让用户配**一个数**：模型（或后端）的并行度 N，默认 64。planner 按上表推导八把闸门，
 N=64 时与 v1 的出厂默认逐项相等。站点配置仍可以逐把覆盖（调优任务会用到）。
@@ -173,12 +176,10 @@ planner 的输出，也是 `curation plan --json` 的 schema：
      "episodes": "survivors:numeric", "hard_gates": ["video_action_sync"]},
     {"id": "vlm", "kind": "vlm", "command": "check",
      "modules": ["task_success"], "episodes": "survivors:frame",
-     "gates": {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32, "guard_caption": 32},
+     "gates": {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32},
      "merge": {"strategy": "none", "groups": []}},
     {"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"},
     {"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1, "modules": ["dedup"], "episodes": "keep"},
-    {"id": "profile", "kind": "vlm", "command": "check", "modules": ["skill_profile"],
-     "episodes": "keep-minus-duplicates", "gates": {"caption": 32, "llm": 16, "audit": 16}},
     {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
   ],
   "estimates": {"vlm_requests": 735, "wall_clock_s": 1100, "notes": ["..."]}
@@ -203,7 +204,7 @@ planner 的输出，也是 `curation plan --json` 的 schema：
 |---|---|---|---|---|---|
 | `probe` 任务完成度打分 | 0.5s 间隔、最长边 448、≤4 机位 | 各机位按下标对齐成「时刻」，linspace 含首尾取 8 个时刻，**按时间顺序**提交 | 2×机位数：各机位第 0 帧作参考 + 该时刻各机位画面；模型回 0–100 一个整数 | 8 | 过了两道硬门的每一条 |
 | `endstate` 逐机位复核 | 复用 probe 已解码的帧 | 每机位 linspace 含首尾取 8 帧，前 4 为「早期」后 4 为「后期」 | 8 张，**单机位** | 机位数 × 2（「做成了吗」「失败了吗」分开问） | 每一条，不看 probe 的结果 |
-| 判废护栏（`caption` + `llm`） | 复用已解码的帧 | 每机位 linspace 取 N 帧 | 机位数 × N，外加 1 次纯文本比对 | 0–2 | 仅当已判废且任务文本来自原始标注 |
+| 判废护栏（`caption` + `llm`；**D73 起 v2 不发**） | 复用已解码的帧 | 每机位 linspace 取 N 帧 | 机位数 × N，外加 1 次纯文本比对 | 0–2 | v1：仅当已判废且任务文本来自原始标注 |
 | `arbitration` 取证仲裁 | 复用已解码的帧 | 外部机位：夹爪开合事件定锚点，挑最清晰的；腕部机位：事件前后 −0.5 / 0 / +1.0 / +2.5 秒 | 定位 1 张整帧；合议 2 张（整帧 + 目标框外扩 15% 后放大 3 倍）或腕部 4 张放大 2 倍 | 出题 1 + 每锚点定位 1 + 每线 3 票 | 仅当打分与复核之后仍弃权 |
 | `arbitration` 任务类型判别 | — | — | 纯文本 | 0–1 | 关键词规则没命中时 |
 | `caption` 技能打标 / autolabel | **另一次全帧率解码**、448、≤4 机位 | 每机位 linspace 含首尾取 8 帧 | ≤32 张，多机位分段带标签 | 1 | 画像：判决通过且去重后的条目；autolabel：漏斗前的无标注条目，结果被画像复用 |
@@ -275,7 +276,7 @@ class MergeStrategy(Protocol):
 - **提案、执行、回执，三步分别在哪**：planner（Daemon 里）只出**提案** —— 这一档里哪些 unit 可以进同一组，
   写进 `plan.json`，经 `--plan-stage` 交给 CLI。**执行**在 `check` 进程里：同一档的多个模块本来就在同一个进程
   （D18），合并执行器在发请求的那一刻，把**此刻都已就绪**且在同一组里的 unit 拼成一个请求；
-  有前置依赖没满足的（比如还在等 autolabel 的任务文本）不等它，各发各的。
+  有前置依赖没满足的不等它，各发各的。
   **回执**写进结果：每个 unit 记下自己是合并发的、拆包发的还是降级单发的，性能剖析里的合并节省量由回执统计，不靠估。
 
 合并后的请求形如：
@@ -367,13 +368,11 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
   已被正常判完的模块确定拒绝的条目例外：聚合时直接拒绝，不进待补跑，也不补跑（D35）。
   「出错」取宽口径（D33）：任何一次模型调用重试用尽、或任一机位解码失败都算，不看 v1 的降级逻辑能否给出结论。
   这样定有两个理由：出错多半是这条数据自己的问题（视频坏了），后面的档大概率也过不去；
-  而且下游有的会吃上游的产出（task_success 要 autolabel 给的任务文本），上游没成，下游跑了也是错的。
+  而且下游有的会吃上游的产出，上游没成，下游跑了也是错的。
 - **整个模块失败，是另一条规则**。模块跑不起来通常是环境问题，不是数据问题。这时它的门视为**尚未生效**，
   后面的模块照常跑、照常出自己的报告小节（需求原话：一个模块失败，重试时只跑失败的模块）；
   但所有条目都缺这个模块的结论，所以全部待补跑、暂不交付。模块重试成功后，它判拒的条目在聚合时剔除。
-  直接依赖它产出的下游模块除外（autolabel 失败时，task_success 对无标注条目不跑）。
-  适用于所有已勾选的模块，包括不判废的去重和技能画像，以及 autolabel：
-  补不出任务描述的无标注条目同样待补跑，而不是拿一句空话去判成败。
+  适用于所有已勾选的模块，包括不判废的去重。没有任务标注的条目不在此列：D72 起它们不判成败，也不待补跑。
 - **反复搞崩进程的那一条，点名跳过**。解码库的原生崩溃 try/except 接不住，会带走整个 CLI 进程。
   Daemon 看 `inflight.json` 知道出事时手上是哪几条，带 `--resume` 重新拉起；同一条 episode 连续两次出现在
   崩溃现场，就把它记为 `error`（原因：进程崩溃）并跳过。这是 v1 `pipeline/isolation.py`「对折缩围」的简化版 ——
@@ -391,8 +390,8 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
   30 秒窗口内 429 或 5xx 的比例超过阈值，八把闸门按同一比例**减半**，恢复后逐步回升（加性增、乘性减），
   每次调整发一条 `kind=throttle` 事件，Daemon 记入日志和指标并告警。这条保护 v1 没有，是线上产品必须有的。
 - **磁盘**：没有帧缓存（D18），本地占空间的只有两样 —— 任务工作目录（结果、证据帧、日志，MB 到 GB 级）
-  和导出时的视频临时文件（v3 源要重编码，必须先写本地再整文件拷贝，见 06 篇 §4.4）。
-  导出前检查临时卷的余量，不够就让导出失败并说明原因，不去挤占工作目录。
+  和 mcap / Lance 源在临时卷上的本地副本（D44，09 篇 §2.1）。副本放临时卷，不去挤占工作目录；
+  空间不够就让这条命令失败并说明原因。
 
 ## 8. 待调优项（明确不在本期做，但框架已预留）
 

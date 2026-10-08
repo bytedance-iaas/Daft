@@ -56,8 +56,7 @@ def _item(run_dir, store, modules, policy, row, *, include_records=False):
         if row["next_stage"] == "done" and row["reason"] != "missing" and policy is not None \
                 and all(is_v2(r) for r in records.values()):       # a task made before C2 2.0: no live verdict
             state = agg.RunState(str(run_dir), modules, [ep], policy,
-                                 results={m: ({ep: records[m]} if m in records else {}) for m in modules},
-                                 autolabel={})
+                                 results={m: ({ep: records[m]} if m in records else {}) for m in modules})
             v = agg.machine(state, ep)
             verdict, reason = v.verdict, v.reason()
     item.update(verdict=verdict, verdict_reason=reason)

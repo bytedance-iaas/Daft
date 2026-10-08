@@ -73,16 +73,18 @@ function findingsOf(module: string, ep: number, rec: ResultRecord | undefined): 
       if (note === 'undecidable' || note === 'no_motion') return [finding(module, 'undecidable', '画面里动作太少，测不准滞后')];
       return [];
     }
-    case 'task_success':
+    case 'task_success': {
       if (TS_REJECTS.includes(ep)) return [finding(module, 'failure', String(details.reason ?? '复核一致判未完成'), { time_s: [9.5, 13], evidence: [`details/evidence/task_success/ep${String(ep).padStart(6, '0')}_0.jpg`] })];
-      if (VERDICT_REVIEW.includes(ep)) return [finding(module, 'uncertain', '证据不足，弃权：末态物证在灰区')];
-      return [];
+      const out: Finding[] = [];
+      // the kill guard's suspicion (LABEL-4) is task_success's finding too, asked on the task verdict
+      if (LABEL_REVIEW.includes(ep)) out.push(finding(module, 'label_conflict_suspect', '标注与画面描述不是同一任务，疑似标注错'));
+      if (VERDICT_REVIEW.includes(ep)) out.push(finding(module, 'uncertain', '证据不足，弃权：末态物证在灰区'));
+      return out;
+    }
     case 'dedup': {
       const dup = DUPLICATE_OF[ep];
       return dup === undefined ? [] : [finding(module, 'duplicate', `与 ep${String(dup).padStart(6, '0')} 字节级完全重复`, { readings: { duplicate_of: dup, group_id: dup } })];
     }
-    case 'skill_profile':
-      return LABEL_REVIEW.includes(ep) ? [finding(module, 'label_disagreement', '标注与画面描述归入不同技能族')] : [];
     default:
       return [];
   }
@@ -249,14 +251,21 @@ export function findingsReport(): ReportV2 {
 
 /** The questions of the findings task: the main task's, each naming the finding codes it asks about (C4 2.3.0). */
 export function withCodes(questions: Map<number, AdjudicationCard['questions']>): Map<number, AdjudicationCard['questions']> {
-  const codes: Record<string, [string, string]> = { label: ['label_disagreement', 'LABEL-4'], task_verdict: ['uncertain', 'TASK-4'] };
+
   const out = new Map<number, AdjudicationCard['questions']>();
   for (const [ep, qs] of questions) {
     out.set(
       ep,
       qs.map((q) => {
-        const pair = q.line === 'reject_appeal' ? (q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-4']) : codes[q.line];
-        return pair ? { ...q, codes: [pair[0]], items: [pair[1]] } : q;
+        if (q.line === 'reject_appeal') {
+          const pair = q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-4'];
+          return { ...q, codes: [pair[0]], items: [pair[1]] };
+        }
+        if (q.line !== 'task_verdict') return q;
+        // one question, both findings: the suspected label conflict and the abstention
+        const codes = LABEL_REVIEW.includes(ep) ? ['label_conflict_suspect', 'uncertain'] : ['uncertain'];
+        const items = LABEL_REVIEW.includes(ep) ? ['LABEL-4', 'TASK-4'] : ['TASK-4'];
+        return { ...q, codes, items };
       }),
     );
   }
@@ -300,7 +309,6 @@ export function findingsPlan(): Plan {
       { id: 'dedup', kind: 'cpu', command: 'check', block: 'cpu', after: 'frame', full_set: true, concurrency: 1, modules: ['dedup'], episodes: 'selected' },
       { id: 'autolabel', kind: 'vlm', command: 'autolabel', block: 'vlm', episodes: 'unlabeled', gates: { caption: 32 } },
       { id: 'vlm', kind: 'vlm', command: 'check', block: 'vlm', after: 'autolabel', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
-      { id: 'profile', kind: 'vlm', command: 'check', block: 'vlm', after: 'vlm', full_set: true, modules: ['skill_profile'], episodes: 'selected', gates: { caption: 32, llm: 16, audit: 16 }, merge: { strategy: 'none', groups: [] } },
       { id: 'final', kind: 'aggregate', command: 'aggregate', phase: 'final' },
     ],
     estimates: {
@@ -309,7 +317,6 @@ export function findingsPlan(): Plan {
       notes: [
         'rough estimate: every selected episode goes through both blocks, which run side by side; 22.7 s per request at 67% gate use (image-request baseline from v1, 2026-09-07; video latency is not calibrated)',
         'task_success arbitration and label-guard calls depend on the data and are not counted',
-        'skill_profile text calls (taxonomy, label audit) are per dataset and not counted',
       ],
     },
   } as Plan;

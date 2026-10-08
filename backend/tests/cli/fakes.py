@@ -178,7 +178,7 @@ def make_task(task_id: str = "task_01", state: str = "running", *, pending: int 
         "embodiment_id": "franka",
         "vlm": {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
                 "reasoning_effort": None},
-        "params": {"export": True},
+        "params": {"vlm_retry": 3},
         "source": {"objects": 204, "bytes": 1520331122, "digest": "sha256:" + "0" * 64},
         "progress": {"stages": [
             {"id": "numeric", "state": "succeeded", "done": 50, "total": 50, "elapsed_s": 1},
@@ -192,7 +192,7 @@ def make_task(task_id: str = "task_01", state: str = "running", *, pending: int 
         "result_rev": 1 if done else 0,
         "usage": {"prompt_tokens": 1820, "completion_tokens": 64, "reasoning_tokens": 0,
                   "cached_tokens": 0, "requests": 3, "requests_unknown_usage": 0},
-        "pending_adjudication": pending, "delivery_stale": False,
+        "pending_adjudication": pending,
         "active_subtask": active_subtask,
         "created_at": 1758300000000, "updated_at": 1758300001000,
         "started_at": 1758300000500, "finished_at": 1758300009000 if done else None,
@@ -394,6 +394,6 @@ def _list_item(task: dict) -> dict:
             "pause_reason": None, "dataset": task["input"]["uri"],
             "created_at": task["created_at"], "progress": task["progress"],
             "summary": task["summary"], "pending_adjudication": task["pending_adjudication"],
-            "delivery_stale": task["delivery_stale"], "active_subtask": None,
+            "active_subtask": None,
             "modules": [m["id"] for m in task["modules"]], "dataset_id": task.get("dataset_id"),
             "module_counts": {"succeeded": 1}, "usage": task["usage"]}

@@ -13,14 +13,13 @@ describe('registry 2.0: what the finding codes say about a module', () => {
 
   it('review lines come from the review-level codes (D43)', () => {
     const byId = Object.fromEntries(reg.modules.map((m) => [m.id, reviewLinesOf(m)]));
-    expect(byId.task_success).toEqual(['task_verdict', 'label']);
+    expect(byId.task_success).toEqual(['task_verdict']);        // the label conflict asks it too
     expect(byId.data_integrity).toEqual(['integrity_check']);
     expect(byId.eef_video_consistency).toEqual(['eef_check']);
-    expect(byId.skill_profile).toEqual(['label']);
     expect(byId.motion_quality).toEqual([]);
   });
 
   it('the adjudication page lists the modules that ask or may be appealed - as registry 1.14 did', () => {
-    expect(ids(producesAdjudication)).toEqual(['data_integrity', 'eef_video_consistency', 'task_success', 'dedup', 'skill_profile']);
+    expect(ids(producesAdjudication)).toEqual(['data_integrity', 'eef_video_consistency', 'task_success', 'dedup']);
   });
 });

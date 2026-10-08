@@ -11,14 +11,14 @@
 * **run ids** are the start time (``YYYYMMDD-HHMMSS``, site time zone); a name
   already taken gets ``-2``, ``-3``... and is claimed at once by writing its
   ``run.json``, so two tasks never share a batch;
-* **sync**: the Daemon uploads the run directory (not the delivered dataset - the
-  CLI's ``export --output`` uploads that - and not work in progress: hidden files,
-  ``inflight.json``, temporary files, ``_COMPLETE``); a local record of what went up
-  keeps each sync to what changed;
-* **publishing is serial per delivery directory**: export, sync, verify,
-  ``_COMPLETE`` and ``latest`` run under one lock per normalized delivery key;
-  ``latest`` moves only when the batch is complete (task succeeded, dataset
-  exported and not stale, verified).
+* **sync**: the Daemon uploads the run directory - the result revisions, the report
+  and its details, which is the whole delivery since D69 - and not work in progress
+  (hidden files, ``inflight.json``, temporary files, ``_COMPLETE``); a local record of
+  what went up keeps each sync to what changed, and the files go up side by side
+  (``_UPLOADERS`` at a time: they are small, the round trips are what costs);
+* **publishing is serial per delivery directory**: sync, verify, ``_COMPLETE`` and
+  ``latest`` run under one lock per normalized delivery key; ``latest`` moves only
+  when the batch is complete (task succeeded, verified).
 
 Two back ends: TOS through W8's client (the output key), and - experimental, for
 debugging and tests only - a local directory standing in for the bucket
@@ -32,6 +32,7 @@ import os
 import pathlib
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterator
 
 from ..secrets import tos as T
@@ -41,13 +42,11 @@ log = logging.getLogger("daemon.orchestr")
 
 LATEST = "latest"
 COMPLETE = "_COMPLETE"
-EXPORT_DATASET = "export/lerobot_curated"
-#: every delivered dataset directory ``curation export`` uploads itself: LeRobot, and the
-#: mcap / lance deliveries (D44, ``curation/export/containers.py``)
-EXPORT_DATASETS = (EXPORT_DATASET, "export/mcap_curated", "export/lance_episodes")
 #: names in the run directory that are never delivered by the sync (verify skips them too)
-_SKIP_NAMES = frozenset({"inflight.json", COMPLETE, LATEST, "_EXPORTING"})
+_SKIP_NAMES = frozenset({"inflight.json", COMPLETE, LATEST})
 _LIST_PAGE = 1000
+#: files a sync uploads at the same time
+_UPLOADERS = 8
 
 
 class DeliveryError(Exception):
@@ -347,8 +346,6 @@ def _delivered(rel: str) -> bool:
     parts = rel.split("/")
     if any(p.startswith(".") for p in parts):
         return False
-    if any(rel == d or rel.startswith(d + "/") for d in EXPORT_DATASETS):
-        return False                      # the CLI's export uploads the dataset itself
     name = parts[-1]
     if name in _SKIP_NAMES:
         return False
@@ -379,16 +376,30 @@ def sync_run_dir(delivery: Delivery, run_id: str, root: pathlib.Path, state_path
             sig = [st.st_size, st.st_mtime_ns]
             if files.get(rel) != sig:
                 todo.append((rel, full, sig))
-    for n, (rel, full, sig) in enumerate(todo, 1):
-        if check_stop is not None:
-            check_stop()
-        delivery.put_file(_join(run_id, rel), str(full))
-        files[rel] = sig
-        if n % 50 == 0:
-            write_json_atomic(state_path, state)
-        if progress is not None:
-            progress(n, len(todo))
-    write_json_atomic(state_path, state)
+    # Every upload is queued at once and recorded as it lands; a stop already pending starts
+    # none of them, one coming in meanwhile (or one failed upload) cancels what has not
+    # started, and the record keeps what did go up either way.
+    if todo and check_stop is not None:
+        check_stop()
+    done = 0
+    pool = ThreadPoolExecutor(max_workers=_UPLOADERS, thread_name_prefix="sync")
+    try:
+        futures = {pool.submit(delivery.put_file, _join(run_id, rel), str(full)): (rel, sig)
+                   for rel, full, sig in todo}
+        for fut in as_completed(futures):
+            if check_stop is not None:
+                check_stop()
+            fut.result()
+            rel, sig = futures[fut]
+            files[rel] = sig
+            done += 1
+            if done % 50 == 0:
+                write_json_atomic(state_path, state)
+            if progress is not None:
+                progress(done, len(todo))
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+        write_json_atomic(state_path, state)
     return {"uploaded": len(todo)}
 
 
@@ -398,10 +409,10 @@ def forget_sync(state_path: pathlib.Path) -> None:
 
 
 #: What a restore from the delivery leaves there (00 §4.2 "大文件不回灌", v1's
-#: ``REPROFILE_SKIP_DIRS``): the delivered dataset, review clips, evidence frames and
-#: plot data - nothing local reads them; readers sign their delivery URLs.
-RESTORE_SKIP = (*(d + "/" for d in EXPORT_DATASETS), "details/audit_clips/",
-                "details/evidence/", "details/plots/", "checks/video_action_sync/curves/")
+#: ``REPROFILE_SKIP_DIRS``): review clips, evidence frames and plot data - nothing local
+#: reads them; readers sign their delivery URLs.
+RESTORE_SKIP = ("details/audit_clips/", "details/evidence/", "details/plots/",
+                "checks/video_action_sync/curves/")
 
 
 def restorable(rel: str) -> bool:

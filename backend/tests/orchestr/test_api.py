@@ -115,7 +115,7 @@ def test_legal_actions_on_tasks_nobody_runs(api):
 
 @pytest.mark.parametrize("state,path,message", [
     ("succeeded", "retry", "错误"), ("succeeded", "continue", "已停止或失败"),
-    ("running", "reexport", "已完成"), ("created", "adjudication/apply", "已完成"),
+    ("created", "adjudication/apply", "已完成"),
     ("stopped", "retry", "错误")])
 def test_subtasks_need_their_parent_state(api, state, path, message):
     c, _, _ = api()
@@ -128,8 +128,8 @@ def test_subtasks_need_their_parent_state(api, state, path, message):
 def test_one_subtask_at_a_time(api):
     c, _, _ = api()
     t = _seeded(c, "completed_with_errors")
-    sub = _rt(c).repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
-                                               state="paused"))
+    sub = _rt(c).repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="apply_adjudication",
+                                               scope={}, state="paused"))
     body = assert_error(c.post(f"{API}/tasks/{t.id}/retry", headers=JSON, json={}),
                         "subtask_active")
     assert body["error"]["details"]["active_subtask"] == sub.id
@@ -267,10 +267,8 @@ def test_purge_needs_the_exact_path_and_removes_the_batch_and_latest(api, tmp_pa
     t = _seeded(c, "succeeded")
     rt.repo.freeze_task_inputs(t.id, run_id="20260921-120000", preflight={},
                                source_fingerprint={}, vlm_snapshot=None)
-    rt.repo.set_export_fingerprint(t.id, "sha256:" + "c" * 64, False)
     batch = tmp_path / "tos" / "deliveries" / "droid-50" / "20260921-120000"
-    (batch / "export").mkdir(parents=True)
-    (batch / "export" / "manifest.json").write_text("{}")
+    batch.mkdir(parents=True)
     (batch / "report.md").write_text("x" * 100)
     (batch.parent / "latest").write_text("20260921-120000\n")
     other = batch.parent / "20260920-080000"
@@ -282,18 +280,13 @@ def test_purge_needs_the_exact_path_and_removes_the_batch_and_latest(api, tmp_pa
     assert body["error"]["details"]["expected"] == path
     r = c.post(f"{API}/tasks/{t.id}/purge-artifacts", headers=JSON, json={"confirm_path": path})
     assert r.status_code == 202, r.text
-    assert r.json() == {"path": path, "bytes": 102, "latest_removed": True}
-    # the purge runs in the background: the objects go first, the task is marked stale last
-    # (a slow CI runner read the task in between, 2026-09-24)
-    def stale() -> bool:
-        return c.get(f"{API}/tasks/{t.id}").json()["delivery_stale"] is True
-
+    assert r.json() == {"path": path, "bytes": 100, "latest_removed": True}
+    # the purge runs in the background: wait for the objects to go
     deadline = time.monotonic() + 10
-    while (batch.exists() or not stale()) and time.monotonic() < deadline:
+    while batch.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not batch.exists() and not (batch.parent / "latest").exists()
     assert (other / "report.md").read_text() == "keep me"      # another batch is untouched
-    assert stale()
 
 
 def test_purge_refuses_running_tasks_and_tasks_without_a_batch(api):

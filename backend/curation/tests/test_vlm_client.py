@@ -93,6 +93,9 @@ class _Stub(BaseHTTPRequestHandler):
             answer = {"verdict": "success", "task_type": "persistent", "completion": 0.9,
                       "reason": "visible goal", "evidence": [{"camera": "cam", "start_s": 0.0,
                       "end_s": 0.5, "observation": "object at destination"}]}
+            if 'more field "cameras"' in texts:        # the judgement answers per camera too (D71)
+                answer["cameras"] = {"cam": {"verdict": "success", "reason": "visible goal",
+                                             "camera_check": {}}}
             resp = {"choices": [{"message": {"content": json.dumps(answer)}}]}
         elif m:
             k = int(m.group(1))

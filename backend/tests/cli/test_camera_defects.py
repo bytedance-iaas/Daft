@@ -1,6 +1,6 @@
 """camera_defects end to end (registry 1.14): ``check --modules task_success`` also writes the
-rider's records, out of the per-camera reviews it makes anyway - no request of its own, no
-ticking, no vote - and the rider then shows up in the report.
+rider's records, out of the per-camera answers of the one judgement request it makes anyway (D71)
+- no request of its own, no ticking, no vote - and the rider then shows up in the report.
 """
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from .pipeline import Chain, comparable, results, run
 MOD = "camera_defects"
 ITEMS = ("glitch", "shake", "contamination")
 LEVELS = {"none", "minor", "severe", "unknown"}
-ASK = 'extra field "camera_check"'                       # the paragraph every review carries
-REVIEW = "Independently review ONLY this camera"
+ASK = 'more field "cameras"'                             # the per-camera block every judgement asks for
+REVIEW = "Independently review ONLY this camera"         # the two-pass review: must never be sent
 
 
 def _check(p, run_dir, url, modules="task_success"):
@@ -44,13 +44,15 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
     task = results(ran["dir"], "task_success")
     cam = results(ran["dir"], MOD)
     assert set(cam) == set(task) == set(vlm_stage["reference"])
-    for rec in cam.values():
+    for ep, rec in cam.items():
         # advisory: every finding it reports is info under the default policy, never a vote (P18)
         assert rec["status"] == "ok" and rec["error"] is None and "score" not in rec["readings"]
         assert all(registry.finding_code(MOD, f["code"]).level == "info" for f in rec["findings"])
         d = rec["details"]
-        assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["source"] == "task_success.video_reviews"
-        assert set(d["items"]) == set(ITEMS) and d["cams"]
+        assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["source"] == "task_success.cameras"
+        assert set(d["items"]) == set(ITEMS)
+        # an episode without a task text got no judgement request, so no camera answered (D72)
+        assert d["cams"] or task[ep]["details"].get("skipped") == "no_task_text"
         assert set(d["items"].values()) <= LEVELS         # one status per item, nothing nested
         assert set(d["per_camera"]) == set(d["cams"])
         for cam_entry in d["per_camera"].values():
@@ -61,12 +63,12 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
 
 
 def test_the_rider_costs_no_request_and_no_repair(vlm_stage, ran):
-    """Every per-camera review carries the camera_check paragraph, the probe does not, and no
-    answer was sent back for repair (the count of requests is the count of reviews plus probes
-    plus arbitrations; nothing else)."""
-    asked = [t for t in ran["posts"] if ASK in t]
-    reviews = [t for t in ran["posts"] if REVIEW in t]
-    assert asked and asked == reviews
+    """Every judgement request carries the per-camera block (the rider rides in it), no review
+    request per camera is ever sent, and no answer was sent back for repair (the count of
+    requests is one per episode; nothing else)."""
+    judged = [t for t in ran["posts"] if "Assess the robot manipulation task" in t]
+    assert judged and all(ASK in t for t in judged)
+    assert not any(REVIEW in t for t in ran["posts"])
     assert not any("Invalid answer:" in t for t in ran["posts"])
     assert len(ran["posts"]) == vlm_stage["reference_posts"]
     assert set(ran["doc"]["modules"]) == {"task_success", MOD}
@@ -111,7 +113,7 @@ def test_resume_redoes_an_episode_whose_defect_report_is_from_an_older_protocol(
     path = os.path.join(part, name)
     with open(path, "rb") as fh:                       # same length in, same length out: the
         raw = fh.read()                               # part index addresses records by offset
-    old, new = b'"camera-check/1"', b'"camera-check/0"'
+    old, new = b'"camera-check/2"', b'"camera-check/0"'
     assert len(old) == len(new) and raw.count(old) == len(results(run_dir, MOD))
     with open(path, "wb") as fh:
         fh.write(raw.replace(old, new, 1))

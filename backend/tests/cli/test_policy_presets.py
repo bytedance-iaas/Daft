@@ -87,7 +87,6 @@ def test_report_only_keeps_what_was_judged_and_asks_nobody(chain):
     # profile files it (a duplicate the policy does not reject is no copy to leave out)
     assert sorted(_list(chain.rd, 1, "passed")) == list(range(8))
     assert _list(chain.rd, 1, "reject") == _list(chain.rd, 1, "held") == _list(chain.rd, 1, "review") == {}
-    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 8
     lines = {ln["episode_index"]: ln for ln in
              read_jsonl(os.path.join(chain.rd, "revisions", "r0001", "verdicts.jsonl"))}
     assert all(ln["blocking"] == [] and ln["review"] == [] for ln in lines.values())
@@ -103,10 +102,10 @@ def test_switching_to_the_default_reruns_aggregate_only(chain):
     assert _records(chain.rd) == chain.digest            # the module records stay as they were
     assert _list(chain.rd, 2, "held") == {}
     reject = _list(chain.rd, 2, "reject")
-    assert sorted(reject) == [2, 5, 7]
+    assert sorted(reject) == [1, 2, 5, 7]                 # 4 and 6 have no task text: not judged (D72)
     assert [r["code"] for r in reject[2]["reasons"]][:1] == ["gap"]
     assert [r["code"] for r in reject[5]["reasons"]][:1] == ["fragment"]
     assert reject[7]["reasons"][0]["kind"] == "duplicate" and reject[7]["reasons"][0]["duplicate_of"] == 3
-    assert sorted(_list(chain.rd, 2, "passed")) == [0, 1, 3, 4, 6]
-    assert sorted(_list(chain.rd, 2, "review")) == [0, 3, 7]
+    assert sorted(_list(chain.rd, 2, "passed")) == [0, 3, 4, 6]
+    assert sorted(_list(chain.rd, 2, "review")) == [0, 1, 3, 7]
     assert (_policy(chain.rd, 1), _policy(chain.rd, 2)) == ("report_only", "default")

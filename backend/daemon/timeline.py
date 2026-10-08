@@ -18,8 +18,7 @@ from .repo import protocol as P
 STATE_ZH = {"created": "待启动", "queued": "排队中", "running": "运行中", "pausing": "暂停中",
             "paused": "已暂停", "stopping": "停止中", "stopped": "已停止", "succeeded": "已完成",
             "completed_with_errors": "部分错误", "failed": "失败"}
-KIND_ZH = {"retry": "重试", "resume": "继续运行", "apply_adjudication": "执行裁决",
-           "reexport": "重新导出"}
+KIND_ZH = {"retry": "重试", "resume": "继续运行", "apply_adjudication": "执行裁决"}
 
 
 def _entry(at: int, kind: str, text: str, *, state=None, subtask_id=None, revision=None) -> dict:
