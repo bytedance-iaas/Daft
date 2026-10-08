@@ -83,9 +83,9 @@ EOF
 ```
 
 核对：五段依次是 numeric、frame、dedup（CPU 块）、vlm（VLM 块）与收尾的 final（D72 起没有 autolabel 段）；CPU 两段并发 30（32 核留 2 核）；
-dedup 并发 1；vlm 段闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 / guard_caption 32`，
+dedup 并发 1；vlm 段闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32`（`guard_caption` 随判废护栏下线，D73），
 合并是 `{"strategy": "none", "groups": []}`；上限 `cpu_concurrency 30 / vlm_parallelism 64`，都由 planner 定；
-估算 112 次请求（成败判定 (200−88)×1：88 条没有标注不判，D71 起一条一次）；notes 里说明 88 条没有任务标注、运动学极限缺型号、哪些调用没计入。
+估算 200 次请求（每条 1 次：有标注的判成败，88 条没标注的只看画面缺陷）；notes 里说明 88 条没有任务标注、运动学极限缺型号、哪些调用没计入。
 
 **3. 上限取交集与闸门推导**：
 

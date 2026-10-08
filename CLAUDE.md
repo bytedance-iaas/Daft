@@ -36,7 +36,7 @@ Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走�
 
 **两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
 → `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `vlm`（eef_video_consistency、task_success，camera_defects 骑在
-task_success 的请求上；没有任务标注的条目 task_success 不判，D72）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
+task_success 的请求上；没有任务标注的条目不判成败、只发一次画面缺陷请求，D72 / D73；每条恰好一次模型请求，没有复核、仲裁和判废护栏）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
 本块下一段；`dedup` 是全量步骤，块内前面的段跑完才启动。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 **判决是策略判决**（F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），两块都结束后 `aggregate` 用任务的策略
 （`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info，再判

@@ -135,7 +135,7 @@ def test_usage_is_booked_per_module_on_both_ledgers(chain):
     kinds = {e["call_kind"] for e in actual}
     # llm here is the label guard's annotation-vs-caption comparison on the episodes the judgement
     # rejected (the skill profile's induction, the other llm caller, left with registry 3.0)
-    assert kinds >= {"probe", "caption", "llm"}
+    assert kinds == {"probe"}, "one request per episode - the judgement, or the picture-defect request (D73)"
     assert not kinds & {"endstate", "arbitration"}, "no review request per camera, no arbitration (D71)"
     report = json.load(open(os.path.join(chain.rd, "revisions", "r0001", "report.json"),
                             encoding="utf-8"))

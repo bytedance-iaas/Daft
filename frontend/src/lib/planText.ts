@@ -19,7 +19,7 @@ const ROUGH = /^rough estimate: every selected episode is assumed to pass the ha
 const ROUGH_BLOCKS = /^rough estimate: every selected episode goes through both blocks, which run side by side; ([\d.]+) s per request at (\d+%) gate use \(image-request baseline from v1, ([\d-]+); video latency is not calibrated\)$/;
 const UNCOUNTED = /^no request model for \[(.*)\]; not counted$/;
 // episodes without a task text are not judged by task_success (the caption pass is gone)
-const UNLABELED = /^(\d+) selected episode\(s\) have no task text: task_success does not judge them, every other check still runs on them$/;
+const UNLABELED = /^(\d+) selected episode\(s\) have no task text: task_success does not judge them \(their cameras are still checked for picture defects, one request each\), every other check still runs on them$/;
 
 /** One estimate note in Chinese; `name` gives a module id its Chinese name. */
 export function planNoteText(note: string, name: (moduleId: string) => string): string {

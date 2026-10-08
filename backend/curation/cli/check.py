@@ -288,21 +288,17 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         try:
             if judge is not None:
                 judge.open()
-            from ..adapters.vlm_client import vlm_completion_from_config
+            from ..adapters.vlm_client import camera_check_from_config, vlm_completion_from_config
 
             vlm_completion = vlm_completion_from_config(cfg)
-            # D71: the judgement answers for every camera in its one request; there is no
-            # review client (the slot stays for v1's shape of TaskClients)
-            cam_voter = None
-            try:
-                arb_deps = funnel.build_arbitration_deps(cfg, gates)
-            except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people
-                arb_deps = None
-                ctx.log("warn", f"evidence arbitration unavailable ({type(e).__name__}: {e})")
+            # D71 / D73: the judgement answers for every camera in its one request; there is no
+            # review client and no label guard (the slots stay for v1's shape of TaskClients).
+            # An episode without a task text gets the picture-defect request instead.
+            cameras = camera_check_from_config(cfg)
         except BaseException:
             session.__exit__(*sys.exc_info())
             raise
-        clients = TaskClients(vlm_completion, cam_voter, arb_deps)
+        clients = TaskClients(vlm_completion, None, None, cameras=cameras)
         if cache is not None:
             cache["vlm"] = {"gates": gates, "cfg": cfg, "task_text": task_text,
                             "session": session, "clients": clients, "eef": judge}

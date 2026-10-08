@@ -348,7 +348,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 
 ## 十八、去重改成流式，没有全量步骤了（2026-10-07，D70）
 
-需求方：「去重还是不能 overlap」。精确去重从 CPU 块的全量步骤改成块里最后一个逐条段，和前面的段交叠执行。
+精确去重从 CPU 块的全量步骤改成块里最后一个逐条段，和前面的段交叠执行。
 
 - **C1 → 3.1**：`FULL_SET_STAGES` 变空（字段保留，将来真有只能看全集的模块再用）；`modules.json` 重新导出。
   dedup 仍是数据集级模块、仍在 `dedup` 段、并发恒为 1（流式状态在一个进程里）。
@@ -364,7 +364,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 
 ## 十九、任务成败只有一次判决（2026-10-07，D71）
 
-需求方：「单次判决，不复核，拿不准直接人工判」，而且「根本不应该有开关」。之前合入的分支把单次判决做成了默认关的
+之前合入的分支把单次判决做成了默认关的
 `pipeline.single_pass` 开关，这里把开关删掉，v2 只剩这一条协议。
 
 - **C2**：`task_success` 记录的 `details.protocol` 固定为 `video-task/2`，带 `cameras`（每路相机的结论与 `camera_check`）、
@@ -376,7 +376,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 
 ## 二十、没有任务标注的条目不判成败，补描述下线（2026-10-08，D72）
 
-需求方：「如果没有 label 就直接 skip 掉，不要有 autolabel 这一个 action 了」。原来 VLM 块先把所选里全部无标注条目补完描述，判定才开始。
+原来 VLM 块先把所选里全部无标注条目补完描述，判定才开始。
 
 - **C1 3.2**：`blocks` 里 VLM 块只剩 `vlm`，`stages` 不再有 `autolabel`；每个模块的 `depends_on` 为空；`unassessable_reasons` 多 `no_task_text`；
   `task_success.task_text_missing` 的说明改为「没有任务标注，没有做任务成败判定」。
@@ -384,4 +384,11 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   枚举里的 `autolabel` 保留给旧计划；`task_success` 对无标注条目的记录：`status: ok`、`details.skipped = "no_task_text"`、`task_desc_source = "无"`，
   发现只有 `task_text_missing`，TASK-5 / LABEL-5 列在 `unassessable`（`no_task_text`）；交付清单里这种条目的 `task_text` 为 null。
 - **C3 / C4**：stage id 枚举不变（旧任务的进度里仍有 `autolabel`）；新任务的进度没有这一行；`usage` 的模块里不再出现 `autolabel`。
+
+### 补充（同日，D73）：判废护栏去掉，无标注条目只看画面缺陷
+
+- **C2**：无标注条目的 `task_success` 记录仍是 `skipped = "no_task_text"`，但带 `cams` / `video_inputs` / `cameras`（每路相机的 `camera_check`，
+  `verdict` 为 `unavail`），`camera_defects` 的记录由此产生，和有标注的条目一样；计划里 vlm 段的 `gates` 不再有 `guard_caption`；
+  `estimates.vlm_requests` 每条 1 次。有标注条目的记录不再出现 `label_check`；`label_conflict_suspect` 只在 D73 之前的记录里。
+- **C1 / C4 不变**。
 

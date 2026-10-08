@@ -121,6 +121,17 @@ class FakeVlm:
     def answer(self, payload: dict) -> str:
         text = _texts(payload)
         n = int(self.answer_key(payload).split(":")[1][:8], 16)
+        if "Inspect the supplied continuous videos for picture defects only" in text:
+            # an episode without a task text (D73): the defect report per camera, no verdict - a
+            # pure function of each camera's name and window, as in the judgement below
+            cams = re.findall(r"Camera: (.+?)\. Same episode", text)
+            ends = [float(x) for x in re.findall(r"episode window ends at ([\d.]+)s", text)]
+            starts = [float(x) for x in re.findall(r"episode time ([\d.]+)s", text)]
+            block = {}
+            for i, name in enumerate(cams):
+                k = int(round(ends[i] * 10)) + sum(map(ord, name))
+                block[name] = {"camera_check": _fake_camera_check(k, starts[i], ends[i])}
+            return json.dumps({"cameras": block})
         if "Assess the robot manipulation task from the supplied continuous videos" in text:
             camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
             start = float(re.search(r"episode time ([\d.]+)s", text).group(1))

@@ -204,7 +204,8 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
     unlabeled = _unlabeled(dataset, selected, count, unlabeled_episodes, notes)
     if unlabeled and any(s.id == "task_success" for s in chosen):
         notes.append(f"{unlabeled} selected episode(s) have no task text: task_success does not "
-                     "judge them, every other check still runs on them")
+                     "judge them (their cameras are still checked for picture defects, one request "
+                     "each), every other check still runs on them")
     for block, block_stages in registry_mod.BLOCKS.items():
         previous = None
         for stage_id in block_stages:

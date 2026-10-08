@@ -59,8 +59,7 @@ def test_full_plan_matches_the_design_example():
     # D72: no caption stage before the checks - the 88 unlabeled episodes are simply not judged
     assert (vlm["block"], vlm["episodes"]) == ("vlm", "selected") and "after" not in vlm
     assert vlm["modules"] == ["task_success", "camera_defects"] and "hard_gates" not in vlm
-    assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
-                            "guard_caption": 32}
+    assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32}  # no guard_caption (D73)
     assert vlm["merge"] == {"strategy": "none", "groups": []}
     assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
@@ -198,19 +197,21 @@ def test_no_stage_captions_and_task_success_skips_the_unlabeled():
     assert _unlabeled_note(plan(["timestamp_check", "visual_quality"], preflight=unlabelled)) is None
 
 
-def test_unlabeled_episodes_cost_no_judgement():
+def test_unlabeled_episodes_still_cost_one_request():
+    """D73: an episode without a task text gets the picture-defect request instead of a
+    judgement, so the estimate counts one request per selected episode either way."""
     pf = X.preflight(64, without_task=10)
     full = plan(["task_success"], preflight=X.preflight(64))["estimates"]["vlm_requests"]
     # exact knowledge: none of the selected episodes lacks a task text
     p = plan(["task_success"], preflight=pf, episodes=[0, 1, 2], unlabeled_episodes=[40, 41])
     assert _unlabeled_note(p) is None and p["estimates"]["vlm_requests"] == 3
     p = plan(["task_success"], preflight=pf, episodes=[0, 1, 40], unlabeled_episodes=[40, 41])
-    assert _unlabeled_note(p).startswith("1 selected episode(s)") and p["estimates"]["vlm_requests"] == 2
+    assert _unlabeled_note(p).startswith("1 selected episode(s)") and p["estimates"]["vlm_requests"] == 3
     # only totals known: plan it, and say the count is an estimate
     p = plan(["task_success"], preflight=pf, episodes=range(32))
     assert _unlabeled_note(p).startswith("5 selected episode(s)")
     assert any("estimated from the preflight" in n for n in p["estimates"]["notes"])
-    assert plan(["task_success"], preflight=pf)["estimates"]["vlm_requests"] == full - 10
+    assert plan(["task_success"], preflight=pf)["estimates"]["vlm_requests"] == full
 
 
 # ---------------------------------------------------------------- D23: existing modules never merge
@@ -278,7 +279,7 @@ def test_caps_flow_into_the_plan():
     assert p["vlm_parallelism"] == 16
     g = derive_gates(16)
     assert stage(p, "vlm")["gates"] == {k: g[k] for k in
-                                        ("episode", "probe", "endstate", "arbitration", "guard_caption")}
+                                        ("episode", "probe", "endstate", "arbitration")}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 
@@ -319,7 +320,7 @@ def test_estimates_follow_v1_call_graph():
     assert p["estimates"]["vlm_requests"] == 10                     # one judgement per episode (D71)
     assert p["estimates"]["wall_clock_s"] > 0
     p = plan(["task_success"], preflight=X.preflight(10, without_task=4))
-    assert p["estimates"]["vlm_requests"] == 10 - 4                  # the 4 unlabeled are not judged (D72)
+    assert p["estimates"]["vlm_requests"] == 10                      # the 4 unlabeled get the picture-defect request (D73)
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10))
     assert p["estimates"]["vlm_requests"] == 10                      # merged: one request per episode
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10),

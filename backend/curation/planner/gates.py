@@ -31,9 +31,11 @@ GATE_NAMES = ("episode", "probe", "endstate", "arbitration", "guard_caption",
               "caption", "llm", "audit")
 
 #: The gates each VLM stage of a plan carries (v1's call sites, 04 §4.1). ``caption`` is v1's
-#: caption pass; no v2 stage carries it since the autolabel stage went (D72).
+#: caption pass (no v2 stage carries it since the autolabel stage went, D72) and ``guard_caption``
+#: the label guard's (gone with D73); ``endstate`` and ``arbitration`` stay on the stage for v1's
+#: ``rejudge``, which reads the plan's gates.
 STAGE_GATES: dict[str, tuple[str, ...]] = {
-    "vlm": ("episode", "probe", "endstate", "arbitration", "guard_caption"),
+    "vlm": ("episode", "probe", "endstate", "arbitration"),
 }
 
 #: Where each gate lives in v1's pipeline config. The three gates missing here are

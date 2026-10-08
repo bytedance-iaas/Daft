@@ -1,8 +1,9 @@
 """camera_defects: glitch, shake and lens contamination, reported by the model in the
 per-camera review it already makes for task_success (no request of its own).
 
-Every endstate review asks the model for an extra ``camera_check`` field next to its verdict
-(``adapters.video_vlm.CAMERA_CHECK_PROMPT``); this module reads those answers back out of
+The one judgement request asks the model for a ``camera_check`` per camera next to its verdict
+(``adapters.video_vlm.CAMERAS_PROMPT``; an episode without a task text gets the same question
+alone, ``CAMERAS_ONLY_PROMPT``, D73); this module reads those answers back out of
 task_success's per-camera answers (``cameras``) and turns them into one advisory record per episode. The
 record never votes: ``passed`` and ``score`` stay None, the three items live in ``details``
 and are always present - ``unknown`` when the model did not answer, when the review failed,
@@ -69,8 +70,8 @@ def struct_from_task(task_struct: dict | None) -> dict:
 
     if task_struct is None:
         reason = "任务成败判定没有产生结果，无法读取逐机位复核"
-    elif detail.get("skipped") == "no_task_text":
-        reason = "没有任务标注，没有发判定请求"                       # D72
+    elif reviews is None and detail.get("skipped") == "no_task_text":
+        reason = "没有任务标注，画面缺陷请求没有得到结果"             # D73: it gets that request alone
     elif reviews is None:
         reason = "判定请求没有按相机作答（非视频模式或请求失败）"
     elif per_camera and not any(e["answered"] for e in per_camera.values()):

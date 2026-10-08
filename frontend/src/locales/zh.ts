@@ -1021,7 +1021,7 @@ export const zh = {
     planNoteDecode: '数据完整性的解码测试（decode_test）开着时没有计入：大约要把每一帧多解码一遍',
     planBlock: (block: string, fullSet: boolean) => (fullSet ? `${block} · 全量步骤` : block),
     planNoteTaskSuccess: '任务成败判定的判废护栏调用视数据而定，没有计入',
-    planNoteUnlabeled: (n: string) => `${n} 条没有任务标注：任务成败判定不判它们，其余检查照常`,
+    planNoteUnlabeled: (n: string) => `${n} 条没有任务标注：不判任务成败，只看画面缺陷（各一次请求），其余检查照常`,
     planNoteTaskSuccessTwoPass: '任务成败判定的取证仲裁和判废护栏调用视数据而定，没有计入',
     planNoteSkillProfile: '技能画像的文本调用（技能归纳、标注核对）按数据集算，没有计入',
     planNoteUncounted: (names: string) => `${names}没有请求数估算，没有计入`,

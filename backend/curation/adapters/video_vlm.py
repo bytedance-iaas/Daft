@@ -7,10 +7,12 @@ import math
 from .video_input import VideoClip, video_content
 
 #: ONE request judges the episode AND every camera (design 13, D71): no review request per
-#: camera, no arbitration. The per-camera answers come out of the same reasoning pass, so they are
-#: not an independent second signature - what guards a rejection is the evidence it must cite, the
-#: label guard, and sending everything less than a clear answer to a person. Records judged under
-#: the earlier two-pass protocol (``video-task/1``) are stale: ``check --resume`` judges them again.
+#: camera, no arbitration, and since D73 no label guard either. The per-camera answers come out of
+#: the same reasoning pass, so they are not an independent second signature - what guards a
+#: rejection is the evidence it must cite and sending everything less than a clear answer to a
+#: person. Records judged under the earlier two-pass protocol (``video-task/1``) are stale:
+#: ``check --resume`` judges them again. An episode without a task text gets the picture-defect
+#: request alone (``CAMERAS_ONLY_PROMPT``): same cameras, same defect items, no verdict.
 PROTOCOL = "video-task/2"
 #: the per-camera picture-defect report answered inside that same request (camera_defects module).
 #: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
@@ -91,6 +93,23 @@ Judge each camera on what THAT camera shows and nothing else: a camera that cann
 or the relevant action is "uncertain" for that camera, even when another camera settles the episode.
 Do not copy the episode verdict into every camera. The episode's own verdict stays in the five
 fields above and is yours to decide from all the cameras together.
+""" + CAMERA_CHECK_DEFS + """
+The whole answer must be one valid JSON object."""
+
+#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same three defect
+#: items, no verdict - there is no task to judge, so nothing is asked about success or failure.
+CAMERAS_ONLY_PROMPT = """Inspect the supplied continuous videos for picture defects only. This episode
+has no task description, so there is no task to judge: do not assess success or failure, do not
+describe what the robot does. All cameras show the same episode.
+Return one JSON object with exactly one field "cameras", with one entry for EVERY camera supplied
+above, under its exact name:
+{"cameras":{"<exact supplied camera name>":{
+   "camera_check":{
+     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "contamination":{"level":"none|minor|severe|unknown",
+                      "kind":"none|dirt|smudge|water|obstruction|other",
+                      "times":[[start_s,end_s]],"note":"..."}}}}}
 """ + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
@@ -223,6 +242,36 @@ def parse_cameras(raw, clips: list[VideoClip]) -> dict:
     return out
 
 
+def parse_cameras_only(text: str, clips: list[VideoClip]) -> dict:
+    """The answer to :data:`CAMERAS_ONLY_PROMPT`: ``{"cameras": {camera: {verdict, reason,
+    camera_check}}}`` in the shape of :func:`parse_cameras` - ``verdict`` is ``unavail`` for every
+    camera, since nothing was judged - so the camera_defects rider reads both answers alike. An
+    answer without a ``cameras`` object costs the one repair round; inside it, lenient."""
+    from .vlm_client import strip_reasoning
+
+    raw = strip_reasoning(text).strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    answer = json.loads(raw)
+    if not isinstance(answer, dict) or not isinstance(answer.get("cameras"), dict):
+        raise ValueError("the picture-defect answer needs a cameras object")
+    answers, known = answer["cameras"], {c.camera: c for c in clips}
+    out: dict = {}
+    for clip in clips:
+        got = answers.get(clip.camera)
+        if got is None:
+            for name, value in answers.items():
+                if isinstance(name, str) and _resolve_camera(name, known) is clip:
+                    got = value
+                    break
+        check = got.get("camera_check") if isinstance(got, dict) else None
+        entry = {"verdict": "unavail", "reason": "", "camera_check": parse_camera_check(check, [clip])}
+        if not isinstance(got, dict):
+            entry["camera_check"].setdefault("problems", []).append("the model gave no entry for this camera")
+        out[clip.camera] = entry
+    return {"cameras": out}
+
+
 def _without_camera_check(raw: str) -> str | None:
     """``raw`` with the ``"camera_check": {...}`` member removed, or None if it is not there.
 
@@ -329,10 +378,12 @@ def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
 def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
                         timeout_s: float = 60, api_key_env: str | None = None,
                         max_in_flight: int = 16, thinking: bool | None = None,
-                        json_mode: bool = True, fps: float = 5.0):
+                        json_mode: bool = True, fps: float = 5.0, cameras_only: bool = False):
     """The ``probe`` request is the judgement: it also answers for every camera (D71), so there is
-    no review request per camera and no arbitration. The ``endstate`` and ``arbitration`` tags are
-    v1's own commands' (``rejudge``), not the product's."""
+    no review request per camera and no arbitration. With ``cameras_only`` the same request asks
+    for the picture defects alone (an episode without a task text, D73); ``instruction`` is then
+    ignored. The ``endstate`` and ``arbitration`` tags are v1's own commands' (``rejudge``), not
+    the product's."""
     import requests
     from .vlm_client import SharedGate, _with_thinking, auth_headers
 
@@ -342,11 +393,16 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
     constrained = {"json": bool(json_mode)}      # flipped off if the backend refuses the field
     per_camera = tag == "probe"                   # the judgement answers for every camera
 
-    def assess(clips: list[VideoClip], instruction: str, *, hints: str = "") -> dict:
+    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "") -> dict:
         from . import vlm_client
 
-        prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
-        if per_camera:
+        if cameras_only:
+            prompt = CAMERAS_ONLY_PROMPT
+        else:
+            prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
+        if cameras_only:
+            pass
+        elif per_camera:
             prompt += CAMERAS_PROMPT            # one request answers the episode and every camera
         elif tag == "endstate":
             prompt += "\nIndependently review ONLY this camera; abstain if its view is insufficient."
@@ -377,6 +433,8 @@ def make_video_assessor(endpoint: str, model: str, *, tag: str = "probe",
         for attempt in range(2):
             text = ask()
             try:
+                if cameras_only:
+                    return parse_cameras_only(text, clips)
                 return parse_assessment(text, clips, per_camera=per_camera)
             except (ValueError, TypeError, KeyError) as exc:
                 if attempt:

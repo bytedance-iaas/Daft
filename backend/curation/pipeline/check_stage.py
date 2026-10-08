@@ -88,6 +88,8 @@ class TaskClients:
     vlm_completion: Callable
     cam_voter: Callable | None
     arb_deps: dict | None
+    #: the picture-defect request an episode without a task text gets instead of a judgement (D73)
+    cameras: Callable | None = None
 
 
 @dataclass
@@ -377,14 +379,7 @@ class StageRun:
             self.o.task_text.instructions[int(ep)] = str(row.get("instruction") or "")
         text, src, problem = self.o.task_text.resolve(ep)
         if problem is not None:
-            # D72: no task text, no judgement - the record says so and the episode goes on;
-            # the platform does not write a caption for it (the autolabel step is gone)
-            from .tasktext import NO_TASK_TEXT, SRC_NONE
-
-            detail = {"rules": [NO_TASK_TEXT], "skipped": NO_TASK_TEXT, "task_desc_source": SRC_NONE,
-                      "reason": "没有任务标注，没有做任务成败判定"}
-            return {"task_success": {"passed": None, "score": None,
-                                     "detail": json.dumps(detail, ensure_ascii=False)}}, {}
+            return self._picture_only(ep, row, log), {}
         clients = self.o.task_clients
         deps = funnel.TaskDeps(
             vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
@@ -394,8 +389,8 @@ class StageRun:
             decode=wrap_decode(funnel._default_decode, log, camera_names(row.get("video"))))
         # D39 recorded how a human relabel is judged again ("v1": v1's rejudge, scoring plus
         # the per-camera vote; "full": the first run's flow). Under the one protocol (D71) there
-        # is nothing left to choose between: both judge the relabel in the single request, with
-        # the label guard. The recorded mode is kept on the record for aggregate.
+        # is nothing left to choose between: both judge the relabel in the single request.
+        # The recorded mode is kept on the record for aggregate.
         rerun = self.o.task_text.relabel_rerun(ep) if src == "人工改标" else None
         try:
             protocol_src = "原始标注" if src == "人工改标" else src
@@ -415,6 +410,32 @@ class StageRun:
             struct = dict(struct, detail=json.dumps(detail, ensure_ascii=False, default=str))
         evidence = self._evidence(ep, row, struct)
         return {"task_success": struct}, {"task_success": evidence}
+
+    def _picture_only(self, ep: int, row: dict, log) -> dict:
+        """D72 / D73: an episode without a task text is not judged - its record says so and the
+        episode goes on through every other check - but its cameras are still looked at: one
+        request asks for the picture defects alone, so the camera_defects rider has the same
+        answer it has for a judged episode. A request that fails is an execution error, as for
+        a judgement; without a video or a client the record only says ``no_task_text``."""
+        from .tasktext import NO_TASK_TEXT, SRC_NONE
+        from .video_task import prepare_clips
+
+        detail = {"input_mode": "video", "rules": [NO_TASK_TEXT], "skipped": NO_TASK_TEXT,
+                  "task_desc_source": SRC_NONE, "reason": "没有任务标注，没有做任务成败判定"}
+        clients = self.o.task_clients
+        if clients is not None and clients.cameras is not None and row.get("video"):
+            try:
+                clips = prepare_clips(self.o.cfg, row["video"])
+                detail["video_inputs"] = [c.metadata() for c in clips]
+                detail["cams"] = [c.camera for c in clips]
+                asked = wrap_call(clients.cameras, log, step="probe", call_kind="probe")
+                detail["cameras"] = asked(clips)["cameras"]
+            except Exception as e:  # noqa: BLE001 - the episode's own error, held like any other
+                if not log:
+                    log.add("internal", cause=f"{type(e).__name__}: {e}")
+                return {"task_success": funnel.internal_error_struct(e)}
+        return {"task_success": {"passed": None, "score": None,
+                                 "detail": json.dumps(detail, ensure_ascii=False)}}
 
     # ------------------------------------------------------------ dedup (D70)
     def _eid(self, ep: int) -> str:

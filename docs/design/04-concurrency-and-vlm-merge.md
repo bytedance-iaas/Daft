@@ -95,8 +95,8 @@ v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门�
 | episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2 |
 | probe | 打分请求，进程级一把，所有 episode 共用 | `checks.task_success.vlm.max_concurrency` | 64 | N |
 | endstate | 逐机位复核（**D71 起 v2 不发这类请求**，闸门与配置键留给 v1 的 `rejudge`） | episode 并发 × 2 | 64 | N |
-| arbitration | 取证仲裁链（**同上，D71 起 v2 不发**；判废护栏的 caption / 比对仍走它的闸门） | = episode 并发 | 32 | N/2 |
-| 护栏 caption | 判废护栏里的 caption | = episode 并发 | 32 | N/2 |
+| arbitration | 取证仲裁链（**同上，D71 起 v2 不发**） | = episode 并发 | 32 | N/2 |
+| 护栏 caption | 判废护栏里的 caption（**D73 起 v2 不发，闸门不再下发到 vlm 段**，名字留给 v1 配置） | = episode 并发 | 32 | N/2 |
 | caption | v1 的补描述打标（D72 起 v2 没有段用它，闸门名保留给 v1 配置） | `skill_profile.caption_concurrency` | 32 | N/2 |
 | llm | 纯文本调用（v1 的技能归纳；v2 没有模块用，闸门保留为参数位）| `skill_profile.llm_concurrency` | 16 | N/4 |
 | audit | 配对判断（同上）| `skill_profile.audit_concurrency` | 16 | N/4 |
@@ -204,7 +204,7 @@ planner 的输出，也是 `curation plan --json` 的 schema：
 |---|---|---|---|---|---|
 | `probe` 任务完成度打分 | 0.5s 间隔、最长边 448、≤4 机位 | 各机位按下标对齐成「时刻」，linspace 含首尾取 8 个时刻，**按时间顺序**提交 | 2×机位数：各机位第 0 帧作参考 + 该时刻各机位画面；模型回 0–100 一个整数 | 8 | 过了两道硬门的每一条 |
 | `endstate` 逐机位复核 | 复用 probe 已解码的帧 | 每机位 linspace 含首尾取 8 帧，前 4 为「早期」后 4 为「后期」 | 8 张，**单机位** | 机位数 × 2（「做成了吗」「失败了吗」分开问） | 每一条，不看 probe 的结果 |
-| 判废护栏（`caption` + `llm`） | 复用已解码的帧 | 每机位 linspace 取 N 帧 | 机位数 × N，外加 1 次纯文本比对 | 0–2 | 仅当已判废且任务文本来自原始标注 |
+| 判废护栏（`caption` + `llm`；**D73 起 v2 不发**） | 复用已解码的帧 | 每机位 linspace 取 N 帧 | 机位数 × N，外加 1 次纯文本比对 | 0–2 | v1：仅当已判废且任务文本来自原始标注 |
 | `arbitration` 取证仲裁 | 复用已解码的帧 | 外部机位：夹爪开合事件定锚点，挑最清晰的；腕部机位：事件前后 −0.5 / 0 / +1.0 / +2.5 秒 | 定位 1 张整帧；合议 2 张（整帧 + 目标框外扩 15% 后放大 3 倍）或腕部 4 张放大 2 倍 | 出题 1 + 每锚点定位 1 + 每线 3 票 | 仅当打分与复核之后仍弃权 |
 | `arbitration` 任务类型判别 | — | — | 纯文本 | 0–1 | 关键词规则没命中时 |
 | `caption` 技能打标 / autolabel | **另一次全帧率解码**、448、≤4 机位 | 每机位 linspace 含首尾取 8 帧 | ≤32 张，多机位分段带标签 | 1 | 画像：判决通过且去重后的条目；autolabel：漏斗前的无标注条目，结果被画像复用 |

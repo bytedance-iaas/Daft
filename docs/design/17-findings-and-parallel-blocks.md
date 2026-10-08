@@ -300,7 +300,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `failure` | TASK-5 | high | blocking，可复议 | 判失败；区间 = `evidence` 的时间段（P19） |
 | `uncertain` | TASK-5 | medium | review（task_verdict） | 弃权 |
 | `recovery` | TASK-12 | low | info | 中途回落后完成 |
-| `label_conflict_suspect` | LABEL-5 | medium | review（label） | 判废护栏 |
+| `label_conflict_suspect` | LABEL-5 | medium | review（label） | 判废护栏（D73 起不再产生，细码留给旧记录） |
 | `task_text_missing` | LABEL-3 | low | info | 没有任务标注：D72 起这条不判成败（记录 `no_task_text`）；更早的任务里是「用了自产caption」（P20） |
 | `completion`（读数） | TASK-5 | — | 读数 | 完成度估计 |
 
@@ -391,7 +391,7 @@ A 类算法不动，壳里读 `details` 生成。
 将来真需要一个只能看全集的模块，往 `FULL_SET_STAGES` 里加回来就行。
 去重不 `depends_on` 判决，上游判决变了也不 `stale`。（VLM 块原来的全量步骤是技能画像，D68 起下线。）
 
-**为什么改**：需求方的原话是「去重还是不能 overlap」。不勾模型模块的任务（「快速质检」）里，去重这一段是串在关键路径末尾的，
+**为什么改**：去重也要和前面的段交叠（需求方 2026-10-07 定）。不勾模型模块的任务（「快速质检」）里，去重这一段是串在关键路径末尾的，
 条数越多越明显；改成逐条之后，整条流水线没有栅栏了 —— 最后一条 episode 判完就能出报告。
 
 ### 3.3 Daemon 派发与 planner

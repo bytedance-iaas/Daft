@@ -998,6 +998,23 @@ def vlm_completion_from_config(cfg: dict):
                                                                DEFAULT_MAX_CONCURRENCY)))
 
 
+def camera_check_from_config(cfg: dict):
+    """The picture-defect request an episode without a task text gets (D73): the production
+    scorer's endpoint, timeout and gate, asking for the cameras' defects alone."""
+    from .video_vlm import make_video_assessor
+
+    vlm = cfg["checks"]["task_success"].get("vlm") or {}
+    if not vlm.get("endpoint"):
+        raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
+    return make_video_assessor(vlm["endpoint"], vlm["model"], cameras_only=True,
+                               api_key_env=vlm.get("api_key_env"),
+                               thinking=cfg.get("pipeline", {}).get("thinking"),
+                               timeout_s=timeout_for("probe", vlm),
+                               fps=float((vlm.get("video") or {}).get("fps", 5)),
+                               max_in_flight=int(vlm.get("max_concurrency",
+                                                         DEFAULT_MAX_CONCURRENCY)))
+
+
 # ══ 取证仲裁链的提示词与工厂(2026-08-13 定稿)═══════════════════════════════
 # 提示词全部原样承接实验版 arb_bench_b_v2(droid-200 真值上校准过的措辞):
 # - 问题生成三军规(禁加强词/严格度不超指令字面/gripper 不当 target):删一条冤杀就涨;

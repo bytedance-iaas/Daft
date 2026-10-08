@@ -195,7 +195,7 @@ def test_video_timeout_is_not_failure_and_has_no_image_fallback(monkeypatch):
     def broken(*a, **kw):
         raise TimeoutError("video timeout")
 
-    result = judge_video_episode({}, {}, "pick", broken, broken)
+    result = judge_video_episode({}, {}, "pick", broken)
     assert result.passed is None and result.detail["rules"] == ["video_score_failed"]
 
 
@@ -203,7 +203,53 @@ def test_media_preparation_failure_is_execution_error_not_model_abstention():
     from curation.pipeline.video_task import VideoPreparationError
 
     with pytest.raises(VideoPreparationError):
-        judge_video_episode({}, {}, "pick", lambda *a: pytest.fail("model called"), None)
+        judge_video_episode({}, {}, "pick", lambda *a: pytest.fail("model called"))
+
+
+def test_a_rejection_is_the_one_answer_and_nothing_else_is_asked(monkeypatch):
+    """D73: no label guard - a failure verdict with an original annotation is a rejection on
+    that one request; no caption, no comparison, no second request of any kind."""
+    monkeypatch.setattr("curation.pipeline.video_task.prepare_videos", lambda *a, **kw: [clip()])
+    calls = []
+
+    def scorer(*a, **kw):
+        calls.append(a)
+        return judged("failure", cam_verdict="failure")
+
+    result = judge_video_episode({}, {}, "pick up object", scorer, task_src="原始标注")
+    assert result.passed is False and len(calls) == 1
+    assert "label_check" not in result.detail and result.detail["rules"] == ["video_single_pass_failure"]
+
+
+def test_an_episode_without_a_task_text_gets_the_picture_defect_request_alone(monkeypatch):
+    """D73: the cameras-only request asks for the three defect items per camera and no verdict;
+    its answer reads in the shape of the judgement's per-camera block."""
+    from curation.adapters.video_vlm import (CAMERAS_ONLY_PROMPT, CAMERA_CHECK_DEFS,
+                                             make_video_assessor, parse_cameras_only)
+
+    assert "picture defects only" in CAMERAS_ONLY_PROMPT and CAMERA_CHECK_DEFS in CAMERAS_ONLY_PROMPT
+    assert '"verdict"' not in CAMERAS_ONLY_PROMPT and "Task:" not in CAMERAS_ONLY_PROMPT
+    clips = [clip(), clip(camera="wrist")]
+    answer = json.dumps({"cameras": {"cam": {"camera_check": {
+        "glitch": {"level": "minor", "times": [[0.0, 0.5]], "note": "blocky"},
+        "shake": {"level": "none", "times": [], "note": ""},
+        "contamination": {"level": "severe", "kind": "water", "times": [], "note": "persistent"}}}}})
+    got = parse_cameras_only(answer, clips)
+    assert set(got) == {"cameras"} and set(got["cameras"]) == {"cam", "wrist"}
+    cam, wrist = got["cameras"]["cam"], got["cameras"]["wrist"]
+    assert cam["verdict"] == "unavail" and cam["camera_check"]["glitch"]["level"] == "minor"
+    assert cam["camera_check"]["contamination"]["kind"] == "water"
+    assert wrist["camera_check"]["glitch"]["level"] == "unknown"
+    assert "the model gave no entry for this camera" in wrist["camera_check"]["problems"]
+    with pytest.raises(ValueError):
+        parse_cameras_only(json.dumps({"verdict": "success"}), clips)
+
+    sent = mock_transport(monkeypatch, [answer])
+    assess = make_video_assessor("http://test/v1", "m", cameras_only=True)
+    out = assess(clips)
+    assert len(sent) == 1 and out["cameras"]["cam"]["camera_check"]["glitch"]["level"] == "minor"
+    text = json.dumps(sent[0])
+    assert "picture defects only" in text and "Assess the robot manipulation task" not in text
 
 
 def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
