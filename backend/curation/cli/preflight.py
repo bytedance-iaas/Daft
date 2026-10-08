@@ -373,7 +373,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
     vlm_backend = (args.vlm_backend or "").strip()
     caption_note = (f"{_plural(without_task, 'episode')} "
                     f"{'has' if without_task == 1 else 'have'} no task text; "
-                    f"the model will caption them first") if without_task else ""
+                    f"task_success will not judge them, their cameras are still checked "
+                    f"for picture defects") if without_task else ""
 
     modules = []
     eef_base = None

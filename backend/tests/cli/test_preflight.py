@@ -84,7 +84,8 @@ def test_missing_task_text_does_not_grey_out_vlm_modules(cli, dataset):
     for mid in ("task_success",):
         m = _mod(doc, mid)
         assert m["availability"] == "available"
-        assert m["notes"] == ["2 episodes have no task text; the model will caption them first"]
+        assert m["notes"] == ["2 episodes have no task text; task_success will not judge them, "
+                              "their cameras are still checked for picture defects"]
 
 
 def test_fully_unlabelled_dataset_still_runs_vlm_modules(cli, dataset):

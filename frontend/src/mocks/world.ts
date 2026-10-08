@@ -531,7 +531,7 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
       }
     }
     if (needs.includes('vlm')) {
-      const notes = p.episodes - p.withTask > 0 ? [`${p.episodes - p.withTask} episodes have no task text; the model will caption them first`] : [];
+      const notes = p.episodes - p.withTask > 0 ? [`${p.episodes - p.withTask} episodes have no task text; task_success will not judge them, their cameras are still checked for picture defects`] : [];
       if (!opts.vlmBackend) {
         return {
           id: m.id,
