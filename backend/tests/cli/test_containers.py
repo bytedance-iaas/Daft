@@ -360,16 +360,57 @@ def test_tos_changed_object_exits_6(cli, tos, mini_mcap, tmp_path):
     sm = str(tmp_path / "sm.json")
     assert cli("snapshot", "--input", "tos://src/ds/mcap", "--out", sm).rc == 0
     tos.buckets["src"]["ds/mcap/episode_3.mcap"] += b"\0"
+    # the guard works on a fresh listing of the bucket; the stage commands take the snapshot's
+    # listing while it lives (an hour, or until the Daemon drops it for a resume or a retry)
+    from curation.cli import listing_cache
+
+    listing_cache.forget(str(tmp_path))
     res = cli("check", "--modules", "timestamp_check", "--input", "tos://src/ds/mcap",
               "--run-dir", str(tmp_path / "run"), "--source-manifest", sm, "--episodes", "3")
     assert res.rc == 6 and res.doc["error"]["details"]["key"] == "episode_3.mcap"
     tos.buckets["src"]["ds/mcap/episode_9.mcap"] = tos.buckets["src"]["ds/mcap/episode_0.mcap"]
     del tos.buckets["src"]["ds/mcap/episode_3.mcap"]
     tos.buckets["src"]["ds/mcap/episode_3.mcap"] = tos.buckets["src"]["ds/mcap/episode_0.mcap"]
+    listing_cache.forget(str(tmp_path))
     res = cli("check", "--modules", "timestamp_check", "--input", "tos://src/ds/mcap",
               "--run-dir", str(tmp_path / "run"), "--source-manifest", sm, "--episodes", "1")
     assert res.rc == 6                            # a new episode file: the dataset changed
     assert res.doc["error"]["details"]["change"] == "added"
+
+
+def _listings(cloud) -> int:
+    return sum(1 for c in cloud.calls if c[0] == "list")
+
+
+def test_the_bucket_is_listed_once_per_task(cli, tos, mini_mcap, tmp_path, monkeypatch):
+    """The snapshot keeps its listing next to the manifest; the stage commands take it instead
+    of listing the bucket again (each used to list on its own, then once more for the guard and,
+    for LeRobot, once more for v1's reader), until it expires, the metadata files changed, or the
+    Daemon dropped it for a resume or a retry."""
+    from curation.cli import listing_cache
+
+    tos.upload_dir(mini_mcap, "src", "ds/mcap")
+    rd = tmp_path / "run"
+    manifest = str(rd / "source_manifest.json")
+    assert cli("snapshot", "--input", "tos://src/ds/mcap", "--out", manifest).rc == 0
+    cache = rd / listing_cache.CACHE_NAME
+    assert cache.is_file()
+    per = _listings(tos)                                   # the calls one listing of the bucket takes
+    assert per >= 1
+    common = ["--input", "tos://src/ds/mcap", "--run-dir", str(rd), "--source-manifest", manifest,
+              "--selection", "0-7"]
+    for _ in range(2):
+        res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+        assert res.rc == 0, res.doc
+    assert _listings(tos) == per                           # no listing after the snapshot's
+    assert any("from the snapshot's listing" in e.get("msg", "") for e in res.events)
+    listing_cache.forget(str(rd))                          # what the Daemon does for a resume / retry
+    assert not cache.exists()
+    res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+    assert res.rc == 0 and _listings(tos) == 2 * per and cache.is_file()
+    monkeypatch.setattr(listing_cache, "MAX_AGE_S", 0.0)   # expired: listed afresh, kept again
+    res = cli("check", "--modules", "timestamp_check", *common, "--episodes", "0-1")
+    assert res.rc == 0 and _listings(tos) == 3 * per
 # ---------------------------------------------------------------- the helpers
 
 

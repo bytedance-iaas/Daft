@@ -391,8 +391,23 @@ class Source:
 
 
 def open_source(ctx: Context, args) -> Source:
-    """:func:`open_input` plus what the readers need: format, listing, local directory."""
-    return Source(ctx, args, open_input(ctx, args))
+    """:func:`open_input` plus what the readers need: format, listing, local directory.
+
+    A remote input is listed once per task: a command with ``--source-manifest`` takes the
+    listing the snapshot kept (:mod:`listing_cache`), and v1's readers are seeded with the
+    command's listing so they do not list the bucket a third time."""
+    from . import listing_cache
+
+    storage = open_input(ctx, args)
+    listing = None
+    if storage.remote:
+        listing = listing_cache.listing_for(ctx, storage, getattr(args, "source_manifest", None))
+    src = Source(ctx, args, storage, listing=listing)
+    if storage.remote:
+        from ..ingest import dsfs
+
+        dsfs.seed(storage.uri, ((k, o.size, o.etag) for k, o in src.listing.items()))
+    return src
 
 
 def selection_of(args) -> list[int] | None:
@@ -423,7 +438,7 @@ def source_guard(ctx: Context, args, storage):
 
     def check(episodes) -> None:
         if not state:                    # one listing per command: it is what the call reads
-            listing = storage.list()
+            listing = src.listing if src is not None else storage.list()
             info = lerobot_meta.load_info(storage)
             fmt = lerobot_meta.detect_format(listing)
             fmt.codebase_version = str(info.get("codebase_version") or "")

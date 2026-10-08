@@ -595,6 +595,14 @@ class Run:
         return open_delivery(self.task.output_uri, local_root=self.cfg.local_delivery_root,
                              svc=self.orch.svc, key=key, region=region)
 
+    def forget_listing(self) -> None:
+        """Drop the listing the snapshot kept for the stage commands (``cli/listing_cache``):
+        a resume or a retry may come long after it, and the source guard must see the bucket
+        as it is now."""
+        from curation.cli import listing_cache
+
+        listing_cache.forget(str(self.wd.root))
+
     def ensure_local(self) -> None:
         """A subtask on a task whose work directory the janitor cleaned (7 days after the
         end) first brings back from the delivery what it builds on (00 §4.2)."""

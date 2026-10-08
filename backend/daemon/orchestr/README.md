@@ -22,7 +22,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
 | `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内是逐条交接的段（D70 起没有全量步骤；更早的计划里的 `full_set` 段仍按整段跑，`autolabel` 段记 skipped，D72）；一块失败另一块随之停下 |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 一块的逐条段（一条链）：每段一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`（只在块内），每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
-| `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5） |
+| `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5）；续跑、重试开始前删掉快照留下的对象清单缓存（`.source_listing.json`），让源文件守卫重新列一遍 |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |
 | `start.py` | 启动前：三项检查（D30）、数据集指纹核对（D37）、固化输入并入队 |

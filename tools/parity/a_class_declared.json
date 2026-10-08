@@ -31,6 +31,11 @@
       "since": "jinxin_drop_skill_profile (2026-10-07)",
       "why": "D69: the platform only produces the report, it no longer writes a delivery dataset - the LeRobot writer has no caller left (the mcap / rrd writers, the incremental re-export and the export command went with it; v1's own export raises through export/retired.py)"
     },
+    "ingest/dsfs.py": {
+      "blob": "a3c6bd953263073b2e80418de975fd6f1fa17810",
+      "since": "jinxin_drop_skill_profile (2026-10-08)",
+      "why": "the listing a command already has is handed to the readers (seed): one listing of the bucket per task instead of three per stage worker; no read path changes - prefetch, exists, glob and the reads are as they were (tests/cli test_the_bucket_is_listed_once_per_task)"
+    },
     "ingest/mcap_reader.py": {
       "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
       "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",

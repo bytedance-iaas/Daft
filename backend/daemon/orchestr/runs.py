@@ -253,6 +253,7 @@ class MainRun(StageRun):
         self.reload()
         if self.sub_id is not None:                      # a resume, maybe days later
             self.ensure_local()
+            self.forget_listing()
         self.require_current_format()
         plan = planning.ensure_plan(self)
         self.plan_progress(self.stage_ids(plan), plan)
@@ -285,6 +286,7 @@ class RetryRun(StageRun):
 
         self.reload()
         self.ensure_local()
+        self.forget_listing()
         self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
