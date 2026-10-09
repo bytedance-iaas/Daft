@@ -541,6 +541,8 @@ def _eef_video_consistency(passed, score, d, p) -> Derived:
         out.add(m, "unsettled", reason.removeprefix("需要人工裁决：") or "末端投影与画面是否相符要人看",
                 readings={"why": codes})
     opinion = d.get("opinion") if isinstance(d.get("opinion"), dict) else {}
+    if opinion.get("status") == "not_assessable":   # no trajectory for the episode: nothing was compared
+        out.cannot("MV-4", "not_applicable", str(opinion.get("failure") or reason or "这一条没有轨迹")[:200])
     if opinion.get("flagged"):
         best, best_cam = None, None
         for cid, cam in (opinion.get("cameras") or {}).items():

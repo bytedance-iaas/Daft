@@ -13,7 +13,7 @@ import { LazyVisible } from '../../components/LazyVisible';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
 import { fieldLabel, readable } from '../../lib/reportView';
-import { anyValue, countsOf, fmt, hasAny, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
+import { anyValue, countsOf, eefOpinionOnly, fmt, hasAny, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
 import { formatScalar, splitSummary } from '../../lib/summary';
 import { zh } from '../../locales/zh';
 
@@ -135,11 +135,15 @@ function labelled(v: unknown, names: Record<string, string>): Item[] | null {
   return seriesOf(v, (n) => names[n] ?? n);
 }
 
+/** Whether a section shows why its module abstained (always, unless the module says when not). */
+type ViewOpts = { abstain?: boolean | ((s: Summary) => boolean) };
+
 /** The charts every verdict module may add: why it abstained, where the errors stopped. */
-function commonCharts(s: Summary, model: ViewModel, opts: { abstain?: boolean } = {}): ViewModel {
+function commonCharts(s: Summary, model: ViewModel, opts: ViewOpts = {}): ViewModel {
   const charts = [...model.charts];
   const abstain = seriesOf(s.abstain_reason_counts);
-  if (opts.abstain !== false && anyValue(abstain) && !charts.some((c) => c.key === 'abstain')) {
+  const shows = typeof opts.abstain === 'function' ? opts.abstain(s) : opts.abstain !== false;
+  if (shows && anyValue(abstain) && !charts.some((c) => c.key === 'abstain')) {
     charts.push({ key: 'abstain', title: S().abstainReasons, items: abstain, horizontal: true });
   }
   const steps = labelled(s.error_steps, S().step);
@@ -428,7 +432,7 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     ['to_human', Z.outcome.human, true, toHuman ? Z.humanPending(pending, toHuman) : undefined],
   ];
   // a task without a gripper reference has only the model's opinion (D-E15): no verdict counts to show
-  const opinionOnly = num(s.opinion_episodes) !== null && !outcome.some(([k]) => num(s[k]));
+  const opinionOnly = eefOpinionOnly(s);
   if (!opinionOnly) for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
   const O = Z.opinion;
   if (num(s.opinion_episodes) !== null) {
@@ -436,6 +440,7 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     stats.push({ label: O.flagged, value: num(s.opinion_flagged) ?? 0, tone: num(s.opinion_flagged) ? 'warn' : undefined, foot: O.flaggedFoot });
     stats.push({ label: O.segments, value: num(s.opinion_segments) ?? 0 });
     if (num(s.opinion_failed)) stats.push({ label: O.failed, value: num(s.opinion_failed), tone: 'warn' });
+    if (num(s.opinion_not_assessable)) stats.push({ label: O.notAssessable, value: num(s.opinion_not_assessable), foot: O.notAssessableFoot });
   }
   if (num(s.model_cpu_agreement) !== null)
     stats.push({ label: Z.agreement, value: `${Math.round(num(s.model_cpu_agreement)! * 100)}%`, foot: Z.agreementFoot(num(s.model_votes) ?? 0) });
@@ -608,7 +613,7 @@ function defaultModel(s: Summary): ViewModel {
 
 type Model = (s: Summary, section: ReportModuleSection) => ViewModel;
 
-function view(id: string, model: Model, opts: { abstain?: boolean } = {}): ComponentType<SectionViewProps> {
+function view(id: string, model: Model, opts: ViewOpts = {}): ComponentType<SectionViewProps> {
   function SectionView({ section }: SectionViewProps) {
     const s = (section.summary ?? {}) as Summary;
     return <ModelView id={section.id} model={withFallback(s, commonCharts(s, model(s, section), opts))} />;
@@ -630,7 +635,8 @@ export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   video_action_sync: view('video_action_sync', syncModel),
   task_success: view('task_success', taskModel, { abstain: false }),
   dedup: view('dedup', dedupModel),
-  eef_video_consistency: view('eef_video_consistency', eefModel),
+  // the opinion asks nobody: an episode it could not look at has its own figure (没问模型), no abstention chart
+  eef_video_consistency: view('eef_video_consistency', eefModel, { abstain: (s) => !eefOpinionOnly(s) }),
 };
 
 export const DefaultSectionView = view('default', defaultModel);

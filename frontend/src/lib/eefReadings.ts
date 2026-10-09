@@ -282,6 +282,43 @@ export function eefOpinion(details: D): EefOpinion | null {
   };
 }
 
+// ---------------------------------------------------------------- a trajectory derived from the recording (design doc 22 §5.4)
+
+export interface EefTrajectorySource {
+  gripper: string;
+  builtin: boolean;
+  /** the calibration's fields that are assumptions */
+  assumed: string[];
+  /** why the episode has no trajectory, or null */
+  reason: string | null;
+  message: string | null;
+  cameras: { hand: string; status: string; reason: string | null; pairingRate: number | null; intrinsics: string | null }[];
+  /** the export's checks (design doc 22 §7 rows 3, 7, 8): what looks wrong, in words */
+  suspects: string[];
+}
+
+/** How the platform had the episode's trajectory (``details.trajectory_source``): null for an uploaded file. */
+export function eefTrajectorySource(details: D): EefTrajectorySource | null {
+  const src = obj(details.trajectory_source);
+  if (src.kind !== 'derived') return null;
+  const cal = obj(src.calibration);
+  return {
+    gripper: s(cal.gripper) ?? '',
+    builtin: cal.builtin === true,
+    assumed: arr(cal.assumed).map(s).filter((x): x is string => !!x),
+    reason: s(src.reason),
+    message: s(src.message),
+    cameras: Object.entries(obj(src.cameras)).map(([hand, raw]) => {
+      const c = obj(raw);
+      return { hand, status: s(c.status) ?? '', reason: s(c.reason), pairingRate: n(c.pairing_rate), intrinsics: s(c.intrinsics) };
+    }),
+    suspects: arr(src.suspects)
+      .map(obj)
+      .map((x) => s(x.detail))
+      .filter((x): x is string => !!x),
+  };
+}
+
 // ---------------------------------------------------------------- a wrist camera's own motion (design doc 22 §5.3)
 
 export interface EefEgoSegment {

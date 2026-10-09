@@ -155,7 +155,12 @@ def test_the_eef_module_takes_part_in_the_verdict():
     assert spec.code("inconsistent").level == "blocking" and spec.code("inconsistent").appealable
     assert spec.code("unsettled").review_line == "eef_check"
     props = spec.param_schema["properties"]
+    # 4.3 (design doc 24): the trajectory is generated from the dataset; 4.4 (design doc 22 §5.4, D80): a handheld
+    # gripper's raw mcap is derived with an uploaded gripper calibration or the built-in one
     assert "trajectory_json" not in spec.param_schema.get("required", []) and "review_windows_per_camera" in props
+    assert M.upload_params(spec.id) == {"trajectory_json": "eef_trajectory", "observation_seeds": "eef_observation_seeds",
+                                        "gripper_template": "eef_gripper_template", "record_mapping": "eef_record_mapping",
+                                        "gripper_calibration": "eef_gripper_calibration"}
     assert [o["const"] for o in props["threshold_profile"]["oneOf"]] == ["demo"]   # no "no thresholds" any more
     assert "eef_review_windows" in [t.id for t in spec.tables]
     exported = {m["id"]: m for m in M.export()["modules"]}
@@ -224,6 +229,8 @@ def test_review_lines():
 def test_params_validate():
     M.validate_params("eef_video_consistency", {"trajectory_json": "/data/trajectory.json", "lag_search_s": 0.5})
     M.validate_params("eef_video_consistency", {})                      # the trajectory is generated (design doc 24)
+    with pytest.raises(jsonschema.ValidationError):
+        M.validate_params("eef_video_consistency", {"gripper_calibration": 3})
     with pytest.raises(jsonschema.ValidationError):
         M.validate_params("eef_video_consistency", {"trajectory_json": "x", "threshold_profile": "strict"})
     M.validate_params("video_action_sync", {"sync_plots": "all"})

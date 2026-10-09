@@ -105,6 +105,19 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(eefEgoMotion(eefOpinionRecord(3).details as Record<string, unknown>)).toBeNull();
   });
 
+  it('reads how the platform had a handheld gripper\'s trajectory (design doc 22 §5.4)', async () => {
+    const { eefHandheldRecord, eefOpinionRecord } = await import('../mocks/eef');
+    const { eefTrajectorySource } = await import('./eefReadings');
+    const src = eefTrajectorySource(eefHandheldRecord(3).details as Record<string, unknown>)!;
+    expect(src).toMatchObject({ gripper: 'das_gripper', builtin: true, assumed: ['T_camera_tcp', 'body_to_optical', 'pose_frame'], reason: null });
+    expect(src.cameras).toEqual([
+      { hand: 'robot0', status: 'ok', reason: null, pairingRate: 0.9987, intrinsics: 'camera_info' },
+      { hand: 'robot1', status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairingRate: null, intrinsics: null },
+    ]);
+    expect(src.suspects).toEqual(['有画面的帧里只有 88% 配上了位姿（容差 20 ms）']);
+    expect(eefTrajectorySource(eefOpinionRecord(3).details as Record<string, unknown>)).toBeNull();     // an uploaded file
+  });
+
   it('says which part of a clip got no answer and why', async () => {
     const { eefOpinion } = await import('./eefReadings');
     const op = eefOpinion({

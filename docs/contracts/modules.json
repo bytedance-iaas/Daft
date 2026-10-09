@@ -1,5 +1,5 @@
 {
- "registry_version": "4.3",
+ "registry_version": "4.4",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1721,7 +1721,19 @@
       ],
       "x-max-mb": 64,
       "title": "trajectory.json",
-      "description": "一般不用给：平台从数据集自己生成（手持夹爪数据集的状态与相机标定），或读数据集自带的 trajectory.json。只有要换一份轨迹时才上传：约定格式 eef-video/1.0.0 的单文件包，上传即校验",
+      "description": "一般不用给：平台从数据集生成（导出过的手持夹爪数据集的状态与相机标定；原始手持夹爪 mcap 用下面的夹爪标定逐条推出），或读数据集自带的 trajectory.json。只有要换一份轨迹时才上传：约定格式 eef-video 1.0 / 1.1 的单文件包，上传即校验",
+      "default": ""
+     },
+     "gripper_calibration": {
+      "type": "string",
+      "format": "upload",
+      "x-upload-kind": "eef_gripper_calibration",
+      "x-accept": [
+       ".json"
+      ],
+      "x-max-mb": 1,
+      "title": "夹爪标定",
+      "description": "手持夹爪的标定 umi-calibration/2：位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、缺 camera_info 时的内参回退。只在没传 trajectory.json、平台从手持夹爪的 mcap 推出轨迹时用；不给就用内置的 DAS DEMO 假设值（不带内参回退，结果注明「按假设值」）",
       "default": ""
      },
      "observation_seeds": {

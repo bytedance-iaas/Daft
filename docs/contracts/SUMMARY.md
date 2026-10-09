@@ -418,3 +418,13 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **F5.19，C2（兼容扩充）**：EEF 意见记录多 `details.ego_motion`（每路腕部相机的状态、指标、时间差、片段与匹配不足的段落，整条的好 / 不好与一句话，
   `uncalibrated`、`assumed`）；预检的能力表多一个分项 `ego_motion`，原因码加 `ego_motion_wrist_only`、`camera_poses_missing`、`own_hand_camera`
   （手持夹爪腕部相机的位置 / 朝向）。schema_version 不变，C4 不变。
+- **F5.20，C1 4.4**：EEF 模块新增可选上传参数 `gripper_calibration`（上传种类 `eef_gripper_calibration`，`umi-calibration/2`，≤ 1 MB）。
+  `trajectory_json` 在 4.3（设计 24）已不必填、由平台从数据集生成；原始手持夹爪的 mcap 没有可生成的来源，由平台逐条从录制推出轨迹
+  （标定用这份或内置的 DAS DEMO 假设值，设计 22 §5.4）。
+- **F5.20，C2（兼容扩充）**：预检在手持夹爪的 mcap 上不给 trajectory.json 也判可用（说明里写轨迹从录制推出、用哪份标定），夹爪标定不能用时
+  `unsupported: calibration_invalid`；EEF 记录多 `details.trajectory_source`（`kind: derived`、标定、每只手的相机配上没有与原因、导出检查的可疑项）；
+  推出的单条轨迹包与导出报告在运行目录 `checks/eef_video_consistency/trajectory/`。意见模式下没有轨迹的条目（推不出，或上传的文件里没有）
+  `opinion.status = "not_assessable"`、原因在 `opinion.failure`，没有发现、MV-4 评估不了、不转人工（以前文件里没有的条目转人工 `not_in_file`）。
+- **F5.20，C4 4.6.0**（4.5.0 是 UMI 原始会话，设计 24 §6）：`UploadKind` 加 `eef_gripper_calibration`（Daemon 到货即按 Schema 与刚性检查校验，摘要是夹爪、位姿定义、按假设值的字段、
+  有内参回退的手）；`eef-overlay` 对没传轨迹的任务读平台生成的那份（设计 24）或逐条推出的轨迹，这一条还没有或推不出时 404 `not_derived`。上传校验的 `warnings` 统一成 `UploadIssue`
+  对象（此前夹爪模板、记录映射的警告是字符串，与契约不符）。前端类型已重新生成。

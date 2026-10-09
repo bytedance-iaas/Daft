@@ -101,6 +101,8 @@ TIME_OFFSET = "time_offset"
 OWN_HAND_CAMERA = "own_hand_camera"          # on a handheld gripper: its own hand never moves in the picture
 EGO_MOTION_WRIST_ONLY = "ego_motion_wrist_only"
 CAMERA_POSES_MISSING = "camera_poses_missing"
+# a handheld gripper's trajectory derived from its recording (design doc 22 §5.4)
+CALIBRATION_INVALID = "calibration_invalid"
 
 
 @dataclasses.dataclass(frozen=True)

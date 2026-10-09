@@ -412,7 +412,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
 
             if eef_base is None:
                 eef_base = _eef_entry(eef_preflight, storage, listing, uri, getattr(args, "module_params", {}),
-                                      [ep.index for ep in episodes])
+                                      [ep.index for ep in episodes],
+                                      handheld=container is not None and container.get("profile") == "umi_das")
             entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
             # design doc 12 §8.7 (D-E17): the record mapping drafted from the metadata, for a person to confirm
             from ..extensions.eef_consistency import record_draft
@@ -536,9 +537,12 @@ def render(doc: dict) -> str:
     return "\n".join(lines)
 
 
-def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, episodes: list[int]) -> dict:
+def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, episodes: list[int], *,
+               handheld: bool = False) -> dict:
     """The EEF module's entry (design doc 24): the trajectory a caller gave, else the one generated from the
-    dataset (or its own ``trajectory.json``); a dataset with neither is unsupported - nothing for the user to give."""
+    dataset (or its own ``trajectory.json``), else - a handheld gripper's raw mcap (``handheld``, the reader's
+    ``umi_das`` layout) - the one derived episode by episode from the recording (design doc 22 §5.4); a dataset
+    with none of these is unsupported - nothing for the user to give."""
     import os
 
     from ..extensions.eef_consistency import contracts as EC
@@ -548,10 +552,14 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
     temp = None
     if not (params.get("trajectory_json") or "").strip():
         how = derive.source_of(listing)
+        if how is None and handheld:
+            return eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
+                                                   lerobot_root=None if "://" in uri else uri, handheld=True)
         if how is None:
             return {"availability": EC.UNSUPPORTED, "reason_code": EC.TRAJECTORY_MISSING,
                     "reason": "the dataset records no end-effector poses with the cameras' calibration "
-                              "(a handheld-gripper dataset's meta/umi_calibration.json, or a trajectory.json), "
+                              "(a handheld-gripper dataset's meta/umi_calibration.json, a handheld gripper's mcap, or a "
+                              "trajectory.json), "
                               "so there is nothing to project onto its videos"}
         try:
             temp = derive.to_temp(storage, listing)

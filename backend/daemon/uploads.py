@@ -11,7 +11,9 @@
   the module's own loader: patches decoded, features counted, entries with too few features reported;
 * ``eef_record_mapping`` - the record mapping of the EEF module's record comparison (``eef-mapping/1.1``
   ``record``, or a 1.0 exporter mapping whose ``eef`` block is the pose record; design doc 12 §8.7), parsed by
-  the module's own parser; whether its columns / topics exist is checked when a task binds it to a dataset.
+  the module's own parser; whether its columns / topics exist is checked when a task binds it to a dataset;
+* ``eef_gripper_calibration`` - a handheld gripper's ``umi-calibration/2`` (C2 ``eef/umi_calibration.schema.json``,
+  design doc 22 §5.4): the Schema and the rigid, proper transforms the exporter checks.
 
 An error is reported with its location (JSON path, sample, episode, frame, camera, point). Files
 live on the data volume as ``uploads/<owner key>/<upload_id>/{file, meta.json}``: no database row,
@@ -36,7 +38,7 @@ from .util import ID_ATTEMPTS, id_regex, new_id
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template", "eef_record_mapping",
-         "viz_annotations")
+         "eef_gripper_calibration", "viz_annotations")
 _ID_RE = re.compile(rf"^{id_regex('upl', r'upl_[0-9a-z]{10,40}')}$")
 _MAX_ERRORS = 50
 
@@ -47,6 +49,11 @@ def _owner_key(owner: str) -> str:
 
 def _invalid(message: str, errors: list[dict]) -> ApiError:
     return ApiError("validation_failed", message, details={"errors": errors[:_MAX_ERRORS]})
+
+
+def _warning(problem: str, code: str, field: str | None = None) -> dict:
+    """A warning as C4 ``UploadIssue`` has it."""
+    return {"field": field, "problem": problem, "code": code, "severity": "warning"}
 
 
 def _issue(i) -> dict:
@@ -132,10 +139,11 @@ def validate_template(data: bytes) -> dict:
     summary = {"entries": len(t.entries), "usable_entries": len(t.entries) - len(weak),
                "cameras": sorted({e.camera_id for e in t.entries if e.camera_id}), "points": list(t.point_ids),
                "methods": list(t.methods), "masked_entries": sum(e.mask is not None for e in t.entries)}
-    warnings = [f"{len(weak)} entries have fewer than {t.matching.min_inliers} features and will never match: "
-                + ", ".join(weak[:5])] if weak else []
+    warnings = [_warning(f"{len(weak)} entries have fewer than {t.matching.min_inliers} features and will never match: "
+                         + ", ".join(weak[:5]), "entries_weak", "entries")] if weak else []
     if "synthetic_fixture" in t.methods:
-        warnings.append("entries are synthetic_fixture (DEMO): not for visual-accuracy acceptance")
+        warnings.append(_warning("entries are synthetic_fixture (DEMO): not for visual-accuracy acceptance",
+                                 "synthetic_fixture", "entries"))
     return {"valid": True, "summary": summary, "warnings": warnings}
 
 
@@ -154,7 +162,27 @@ def validate_record_mapping(data: bytes) -> dict:
     summary = {"sources": sorted(src), "robot": src["joints"].robot if "joints" in src else None,
                "columns": sorted({c for s in src.values() for c in (s.key, s.quaternion_key) if c}),
                "topics": sorted({s.topic for s in src.values() if s.topic}), "declared_frames": sorted(m.frames)}
-    warnings = [] if doc.get("record") else ["no record block: the exporter's eef block is the pose record"]
+    warnings = [] if doc.get("record") else [_warning("no record block: the exporter's eef block is the pose record",
+                                                       "record_block_missing", "record")]
+    return {"valid": True, "summary": summary, "warnings": warnings}
+
+
+def validate_gripper_calibration(data: bytes) -> dict:
+    """The ``validation`` of a gripper calibration upload (``umi-calibration/2``), or raises validation_failed (400)."""
+    from curation.extensions.eef_consistency.adapters import umi_mcap as X
+
+    try:
+        doc = json.loads(data.decode("utf-8"))
+        cfg = X.check_calibration(doc, "夹爪标定")
+    except (ValueError, UnicodeDecodeError, X.ExportError) as err:
+        raise _invalid(f"夹爪标定不合格：{err}", [{"field": None, "problem": str(err), "code": "calibration_invalid",
+                                               "severity": "error"}]) from None
+    assumed = X.assumed(cfg)
+    summary = {"gripper": cfg["gripper"], "pose_frame": cfg["pose_frame"], "assurance": cfg["provenance"]["assurance"],
+               "assumed": assumed, "intrinsics_fallback": sorted((cfg.get("intrinsics_fallback") or {})),
+               "pairing_tolerance_s": cfg["pairing_tolerance_s"]}
+    warnings = [_warning(f"assumed, not declared by the gripper's maker: {', '.join(assumed)}", "assumed",
+                         "provenance")] if assumed else []
     return {"valid": True, "summary": summary, "warnings": warnings}
 
 
@@ -185,7 +213,7 @@ def validate_annotations(data: bytes, name: str = "") -> dict:
 
 VALIDATORS = {"eef_trajectory": validate_trajectory, "eef_observation_seeds": validate_seeds,
               "eef_gripper_template": validate_template, "eef_record_mapping": validate_record_mapping,
-              "viz_annotations": validate_annotations}
+              "eef_gripper_calibration": validate_gripper_calibration, "viz_annotations": validate_annotations}
 
 
 class UploadStore:

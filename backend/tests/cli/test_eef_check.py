@@ -301,6 +301,87 @@ def test_a_handheld_gripper_recording_gets_an_opinion_camera_by_camera(cli, tmp_
     assert not [f for f in rec.get("findings") or [] if f["code"] == "ego_motion_suspect"]
 
 
+def test_a_handheld_gripper_recording_needs_no_trajectory(cli, tmp_path):
+    """Design doc 22 §5.4 (F5.20): no trajectory.json on a handheld gripper's mcap - each episode's trajectory is
+    derived from the recording with the built-in DAS DEMO calibration (or the task's), kept in the run directory for
+    the overlay, and the record says where it came from. --resume keeps it; another calibration redoes it."""
+    from curation.extensions.eef_consistency import derive_mcap
+
+    from ..eef import das_mcap as F
+
+    data = tmp_path / "das"
+    F.make_das(data)
+    rd = str(tmp_path / "run")
+
+    def run(*extra):
+        with fake_vlm(tmp_path):
+            res = cli("check", "--modules", EEF, "--input", str(data), "--run-dir", rd, "--episodes", "0", *VLM, *extra)
+        assert res.rc == 0, res.doc
+        return res.doc["modules"][EEF]
+
+    first = run()
+    assert first["episodes"]["error"] == 0
+    (rec,) = results(rd, EEF).values()
+    d = rec["details"]
+    src = d["trajectory_source"]
+    assert src["kind"] == "derived" and src["calibration"]["builtin"] and src["calibration"]["gripper"] == "das_gripper"
+    assert src["calibration"]["assumed"] == ["T_camera_tcp", "body_to_optical", "pose_frame"]
+    # the fixture's robot1 has no camera_info, and the built-in calibration no intrinsics: robot0 alone is drawn
+    assert src["cameras"]["robot1"]["status"] == "unsupported" and src["cameras"]["robot0"]["status"] == "ok"
+    assert src["rows"] == F.N - F.POSE_FROM
+    assert set(d["opinion"]["cameras"]) == {"robot0_camera0"} and d["opinion"]["status"] == "answered"
+    assert set(d["ego_motion"]["cameras"]) == {"robot0_camera0"}
+    out = os.path.join(rd, "checks", EEF)
+    assert derive_mcap.bundle_path(out, 0).is_file() and derive_mcap.report_path(out, 0).is_file()
+    assert run("--resume")["skipped_existing"] == 1
+    cal = tmp_path / "cal.json"
+    cal.write_text(json.dumps(F.calibration()))                 # with robot1's intrinsics as a fallback
+    again = run("--resume", "--param", f"{EEF}.gripper_calibration={cal}")
+    assert again["skipped_existing"] == 0
+    (rec,) = results(rd, EEF).values()
+    src = rec["details"]["trajectory_source"]
+    assert not src["calibration"]["builtin"] and src["cameras"]["robot1"]["intrinsics"] == "intrinsics_fallback"
+    assert set(rec["details"]["opinion"]["cameras"]) == {"robot0_camera0", "robot1_camera0"}
+
+
+def test_an_episode_without_a_trajectory_asks_nobody(cli, tmp_path):
+    """An episode the recording gives no trajectory for (another device's file next to the gripper's): the opinion
+    says it could not look and reports nothing, so the task keeps it and asks nobody (as an episode without a task
+    text, D72); having assessed nothing, it reads as an abstention in the 1.0 counts."""
+    import shutil
+
+    from ..eef import das_mcap as F
+    from ..viz.mcap_fixtures import make_default
+
+    data = tmp_path / "das"
+    F.make_das(data)
+    make_default(str(tmp_path / "arm"))
+    shutil.copy(tmp_path / "arm" / "episode_0.mcap", data / "episode_1.mcap")
+    rd = str(tmp_path / "run")
+    with fake_vlm(tmp_path):
+        res = cli("check", "--modules", EEF, "--input", str(data), "--run-dir", rd, "--episodes", "0-1", *VLM)
+    assert res.rc == 0, res.doc
+    recs = results(rd, EEF)
+    arm = recs[1]
+    assert arm["status"] == "ok" and arm["details"]["assessment_mode"] == "vlm_opinion" and verdict_of(arm) == "abstain"
+    assert arm["details"]["opinion"]["status"] == "not_assessable" and arm["details"]["decision"]["human"] == []
+    assert arm["details"]["trajectory_source"]["reason"] == "trajectory_not_derived"
+    assert "这一条推不出轨迹" in arm["details"]["opinion"]["failure"]
+    assert {u["item"] for u in arm["unassessable"]} == {"MV-4", "AV-1"} and arm["findings"] == []
+    assert recs[0]["details"]["opinion"]["status"] == "answered"
+
+
+def test_without_a_trajectory_an_arm_mcap_fails_the_module(cli, tmp_path):
+    """Nothing to generate a trajectory from (design doc 24) and no handheld gripper's recording to derive one from
+    (design doc 22 §5.4): an arm's mcap fails the module, as a LeRobot dataset without poses and calibration does."""
+    from ..viz.mcap_fixtures import make_default
+
+    make_default(str(tmp_path / "arm"))
+    res = cli("check", "--modules", EEF, "--input", str(tmp_path / "arm"), "--run-dir", str(tmp_path / "run"),
+              "--episodes", "0", *VLM)
+    assert res.rc != 0 and "no end-effector poses" in json.dumps(res.doc, ensure_ascii=False)
+
+
 def test_opinion_answers_are_checked_against_the_clip():
     from curation.extensions.eef_consistency import opinion as OP
 

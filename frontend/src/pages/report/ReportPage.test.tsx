@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
-import { eefHandheldRecord, eefOpinionRecord, eefRecord } from '../../mocks/eef';
+import { eefHandheldRecord, eefOpinionRecord, eefRecord, eefUnderivedRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -307,6 +307,18 @@ describe('质检报告 (07 §5)', () => {
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
+  it('Episode 明细: a handheld gripper\'s episode without a derivable trajectory says why, and that nobody was asked (design doc 22 §5.4)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefUnderivedRecord(12) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const op = await screen.findByTestId('eef-opinion');
+    expect(op).toHaveTextContent(/^模型意见没有问模型，也不转人工$/);           // the source block says why
+    expect(op).not.toHaveTextContent('模型看整段视频');
+    const src = screen.getByTestId('eef-source');
+    expect(src).toHaveTextContent('这一条推不出轨迹');
+    expect(src).toHaveTextContent('robot0：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(screen.queryByTestId('eef-ego')).toBeNull();
+  });
+
   it('Episode 明细: an evidence frame of the opinion opens the mini player there, with the marks drawn (design doc 22 §3.3)', async () => {
     db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefOpinionRecord(12) }]])]]);
     renderApp(`${REPORT}?ep=12#episodes`);
@@ -324,6 +336,12 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=12#episodes`);
     const ego = await screen.findByTestId('eef-ego');
     expect(ego).toHaveTextContent('只报告，不参与判过 / 判废');
+    // no trajectory.json was given: the platform derived it from the recording (design doc 22 §5.4)
+    const src = screen.getByTestId('eef-source');
+    expect(src).toHaveTextContent('轨迹由平台从录制推出内置的 DEMO 标定（das_gripper）按假设值：T_camera_tcp、body_to_optical、pose_frame');
+    expect(src).toHaveTextContent('robot0：配对 99.9%，内参来自录制里的 camera_info');
+    expect(src).toHaveTextContent('robot1：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(src).toHaveTextContent('导出检查的可疑项：有画面的帧里只有 88% 配上了位姿（容差 20 ms）');
     expect(within(ego).getByTestId('eef-ego-verdict')).toHaveTextContent('不好');
     expect(ego).toHaveTextContent('ext：位姿约晚 0.47 s（第 51–251 帧，中）');
     expect(ego).toHaveTextContent('阈值未校准（demo） · 每对画面相隔 0.5 秒');

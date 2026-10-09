@@ -1384,7 +1384,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0; 4.4.0)
+         * The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0; 4.4.0; 4.6.0)
          * @description Design docs 20 and 22. The marked clip sent to the model is encoded in memory and never saved; the
          *     mini player plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
          *     `viz_camera`) and draws these layers on top, each sample frame at `times_s` - where the player
@@ -1394,8 +1394,10 @@ export interface paths {
          *     adds the tool's three axes, the future trail and, when a gripper reference was given, the observed
          *     point with its trail and the residual line. A handheld gripper's poses missing on a few frames are
          *     bridged for the drawing when the known poses around them are at most `max_gap_ms` apart (default:
-         *     three sample intervals, what the checks bridged; 4.4.0). 404 `no_eef_module` when the task did not
-         *     run the EEF module, `no_episode` when the bundle has no such episode.
+         *     three sample intervals, what the checks bridged; 4.4.0). A task given no trajectory file reads the one its
+         *     checks generated from the dataset, or derived episode by episode from a handheld gripper's mcap (4.6.0).
+         *     404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the bundle has no such
+         *     episode, `not_derived` when the checks have no trajectory for the episode (yet, or it cannot have one).
          */
         get: operations["getTaskEpisodeEefOverlay"];
         put?: never;
@@ -2164,10 +2166,10 @@ export interface components {
             credential: string | null;
         };
         /**
-         * @description the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external annotation file (design doc 18 §4.5), not a module parameter
+         * @description the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external annotation file (design doc 18 §4.5), not a module parameter; eef_gripper_calibration (4.6.0) is a handheld gripper's calibration (umi-calibration/2)
          * @enum {unknown}
          */
-        UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template" | "eef_record_mapping" | "viz_annotations";
+        UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template" | "eef_record_mapping" | "eef_gripper_calibration" | "viz_annotations";
         /** @description upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits */
         UploadId: string;
         UploadIssue: {

@@ -91,6 +91,11 @@ export function hasAny(s: Summary, keys: readonly string[]): boolean {
   return keys.some((k) => k in s);
 }
 
+/** The EEF module's opinion only (no gripper reference, design doc 12 §10.5): no verdict counts, nobody asked. */
+export function eefOpinionOnly(s: Summary): boolean {
+  return num(s.opinion_episodes) !== null && !['judged_pass', 'judged_reject', 'to_human'].some((k) => num(s[k]));
+}
+
 /**
  * One line for tables (本次质检范围, the task detail's 判决摘要): the essence of a section,
  * read from the keys it has - «错位判废 0 条，已标注 3 条», «6 个技能族，标注分歧 5 条»,
@@ -110,6 +115,12 @@ export function sectionDigest(s: Summary): string | null {
     if (num(s.label_disagreements) !== null) parts.push(Z.disagreements(num(s.label_disagreements)!));
   } else if (num(s.removed) !== null) {
     parts.push(Z.removed(num(s.removed)!));
+  } else if (eefOpinionOnly(s)) {
+    // no candidates, and it asks nobody: an episode it could not look at (no trajectory, design doc 22 §5.4) is no
+    // 转人工 even though the 1.0 counts call it an abstention
+    parts.push(Z.opinion(num(s.opinion_episodes)!));
+    if (num(s.opinion_flagged)) parts.push(Z.opinionFlagged(num(s.opinion_flagged)!));
+    if (num(s.opinion_not_assessable)) parts.push(Z.opinionUnassessed(num(s.opinion_not_assessable)!));
   } else if (num(s.candidates) !== null) {
     parts.push(Z.candidates(num(s.candidates)!));
   } else if (mean !== null) {

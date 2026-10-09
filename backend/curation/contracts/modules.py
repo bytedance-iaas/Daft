@@ -60,6 +60,9 @@ offset it finds), which a record without that reading marks unassessable.
 (L2: zero-filled blocks inside media, mcap CRCs, parquet pages) became a task's choice like the decode test.
 4.3 (design doc 24): the EEF module's ``trajectory_json`` is optional - without it the module generates the trajectory
 from the dataset (a handheld gripper's state and camera calibration) or reads the dataset's own trajectory.json.
+4.4 (design doc 22 §5.4, D80): the EEF module's ``gripper_calibration`` upload - a handheld gripper's raw mcap
+(the built-in UMI layout) carries poses and cameras but no calibration to generate from (design doc 24 §2): each
+episode's trajectory is derived with this calibration or the built-in DAS DEMO one.
 """
 from __future__ import annotations
 
@@ -67,7 +70,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.3"
+REGISTRY_VERSION = "4.4"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -385,14 +388,22 @@ def _eef_params() -> dict:
     ``observation_seeds`` (a person's anchors)
     or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
     seeds win where both exist; without either (1.12, D-E15) the CPU measures nothing and the model gives an
-    advisory opinion on each camera's whole clip (design doc 12 §10.5)."""
+    advisory opinion on each camera's whole clip (design doc 12 §10.5). Since 4.4 (design doc 22 §5.4, D80) a
+    handheld gripper's raw mcap, which has nothing to generate the trajectory from, has it derived episode by episode
+    with ``gripper_calibration`` or the built-in DAS DEMO calibration."""
     return {
         "type": "object", "additionalProperties": False,
         "properties": {
             "trajectory_json": _upload(
                 "eef_trajectory", [".json"], 64, title="trajectory.json",
-                description="一般不用给：平台从数据集自己生成（手持夹爪数据集的状态与相机标定），或读数据集自带的 trajectory.json。"
-                            "只有要换一份轨迹时才上传：约定格式 eef-video/1.0.0 的单文件包，上传即校验", default=""),
+                description="一般不用给：平台从数据集生成（导出过的手持夹爪数据集的状态与相机标定；原始手持夹爪 mcap 用下面的"
+                            "夹爪标定逐条推出），或读数据集自带的 trajectory.json。只有要换一份轨迹时才上传：约定格式"
+                            " eef-video 1.0 / 1.1 的单文件包，上传即校验", default=""),
+            "gripper_calibration": _upload(
+                "eef_gripper_calibration", [".json"], 1, title="夹爪标定",
+                description="手持夹爪的标定 umi-calibration/2：位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、"
+                            "缺 camera_info 时的内参回退。只在没传 trajectory.json、平台从手持夹爪的 mcap 推出轨迹时用；"
+                            "不给就用内置的 DAS DEMO 假设值（不带内参回退，结果注明「按假设值」）", default=""),
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"

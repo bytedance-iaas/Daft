@@ -13,7 +13,7 @@
 读的顺序：§1 现状与缺口 → §3 叠加的设计（F5.17，先做）→ §4 UMI 数据实测 → §5 UMI 路线（F5.18、F5.19）→ **§7 假设与生产输入**（F5.18 起的前提）→ §8 验收。
 
 落地顺序：**F5.17**（叠加并入迷你播放器，dataset2 立刻能验，先 LeRobot、再它的 mcap 孪生）→ F5.18（mcap 适配器与每种夹爪一份的标定文件）
-→ F5.19（自运动一致性与意见输出）。§7 按假设做（`model_assumed`，报告与意见注明「按假设值」），驻场时当面与客户确认。
+→ F5.19（自运动一致性与意见输出）→ F5.20（手持夹爪的 mcap 可以不传 trajectory.json，§5.4）。§7 按假设做（`model_assumed`，报告与意见注明「按假设值」），驻场时当面与客户确认。
 契约：F5.17 升 C4 4.3.0（`EefOverlay` 只加字段）；F5.18 EEF 输入格式升 1.1（只加可选字段，旧文件不变）、新增 `umi-calibration/2` 的 Schema；
 F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_motion` 分项。
 
@@ -321,6 +321,35 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
 （`coverage_from_registry`）、回归工具的 `finding_map.json` 同步；C2 的 EEF 记录加每路相机的 `ego_motion` 分项与片段；
 报告的 EEF 小节与 Episode 明细的「模型意见」块展示分项、片段、幅度档、证据帧与「按假设值」注记。
 
+### 5.4 不传 trajectory.json：手持夹爪由平台从录制推出（F5.20，D80）
+
+需求方 2026-10-09：trajectory.json 改为可选。原始手持夹爪的 mcap 能省：录制里有每只手的 VIO 位姿、开口和腕部相机（多数带
+`camera_info`），缺的只是夹爪本身的几项（§7 第 1、2 项），也就是 `umi-calibration/2` 那份标定。机械臂的 LeRobot / mcap 里有末端位姿，
+但相机内外参不在数据里，推不出投影。
+
+同日落地的设计 24（注册表 4.3）让平台从数据集生成轨迹：导出过的手持夹爪 LeRobot 数据集（`observation.state` 与 `meta/umi_calibration.json`），
+或数据集自带的 trajectory.json；它 §2 留下的「原始手持夹爪数据缺相机标定」就是本节。合起来，没上传 trajectory.json 时依次是：设计 24 的生成或自带文件
+→ 本节的逐条推导（原始手持夹爪 mcap）→ 都没有，按设计 24 报不支持。
+
+- 参数：`trajectory_json` 不再必填（注册表 4.3，设计 24）；新增可选上传「夹爪标定」`gripper_calibration`（注册表 4.4，`umi-calibration/2`，上传种类
+  `eef_gripper_calibration`，到货即按 Schema 与刚性检查校验）。两者都给时用 trajectory.json，标定不用。
+- 预检：没给 trajectory.json 时——
+  - 设计 24 能生成或数据集自带文件：按设计 24；
+  - 否则 mcap 读取器认出手持夹爪的布局（内置 UMI 模版，`umi_das` 档案）：可用，注明「轨迹由平台从录制推出」和用哪份标定；腕部相机的位置 / 朝向报
+    `own_hand_camera`，自运动可用；给了观测种子或夹爪模板：不支持（手持夹爪只走意见模式）；
+  - 都不是：不支持（`trajectory_missing`，设计 24）。
+- 标定：没给就用内置的 DAS DEMO 标定（`eef_consistency/calibrations/das_gripper_demo.json`）：`pose_frame: vio_body_flu`、§5.2 的机体→光学旋转、
+  `T_camera_tcp` (0, 0.086, 0.17) m、开口按米、内参按比例拉伸到视频、配对容差 20 ms，全部 `model_assumed`。它**不带内参回退**（客户相机的内参不进
+  公开仓库）：没有 `camera_info` 的文件（如 `umi_sample.mcap`）两路相机报「不支持」，上传一份带 `intrinsics_fallback` 的标定才能看。
+- 推导：质检逐条（意见模式判到这一条时）用 `export-umi-mcap` 的同一套（`umi_mcap.export_episode`，读本地文件或流式读 TOS 对象），不跑导出报告里
+  抽查帧对的自运动（§5.3 的整条检查会跑）。推出的单条轨迹包写进运行目录 `checks/eef_video_consistency/trajectory/episode_<N>.json`，导出报告写在旁边
+  `episode_<N>.report.json`；叠加接口从这里读。续跑：推导用的标定（内容的 sha256）与推导的版本进输入摘要。
+- 记录：`details.trajectory_source = {kind: "derived", calibration: {name, sha256, builtin, assumed}, cameras: {hand: {status, reason, pairing_rate,
+  intrinsics, first_decodable}}, suspects: [...]}`；上传的轨迹没有这个字段。Episode 明细在 EEF 区块里写一行「轨迹由平台从录制推出（标定 …）」，
+  不支持的相机与导出报告的可疑项（§7 第 3、7、8 行）跟在后面。
+- 叠加：任务没有上传件时先读设计 24 生成的那份，再读推出的单条轨迹包；都没有（还没跑到，或推不出）时 404 `not_derived`，迷你播放器不提示。
+- 耗时：每条多扫一遍 mcap（50 s 的 DAS 文件约 5–6 s）。
+
 ## 6. `T_camera_tcp`、`eef_pose` 的定义与 ORB-SLAM3
 
 - **每种夹爪问一次，不是每个数据集问一次。** 原版 UMI（GoPro 手持夹爪）的流水线用 ORB-SLAM3 跑视频 + IMU 得到**相机**轨迹，
@@ -400,6 +429,15 @@ DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能
 3. 自运动的问题出 info 级 `ego_motion_suspect`（模型意见仍是 `opinion_mismatch`），条目 keep / drop 不受影响；报告 EEF 小节列出片段、幅度档、
    证据帧与「按假设值」注记；契约测试与锁、回归工具对照表的一致性检查通过。
 4. 回归：`tests/eef/test_egomotion.py` 用合成的旋转 / 平移序列与鱼眼投影造帧对（不依赖真数据），真数据用例按 dataset2 的惯例可跳过。
+
+**F5.20 不传 trajectory.json**
+
+1. `umi_das`（`00001(1).mcap` + `umi_sample.mcap`）不传 trajectory.json 建任务成功：`00001` 两路的模型意见、自运动与传导出文件的任务一致；
+   `umi_sample` 两路因为没有 `camera_info`、内置标定又不带内参回退，报不支持并说明原因。
+2. 上传一份带 `intrinsics_fallback` 的标定后，`umi_sample` 两路可看。
+3. 迷你播放器的叠加照常（读推出的轨迹）；Episode 明细显示「轨迹由平台从录制推出」、用的标定与可疑项。
+4. LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json 仍要求上传（设计 24 落地后改为：没有可生成的来源，EEF 不支持）；契约测试与锁、前端类型生成通过；测试覆盖预检三种情况、推导与续跑摘要、
+   上传校验、叠加读推出的轨迹。
 
 ## 9. 实施记录
 
@@ -505,3 +543,38 @@ DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能
   robot1 位姿整体后移 0.5 s：这一路 suspect、robot0 照旧 ok，时间差 +0.47 s，片段档「中」，发现 medium、条目仍在通过清单；机体→光学写成单位阵：
   两路 suspect，转动片段全是「重」，相对误差中位 1.07 / 1.14，发现 high；`umi_sample.mcap`：整条「判断不了」，白墙段（约 1.5–4.0 s）列为匹配不足。
   三个任务并行时，`00001` 一条的自运动检查约 73 s（两路；单独跑每路约 14 s）。Episode 明细的证据帧打开迷你播放器停在那一帧。
+
+### F5.20（2026-10-09）
+
+按 §5.4 落地：`derive_mcap.py`（`Derived`：逐条推一次、加锁缓存，单条轨迹包与导出报告写进模块输出目录的 `trajectory/`），
+`umi_mcap.episode_bundle`（`export-umi-mcap` 的单条入口，本地文件或流式读 TOS），内置标定 `calibrations/das_gripper_demo.json`，
+预检 `derived_entry`（mcap 读取器认出 `umi_das` 档案时走它），C1 4.4（新增上传 `gripper_calibration`；`trajectory_json` 在 4.3 已不必填），
+C4 4.6.0（上传种类 `eef_gripper_calibration`、叠加的 `not_derived`；4.5.0 让给了设计 24 的 UMI 原始会话），Daemon 上传到货校验与叠加读推出的轨迹包，报告与 Episode 明细的轨迹来源。偏离与细化：
+
+- 单条入口叫 `episode_bundle`（不是 §5.4 写的 `export_episode`）：返回 `(轨迹包或 None, 导出报告)`，不跑导出报告里抽查帧对的自运动（整条检查会跑）。
+  推导版本 `derive-umi-mcap/1`；续跑摘要 = 标定文件内容的 sha256 + 推导版本 + 导出器版本，没给轨迹文件时种子与模板的摘要为空。
+- 记录的 `trajectory_source`：`calibration` 是 `{gripper, builtin, sha256, assumed, intrinsics_fallback}`（§5.4 写的 `name` 换成夹爪名，
+  另记回退覆盖哪几只手）；另有 `status`、`rows`、`anchor_topic`、`dropped_before_anchor`，推不出时有 `reason`（`episode_missing`、
+  `trajectory_not_derived`、`recording_unreadable`、`trajectory_invalid`）与 `message`。
+- 没有轨迹的条目（意见模式）：推不出的、以及上传文件里没有的，都不问模型、不转人工——`opinion.status = "not_assessable"`、原因写在
+  `opinion.failure`，没有发现，MV-4、AV-1 记为评估不了，任务照常保留（设计 12 §10.5 补了一段）。以前意见模式下文件里没有的条目走判决模式的
+  `not_in_file` 转人工，和「意见不问人」相违，一并改了。1.0 的计数把它算作「弃权」（没评估任何项），控制台因此：EEF 小节单列「没问模型」、
+  只有意见时不画弃权原因；「本次质检范围」的说明对只有意见的 EEF 写「模型意见 N 条，有不匹配片段 M 条，没有轨迹、没问模型 K 条」
+  （以前落到 `candidates` 一支，写的是「候选 0 条」）；Episode 明细的「模型意见」块只写「没有问模型，也不转人工」，原因看轨迹来源块。
+- 叠加：推不出的条目也是 404 `not_derived`（§5.4 只写了还没推到），迷你播放器照常放视频、不出叠加按钮；结果版本恢复后从交付件里的
+  `trajectory/` 读。
+- 上传校验的告警改成 `UploadIssue` 对象（C4 一直要求对象；夹爪模板与数据集记录映射的告警以前是字符串，一并改了）。
+- 与设计 24 合并（同日另一路落地、先推送）：推导模块改名 `derive_mcap.py`（`derive.py` 是设计 24 的生成），决策号让给设计 23 提议的 D76–D79
+  改为 D80，注册表让给 4.2（完整性 `full_read`）、4.3（设计 24）改为 4.4。来源顺序是上传件 → 设计 24 的生成或数据集自带文件 → 本节的逐条推导
+  （CLI 判定器先看首条录制是不是手持夹爪的布局，不是就按设计 24 整个模块失败 `trajectory_missing`）；预检在设计 24 的 `_eef_entry` 里多一支
+  `handheld`。叠加先读设计 24 生成的那份、再读推出的单条，都没有统一回 `not_derived`（设计 24 原来回的 `no_trajectory` 不在 C4 里，播放器会当出错提示）。
+  新建任务表单照设计 24：没有轨迹来源的数据集 EEF 在预检里是「不支持」，表单不要求上传。
+- 测试：`tests/eef/test_derive_mcap.py`（内置标定、逐条推导与缓存、标定决定能画的相机与摘要、非手持夹爪的录制、预检三种情况）、
+  `tests/cli/test_eef_check.py`（不传轨迹跑通、推不出的条目不问人、别的数据集仍被拒）、`tests/cli/test_preflight.py`、
+  `tests/orchestr/test_eef_tasks.py`（标定到货校验）、`tests/viz/test_eef_overlay.py`（读推出的轨迹）、`tests/contracts`，前端读数解析、
+  Episode 明细（推出来的与推不出的）、报告小节与说明。
+- 实测（本机 Daemon、假模型，`umi_das` = `00001(1).mcap` + `umi_sample.mcap`）：推导 `00001` 一条 2.7 s、`umi_sample` 0.1 s（没有
+  `camera_info`，读完头部就知道）。内置标定：ep0 两路内参来自 `camera_info`，模型意见两路作答，自运动两路 ok、时间差 −0.03 s，与传导出文件的
+  任务一致；ep1 两路不支持（没有 `camera_info`、内置标定不带内参回退），不问模型、没有发现，任务 2 条全保留、待裁决 0；叠加 ep0 两路画本手
+  （第 600 帧 robot0 开口 103 mm），ep1 返回 `not_derived`。上传带 `intrinsics_fallback` 的标定：两条都推出、ep1 两路用回退内参，模型请求 4 个，
+  ep1 自运动「判断不了」（白墙段匹配不足，同 F5.19）。

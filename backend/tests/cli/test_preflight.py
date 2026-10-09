@@ -125,6 +125,22 @@ def test_robot_type_outside_the_registry_skips_only_kinematics(cli, dataset):
             assert (m["availability"], m["reason_code"]) == advisory[m["id"]]
 
 
+def test_a_handheld_grippers_mcap_needs_no_trajectory(cli, tmp_path):
+    """Design doc 22 §5.4 (D80): nothing to generate from (design doc 24), yet the recording carries the trajectory;
+    the module only waits for a model."""
+    from ..eef import das_mcap as F
+
+    F.make_das(tmp_path / "das")
+    doc = _valid(cli("preflight", "--input", str(tmp_path / "das")).doc)
+    eef = _mod(doc, "eef_video_consistency")
+    assert (eef["availability"], eef["reason_code"]) == ("needs_input", "vlm_backend_missing")
+    assert eef["subitems"]["ego_motion"]["availability"] == "available"
+    assert any("derives each episode's trajectory" in n for n in eef["notes"])
+    ready = _mod(_valid(cli("preflight", "--input", str(tmp_path / "das"), "--vlm-backend", "ark").doc),
+                 "eef_video_consistency")
+    assert ready["availability"] == "available"
+
+
 @pytest.mark.parametrize("robot_type", [None, "", "unknown"])
 def test_unreadable_robot_type_needs_input(cli, dataset, robot_type):
     edit_info(dataset, robot_type=robot_type)          # None removes the key

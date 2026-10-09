@@ -5,7 +5,9 @@ video (the task's ``VizEpisode`` camera) and paints these layers on a canvas abo
 task's trajectory bundle - no frame is decoded: the copy made at start (``inputs/uploads.json``, brought
 back from the delivery when the work directory was cleaned), else the upload itself - and, when the
 module measured the episode (a gripper reference was given), from its observation rows in the run
-directory. Each bundle camera is matched to the ``VizEpisode`` camera playing the same file (LeRobot) or
+directory. A task given no trajectory.json on a handheld gripper's mcap reads the episode's trajectory the checks
+derived from the recording (``checks/eef_video_consistency/trajectory/``, design doc 22 §5.4); ``not_derived``
+until they have. Each bundle camera is matched to the ``VizEpisode`` camera playing the same file (LeRobot) or
 topic (mcap); ``viz_camera`` is null when none does.
 
 ``times_s`` places every sample frame where the player shows its paired video frame, from the same data
@@ -34,32 +36,34 @@ REFERENCES = ("observation_seeds", "gripper_template")
 _CACHE = LRU(max_items=32, max_bytes=64 << 20)
 
 
-def _bundle(rt, task, owner: str) -> tuple[Path, dict]:
-    """The trajectory bundle the task's EEF module read, and the module's parameters."""
+def _bundle(rt, task, owner: str, index: int) -> tuple[Path, dict]:
+    """The trajectory bundle the task's EEF module read for episode ``index``, and the module's parameters."""
+    from curation.extensions.eef_consistency import derive, derive_mcap
+
     from ..orchestr.service import orchestrator_of
     from ..results.store import store_of
 
-    from curation.extensions.eef_consistency import derive
-
     row = next((m for m in rt.repo.get_task_modules(task.id) if m.module_id == MODULE), None)
-    if row is None or not row.selected:
+    params = (row.params or {}) if row is not None else {}
+    handle = params.get(PARAM)
+    if row is None or not (row.selected or handle):
         raise ApiError("not_found", "这个任务没有勾选「EEF–视频一致性」，没有可叠加的投影",
                        details={"reason": "no_eef_module"})
-    params = row.params or {}
-    handle = params.get(PARAM)
     store = store_of(rt)
     run_dir = store.task_dir(task.id)
-    if not handle:                                  # design doc 24: generated from the dataset into the run
-        generated = run_dir / derive.RUN_COPY
-        if not generated.is_file() and int(task.result_rev or 0) > 0:
+    if not handle:              # no upload: the copy generated from the dataset (design doc 24), else the episode's own
+        generated = run_dir / derive.RUN_COPY                      # derived from a handheld gripper's mcap (22 §5.4)
+        derived = derive_mcap.bundle_path(module_dir(str(run_dir), MODULE), index)
+        if not (generated.is_file() or derived.is_file()) and int(task.result_rev or 0) > 0:
             try:                                    # a cleaned work directory: restore it first
                 store.revision(task)
             except ApiError:
                 pass
-        if generated.is_file():
-            return generated, params
-        raise ApiError("not_found", "这个任务的轨迹还没有生成（EEF 模块还没跑到这条）",
-                       details={"reason": "no_trajectory"})
+        for path in (generated, derived):
+            if path.is_file():
+                return path, params
+        raise ApiError("not_found", f"episode {index} 的轨迹还没有生成（EEF 模块还没判到这一条，或这一条推不出来）",
+                       details={"reason": "not_derived"})
     table_path = run_dir / "inputs" / "uploads.json"
     if not table_path.is_file() and int(task.result_rev or 0) > 0:
         try:                                            # a cleaned work directory: restore it first
@@ -147,7 +151,7 @@ def episode_overlay(rt, svc, task_id: str, owner: str, index: int, *, max_gap_ms
     from curation.extensions.eef_consistency import load, overlay, umi
 
     task = rt.repo.get_task(task_id, owner=owner)
-    path, params = _bundle(rt, task, owner)
+    path, params = _bundle(rt, task, owner, int(index))
     judged = any(params.get(p) for p in REFERENCES)
     stat = path.stat()
     observations = _observation_files(rt, task.id, index) if judged else []

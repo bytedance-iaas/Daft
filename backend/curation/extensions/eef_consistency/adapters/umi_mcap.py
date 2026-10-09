@@ -23,6 +23,10 @@ The bundle is never interpolated: readers bridge short gaps themselves (``umi.fi
 Next to ``trajectory.json`` goes ``umi-export-report.json``: per camera the pairing rate, the missing and
 the slow stretches, where the intrinsics came from, and the platform's checks of design doc 22 §7
 (``calibration_suspect``, ``timing_suspect``), the camera's own motion against the poses among them.
+
+The platform does the same itself when a task gives no trajectory.json (design doc 22 §5.4, F5.20): one episode
+at a time (:func:`episode_bundle`), the file read in place or streamed from TOS, the gripper's calibration the
+task's or the built-in DAS DEMO one (:data:`BUILTIN_CALIBRATION`: the assumptions of §7, no camera's intrinsics).
 """
 from __future__ import annotations
 
@@ -39,6 +43,8 @@ from .. import contracts as C, geometry as G
 from .lerobot_mapping import _points
 
 CAL_VERSION = "umi-calibration/2"
+#: the gripper calibration a task without one uses (design doc 22 §5.4): DAS, every value assumed
+BUILTIN_CALIBRATION = pathlib.Path(__file__).resolve().parents[1] / "calibrations" / "das_gripper_demo.json"
 REPORT_VERSION = "umi-export-report/1"
 GENERATOR = "eef export-umi-mcap"
 TOPICS = {"pose": "/{hand}/vio/eef_pose", "opening": "/{hand}/sensor/magnetic_encoder",
@@ -68,24 +74,33 @@ class ExportError(ValueError):
 
 # ---------------------------------------------------------------- the calibration file
 
-def read_calibration(path) -> dict:
-    """The ``umi-calibration/2`` file, checked against its Schema and for rigid, proper transforms."""
+def check_calibration(cfg, where: str = "calibration") -> dict:
+    """A ``umi-calibration/2`` document checked against its Schema and for rigid, proper transforms (``where``
+    names it in the errors)."""
     from ....contracts import schemas
 
-    cfg = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
     problems = schemas.errors("eef/umi_calibration.schema.json", cfg)
     if problems:
-        raise ExportError(f"{path}: not a {CAL_VERSION} file: {problems[0]}")
+        raise ExportError(f"{where}: not a {CAL_VERSION} file: {problems[0]}")
     R = np.asarray(cfg["body_to_optical"], float)
     if not (np.allclose(R @ R.T, np.eye(3), atol=1e-6) and np.linalg.det(R) > 0.999):
-        raise ExportError(f"{path}: body_to_optical is not a proper rotation")
+        raise ExportError(f"{where}: body_to_optical is not a proper rotation")
     if not G.is_rigid(np.asarray(cfg["T_camera_tcp"], float)):
-        raise ExportError(f"{path}: T_camera_tcp is not a rigid transform")
+        raise ExportError(f"{where}: T_camera_tcp is not a rigid transform")
     for hand, intr in (cfg.get("intrinsics_fallback") or {}).items():
         K = np.asarray(intr["K"], float)
         if K[0, 0] <= 0 or K[1, 1] <= 0 or not np.allclose(K[2], [0, 0, 1]):
-            raise ExportError(f"{path}: intrinsics_fallback.{hand}: invalid K")
+            raise ExportError(f"{where}: intrinsics_fallback.{hand}: invalid K")
     return cfg
+
+
+def read_calibration(path) -> dict:
+    """The ``umi-calibration/2`` file, checked (:func:`check_calibration`)."""
+    try:
+        cfg = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ExportError(f"{path}: not JSON: {exc}") from None
+    return check_calibration(cfg, str(path))
 
 
 def assurance(cfg: dict, item: str) -> str:
@@ -155,10 +170,17 @@ class Recording:
     task: str | None
 
 
+def _open(path: str):
+    """The episode file: a local path, or the object's URI in a streamed TOS dataset (ranged reads)."""
+    from ..mcap_media import open_episode
+
+    return open_episode(path)
+
+
 def _topics_of(path: str) -> set[str]:
     from mcap.reader import make_reader
 
-    with open(path, "rb") as fh:
+    with _open(path) as fh:
         summary = make_reader(fh).get_summary()
     return {c.topic for c in summary.channels.values()} if summary else set()
 
@@ -187,7 +209,7 @@ def scan(path: str, cfg: dict, anchor_topic: str = ANCHOR_TOPIC) -> Recording:
     infos: dict[str, dict] = {}
     anchor_log = None
     dec = M.Decoder()
-    with open(path, "rb") as fh:
+    with _open(path) as fh:
         reader = make_reader(fh)
         for schema, channel, message in reader.iter_messages(topics=sorted(set(want) | {anchor_topic}), log_time_order=True):
             if channel.topic == anchor_topic and anchor_log is None:
@@ -604,7 +626,7 @@ def _decode(path: str, cam: Camera, wanted: set[int]) -> dict[int, np.ndarray]:
         ctx = av.CodecContext.create("hevc" if cam.codec == "h265" else "h264", "r")
         ctx.thread_type = "SLICE"                         # no frame threading: frame k comes out of message k
     dec = M.Decoder()
-    with open(path, "rb") as fh:
+    with _open(path) as fh:
         for k, (schema, channel, message) in enumerate(make_reader(fh).iter_messages(topics=[cam.topic], log_time_order=True)):
             if k > last:
                 break
@@ -627,6 +649,27 @@ def _decode(path: str, cam: Camera, wanted: set[int]) -> dict[int, np.ndarray]:
 
 
 # ---------------------------------------------------------------- a dataset
+
+def _bundle(samples: list[dict], dataset_id: str, fps: float) -> dict:
+    """The ``trajectory-bundle/1.0`` around exported samples."""
+    return {"schema_version": C.SCHEMA_VERSION_1_1, "container": C.CONTAINER, "media_uri_base": "lerobot_root",
+            "dataset": {"id": dataset_id, "lerobot_codebase_version": "mcap", "fps": float(fps),
+                        "episode_count": max(s["episode_index"] for s in samples) + 1, "generator": GENERATOR},
+            "samples": samples}
+
+
+def episode_bundle(path: str, ep: int, cfg: dict, *, uri: str, dataset_id: str, horizon_s: float = 1.0,
+                   anchor_topic: str = ANCHOR_TOPIC) -> tuple[dict | None, dict]:
+    """One episode as a bundle of its own, for the platform deriving it (design doc 22 §5.4): (bundle or None
+    when the episode cannot be exported, its report). The pairs the report checks the camera's motion on are
+    left out: the opinion checks the whole episode (§5.3)."""
+    res = export_episode(path, ep, cfg, uri=uri, dataset_id=dataset_id, horizon_s=horizon_s, anchor_topic=anchor_topic,
+                         ego_check=False)
+    if res.entry is None:
+        return None, res.report
+    fps = float(np.median([v["media"]["fps"] for v in res.entry["sample"]["views"]]))
+    return _bundle([res.entry], dataset_id, fps), res.report
+
 
 def export(mcap_root, calibration, out, *, episodes: list[int] | None = None, dataset_id: str | None = None,
            horizon_s: float = 1.0, anchor_topic: str = ANCHOR_TOPIC, ego_check: bool = True) -> dict:
@@ -660,11 +703,7 @@ def export(mcap_root, calibration, out, *, episodes: list[int] | None = None, da
             fps_all += [v["media"]["fps"] for v in res.entry["sample"]["views"]]
     if not samples:
         raise ExportError("no episode could be exported: " + json.dumps(report["episodes"], ensure_ascii=False)[:400])
-    bundle = {"schema_version": C.SCHEMA_VERSION_1_1, "container": C.CONTAINER, "media_uri_base": "lerobot_root",
-              "dataset": {"id": dataset_id or root.name, "lerobot_codebase_version": "mcap",
-                          "fps": float(np.median(fps_all)), "episode_count": max(s["episode_index"] for s in samples) + 1,
-                          "generator": GENERATOR},
-              "samples": samples}
+    bundle = _bundle(samples, dataset_id or root.name, float(np.median(fps_all)))
     data = json.dumps(bundle, ensure_ascii=False, allow_nan=False).encode()
     checked = load.load_bundle(data, lerobot_root=str(root))
     if not checked.ok:                                       # never write a file the platform would refuse

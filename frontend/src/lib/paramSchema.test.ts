@@ -86,8 +86,10 @@ describe('param_schema → form fields (C1, D38)', () => {
   });
 
   it('reads a file parameter as an upload whose value is the handle (registry 1.5, F5.5)', () => {
-    const [traj, seeds] = paramFields(schemaOf('eef_video_consistency'));
+    const [traj, calibration, seeds] = paramFields(schemaOf('eef_video_consistency'));
     expect(traj).toMatchObject({ key: 'trajectory_json', kind: 'upload', required: false, uploadKind: 'eef_trajectory', accept: ['.json'], maxMb: 64, default: '' });
+    // registry 4.4: a handheld gripper's raw mcap is derived with this calibration or the built-in one (design doc 22 §5.4)
+    expect(calibration).toMatchObject({ key: 'gripper_calibration', kind: 'upload', required: false, uploadKind: 'eef_gripper_calibration', accept: ['.json'], maxMb: 1 });
     expect(seeds).toMatchObject({ key: 'observation_seeds', kind: 'upload', required: false, uploadKind: 'eef_observation_seeds', accept: ['.jsonl', '.json'] });
     expect(validateParam(traj, '')).toBeNull();                   // optional: generated from the dataset (design doc 24)
     expect(validateParam(traj, '/data/trajectory.json')).toBe('trajectory.json要先上传文件');

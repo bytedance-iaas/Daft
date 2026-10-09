@@ -11,7 +11,7 @@ import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
-import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
+import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -392,6 +392,7 @@ function EefBlock({ taskId, record }: BlockProps) {
         <Space wrap>
           <EefConclusion record={record} />
         </Space>
+        <EefTrajectorySource record={record} />
         <EefOpinion record={record} />
         <EefEgoMotion record={record} />
         <EefDatasetRecord taskId={taskId} record={record} />
@@ -403,6 +404,7 @@ function EefBlock({ taskId, record }: BlockProps) {
       <Space wrap>
         <EefConclusion record={record} />
       </Space>
+      <EefTrajectorySource record={record} />
       <div className="episode-line muted">
         {E().eef.overall}：{overall ? zh.sections.eef.overall[overall] ?? zh.sections.eef.overall[`${overall}s`] ?? overall : '—'}
         {Array.isArray(d.reasons) && d.reasons.length ? `；${E().eef.reasons}：${d.reasons.map(String).join('、')}` : ''}

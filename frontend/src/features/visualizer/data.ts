@@ -206,7 +206,8 @@ export async function probeMedia(url: string, signal?: AbortSignal): Promise<Med
 
 /** A task's EEF marks are not there to draw: it did not run the module, or its bundle has no such episode. */
 export function noEefOverlay(e: unknown): boolean {
-  return e instanceof ApiError && e.status === 404 && ['no_eef_module', 'no_episode'].includes(String(e.details?.reason ?? ''));
+  // not_derived: a handheld gripper's trajectory the checks have not derived from the recording yet (design doc 22 §5.4)
+  return e instanceof ApiError && e.status === 404 && ['no_eef_module', 'no_episode', 'not_derived'].includes(String(e.details?.reason ?? ''));
 }
 
 /**

@@ -1,10 +1,13 @@
 """The two EEF modules' entries of ``curation preflight`` (C2 preflight.schema, design 12 §5.1, §11.1).
 
 The file is a module parameter (``trajectory_json``): a path on the command line, an upload handle in
-the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without it the module
-``needs_input`` (``input_hint.field = trajectory_json``); the console never pre-selects an advisory module,
-it is opted into and then asks for the upload; with a valid file it then needs a VLM backend (D49: the
-module reviews with a model).
+the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without one, ``cli/preflight``
+generates it from the dataset and passes that (design doc 24), or says unsupported when there is nothing to generate
+it from - except on a handheld gripper's raw mcap, which carries its own trajectory (``handheld``, design doc 22
+§5.4, D80: derived when the module runs, with ``gripper_calibration`` or the built-in DAS DEMO calibration); asked
+here without a file and not handheld, the module ``needs_input`` (``input_hint.field = trajectory_json``). The
+console never pre-selects an advisory module; with a valid file it then needs a VLM backend (D49: the module
+reviews with a model).
 """
 from __future__ import annotations
 
@@ -99,14 +102,55 @@ def _record_check(params: dict, root: str | None):
     return ({"missing": missing}, note + f"; not in the dataset: {', '.join(missing)}") if missing else (mapping, note)
 
 
+def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | None = None) -> dict:
+    """No trajectory.json on a handheld gripper's mcap (design doc 22 §5.4): the trajectory comes from each recording
+    when the module runs. Available unless the calibration is unusable or a gripper reference is given (a handheld
+    gripper only gets the model's opinion); what each sub-item can be is what a wrist camera on its own hand gives."""
+    from .adapters import umi_mcap as X
+
+    if seed_dir(params) or template_path(params):
+        return _unsupported("UMI action overlays use advisory video opinion; omit gripper seeds/templates",
+                            C.TRAJECTORY_INVALID)
+    cal = os.path.expanduser((params.get("gripper_calibration") or "").strip())
+    try:
+        cfg = X.read_calibration(cal or X.BUILTIN_CALIBRATION)
+    except (X.ExportError, OSError) as exc:
+        return _unsupported(f"the gripper calibration is unusable: {exc}", C.CALIBRATION_INVALID, {"path": cal or None})
+    episodes = sorted(set(int(e) for e in episodes))
+    own = {C.POSITION: C.OWN_HAND_CAMERA, C.ORIENTATION: C.OWN_HAND_CAMERA, C.TEMPORAL: C.WRIST_CAMERA_SPATIAL_ONLY,
+           C.CAMERA_MOTION: C.WRIST_CAMERA_SPATIAL_ONLY, C.STATE_MOTION: C.POSE_SEMANTICS_UNKNOWN,
+           C.INPUT_CONSISTENCY: C.PROJECTION_MISSING}
+    subitems = {k: {"availability": C.UNSUPPORTED, "reason_code": r} for k, r in own.items()}
+    subitems[C.EGO_MOTION] = {"availability": C.AVAILABLE, "reason_code": None}
+    record, record_note = _record_check(params, lerobot_root)
+    subitems[C.RECORD] = {"availability": C.AVAILABLE, "reason_code": None} if record is not None and not isinstance(record, dict) \
+        else {"availability": C.UNSUPPORTED,
+              "reason_code": C.RECORD_MAPPING_MISSING if record is None else record.get("code") or C.RECORD_COLUMNS_MISSING}
+    which = (f"the uploaded calibration ({cfg['gripper']})" if cal
+             else f"the built-in DAS DEMO calibration ({', '.join(X.assumed(cfg))} assumed; no intrinsics fallback: "
+                  f"a recording without camera_info needs an uploaded calibration with one)")
+    notes = [f"no trajectory.json: the platform derives each episode's trajectory from the handheld gripper's recording "
+             f"(design doc 22 §5.4) with {which}",
+             "no observation seeds and no gripper template: the model gives an advisory opinion on each wrist camera's "
+             "whole clip and the camera's own motion is compared with the poses; no episode is passed, rejected or "
+             "asked on its account"]
+    if record_note:
+        notes.append(record_note)
+    return {"availability": C.AVAILABLE, "subitems": subitems, "episode_counts": {C.AVAILABLE: len(episodes)},
+            "notes": notes}
+
+
 def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Callable[[str], bool] | None,
-                      lerobot_root: str | None = None) -> dict:
-    """The preflight entry of ``eef_video_consistency`` for the task's episodes."""
+                      lerobot_root: str | None = None, handheld: bool = False) -> dict:
+    """The preflight entry of ``eef_video_consistency`` for the task's episodes. ``handheld``: the dataset is a
+    handheld gripper's mcap (the built-in UMI layout), which carries its own trajectory."""
     traj = (params.get("trajectory_json") or "").strip()
+    if not traj and handheld:
+        return derived_entry(params, episodes=episodes, lerobot_root=lerobot_root)
     if not traj:
         return {"availability": C.NEEDS_INPUT, "reason_code": C.TRAJECTORY_MISSING,
                 "reason": "no trajectory.json given: upload one (console) or pass "
-                          "--param eef_video_consistency.trajectory_json=PATH",
+                          "--param eef_video_consistency.trajectory_json=PATH (a handheld gripper's mcap needs none)",
                 "input_hint": {"field": "trajectory_json"}}
     path = pathlib.Path(os.path.expanduser(traj))
     if not path.is_file():

@@ -85,6 +85,24 @@ def test_upload_is_validated_on_arrival_with_located_errors(daemon):
     assert _upload(d, "no_such_kind", "x.json", {}, status=400)["error"]["code"] == "validation_failed"
 
 
+def test_a_gripper_calibration_is_validated_on_arrival(daemon):
+    """Design doc 22 §5.4: a handheld gripper's umi-calibration/2, checked as the exporter checks it."""
+    from ..eef import das_mcap as F
+
+    d = daemon()
+    up = _upload(d, "eef_gripper_calibration", "das.json", F.calibration())
+    s = up["validation"]["summary"]
+    assert (s["gripper"], s["pose_frame"], s["assumed"], s["intrinsics_fallback"]) == ("das_test", "vio_body_flu",
+                                                                                       ["T_camera_tcp"], ["robot1"])
+    assert [w["problem"] for w in up["validation"]["warnings"]] == ["assumed, not declared by the gripper's maker: T_camera_tcp"]
+    bad = _upload(d, "eef_gripper_calibration", "bad.json",
+                  F.calibration(body_to_optical=[[1, 0, 0], [0, 1, 0], [0, 0, -1]]), status=400)
+    assert bad["error"]["details"]["errors"][0]["code"] == "calibration_invalid"
+    assert "proper rotation" in bad["error"]["message"]
+    assert _upload(d, "eef_gripper_calibration", "old.json", {**F.calibration(), "schema_version": "umi-calibration/1"},
+                   status=400)["error"]["code"] == "validation_failed"
+
+
 def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daemon, monkeypatch):
     from daemon import uploads as U
 
@@ -108,7 +126,9 @@ def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daem
     assert row["selected"] and row["availability"] == "available"
 
 
-def test_the_dataset_preflight_asks_for_the_file(daemon):
+def test_the_dataset_preflight_says_there_is_nothing_to_project(daemon):
+    """Design doc 24: a dataset without poses and camera calibration has no trajectory to generate - unsupported,
+    nothing for the user to upload."""
     d = daemon()
     pf = d.preflight()["result"]
     (entry,) = [m for m in pf["modules"] if m["id"] == EEF]

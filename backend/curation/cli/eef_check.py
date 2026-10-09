@@ -126,7 +126,10 @@ class EefJudge:
         except Exception as e:  # noqa: BLE001 - jsonschema's message names the field
             raise UsageError(f"{MODULE}: {getattr(e, 'message', e)}") from None
         storage = getattr(source, "storage", source)
+        self.src = source if source is not storage else None
+        self.mcap = self.src is not None and self.src.kind == "mcap"
         given = (params.get("trajectory_json") or "").strip()
+        traj = None
         if given:
             traj = os.path.expanduser(given)
             if not os.path.isfile(traj):
@@ -135,31 +138,37 @@ class EefJudge:
             from ..extensions.eef_consistency import derive
 
             listing = getattr(source, "listing", None) or storage.list()
-            if derive.source_of(listing) is None:
+            if derive.source_of(listing) is not None:
+                try:
+                    traj = derive.to_run(storage, listing, run_dir)
+                except Exception as e:  # noqa: BLE001
+                    raise ModuleFailed(f"{MODULE}: the trajectory could not be generated from the dataset: {e}"[:300],
+                                       {"reason": "trajectory_invalid"}) from None
+            elif not (self.mcap and self._handheld()):  # a handheld gripper's raw mcap: derived below (design doc 22 §5.4)
                 raise ModuleFailed(f"{MODULE}: the dataset records no end-effector poses with the cameras' calibration",
                                    {"reason": "trajectory_missing"})
-            try:
-                traj = derive.to_run(storage, listing, run_dir)
-            except Exception as e:  # noqa: BLE001
-                raise ModuleFailed(f"{MODULE}: the trajectory could not be generated from the dataset: {e}"[:300],
-                                   {"reason": "trajectory_invalid"}) from None
-        self.src = source if source is not storage else None
-        self.mcap = self.src is not None and self.src.kind == "mcap"
-        if self.mcap:                                  # the episode files, from the one listing
-            listing = self.src.listing
-            media_exists = listing.__contains__
+        #: no trajectory to read: a handheld gripper's recording carries its own (design doc 22 §5.4, F5.20)
+        self.derived = None
+        if traj:
+            if self.mcap:                              # the episode files, from the one listing
+                listing = self.src.listing
+                media_exists = listing.__contains__
+            else:
+                media_exists = (lambda key: storage.stat(key) is not None) if storage.remote else None
+            # every declared episode: a stage worker reuses the judge for the batches and the stream to come
+            self.result = load.load_bundle(traj, lerobot_root=None if storage.remote else storage.root,
+                                           media_exists=media_exists)
+            if not self.result.ok:
+                first = self.result.errors[0]
+                raise ModuleFailed(f"{MODULE}: trajectory.json is invalid: {first.message}",
+                                   {"errors": [i.as_dict() for i in self.result.errors[:10]],
+                                    "sha256": self.result.sha256})
+            self.umi = any(s.hand_poses for s in self.result.samples.values())
         else:
-            media_exists = (lambda key: storage.stat(key) is not None) if storage.remote else None
-        # every declared episode: a stage worker reuses the judge for the batches and the stream to come
-        self.result = load.load_bundle(traj, lerobot_root=None if storage.remote else storage.root,
-                                       media_exists=media_exists)
-        if not self.result.ok:
-            first = self.result.errors[0]
-            raise ModuleFailed(f"{MODULE}: trajectory.json is invalid: {first.message}",
-                               {"errors": [i.as_dict() for i in self.result.errors[:10]],
-                                "sha256": self.result.sha256})
+            self.derived = self.result = self._derived(params, run_dir)
+            self.umi = True
         tpath = template_path(params)
-        if any(s.hand_poses for s in self.result.samples.values()) and (seed_dir(params) or tpath):
+        if self.umi and (seed_dir(params) or tpath):
             raise UsageError("UMI action overlays use advisory video opinion; omit gripper seeds/templates")
         template = None
         if tpath:
@@ -200,6 +209,36 @@ class EefJudge:
         self._fetch_lock = threading.Lock()
         self.model = self.review_config = self.ask = self.cache = None
 
+    def _handheld(self) -> bool:
+        """Whether the mcap dataset is a handheld gripper's: its first episode in the built-in UMI layout."""
+        from ..extensions.eef_consistency import derive_mcap
+
+        numbering = self.src.numbering()
+        return bool(numbering) and derive_mcap.handheld(self.src.input_dir, numbering[min(numbering)])
+
+    def _derived(self, params: dict, run_dir: str):
+        """The trajectory a handheld gripper's raw mcap carries (design doc 22 §5.4): derived episode by episode with
+        the task's gripper calibration or the built-in DAS DEMO one - the calibration the recording lacks."""
+        from ..extensions.eef_consistency import derive_mcap
+        from ..extensions.eef_consistency.adapters.umi_mcap import ExportError
+        from ..pipeline.records import module_dir
+
+        cal = os.path.expanduser((params.get("gripper_calibration") or "").strip()) or None
+        if cal and not os.path.isfile(cal):
+            raise UsageError(f"{MODULE}: gripper calibration not found: {cal}")
+        name = os.path.basename(str(getattr(self.src, "uri", "") or self.src.input_dir).rstrip("/")) or "dataset"
+        try:
+            return derive_mcap.Derived(root=self.src.input_dir, numbering=self.src.numbering(), calibration=cal,
+                                       out_dir=module_dir(run_dir, MODULE), dataset_id=name)
+        except (ExportError, OSError) as e:
+            raise ModuleFailed(f"{MODULE}: the gripper calibration is invalid: {e}", {"path": cal}) from None
+
+    def _sample(self, ep: int):
+        """(the episode's sample or None, how its trajectory was had: None for an uploaded file)."""
+        if self.derived is not None:
+            return self.derived.sample(int(ep))
+        return self.result.samples.get(int(ep)), None
+
     def _record(self):
         """(mapping, reader) of the record comparison, or None without a mapping (design doc 12 §8.7)."""
         from ..extensions.eef_consistency import record as RC
@@ -237,12 +276,15 @@ class EefJudge:
              "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS,
              "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {},
              **({"opinion": [OP.PROTOCOL, OP.PROMPT_VERSION, OP.ANSWER_SCHEMA, OP.MAX_CLIP_S]} if self.opinion else {}),
-             **({"umi_prompt": UMI_PROMPT} if any(s.hand_poses for s in self.result.samples.values()) else {})},
+             **({"umi_prompt": UMI_PROMPT} if self.umi else {})},
             sort_keys=True).encode()).hexdigest()
         self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
-        self.ctx.log("info", f"{MODULE}: trajectory.json sha256 {self.result.sha256[:12]}, "
-                             f"{len(self.result.samples)} episode(s) declared, profile {self.params['threshold_profile']}, "
+        where = (f"trajectory derived from the recordings ({len(self.derived.episodes)} episode(s), "
+                 f"{'built-in' if self.derived.calibration['builtin'] else 'uploaded'} calibration "
+                 f"{self.derived.calibration['gripper']})" if self.derived is not None
+                 else f"trajectory.json sha256 {self.result.sha256[:12]}, {len(self.result.samples)} episode(s) declared")
+        self.ctx.log("info", f"{MODULE}: {where}, profile {self.params['threshold_profile']}, "
                              f"seeds {self.cfg.seed_root or 'none'}, gripper template "
                              f"{self.template_sha[:12] if self.template_sha else 'none'}, model {self.model}"
                              + ("; no gripper reference: the model's opinion only, no verdict (design doc 12 §10.5)"
@@ -262,6 +304,12 @@ class EefJudge:
         out = set()
         for e, rec in done.items():
             d = rec.get("details") or {}
+            if self.derived is not None:               # no seeds, no template; nothing to derive to tell
+                same = (d.get("input_file_sha256") == self.result.sha256 and d.get("review_config") == self.review_config
+                        and d.get("config_hash") in (self.config, None))
+                if not same:
+                    out.add(e)
+                continue
             s = self.result.samples.get(e)
             same = (d.get("input_file_sha256") == self.result.sha256 and d.get("review_config") == self.review_config
                     and (s is None or (d.get("config_hash") == self.config
@@ -277,7 +325,7 @@ class EefJudge:
         return "sha256:" + hashlib.sha256(json.dumps(
             {"episodes": input_digest(episodes), "trajectory": self.result.sha256, "config": self.config,
              "review": self.review_config, "template": self.template_sha,
-             "seeds": [self._seeds(s.sample_id) for _, s in sorted(self.result.samples.items())]},
+             "seeds": [] if self.derived is not None else [self._seeds(s.sample_id) for _, s in sorted(self.result.samples.items())]},
             sort_keys=True).encode()).hexdigest()
 
     def judge(self, ep: int, log) -> tuple[dict | None, list[str]]:
@@ -285,8 +333,10 @@ class EefJudge:
         cause is on ``log``; the record is an error line, held)."""
         from ..extensions.eef_consistency import decide as D
 
-        sample = self.result.samples.get(int(ep))
+        sample, source = self._sample(ep)
         if sample is None:
+            if self.opinion:                        # an opinion asks nobody (design doc 12 §10.5): nothing to show
+                return self._unassessed(int(ep), source), []
             return self._judged(D.decide(None, None), _unsupported_detail(int(ep), "projection_missing"), None, [])
         try:
             return self._judge(ep, sample, log)
@@ -343,8 +393,31 @@ class EefJudge:
                           "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
         if ego is not None:
             detail["ego_motion"] = ego
+        if self.derived is not None:
+            detail["trajectory_source"] = self.derived.sample(int(ep))[1]
         evidence += self._attach_record(detail, sample)           # needs no gripper reference (§8.7)
         return {"passed": True, "score": None, "detail": detail}, evidence
+
+    def _unassessed(self, ep: int, source: dict | None) -> dict:
+        """The opinion's record of an episode without a trajectory: not in the uploaded file, or not derivable from
+        its recording (``source`` says why). It passes like every opinion and asks nobody."""
+        from ..extensions.eef_consistency import opinion as OP
+
+        if source is None:
+            why = "trajectory.json 里没有这一条"
+        else:
+            cams = [f"{h}：{c.get('reason')}" for h, c in sorted((source.get("cameras") or {}).items())
+                    if c.get("status") != "ok" and c.get("reason")]
+            why = "；".join(["这一条推不出轨迹", *cams] if cams else ["这一条推不出轨迹", str(source.get("message") or source.get("reason"))])
+        op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "not_assessable", "cameras": {},
+              "segments": 0, "flagged": False, "max_confidence": None, "requests": 0, "failure": why}
+        detail = {"sample_id": None, "episode_index": int(ep), "assessment_mode": "vlm_opinion", "overall": "opinion",
+                  "opinion": op, "config_hash": self.config, "seeds_sha256": None, "template_sha256": None,
+                  "input_file_sha256": self.result.sha256, "review_config": self.review_config,
+                  "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": ""}
+        if source is not None:
+            detail["trajectory_source"] = source
+        return {"passed": True, "score": None, "detail": detail}
 
     def _ego_motion(self, ep: int, sample) -> dict | None:
         """Each wrist camera's own motion in its pictures against its recorded poses (design doc 22 §5.3):

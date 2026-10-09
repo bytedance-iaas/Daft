@@ -14,6 +14,7 @@ import {
   eefEgoMotion,
   eefOpinion,
   eefStateMotion,
+  eefTrajectorySource,
   eefWindowRows,
   type EefEgoCamera,
   type EefOpinionCamera,
@@ -235,10 +236,53 @@ function OpinionCamera({ c }: { c: EefOpinionCamera }) {
   );
 }
 
+/**
+ * A handheld gripper's trajectory the platform derived from the recording (design doc 22 §5.4): which calibration
+ * (built-in DEMO or uploaded, the assumed fields), each hand's camera - paired how well, or why not drawn - and
+ * what the export's checks found suspect. Nothing for an uploaded trajectory.json.
+ */
+export function EefTrajectorySource({ record }: { record: ResultRecord }) {
+  const src = eefTrajectorySource(details(record));
+  if (!src) return null;
+  const T = Z().source;
+  return (
+    <div data-testid="eef-source">
+      <div className="episode-line">
+        <Space wrap size={8}>
+          <Tag color="arcoblue">{T.derived}</Tag>
+          <span>{src.builtin ? T.builtin(src.gripper) : T.uploaded(src.gripper)}</span>
+          {src.assumed.length ? <span className="muted">{T.assumed(src.assumed.join('、'))}</span> : null}
+        </Space>
+      </div>
+      {src.reason ? <div className="episode-line warn">{[T.reason[src.reason] ?? src.reason, src.message].filter(Boolean).join('：')}</div> : null}
+      {src.cameras.map((c) => (
+        <div key={c.hand} className={`episode-line${c.status === 'ok' ? ' muted' : ' warn'}`}>
+          {c.status === 'ok'
+            ? T.paired(c.hand, c.pairingRate !== null ? (c.pairingRate * 100).toFixed(1) : '—', T.intrinsics[c.intrinsics ?? ''] ?? c.intrinsics ?? '—')
+            : T.unsupported(c.hand, c.reason ?? c.status)}
+        </div>
+      ))}
+      {src.suspects.length ? (
+        <div className="episode-line warn">
+          {T.suspects}：{src.suspects.join('；')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function EefOpinion({ record }: { record: ResultRecord }) {
   const op = eefOpinion(details(record));
   if (!op) return null;
   const O = Z().opinion;
+  if (op.status === 'not_assessable')
+    // no trajectory for the episode (design doc 22 §5.4): nothing was drawn or asked; a derived one's block says why
+    return (
+      <div data-testid="eef-opinion">
+        <div className="eef-head">{O.title}</div>
+        <div className="episode-line warn">{O.notAssessable(eefTrajectorySource(details(record)) ? null : op.failure)}</div>
+      </div>
+    );
   return (
     <div data-testid="eef-opinion">
       <div className="eef-head">{O.title}</div>

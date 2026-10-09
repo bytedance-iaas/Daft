@@ -1,0 +1,22 @@
+{
+ "schema_version": "umi-calibration/2",
+ "gripper": "das_gripper",
+ "pose_frame": "vio_body_flu",
+ "body_to_optical": [[0, 0, 1], [-1, 0, 0], [0, -1, 0]],
+ "T_camera_tcp": [[1, 0, 0, 0], [0, 1, 0, 0.086], [0, 0, 1, 0.17], [0, 0, 0, 1]],
+ "finger_axis": "camera_x",
+ "opening": {"unit": "m", "scale": 1.0},
+ "intrinsics_scaling": "stretch_to_video",
+ "pairing_tolerance_s": 0.02,
+ "provenance": {
+  "source": "built-in DAS DEMO calibration (design doc 22 §5.4, §7)",
+  "method": "assumed from the DAS recordings; no camera's intrinsics: a recording without camera_info needs an uploaded calibration with intrinsics_fallback",
+  "assurance": "model_assumed",
+  "items": {
+   "pose_frame": {"assurance": "model_assumed", "method": "the VIO body (x forward, y left, z up) at the IMU"},
+   "body_to_optical": {"assurance": "model_assumed", "method": "the pictures' own motion against the VIO poses, 24 axis-aligned rotations (1.1 deg)"},
+   "T_camera_tcp": {"assurance": "model_assumed", "method": "the fingertips in one frame and the widest opening"},
+   "opening": {"assurance": "model_assumed", "method": "the magnetic encoder reads metres (0-0.103 m on the recordings)"}
+  }
+ }
+}

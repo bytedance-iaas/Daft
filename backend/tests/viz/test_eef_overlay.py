@@ -51,15 +51,16 @@ def _entry(ep: int, n: int, media: dict) -> dict:
     return e
 
 
-def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None = None, bundle: dict | None = None):
+def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None = None, bundle: dict | None = None,
+          upload: bool = True):
     """A task with the EEF module selected, its bundle (``entries``, or a whole ``bundle``) copied into the run
-    directory as at start."""
+    directory as at start; ``upload=False``: no trajectory.json (a handheld gripper's mcap, design doc 22 §5.4)."""
     from curation.contracts import modules as registry
     from daemon.repo import protocol as P
     from daemon.results.store import store_of
 
     rt = c.app.state.runtime
-    p = {"trajectory_json": HANDLE, **(params or {})}
+    p = {**({"trajectory_json": HANDLE} if upload else {}), **(params or {})}
     rows = [P.TaskModule(task_id="", module_id=m, selected=m == MODULE, availability="available",
                          params=p if m == MODULE else None) for m in registry.ids()]
     task = rt.repo.create_task(P.TaskCreate(
@@ -67,8 +68,9 @@ def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None =
         episode_selector={"mode": "all"}, params={}, modules=rows, dataset_id=dataset_id))
     run_dir = store_of(rt).task_dir(task.id)
     (run_dir / "inputs").mkdir(parents=True, exist_ok=True)
-    synth.write_bundle(run_dir / "inputs" / "trajectory.json", bundle or synth.make_bundle(entries))
-    (run_dir / "inputs" / "uploads.json").write_text(json.dumps({HANDLE: {"path": "inputs/trajectory.json"}}))
+    if upload:
+        synth.write_bundle(run_dir / "inputs" / "trajectory.json", bundle or synth.make_bundle(entries))
+        (run_dir / "inputs" / "uploads.json").write_text(json.dumps({HANDLE: {"path": "inputs/trajectory.json"}}))
     return task, run_dir
 
 
@@ -274,3 +276,30 @@ def test_a_handheld_gripper_bridges_its_pose_gaps_as_far_as_asked(mc, tmp_path):
     for bad in (0, -5, 2001, "soon"):
         assert_error(mc.get(f"{API}/tasks/{task.id}/episodes/0/eef-overlay", params={"max_gap_ms": bad}),
                      "validation_failed")
+
+
+def test_a_task_without_a_trajectory_reads_what_its_checks_derived(mc, tmp_path):
+    """Design doc 22 §5.4: no trajectory.json on a handheld gripper's mcap - the overlay reads the episode's
+    trajectory the checks derived into the run directory; ``not_derived`` before they have."""
+    from curation.extensions.eef_consistency import derive_mcap
+    from curation.extensions.eef_consistency.adapters import umi_mcap
+    from curation.pipeline.records import module_dir
+
+    from ..eef import das_mcap
+
+    cfg = das_mcap.calibration(pairing_tolerance_s=0.06)      # make_umi's frames come 50 ms after the poses
+    del cfg["intrinsics_fallback"]
+    bundle, _ = umi_mcap.episode_bundle(str(mc.data / "umi" / "episode_0.mcap"), 0, umi_mcap.check_calibration(cfg),
+                                        uri="episode_0.mcap", dataset_id="umi")
+    ds = _mcap_dataset(mc, mc.data / "umi", "umi")
+    task, run_dir = _task(mc, ds, mc.data / "umi", [], upload=False)
+    r = mc.get(f"{API}/tasks/{task.id}/episodes/0/eef-overlay")
+    assert_error(r, "not_found")
+    assert r.json()["error"]["details"]["reason"] == "not_derived"
+    path = derive_mcap.bundle_path(module_dir(str(run_dir), MODULE), 0)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(bundle))
+    (cam,) = _overlay(mc, task.id, 0)["cameras"]
+    assert cam["camera_id"] == "robot0_camera0" and cam["viz_camera"] == "robot0_sensor_camera0_compressed"
+    assert cam["times_s"] == pytest.approx([0.05 + 0.1 * k for k in range(20)])
+

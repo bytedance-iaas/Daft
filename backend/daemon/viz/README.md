@@ -18,7 +18,7 @@
 | `display.py` | 展示配置（设计 21 §6，C4 `VizDisplay`）：存在登记的 `display_config` 列里（`{version, updated_at, config}`）；读的时候叠在缓存的读取器元数据上——相机的顺序、显示名与 `hidden`、字幕轨的主轨由这里做，LeRobot / Lance 的曲线分组由读取器换成配置里的组（字段树与曲线接口跟着走）；保存前按不带配置的模型逐项校验，数据集后来变了对不上的键读的时候跳过；任务级只取相机、分组与字幕轨 |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
-| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；手持夹爪的位姿缺测按 `max_gap_ms`（缺省 3 个样本间隔，C4 4.4.0）补上再画，`interpolation` 说补了多少；按任务、文件、episode 与间隔缓存在内存，不落盘 |
+| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；手持夹爪的位姿缺测按 `max_gap_ms`（缺省 3 个样本间隔，C4 4.4.0）补上再画，`interpolation` 说补了多少；没传 trajectory.json 的手持夹爪任务读质检推出的单条轨迹包（`checks/eef_video_consistency/trajectory/`，设计 22 §5.4），还没推出时 404 `not_derived`；按任务、文件、episode 与间隔缓存在内存，不落盘 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
 
 内核（`backend/curation/viz/`）：`lerobot_info.py`（features、names 的几种写法、相机编码与 `needs_transcode`、RFC 6381 编码串）、`groups.py`（曲线分组 §5.3）、

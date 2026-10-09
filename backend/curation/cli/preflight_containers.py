@@ -177,7 +177,9 @@ def _mcap(ctx, args, storage, listing, fmt: Format, specs, doc: dict) -> None:
     _fill_supported(doc, specs, meta, listing, args, storage.uri, storage=storage,
                     container={"kind": "mcap", "detail": detail, "cameras_present": cams,
                                "profile_name": "", "total_frames": total,
-                               "robot_where": "the mcap metadata records"})
+                               "robot_where": "the mcap metadata records",
+                               # the reader's layout: umi_das is a handheld gripper's (design doc 22 §5.4)
+                               "profile": base.profile if base is not None else None})
 
 
 # ---------------------------------------------------------------- lance

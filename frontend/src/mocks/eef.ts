@@ -175,6 +175,18 @@ export function eefHandheldRecord(ep: number): ResultRecord {
     ...base,
     details: {
       ...(base.details as Record<string, unknown>),
+      // no trajectory.json: the platform derived it from the recording (design doc 22 §5.4)
+      trajectory_source: {
+        kind: 'derived',
+        calibration: { gripper: 'das_gripper', builtin: true, sha256: 'a'.repeat(64), assumed: ['T_camera_tcp', 'body_to_optical', 'pose_frame'], intrinsics_fallback: [] },
+        status: 'ok',
+        rows: 287,
+        cameras: {
+          robot0: { status: 'ok', reason: null, pairing_rate: 0.9987, intrinsics: 'camera_info', first_decodable: 0 },
+          robot1: { status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: 0 },
+        },
+        suspects: [{ code: 'timing_suspect', row: 7, camera: 'robot0', detail: '有画面的帧里只有 88% 配上了位姿（容差 20 ms）' }],
+      },
       ego_motion: {
         status: 'suspect',
         verdict: 'bad',
@@ -201,6 +213,37 @@ export function eefHandheldRecord(ep: number): ResultRecord {
             unmatched: [{ start_frame: 15, end_frame: 90, start_s: 1.474, end_s: 3.973, reason: 'pictures_unmatched' }],
           },
         },
+      },
+    },
+  };
+}
+
+/**
+ * A handheld gripper's episode the platform could not derive a trajectory for (design doc 22 §5.4): a recording
+ * without camera_info under the built-in calibration. The opinion did not look, asks nobody and passes.
+ */
+export function eefUnderivedRecord(ep: number): ResultRecord {
+  const why = '这一条推不出轨迹；robot0：这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback';
+  return {
+    ...eefOpinionRecord(ep),
+    verdict: 'abstain',
+    passed: null,
+    elapsed_s: 0.2,
+    details: {
+      episode_index: ep,
+      assessment_mode: 'vlm_opinion',
+      overall: 'opinion',
+      reason: '',
+      decision: { outcome: 'opinion', human: [], confirmed: [], unchecked: [] },
+      opinion: { protocol: 'eef-opinion/1', status: 'not_assessable', cameras: {}, segments: 0, flagged: false, max_confidence: null, requests: 0, failure: why },
+      trajectory_source: {
+        kind: 'derived',
+        calibration: { gripper: 'das_gripper', builtin: true, sha256: 'a'.repeat(64), assumed: ['T_camera_tcp', 'body_to_optical', 'pose_frame'], intrinsics_fallback: [] },
+        status: 'unsupported',
+        reason: 'trajectory_not_derived',
+        rows: 0,
+        cameras: { robot0: { status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: null } },
+        suspects: [],
       },
     },
   };

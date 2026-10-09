@@ -121,7 +121,8 @@ describe('the report sections (06 §6.2, F6.2)', () => {
   it('EEF without a gripper reference: the opinion figures and charts, no verdict counts (D-E15)', async () => {
     render('eef_video_consistency', {
       judged_pass: 0, judged_reject: 0, to_human: 0,
-      opinion_episodes: 7, opinion_flagged: 4, opinion_segments: 9, opinion_failed: 1, opinion_not_assessable: 0,
+      opinion_episodes: 7, opinion_flagged: 4, opinion_segments: 9, opinion_failed: 1, opinion_not_assessable: 2,
+      abstain_reason_counts: [{ name: '这一条推不出轨迹', count: 2 }],
       opinion_aspects: [{ name: 'position', count: 5 }, { name: 'orientation', count: 3 }, { name: 'both', count: 1 }],
       opinion_confidence: [{ name: '<0.3', count: 2 }, { name: '0.3–0.5', count: 1 }, { name: '0.5–0.7', count: 3 }, { name: '0.7–0.9', count: 2 }, { name: '≥0.9', count: 1 }],
     });
@@ -130,7 +131,9 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(figures).toHaveTextContent('有不匹配片段4不匹配置信度 ≥ 50% 的片段');
     expect(figures).toHaveTextContent('不匹配片段9');
     expect(figures).toHaveTextContent('没问成1');
+    expect(figures).toHaveTextContent('没问模型2没有轨迹：轨迹文件里没有，或推不出来；也不转人工');
     expect(figures).not.toHaveTextContent('判过');
+    expect(screen.queryByTestId('chart-abstain')).toBeNull();                   // asked of nobody: no abstention chart
     expect(await within(screen.getByTestId('chart-opinion-confidence')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.7 3'));
     expect(await within(screen.getByTestId('chart-opinion-aspects')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中心 5'));
   });
@@ -257,6 +260,10 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(sectionDigest({ counts: { total: 49, pass: 36, fail: 5, abstain: 6, scored: 0, error: 2 } })).toBe('判废 5 条，转人工 6 条，出错 2 条');
     expect(sectionDigest({ counts: { total: 8, pass: 8, fail: 0, abstain: 0, scored: 0, error: 0 } })).toBe('8 条全部通过');
     expect(sectionDigest(EEF)).toBe('候选 3 条，出错 1 条');
+    // the EEF module's opinion only: its abstentions are episodes without a trajectory, asked of nobody (design doc 22 §5.4)
+    const opinion = { counts: { total: 3, pass: 2, fail: 0, abstain: 1, scored: 0, error: 0 }, candidates: 0, judged_pass: 0, judged_reject: 0, to_human: 0 };
+    expect(sectionDigest({ ...opinion, opinion_episodes: 3, opinion_flagged: 1, opinion_not_assessable: 1 })).toBe('模型意见 3 条，有不匹配片段 1 条，没有轨迹、没问模型 1 条');
+    expect(sectionDigest({ ...opinion, opinion_episodes: 3, opinion_flagged: 0, opinion_not_assessable: 0 })).toBe('模型意见 3 条');
     expect(sectionDigest({})).toBeNull();
   });
 });

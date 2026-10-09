@@ -35,12 +35,13 @@
 | `record.py` | 轨迹与数据集记录（设计 12 §8.7，D-E16，只报告、不参与判决）：`eef-mapping/1.1` 的 `record` 块（1.0 映射的 `eef` 块就是位姿来源）；读 LeRobot 列或 mcap topic；逐帧对齐（`source_state_index` > 帧数相同按帧号 > 时间戳插值）；主指标是按声明关系算的原始残差；工具侧拟合恒定差并与声明比（`constant_mismatch`，推不出期望关系时只报告）；扣掉常量后迟滞分段（`record_deviation`）；时间差（正值 = 记录晚）；数据集内部位姿列与关节角正解互比；有标定时画叠加证据图 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail`；`attach_record` 加上 `details.record`（没有夹爪参考的意见路径也调它） |
 | `decide.py` | 逐条判决（D-E12 / 附录 C.9）：模型能看的分项（位置、朝向）按分项多数意见与 CPU 比对，模型看不了的分项（时间对齐、状态运动、相机运动）CPU 可疑即转人工，文件里没有或位置到处无法评估的转人工；有确认的判废即判废，否则有转人工理由即转人工，否则判过 |
-| `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
+| `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件时由 `cli/preflight` 先按设计 24 生成（或按设计 22 §5.4 走手持夹爪 mcap 的推导），都没有报 `unsupported: trajectory_missing`；单独调用且没给文件时报 `needs_input`；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
 | `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；标记视频与证据帧都不落盘（设计 20），记录只留视频元数据与证据帧号；送模型的视频长边上限 448；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
 | `report.py` | 报告小节摘要：判过 / 判废 / 转人工条数、转人工的原因、判废来自哪些分项、模型与 CPU 的一致率，以及候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；四张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows`；`record_summary` / `record_rows` 是轨迹与数据集记录的摘要与明细表 `eef_record` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口）、`umi`（原始 UMI 会话 → LeRobot 与上传件，设计 20）、`umi_mcap`（DAS / GenRobot 手持夹爪 mcap + `umi-calibration/2` → 上传件与 `umi-export-report.json`，设计 22 §5.2） |
 | `umi.py` | 手持夹爪：`load_hands`（`shared` / `per_hand` 世界系、缺测）、`fill_gaps`（前后有效位姿相隔不超过插值最大间隔时补，缺省 3 个样本间隔、容半个间隔）、本手投影、提示词 |
+| `derive_mcap.py`、`calibrations/das_gripper_demo.json` | 原始手持夹爪 mcap 的轨迹（设计 22 §5.4，D80；设计 24 的生成之外）：逐条按需用 `umi_mcap.episode_bundle` 从录制推出（本地文件或流式读 TOS），缓存、线程安全；单条轨迹包与导出报告写进 `checks/eef_video_consistency/trajectory/`；标定用上传的或内置的 DAS DEMO 假设值（不带客户相机的内参） |
 | `egomotion.py` | 腕部相机自身的运动：画面（ORB、去畸变、本质矩阵）对位姿推出的相对运动，旋转差与平移方向差；`export-umi-mcap` 的报告用它抽查帧对（设计 22 §7 第 2 行）；意见模式下整条检查（F5.19）：每三分之一窗口一对帧、每张画面只提一次特征，逐对旋转差、错开位姿找时间差、滚动中位加迟滞分段，阈值在 profile 的 `ego_motion` 一节（未校准） |
 | `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`export-umi`、`export-umi-mcap`、`template-build`、`template-check` |
 
@@ -137,7 +138,15 @@ fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的�
    写成单位阵的标定重新导出再跑：片段全是「重」。报告 EEF 小节多「读过自运动」「与位姿不一致」两个数和两张片段图，有不一致时发现里多一条
    info 级的「腕部相机的运动与记录的位姿不一致」（不影响判决）。
 
-验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py tests/eef/test_egomotion.py`
+5. 不传 trajectory.json（设计 22 §5.4）：同一个数据集新建任务，勾 EEF–视频一致性，第二屏 trajectory.json 留空（现在是可选项），「夹爪标定」也留空，
+   选视频模型。预检通过；跑完后 Episode 明细的 EEF 区块第一行是「轨迹由平台从录制推出 · 内置的 DEMO 标定（das_gripper）· 按假设值：…」，
+   下面每只手一行配对率与内参来源；`00001(1).mcap` 的模型意见、自运动与传导出文件的任务一致；`umi_sample.mcap` 两路写「不支持（这一路没有
+   camera_info，标定文件里也没有它的 intrinsics_fallback）」，这一条不问模型、不转人工（「模型意见」块写「没有问模型，也不转人工」，
+   记录的 `opinion.status` 是 `not_assessable`），任务的待裁决是 0。再建一个任务，「夹爪标定」传带 `intrinsics_fallback` 的那份（如本机的
+   `das_gripper_demo.json`）：`umi_sample` 两路可看。运行目录 `checks/eef_video_consistency/trajectory/` 里每条一个 `episode_<N>.json` 和
+   `.report.json`；迷你播放器的叠加照常。LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json 时预检是「不支持」（没有可生成轨迹的来源，设计 24）。
+
+验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py tests/eef/test_egomotion.py tests/eef/test_derive_mcap.py`
 （合成的仿 DAS 录制在 `tests/eef/das_mcap.py`，不依赖客户数据；`test_egomotion.py` 的真数据用例在本机有 DAS 录制与导出时才跑）。
 
 ### 原有 EEF 数据
@@ -203,7 +212,7 @@ fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的�
    ```
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
-   `needs_input: trajectory_missing`，给了文件但不给 `--vlm-backend` 时是 `needs_input: vlm_backend_missing`）；`plan.json` 的 `vlm`
+   `unsupported: trajectory_missing`——这个数据集没有可生成轨迹的来源，设计 24；给了文件但不给 `--vlm-backend` 时是 `needs_input: vlm_backend_missing`）；`plan.json` 的 `vlm`
    阶段是 `eef_video_consistency`、`episodes: survivors:numeric`、`hard_gates` 里有它；EEF 的 `check` 打印判完的条数与按细码的发现数
    （`inconsistent` 判废、`unsettled` 转人工、`opinion_mismatch` 只报告），每条记录的 `details.decision` 写着结论和理由，`details.review` 是每个复核窗口（问的点与轴、模型答复）；
    `revisions/r0001/verdicts.jsonl` 里被它判废的条目是 `drop`，`blocking` 列着它的 `inconsistent`，理由是那条发现的中文；`report.md` 的
