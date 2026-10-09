@@ -166,8 +166,9 @@ def check_input(svc: SecretsService, target: InputTarget, *,
 def _container_object(svc: SecretsService, key, target: InputTarget, bucket: str,
                       prefix: str) -> str | None:
     """An mcap dataset (D44) has no ``meta/info.json``: its first episode file read with
-    the same key stands for it (a few bytes); lerobot-lance-convert's layout without
-    ``meta/`` answers with a table version file. None when neither is there or readable."""
+    the same key stands for it (a few bytes); a raw UMI session answers with its ``dataset_plan.pkl``;
+    lerobot-lance-convert's layout without ``meta/`` answers with a table version file. None when
+    none is there or readable."""
     start = (prefix.strip("/") + "/") if prefix.strip("/") else ""
     try:
         with svc.tos(key, target.region) as (client, _):
@@ -176,6 +177,8 @@ def _container_object(svc: SecretsService, key, target: InputTarget, bucket: str
             names = sorted(str(o.key)[len(start):] for o in getattr(page, "contents", None) or [])
             pick = next((n for n in names if n.endswith(".mcap") and not n.startswith(".")),
                         None)
+            if pick is None and "dataset_plan.pkl" in names:      # a raw UMI session (design doc 24 §6)
+                pick = "dataset_plan.pkl"
             if pick is None:
                 versions = client.list_objects_type2(
                     bucket, prefix=f"{start}meta.lance/_versions/", max_keys=1)
@@ -222,6 +225,8 @@ def _local_container_file(root: pathlib.Path) -> str | None:
         names = sorted(p.name for p in root.iterdir()
                        if p.is_file() and p.name.endswith(".mcap") and not p.name.startswith("."))
         rel = names[0] if names else None
+        if rel is None and (root / "dataset_plan.pkl").is_file():   # a raw UMI session (design doc 24 §6)
+            rel = "dataset_plan.pkl"
         if rel is None:
             versions = sorted((root / "meta.lance" / "_versions").iterdir())
             rel = f"meta.lance/_versions/{versions[0].name}" if versions else None

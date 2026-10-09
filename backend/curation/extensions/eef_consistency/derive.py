@@ -32,6 +32,10 @@ DATASET_KEY = "trajectory.json"
 #: A handheld-gripper dataset's camera calibration.
 UMI_CALIBRATION_KEY = "meta/umi_calibration.json"
 HORIZON_S = 1.0
+#: A raw UMI / TRUMI session (design doc 24 §6).
+SESSION_PLAN = "dataset_plan.pkl"
+#: The session files the trajectory is computed from (never the videos: only their headers are read).
+SESSION_FILES = ("camera_trajectory.csv", "slam_stdout.txt", "tx_slam_tag.json", "gripper_range.json")
 #: The copy a run judges, relative to its run directory.
 RUN_COPY = os.path.join("inputs", "eef", "trajectory.json")
 
@@ -42,7 +46,10 @@ def dataset_key(listing) -> str | None:
 
 
 def source_of(listing) -> str | None:
-    """How the trajectory is had: ``generate``, ``dataset_file`` or None (the module cannot run)."""
+    """How the trajectory is had: ``session`` (a raw UMI session read in place), ``generate``, ``dataset_file``
+    or None (the module cannot run)."""
+    if SESSION_PLAN in listing and any(k.startswith("demos/") for k in listing):
+        return "session"
     if UMI_CALIBRATION_KEY in listing and "meta/info.json" in listing:
         return "generate"
     return "dataset_file" if DATASET_KEY in listing else None
@@ -146,9 +153,49 @@ def generate(storage, listing) -> dict:
             "samples": samples}
 
 
+def session(storage, listing) -> dict:
+    """The trajectory bundle of a raw UMI session, read in place (``adapters.umi.session_bundle``). A remote
+    session's small files (plan, CSVs, SLAM logs, tag and gripper calibrations, intrinsics) are copied into a
+    temporary directory; the videos are not - only their headers are read, by ranged GETs."""
+    import shutil
+
+    from .adapters import umi
+
+    if not getattr(storage, "remote", False):
+        return umi.session_bundle(storage.root, dataset_id=os.path.basename(str(storage.root).rstrip("/")))
+    import av
+
+    from ...streams.rangefile import RangeFile
+
+    tmp = tempfile.mkdtemp(prefix="umi-session-")
+    try:
+        for key in listing:
+            name = key.rsplit("/", 1)[-1]
+            if key == SESSION_PLAN or name in SESSION_FILES or (name.endswith(".json") and "intrinsics" in name):
+                dest = os.path.join(tmp, *key.split("/"))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "wb") as fh:
+                    fh.write(storage.read_bytes(key))
+        base = str(storage.uri).rstrip("/")
+
+        def video_info(path: str):
+            """The video's rate and size from its header, by ranged reads with the dataset's own key."""
+            key = f"demos/{path}"
+            with RangeFile(lambda start, n: storage.read_range(key, start, n), int(listing[key].size), name=key) as fh:
+                with av.open(fh) as inp:
+                    stream = inp.streams.video[0]
+                    return float(stream.average_rate), [stream.width, stream.height]
+
+        return umi.session_bundle(tmp, video_info=video_info, dataset_id=os.path.basename(base))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _bytes(storage, listing) -> bytes:
     """The trajectory bundle of the dataset, generated or its own file."""
     how = source_of(listing)
+    if how == "session":
+        return json.dumps(session(storage, listing), allow_nan=False).encode()
     if how == "generate":
         return json.dumps(generate(storage, listing), allow_nan=False).encode()
     if how == "dataset_file":

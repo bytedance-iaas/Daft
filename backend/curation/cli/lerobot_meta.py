@@ -47,7 +47,7 @@ class MetaError(Exception):
 
 @dataclass
 class Format:
-    kind: str                            # lerobot | mcap | lance | lancedb | rrd | unknown
+    kind: str                            # lerobot | mcap | lance | lancedb | rrd | umi_session | unknown
     version: str | None = None           # v2 | v3 | None
     codebase_version: str | None = None
     note: str = ""                       # why an unsupported kind was chosen
@@ -133,6 +133,9 @@ def detect_format(listing: dict[str, ObjectInfo]) -> Format:
             or any(k.endswith("_latest.manifest") or "/_versions/" in f"/{k}" for k in keys):
         return Format("lancedb", note=("Lance tables that are not lerobot-lance-convert's "
                                        "layout (frames.lance + videos.lance + meta)"))
+    if "dataset_plan.pkl" in listing and any(k.startswith("demos/") for k in keys):
+        return Format("umi_session", note=("a raw UMI / TRUMI session (dataset_plan.pkl + demos/); "
+                                           "curation stage-umi makes it a LeRobot dataset (design doc 24 §5)"))
     if _count_suffix(keys, ".mcap"):
         return Format("unknown", note=(f"{_count_suffix(keys, '.mcap')} .mcap files, all in "
                                        f"sub-directories; point --input at the directory that "
@@ -347,6 +350,8 @@ def fingerprint_keys(listing: dict[str, ObjectInfo], kind: str) -> list[str]:
 
     if kind == "mcap":
         return containers.mcap_keys(listing)
+    if kind == "umi_session":                       # design doc 24 §6: the plan stands for the metadata
+        return ["dataset_plan.pkl"]
     keys = meta_keys(listing)
     if not keys and kind == "lance":
         keys = sorted(k for k in listing if k.startswith(containers.LANCE_META_TABLE + "/"))

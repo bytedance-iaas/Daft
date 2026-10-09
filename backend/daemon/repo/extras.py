@@ -52,7 +52,7 @@ def dataset_format(preflight: dict | None) -> str:
         return "unsupported"
     if fmt.get("kind") == "lerobot" and fmt.get("version") in ("v2", "v3"):
         return f"lerobot_{fmt['version']}"
-    if fmt.get("kind") in ("mcap", "lance"):
+    if fmt.get("kind") in ("mcap", "lance", "umi_session"):     # umi_session: design doc 24 §6
         return str(fmt["kind"])
     return "unsupported"
 

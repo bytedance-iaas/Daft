@@ -112,12 +112,13 @@ def test_the_dataset_preflight_asks_for_the_file(daemon):
     d = daemon()
     pf = d.preflight()["result"]
     (entry,) = [m for m in pf["modules"] if m["id"] == EEF]
-    assert entry["availability"] == "needs_input" and entry["input_hint"] == {"field": "trajectory_json"}
+    # design doc 24: nothing to upload; this dataset has no poses with calibration to compute one from
+    assert (entry["availability"], entry["reason_code"]) == ("unsupported", "trajectory_missing")
 
 
 def test_a_task_needs_an_upload_handle_not_a_path(daemon):
     d = daemon()
-    for params, words in (({}, "trajectory_json"),
+    for params, words in (({}, "no end-effector poses"),          # design doc 24: nothing to compute it from
                           ({"trajectory_json": "/etc/hosts"}, "upload"),
                           ({"trajectory_json": "upload:upl_0000000000"}, "不存在")):
         body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": params}], start_now=False)

@@ -1,0 +1,27 @@
+{
+ "schema": "cli/stage-umi.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "input": "tos://bucket/umi/cups/raw",
+   "out": "/data/datasets/staged/3f2a9c/lerobot",
+   "episodes": 1,
+   "cameras": 2,
+   "calibration": {"source": "demos/mapping_C1_2026.09.24_mapping.MP4/tx_slam_tag.json",
+                   "intrinsics": {"camera0": "demos/demo_C1_GX010033.MP4/slam_stdout.txt",
+                                  "camera1": "built-in gopro13_intrinsics_2_7k.json"}},
+   "downloaded_bytes": 220345678
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "input": "tos://bucket/umi/cups/raw",
+   "out": "/data/x",
+   "episodes": 0,
+   "cameras": 2,
+   "calibration": {"source": "x", "intrinsics": {}},
+   "downloaded_bytes": 0
+  }
+ ]
+}

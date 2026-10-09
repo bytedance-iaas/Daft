@@ -17,7 +17,8 @@ from ..repo import protocol as P
 from ..repo.extras import dataset_format
 
 #: the C4 ``DatasetFormat`` values a reader serves, and which reader
-READERS = {"lerobot_v2": "lerobot", "lerobot_v3": "lerobot", "mcap": "mcap", "lance": "lance"}
+READERS = {"lerobot_v2": "lerobot", "lerobot_v3": "lerobot", "mcap": "mcap", "lance": "lance",
+           "umi_session": "umi_session"}
 
 
 def is_mcap(preflight: dict | None) -> bool:
@@ -41,6 +42,8 @@ def viz_format(preflight: dict | None) -> str:
     fmt = preflight.get("format") if isinstance(preflight, dict) else None
     if isinstance(fmt, dict) and fmt.get("kind") == "lance":
         return "lance"
+    if isinstance(fmt, dict) and fmt.get("kind") == "umi_session":     # design doc 24 §6
+        return "umi_session"
     version = lerobot_version(preflight)
     if version is not None:
         return f"lerobot_{version}"

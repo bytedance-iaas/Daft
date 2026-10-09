@@ -38,3 +38,41 @@
 | CLI `check`（`eef_check`） | 不传轨迹时生成到运行目录再读 |
 | Daemon `eef-overlay` | 任务没有上传件时读运行目录里生成的那份（工作目录被清过就先从交付恢复） |
 | 前端 | 上传框随参数 Schema 变为可选；模拟数据的预检改为 `available` |
+
+## 4. 原始会话的标定从会话里取（2026-10-09）
+
+`export-umi` 不再要求手写的 `calibration.json`（`--calibration` 可省；`adapters/umi.derive_calibration`）。`dataset_plan.pkl`
+里没有标定，三样东西分别取自会话：
+
+| 要的 | 取自 |
+|---|---|
+| `T_world_slam` | `demos/mapping_*/tx_slam_tag.json` 的逆 |
+| 内参与鱼眼畸变 | 依次：会话里的 `*intrinsics*.json`（UMI / TRUMI 流水线的输入，按图像尺寸匹配）→ demo 目录 `slam_stdout.txt` 里 ORB-SLAM3 打印的 Kannala-Brandt 参数 → 按图像尺寸的内置标定（`adapters/defaults/`，目前只有 TRUMI 的 GoPro 13 2.7K 4:3） |
+| 图像尺寸 | 原视频 |
+| `T_camera_tcp` | 逐帧 inverse(相机位姿，CSV 经 `tx_slam_tag` 换到标签系) × plan 的 TCP 位姿；plan 的 TCP 本来就是相机位姿乘固定安装变换算出来的，所以整段应是一个常数，偏差超过 1 mm / 0.05° 就报错 |
+
+实测 cups（内参取自 SLAM 日志）与 Trossen（会话里没有日志，用内置 GoPro 13 内参）推导出的标定与手写的逐项一致（`T_camera_tcp` 误差 0）。
+任务文本（`--instruction`）会话里没有，不给时为空，任务成败判定照 D72 不判这些条目。
+
+## 5. ~~原始会话转成 LeRobot~~（2026-10-09 改做 §6）
+
+`curation stage-umi`（把原始会话转码成 LeRobot 放在本地，C2 `stage-umi.schema.json`）留作离线工具；需求方算过 100 GB 的账（整读一遍、
+全量转码十几个小时、多存一成）后定：平台**直接读原始会话**，只把轨迹算出来（§6）。
+
+## 6. 平台直接读原始 UMI 会话（只做 EEF）
+
+- **格式**：预检认出 `umi_session`（根目录 `dataset_plan.pkl` + `demos/`），`supported: true`；数据集摘要来自 plan（条数、相机数、帧率、
+  `umi_*` 机型）；只有「EEF–视频一致性」可用，其余模块 `unsupported`（`format_unsupported_by_module`，「原始会话没有 LeRobot 的数据列与任务文本」）。
+- **轨迹**（`adapters/umi.session_bundle`、`derive.session`）：标定按 §4 从会话取；手位姿与开口取自 plan；相机位姿 = 手位姿 × inverse(`T_camera_tcp`)；
+  **视频不转码**，每路相机的媒体就是 demo 自己的 `raw_video.mp4`（2.7K 原图，`H` 为单位阵），片段是 plan 的帧区间、按 plan 的抽帧步长取帧——
+  片段起点比第一帧晚 (步长 − 1) / 2 个原始帧，解码器按 `round(t × fps)` 编号、每个编号取第一帧，正好取到 plan 用的那些帧（cups 实测与导出时
+  用的帧逐一对上）。远端会话只拷小文件（plan、CSV、SLAM 日志、标签与开口标定、内参文件），视频只用数据集自己的密钥按范围读头部。
+- **读视频**：EEF 跑在 `vlm` 段，经 S1 的块缓存只读这条 episode 用到的块（Trossen 实测每条约 18–21 MB）。
+- **其他配合**：`snapshot` 记下 plan 与所用 demo 的视频、CSV、日志、标定（源守卫据此核对）；`meta_fingerprint` 只看 `dataset_plan.pkl`
+  （CLI 与 Daemon 同一规则）；开跑前的「输入可读」检查认 `dataset_plan.pkl`；Daemon 的可跑格式加 `umi_session`；`aggregate` 读任务文本时
+  原始会话返回空。
+- **实测**：TOS 上 Trossen 原始会话，只给地址、只勾 EEF，经 Task API 跑完：2 条通过，模型 2 次请求，报告与投影叠加接口正常。
+- **可视化**（`daemon/viz/umi_session.py`，C4 4.5.0）：相机是各 demo 的原视频按 episode 的时间窗截取（GoPro HEVC 浏览器放不了，看的时候
+  由 Daemon 现转 H.264，只转这条的时间窗，缓存在本地盘，D60）；曲线是每只手的 TCP 位置与开口（取自 plan）；迷你播放器的投影叠加按原视频文件
+  对上可视化的相机。
+- **还不支持**：EEF 以外的模块。

@@ -119,6 +119,14 @@ def _viz(svc, task_id: str, owner: str, index: int):
 
             return ({row.videos[f]: key for key, f in m.camera_features.items() if f in row.videos}, {},
                     lerobot_times)
+        if reader == "umi_session":             # design doc 24 §6: the demos' raw videos, timed from the episode start
+            m, ep = svc.umi_session.row(src, index)
+            fps = float(m.fps or 0)
+
+            def session_times(key: str, frames: list) -> list:
+                return [round(k / fps, 6) if k is not None and fps > 0 else None for k in frames]
+
+            return ({rel: cam["key"] for cam, (rel, _, _) in zip(m.cameras, ep.videos)}, {}, session_times)
         if reader == "mcap":
             cams = svc.dataset(src).get("cameras") or []
             scanned = svc.mcap.frame_times(src, index)

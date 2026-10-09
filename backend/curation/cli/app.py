@@ -13,7 +13,7 @@ import re
 import sys
 
 from . import (adjudicate, aggregate, check, plan, preflight,
-               report_cmd, snapshot, task_client, verify)
+               report_cmd, snapshot, stage_umi, task_client, verify)
 from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
 
@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_cmd.add_parser(sub, atomic)
     adjudicate.add_parser(sub, atomic)
     verify.add_parser(sub, atomic)
+    stage_umi.add_parser(sub, atomic)
     task_client.add_parser(sub, _global_options(atomic=False))
     return parser
 

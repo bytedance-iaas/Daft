@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation stage-umi --json (schema 1.0)",
+  "description": "A raw UMI / TRUMI session (dataset_plan.pkl + demos/) made into a LeRobot v2.1 dataset with its trajectory.json in a local directory; the camera calibration is read from the session (design doc 24 §4-§5). The source is only read.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "input", "out", "episodes", "cameras", "calibration", "downloaded_bytes"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "input": {"$ref": "common.schema.json#/$defs/uri"},
+    "out": {"type": "string", "minLength": 1, "description": "the LeRobot dataset directory written"},
+    "episodes": {"type": "integer", "minimum": 1},
+    "cameras": {"type": "integer", "minimum": 1},
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "intrinsics"],
+      "properties": {
+        "source": {"type": "string", "description": "where T_world_slam came from"},
+        "intrinsics": {"type": "object", "additionalProperties": {"type": "string"},
+                       "description": "per camera: the session file the intrinsics were read from, or the built-in calibration"}
+      }
+    },
+    "downloaded_bytes": {"type": "integer", "minimum": 0, "description": "bytes copied from a remote session (0 for a local one)"}
+  }
+}

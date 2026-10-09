@@ -10,6 +10,7 @@ import base64
 import json
 import pathlib
 import pickle
+import re
 
 import numpy as np
 
@@ -42,7 +43,7 @@ def read_calibration(path):
     cfg = json.loads(pathlib.Path(path).read_text())
     if cfg.get("schema_version") != "umi-calibration/1":
         raise MappingError("calibration.schema_version must be umi-calibration/1")
-    for key in ("dataset_id", "instruction", "provenance", "cameras", "T_world_slam"):
+    for key in ("dataset_id", "provenance", "cameras", "T_world_slam"):
         if not cfg.get(key):
             raise MappingError(f"calibration.{key} is required")
     if not G.is_rigid(cfg["T_world_slam"]):
@@ -58,6 +59,106 @@ def read_calibration(path):
         if not G.is_rigid(cam.get("T_camera_tcp")):
             raise MappingError(f"{name}: explicit rigid T_camera_tcp is required")
     return cfg
+
+
+#: Built-in intrinsics by (width, height): the camera's own calibration as its pipeline ships it. TRUMI's GoPro 13
+#: at 2.7K 4:3 (``gopro13_intrinsics_2_7k.json``, the same values DecisionFacts' SLAM logs print).
+DEFAULT_INTRINSICS = {(2704, 2028): "gopro13_intrinsics_2_7k.json"}
+_SLAM_KB = re.compile(r"Camera 1 parameters \(Kannala-Brandt\): \[([^\]]+)\]")
+#: How far the per-frame camera -> TCP transform may wander and still be one rigid mount.
+MOUNT_TOL_M, MOUNT_TOL_DEG = 1e-3, 0.05
+
+
+def _intrinsics_doc(doc: dict) -> tuple[list, list, str]:
+    """(K, distortion, model) from a UMI / TRUMI ``*_intrinsics_*.json`` (OpenImuCameraCalibrator output)."""
+    i = doc["intrinsics"]
+    if str(doc.get("intrinsic_type", "")).upper() != "FISHEYE":
+        raise MappingError(f"intrinsics of type {doc.get('intrinsic_type')!r} are not supported (FISHEYE only)")
+    f = float(i["focal_length"])
+    K = [[f, 0., float(i["principal_pt_x"])], [0., f, float(i["principal_pt_y"])], [0., 0., 1.]]
+    return K, [float(i[f"radial_distortion_{k}"]) for k in range(1, 5)], G.FISHEYE
+
+
+def _intrinsics(root: pathlib.Path, demo_dir: pathlib.Path, wh: list[int]) -> tuple[list, list, str, str]:
+    """(K, distortion, model, where from) of a demo's camera: an intrinsics file in the session, the
+    Kannala-Brandt line ORB-SLAM3 prints in the demo's ``slam_stdout.txt``, else the built-in calibration of
+    a camera with that image size."""
+    for path in sorted(root.glob("*intrinsics*.json")) + sorted((root / "demos").glob("*intrinsics*.json")):
+        doc = json.loads(path.read_text())
+        if [doc.get("image_width"), doc.get("image_height")] == list(wh):
+            return (*_intrinsics_doc(doc), path.relative_to(root).as_posix())
+    log = demo_dir / "slam_stdout.txt"
+    if log.is_file():
+        m = _SLAM_KB.search(log.read_text(errors="replace"))
+        if m:
+            p = [float(x) for x in m.group(1).split()]
+            K = [[p[0], 0., p[2]], [0., p[1], p[3]], [0., 0., 1.]]
+            return K, p[4:8], G.FISHEYE, log.relative_to(root).as_posix()
+    name = DEFAULT_INTRINSICS.get(tuple(wh))
+    if name:
+        doc = json.loads((pathlib.Path(__file__).parent / "defaults" / name).read_text())
+        return (*_intrinsics_doc(doc), f"built-in {name}")
+    raise MappingError(f"{demo_dir.name}: no intrinsics for a {wh[0]}x{wh[1]} camera (no intrinsics file, "
+                       "no slam_stdout.txt, no built-in calibration)")
+
+
+def _video_info(root: pathlib.Path, video_path: str) -> tuple[float, list[int]]:
+    """(frame rate, [width, height]) of a session video on local disk."""
+    import av
+
+    with av.open(str(_source(root, video_path))) as inp:
+        stream = inp.streams.video[0]
+        return float(stream.average_rate), [stream.width, stream.height]
+
+
+def derive_calibration(root, *, dataset_id: str | None = None, instruction: str | None = None,
+                       video_info=None) -> dict:
+    """The ``umi-calibration/1`` of a raw session, read from the session itself (design doc 24 §4):
+    ``T_world_slam`` = inverse(``mapping_*/tx_slam_tag.json``); each camera's intrinsics (:func:`_intrinsics`) and
+    image size (its video); ``T_camera_tcp`` = inverse(camera pose) x TCP pose, frame by frame from the CSV and the
+    plan - the plan's TCP is the camera's pose through the mount, so this must be one constant transform."""
+    from scipy.spatial.transform import Rotation
+
+    root = pathlib.Path(root)
+    video_info = video_info or (lambda path: _video_info(root, path))
+    tags = sorted((root / "demos").glob("mapping_*/tx_slam_tag.json"))
+    if not tags:
+        raise MappingError("no demos/mapping_*/tx_slam_tag.json in the session")
+    T_tag_slam = np.linalg.inv(np.asarray(json.loads(tags[-1].read_text())["tx_slam_tag"], float))
+    plans = read_plan(root / "dataset_plan.pkl")
+    plan = plans[0]
+    t = np.asarray(plan["episode_timestamps"], float)
+    n = len(t)
+    cameras, sources = {}, []
+    for j, (camera, grip) in enumerate(zip(plan["cameras"], plan["grippers"])):
+        rate, wh = video_info(camera["video_path"])
+        video = root / "demos" / camera["video_path"]          # its directory holds the CSV and the SLAM log
+        K, dist, model, where = _intrinsics(root, video.parent, wh)
+        first, end = camera["video_start_end"]
+        stride = (end - first) // n
+        T_tag_cam = slam_to_tag(_camera_rows(video.parent / "camera_trajectory.csv", np.arange(first, end, stride) / rate),
+                                T_tag_slam=T_tag_slam)
+        pose = np.asarray(grip["tcp_pose"], float)
+        T_tag_tcp = G.se3(Rotation.from_rotvec(pose[:, 3:]).as_matrix(), pose[:, :3])
+        mount = np.linalg.inv(T_tag_cam) @ T_tag_tcp
+        ref = mount[len(mount) // 2]
+        drift_m = float(np.abs(mount[:, :3, 3] - ref[:3, 3]).max())
+        drift_deg = float(np.degrees(np.max(np.linalg.norm(
+            Rotation.from_matrix(mount[:, :3, :3] @ ref[:3, :3].T).as_rotvec(), axis=1))))
+        if drift_m > MOUNT_TOL_M or drift_deg > MOUNT_TOL_DEG:
+            raise MappingError(f"camera{j}: camera -> TCP is not one rigid transform across the episode "
+                               f"({drift_m * 1000:.1f} mm, {drift_deg:.2f} deg)")
+        cameras[f"camera{j}"] = {"K": K, "model": model, "distortion_coefficients": dist, "image_size_wh": wh,
+                                 "T_camera_tcp": ref.tolist(), "source": {"intrinsics": where,
+                                 "T_camera_tcp": "dataset_plan.pkl tcp_pose against camera_trajectory.csv"}}
+        sources.append(where)
+    return {"schema_version": "umi-calibration/1", "dataset_id": dataset_id or root.name,
+            "instruction": instruction or None, "T_world_slam": T_tag_slam.tolist(), "cameras": cameras,
+            "provenance": {"source": f"{tags[-1].relative_to(root).as_posix()}; intrinsics: {', '.join(sorted(set(sources)))}",
+                           "method": "derived from the session: T_world_slam = inverse(tx_slam_tag); camera -> TCP "
+                                     "from the plan's TCP poses against the SLAM camera poses",
+                           # the camera's own calibration as the session carries it; a built-in one is the model's
+                           "assurance": "model_assumed" if any(s.startswith("built-in") for s in sources) else "declared"}}
 
 
 def slam_to_tag(T_slam_object, *, T_tag_slam) -> np.ndarray:
@@ -134,8 +235,97 @@ def gripper_range(root, video_path: str) -> dict | None:
     return {"min_width_m": lo, "max_width_m": hi, "source": path.relative_to(root).as_posix()}
 
 
-def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
-    """Create a new dataset directory, using raw video pixels (scale only, no inferred crop)."""
+def session_bundle(root, *, video_info=None, dataset_id: str | None = None, instruction: str | None = None,
+                   horizon_s: float = 1.0) -> dict:
+    """The trajectory bundle of a raw session read in place (design doc 24 §6): nothing is transcoded - each
+    camera's media is the demo's own ``raw_video.mp4`` (``media_uri_base = lerobot_root`` with the session as
+    the root), its clip the plan's frame range at the plan's sampling. The plan keeps every ``stride``-th raw
+    frame; the clip starts ``(stride - 1) / 2`` raw frames after the first kept one so that the decoder, which
+    numbers frames by ``round(t * fps)`` and keeps the first of each number, keeps exactly those."""
+    from scipy.spatial.transform import Rotation
+
+    root = pathlib.Path(root)
+    video_info = video_info or (lambda path: _video_info(root, path))
+    cfg = derive_calibration(root, dataset_id=dataset_id, instruction=instruction, video_info=video_info)
+    prov = cfg["provenance"]
+    samples = []
+    for ep, plan in enumerate(read_plan(root / "dataset_plan.pkl")):
+        t = np.asarray(plan["episode_timestamps"], float)
+        if t.ndim != 1 or len(t) < 2 or not np.isfinite(t).all() or np.any(np.diff(t) <= 0):
+            raise MappingError(f"episode {ep}: invalid timestamps")
+        t = t - t[0]
+        n = len(t)
+        cams, grippers = plan["cameras"], plan["grippers"]
+        if len(cams) != len(grippers) or len(cams) not in (1, 2):
+            raise MappingError("UMI sessions have one wrist camera per hand (one or two hands)")
+        hands = [f"robot{j}" for j in range(len(grippers))]
+        hand_T, quats, widths = {}, {}, {}
+        for hand, grip in zip(hands, grippers):
+            pose = np.asarray(grip["tcp_pose"], float)
+            w = np.asarray(grip["gripper_width"], float).reshape(-1)
+            if pose.shape != (n, 6) or w.shape != (n,) or not np.isfinite(pose).all() or not np.isfinite(w).all():
+                raise MappingError(f"episode {ep}/{hand}: invalid absolute TCP poses or opening widths")
+            rot = Rotation.from_rotvec(pose[:, 3:])
+            hand_T[hand], quats[hand], widths[hand] = G.se3(rot.as_matrix(), pose[:, :3]), rot.as_quat(), w
+        views, calibrations, camera_poses, media_wh, fps_of = [], {}, {}, {}, {}
+        for j, camera in enumerate(cams):
+            cid, cal = f"camera{j}", cfg["cameras"][f"camera{j}"]
+            rate, wh = video_info(camera["video_path"])
+            first, end = camera["video_start_end"]
+            if not isinstance(first, int) or not isinstance(end, int) or first < 0 or end <= first or (end - first) % n:
+                raise MappingError(f"{cid}: invalid raw video frame range")
+            stride = (end - first) // n
+            fps = rate / stride
+            if abs(np.median(np.diff(t)) * fps - 1) > 1e-4:
+                raise MappingError(f"{cid}: plan timestamps and video sampling rates differ")
+            start = (first + (stride - 1) / 2) / rate
+            media_wh[cid], fps_of[cid] = wh, fps
+            camera_poses[cid] = hand_T[hands[j]] @ np.linalg.inv(np.asarray(cal["T_camera_tcp"], float))
+            views.append({"view_id": cid, "kind": "camera", "camera_id": cid, "mount": "wrist",
+                          "media": {"kind": "video", "uri": f"demos/{camera['video_path']}", "image_size_wh": wh,
+                                    "frame_count": n, "fps": fps, "clip_start_s": start, "clip_end_s": start + n / fps}})
+            calibrations[cid] = {"camera_id": cid, "reference_frame": "umi_world", "image_size_wh": wh,
+                                 "image_space": "distorted" if cal["model"] != G.PINHOLE else "rectified",
+                                 "model": cal["model"], "K": cal["K"],
+                                 "distortion_coefficients": cal["distortion_coefficients"],
+                                 "extrinsics_mode": "per_frame", "T_reference_camera": None, "provenance": prov}
+        sid = f"umi_{ep:06d}"
+        points, axes = _points({"tcp_offset_m": [0, 0, 0], "axes": {"from": "tcp", "length_m": .06}}, hands[0], "UMI TCP")
+        sample = {"schema_version": VERSION, "sample_id": sid,
+                  "source": {"dataset": cfg["dataset_id"], "episode_id": str(ep), "instruction": cfg.get("instruction") or None},
+                  "frame_count": n, "timebase": "video_pts", "annotations_path": "#frames", "calibration_path": "#calibration",
+                  "eef_frame": hands[0], "reference_frame": "umi_world", "views": views,
+                  "point_definitions": points, "axis_definitions": axes, "raw_pose_sequence": None,
+                  "notes": ["Generated by the platform from the raw session in place: the plan's TCP poses, the "
+                            "session's camera calibration, the demos' own raw videos (not transcoded)."],
+                  "umi": {"camera_hands": {f"camera{j}": hands[j] for j in range(len(cams))},
+                          "horizon_s": horizon_s, "provenance": prov}}
+        ranges = {f"robot{j}": r for j, camera in enumerate(cams) if (r := gripper_range(root, camera["video_path"]))}
+        if ranges:
+            sample["umi"]["gripper_range"] = ranges
+        frames = []
+        H = np.eye(3).tolist()
+        for i in range(n):
+            hp = {h: {"pose": {"pose_type": "absolute", "frame_id": h, "reference_frame": "umi_world",
+                               "position_m": hand_T[h][i, :3, 3].tolist(), "quaternion_xyzw": quats[h][i].tolist(),
+                               "relative_to": None, "provenance": prov},
+                      "opening_m": float(widths[h][i])} for h in hands}
+            frames.append({"schema_version": VERSION, "sample_id": sid, "frame_index": i, "timestamp_s": float(t[i]),
+                           "source_state_index": i, "source_timing": [], "eef": hp[hands[0]]["pose"], "gripper": None,
+                           "hands": hp, "cameras": {cid: {"video_frame_index": i, "video_timestamp_s": i / fps_of[cid],
+                            "image_size_wh": media_wh[cid], "calibration_id": cid, "T_reference_camera": Tc[i].tolist(),
+                            "H_media_from_calibration": H, "projection": None} for cid, Tc in camera_poses.items()}})
+        samples.append({"episode_index": ep, "sample": sample,
+                        "calibration": {"schema_version": VERSION, "calibrations": calibrations}, "frames": frames})
+    return {"schema_version": VERSION, "container": "trajectory-bundle/1.0", "media_uri_base": "lerobot_root",
+            "dataset": {"id": cfg["dataset_id"], "lerobot_codebase_version": "v2.1", "fps": fps_of.get("camera0"),
+                        "episode_count": len(samples), "generator": "curation eef derive (raw UMI session)"},
+            "samples": samples}
+
+
+def export(root, calibration, out, *, horizon_s=1.0, max_side=960, instruction=None, dataset_id=None):
+    """Create a new dataset directory, using raw video pixels (scale only, no inferred crop). ``calibration``
+    None: derived from the session (:func:`derive_calibration`)."""
     import av
     import cv2
     import pyarrow as pa
@@ -146,7 +336,14 @@ def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
     from ..load import load_bundle
 
     root, out = pathlib.Path(root), pathlib.Path(out)
-    cfg = read_calibration(calibration)
+    if calibration is None:
+        cfg = derive_calibration(pathlib.Path(root), dataset_id=dataset_id, instruction=instruction)
+    elif isinstance(calibration, dict):                     # one derived already (cli/stage_umi)
+        cfg = calibration
+    else:
+        cfg = read_calibration(calibration)
+        if instruction:
+            cfg["instruction"] = instruction
     plans = read_plan(root / "dataset_plan.pkl")
     if not np.isfinite(horizon_s) or not 0 <= horizon_s <= 5 or max_side < 32:
         raise MappingError("horizon_s must be 0..5 and max_side at least 32")
@@ -240,7 +437,7 @@ def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
         sid = f"umi_{ep:06d}"
         points, axes = _points({"tcp_offset_m": [0, 0, 0], "axes": {"from": "tcp", "length_m": .06}}, "robot0", "UMI TCP")
         sample = {"schema_version": VERSION, "sample_id": sid,
-                  "source": {"dataset": cfg["dataset_id"], "episode_id": str(ep), "instruction": cfg["instruction"]},
+                  "source": {"dataset": cfg["dataset_id"], "episode_id": str(ep), "instruction": cfg.get("instruction") or None},
                   "frame_count": n, "timebase": "video_pts", "annotations_path": "#frames", "calibration_path": "#calibration",
                   "eef_frame": "robot0", "reference_frame": "umi_world", "views": views,
                   "point_definitions": points, "axis_definitions": axes, "raw_pose_sequence": None,
@@ -273,7 +470,7 @@ def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
         pq.write_table(pa.table({"episode_index": [ep]*n, "frame_index": list(range(n)), "timestamp": t,
                                  "task_index": [0]*n, "index": list(range(sum(e['length'] for e in episodes), sum(e['length'] for e in episodes)+n)),
                                  "observation.state": values.tolist(), "action": values.tolist()}), path)
-        episodes.append({"episode_index": ep, "tasks": [cfg["instruction"]], "length": n})
+        episodes.append({"episode_index": ep, "tasks": [cfg.get("instruction") or ""], "length": n})
     if not np.allclose(fps_all, fps_all[0]):
         raise MappingError("UMI export requires the same sampling rate in every episode")
     names = [name for j in range(len(plans[0]["grippers"])) for name in
@@ -291,7 +488,7 @@ def export(root, calibration, out, *, horizon_s=1.0, max_side=960):
             "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"}
     (meta / "info.json").write_text(json.dumps(info, indent=2))
     (meta / "episodes.jsonl").write_text("".join(json.dumps(e) + "\n" for e in episodes))
-    (meta / "tasks.jsonl").write_text(json.dumps({"task_index": 0, "task": cfg["instruction"]}) + "\n")
+    (meta / "tasks.jsonl").write_text(json.dumps({"task_index": 0, "task": cfg.get("instruction") or ""}) + "\n")
     (meta / "umi_calibration.json").write_text(json.dumps(cfg, indent=2))
     bundle = {"schema_version": VERSION, "container": "trajectory-bundle/1.0", "media_uri_base": "lerobot_root",
               "dataset": {"id": cfg["dataset_id"], "lerobot_codebase_version": "v2.1", "fps": fps_all[0],

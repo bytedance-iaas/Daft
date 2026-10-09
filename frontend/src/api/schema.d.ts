@@ -1977,7 +1977,7 @@ export interface components {
             episodes?: number | null;
         };
         /** @enum {unknown} */
-        DatasetFormat: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "unsupported";
+        DatasetFormat: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "umi_session" | "unsupported";
         DatasetItemFields: {
             /** @description ds- and 9 lowercase letters (D45); registrations made before 1.10.0 keep ds_ and their old id */
             id: string;
@@ -2902,14 +2902,14 @@ export interface components {
              * @description as the visualizer reads it: a lerobot-lancedb 0.1-0.2 dataset (which the preflight takes for LeRobot) is lance
              * @enum {unknown}
              */
-            kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "unknown";
+            kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "umi_session" | "unknown";
             /** @enum {unknown} */
             version: "v2" | "v3" | null;
             /**
              * @description the reader serving it; null = none (Lance tables without LeRobot metadata, rrd ...)
              * @enum {unknown}
              */
-            reader: "lerobot" | "mcap" | "lance" | null;
+            reader: "lerobot" | "mcap" | "lance" | "umi_session" | null;
             /**
              * @description Lance: which lerobot-lancedb layout (design doc 19 §4.2) - 0.3's frames / videos / meta
              *     tables, 0.1-0.2's frames table with a videos table beside it, or with a JPEG column per
@@ -3758,10 +3758,10 @@ export interface components {
             schema_version: components["schemas"]["schema_version"];
             format: {
                 /**
-                 * @description lerobot, mcap and lance (lerobot-lance-convert >= 0.3.0, D44) can be supported; lancedb (other Lance tables), rrd and unknown never are
+                 * @description lerobot, mcap and lance (lerobot-lance-convert >= 0.3.0, D44) can be supported; lancedb (other Lance tables), rrd and unknown never are; umi_session (a raw UMI / TRUMI session) is read after curation stage-umi made it a LeRobot dataset (design doc 24 §5)
                  * @enum {unknown}
                  */
-                kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "unknown";
+                kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "umi_session" | "unknown";
                 /**
                  * @description the LeRobot version of the metadata: v2 / v3 for lerobot, v3 for lance (its meta/ is LeRobot v3.0), null for mcap
                  * @enum {unknown}

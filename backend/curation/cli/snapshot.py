@@ -63,6 +63,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     fmt = lerobot_meta.detect_format(listing)
     if fmt.kind in ("mcap", "lance"):
         return _container(ctx, args, storage, listing, fmt, requested)
+    if fmt.kind == "umi_session":
+        return _session(ctx, args, storage, listing, requested)
     if fmt.kind != "lerobot":
         raise UsageError(f"{storage.uri} is not a LeRobot dataset ({fmt.kind}: {fmt.note}); "
                          f"run preflight first")
@@ -154,3 +156,39 @@ def _container(ctx: Context, args, storage, listing, fmt, requested) -> Result:
     human = (f"{summary['count']} objects, {summary['bytes']} bytes ({fmt.kind}) for {n_eps} "
              f"episodes of {storage.uri}\nwrote {args.out} ({summary['digest']})")
     return Result(doc, human=human)
+
+
+def _session(ctx: Context, args, storage, listing, requested) -> Result:
+    """A raw UMI session (design doc 24 §6): the plan and what the trajectory and the videos come from - the
+    used demos' videos, CSVs and SLAM logs, the mapping's tag transform, the grippers' calibrations."""
+    import os
+    import tempfile
+
+    from ..extensions.eef_consistency.adapters import umi
+    from . import runctx
+    from .stage_umi import needed_keys
+
+    available, _info = runctx.session_episodes(storage)
+    selected, warning = episode_sel.reconcile(requested, available)
+    if warning:
+        ctx.log("warn", warning)
+    ctx.progress(STAGE, 1, 2)
+    fd, tmp = tempfile.mkstemp(prefix="umi-plan-", suffix=".pkl")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(storage.read_bytes("dataset_plan.pkl") if storage.remote
+                     else open(os.path.join(storage.root, "dataset_plan.pkl"), "rb").read())
+        plans = umi.read_plan(tmp)
+    finally:
+        os.unlink(tmp)
+    keys = needed_keys(listing, [c["video_path"] for p in plans for c in p["cameras"]])
+    doc = source_manifest.build(storage.uri, [listing[k] for k in keys if k in listing])
+    try:
+        source_manifest.write(args.out, doc)
+    except OSError as e:
+        raise UsageError(f"--out {args.out}: cannot write it: {e}") from None
+    ctx.progress(STAGE, 2, 2)
+    n_eps = len(selected) if selected is not None else len(available)
+    summary = doc["summary"]
+    return Result(doc, human=f"{summary['count']} objects, {summary['bytes']} bytes (UMI session) for {n_eps} "
+                             f"episodes of {storage.uri}\nwrote {args.out} ({summary['digest']})")

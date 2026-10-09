@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.4.0
+  version: 4.5.0
   description: |
     ## Overview
 
@@ -148,6 +148,11 @@ info:
     sample interval), and the overlay takes `max_gap_ms` to bridge longer or shorter gaps than the
     default.
 
+    **4.5.0** (2026-10-09): a raw UMI / TRUMI session (`dataset_plan.pkl` beside `demos/`) can be registered
+    and checked as it is: `DatasetFormat` and the visualizer's `format.kind` / `format.reader` add
+    `umi_session`. Only the end-effector check runs on it (its trajectory is computed from the session); the
+    visualizer plays the demos' own videos cut to each episode and draws each hand's position and opening.
+
   x-description-zh: |
     ## 概览
 
@@ -238,6 +243,10 @@ info:
 
     **4.4.0**（2026-10-08）：手持夹爪录制的位姿流隔帧缺测时，`EefOverlay` 加 `interpolation`（为画面补了多长的位姿缺口、缺省多长、样本间隔多长），
     叠加接口加查询参数 `max_gap_ms`，可以比缺省补得长一些或短一些。
+
+    **4.5.0**（2026-10-09）：UMI / TRUMI 原始会话（根目录 `dataset_plan.pkl` 加 `demos/`）可以原样登记和质检：`DatasetFormat` 与可视化的
+    `format.kind` / `format.reader` 加 `umi_session`。这种数据集只能做末端执行器检查（轨迹由平台从会话算出）；可视化播放各 demo 的原视频（按 episode 截取），
+    画出每只手的位置与开口。
 
 servers:
   - url: "{base}/api/v1"
@@ -3899,7 +3908,7 @@ components:
         uri: {type: string}
         format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, rrd, unknown]}
         episodes: {type: [integer, "null"]}
-    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, unsupported]}
+    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, umi_session, unsupported]}
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
@@ -5126,9 +5135,9 @@ components:
       additionalProperties: false
       required: [kind, version, reader, layout]
       properties:
-        kind: {enum: [lerobot, mcap, lance, lancedb, rrd, unknown], description: "as the visualizer reads it: a lerobot-lancedb 0.1-0.2 dataset (which the preflight takes for LeRobot) is lance"}
+        kind: {enum: [lerobot, mcap, lance, lancedb, rrd, umi_session, unknown], description: "as the visualizer reads it: a lerobot-lancedb 0.1-0.2 dataset (which the preflight takes for LeRobot) is lance"}
         version: {enum: [v2, v3, null]}
-        reader: {enum: [lerobot, mcap, lance, null], description: "the reader serving it; null = none (Lance tables without LeRobot metadata, rrd ...)"}
+        reader: {enum: [lerobot, mcap, lance, umi_session, null], description: "the reader serving it; null = none (Lance tables without LeRobot metadata, rrd ...)"}
         layout:
           enum: [lance-0.3, lance-0.2-video, lance-0.2-frames, null]
           description: |

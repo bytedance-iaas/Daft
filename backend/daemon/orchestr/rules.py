@@ -132,6 +132,8 @@ def meta_fingerprint(manifest: dict) -> str:
         meta = [o for o in objects if str(o.get("key", "")).startswith("meta.lance/")]
     if not meta and any(str(o.get("key", "")).endswith(".mcap") for o in objects):
         meta = objects
+    if not meta:                                    # a raw UMI session (design doc 24 §6): its plan
+        meta = [o for o in objects if str(o.get("key", "")) == "dataset_plan.pkl"]
     return listing_digest(meta)
 
 

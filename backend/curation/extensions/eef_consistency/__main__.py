@@ -212,7 +212,8 @@ def _export_umi(a: argparse.Namespace) -> int:
     from .adapters.umi import export
 
     try:
-        result = export(a.dataset_root, a.calibration, a.out, horizon_s=a.horizon_s, max_side=a.max_side)
+        result = export(a.dataset_root, a.calibration, a.out, horizon_s=a.horizon_s, max_side=a.max_side,
+                        instruction=a.instruction, dataset_id=a.dataset_id)
     except (ValueError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -261,9 +262,12 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--episodes", type=int, nargs="*", default=None)
     x.add_argument("--out", required=True)
     x.set_defaults(fn=_export)
-    u = sub.add_parser("export-umi", help="calibrated raw UMI session to LeRobot and trajectory.json")
+    u = sub.add_parser("export-umi", help="raw UMI session to LeRobot and trajectory.json (calibration read from the session)")
     u.add_argument("--dataset-root", required=True, help="directory containing dataset_plan.pkl and demos/")
-    u.add_argument("--calibration", required=True, help="explicit umi-calibration/1 JSON")
+    u.add_argument("--calibration", default=None,
+                   help="umi-calibration/1 JSON; default: derived from the session (tx_slam_tag, intrinsics, plan vs CSV)")
+    u.add_argument("--instruction", default=None, help="the task text written into the dataset")
+    u.add_argument("--dataset-id", default=None, help="the dataset id written into the bundle")
     u.add_argument("--horizon-s", type=float, default=1.0, help="history window ending at the current frame, in seconds")
     u.add_argument("--max-side", type=int, default=960)
     u.add_argument("--out", required=True, help="new output directory")

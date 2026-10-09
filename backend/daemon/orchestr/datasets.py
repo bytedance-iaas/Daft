@@ -51,7 +51,7 @@ class Source:
 
 
 #: the formats a task can run on (mcap and lance since D44); snapshot lists them all
-SUPPORTED_KINDS = ("lerobot", "mcap", "lance")
+SUPPORTED_KINDS = ("lerobot", "mcap", "lance", "umi_session")   # umi_session: design doc 24 §6
 
 
 def format_supported(preflight: dict | None) -> bool:

@@ -101,6 +101,9 @@ EEF 要把每帧末端（每只手）的位置和朝向投影到视频上，需�
   `robotN_rot6d_0..5`（姿态，旋转矩阵的前两列）、`robotN_gripper_width`（开口）；`meta/umi_calibration.json` 里每路相机有内参 `K`、
   鱼眼畸变、标定图尺寸和 `T_camera_tcp`（相机到 TCP 的固定变换）。每帧的手位姿由位置和 rot6d 还原成 4×4 矩阵；腕部相机的位姿 =
   手位姿 × `T_camera_tcp` 的逆；视频尺寸与标定图尺寸的比例写成媒体变换。
+- **UMI / TRUMI 原始会话**（根目录 `dataset_plan.pkl` + `demos/`，SLAM 流水线跑完的样子）：数据集地址直接填会话目录。平台不转码，
+  手位姿取自 plan，标定从会话里取（`tx_slam_tag.json`、SLAM 日志或内参文件里的内参、plan 与相机轨迹 CSV 反推的相机到 TCP 变换），
+  视频直接读 demo 的 `raw_video.mp4`。这种数据集只能勾 `eef_video_consistency`。
 - **数据集自带 `trajectory.json`**（离线导出工具写在数据集根目录的）：没有上面那些数据时直接用它。
 - 两样都没有：EEF 对这个数据集不可用，预检写明原因。
 

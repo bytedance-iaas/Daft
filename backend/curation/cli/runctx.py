@@ -434,6 +434,17 @@ def source_guard(ctx: Context, args, storage):
         return None
     if src is not None and src.container:
         return _container_guard(ctx, args, src, manifest)
+    if lerobot_meta.detect_format(src.listing if src is not None else storage.list()).kind == "umi_session":
+        listing = src.listing if src is not None else storage.list()
+        done: set = set()
+
+        def check_session(episodes) -> None:        # design doc 24 §6: the snapshot's objects, once
+            if not done:
+                manifest.verify(listing, keys=sorted(manifest.objects))
+                done.add(True)
+            ctx.log("info", f"source manifest: {len(manifest.objects)} objects unchanged")
+
+        return check_session
     state: dict = {}
 
     def check(episodes) -> None:
@@ -550,6 +561,8 @@ def meta_rows(source, episodes, args, *, what: str) -> list[dict]:
     from ..pipeline.rows import meta_rows as read
 
     input_dir = source
+    if isinstance(source, Source) and source.kind == "umi_session":
+        return []                       # a raw UMI session has no metadata rows and no task text (design doc 24 §6)
     if isinstance(source, Source):
         source.fetch(sorted(episodes))
         input_dir = source.input_dir
@@ -590,6 +603,8 @@ def dataset_episodes(ctx: Context, storage) -> tuple[list[int], dict]:
     if not listing:
         raise InputUnreachable(f"nothing found at {storage.uri}", {"uri": storage.uri})
     fmt = lerobot_meta.detect_format(listing)
+    if fmt.kind == "umi_session":
+        return session_episodes(storage)
     if fmt.kind != "lerobot":
         raise UsageError(f"{storage.uri} is not a LeRobot dataset ({fmt.kind}: {fmt.note}); "
                          f"run preflight first")
@@ -604,6 +619,26 @@ def dataset_episodes(ctx: Context, storage) -> tuple[list[int], dict]:
     except lerobot_meta.MetaError as e:
         raise UsageError(f"{storage.uri}: {e}; run preflight for the full list") from None
     return [ep.index for ep in meta.episodes], info
+
+
+def session_episodes(storage) -> tuple[list[int], dict]:
+    """(episode indices, info) of a raw UMI session (design doc 24 §6): one episode per plan entry."""
+    import os
+    import tempfile
+
+    from ..extensions.eef_consistency.adapters import umi
+
+    fd, tmp = tempfile.mkstemp(prefix="umi-plan-", suffix=".pkl")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(storage.read_bytes("dataset_plan.pkl") if storage.remote
+                     else open(os.path.join(storage.root, "dataset_plan.pkl"), "rb").read())
+        plans = umi.read_plan(tmp)
+    finally:
+        os.unlink(tmp)
+    cams = len(plans[0]["cameras"])
+    return list(range(len(plans))), {"codebase_version": None, "format": "umi_session",
+                                     "robot_type": "umi_dual_handheld_gripper" if cams == 2 else "umi_handheld_gripper"}
 
 
 def container_episodes(src: Source) -> tuple[list[int], dict]:

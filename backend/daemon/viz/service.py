@@ -115,6 +115,9 @@ class VizService:
         from .mcap import McapReader
 
         self.lerobot = LeRobotReader(self)
+        from .umi_session import UmiSessionReader
+
+        self.umi_session = UmiSessionReader(self)       # design doc 24 §6
         self.mcap = McapReader(self)
         self.lance = LanceReader(self)
         self._lance_roots: dict[tuple, bool] = {}
@@ -184,6 +187,8 @@ class VizService:
             return "lance" if self._has_lance_tables(src) else "lerobot"
         if kind == "mcap":
             return "mcap"
+        if kind == "umi_session":
+            return "umi_session"
         return None
 
     def _has_lance_tables(self, src: VizSource) -> bool:
@@ -210,8 +215,14 @@ class VizService:
             self._lance_roots[key] = hit
         return hit
 
+    def _files(self, src: VizSource):
+        """The reader whose cameras are files of the dataset (LeRobot, or a raw UMI session's videos)."""
+        return self.umi_session if self.reader_of(src) == "umi_session" else self.lerobot
+
     def _reader(self, src: VizSource):
         reader = self.reader_of(src)
+        if reader == "umi_session":
+            return self.umi_session
         if reader == "lerobot":
             return self.lerobot
         if reader == "lance":
@@ -233,7 +244,7 @@ class VizService:
         listing = src.listing()
         out: dict[str, Any] = {
             "scope": src.scope, "id": src.id, "dataset_id": src.dataset_id, "name": src.name,
-            "format": {"kind": kind if kind in ("lerobot", "mcap", "lance", "lancedb", "rrd") else "unknown",
+            "format": {"kind": kind if kind in ("lerobot", "mcap", "lance", "lancedb", "rrd", "umi_session") else "unknown",
                        "version": version if version in ("v2", "v3") else None, "reader": reader, "layout": None},
             "fps": None, "episode_count": 0, "episode_indices": None, "total_frames": None,
             "robot_type": None, "bytes": sum(o.size for o in listing.values()) if listing else None,
@@ -308,7 +319,7 @@ class VizService:
             chunk, file = row.video_files[feature]
             ident = f"lance:{feature}:{chunk}:{file}"
             return cam, ident, self.segments.blob_opener(blob, ident), frm, to
-        cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
+        cam, rel, frm, to = self._files(src).camera_file(src, index, camera)
         return cam, rel, self.segments.opener(src, rel), frm, to
 
     def segment_place(self, src: VizSource, index: int, camera: str, frm) -> dict | None:
@@ -339,7 +350,7 @@ class VizService:
         if not self.transcode_enabled:
             raise ApiError("not_found", "平台转码已关闭（CURATOR_VIZ_TRANSCODE=0）",
                            details={"reason": "transcode_disabled"})
-        cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
+        cam, rel, frm, to = self._files(src).camera_file(src, index, camera)
         fp = digest(src.scope, src.id, src.fingerprint)
         out = self.disk.path("transcode", fp, f"ep{int(index):06d}", f"{camera}.mp4")
         key = f"{fp}:{index}:{camera}"
@@ -520,9 +531,9 @@ class VizService:
             etag, immutable = self._cam_cache(src, index, camera, "mp4")
             return ranged_response(blob.read_range, int(blob.size()), "video/mp4", request_headers,
                                    etag=etag, immutable=immutable)
-        if self.reader_of(src) != "lerobot":
+        if self.reader_of(src) not in ("lerobot", "umi_session"):
             raise ApiError("not_found", "这个数据集的相机不经这条路由", details={"reason": "not_lerobot"})
-        cam, rel, frm, to = self.lerobot.camera_file(src, index, camera)
+        cam, rel, frm, to = self._files(src).camera_file(src, index, camera)
         if transcode or cam["access"] in ("transcode", "unsupported"):
             etag, immutable = self._cam_cache(src, index, camera, "mp4", transcode=True)
             return self._transcode_answer(self.lerobot_transcode(src, index, camera), request_headers,

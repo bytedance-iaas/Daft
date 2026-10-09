@@ -195,6 +195,7 @@ export const zh = {
     lerobot_v3: 'LeRobot v3',
     mcap: 'mcap',
     lance: 'Lance',
+    umi_session: 'UMI 原始会话',
     unsupported: '不支持',
   } as Record<string, string>,
 
@@ -1329,7 +1330,7 @@ export const zh = {
       source: '源文件清单',
       input: '数据集地址',
     },
-    formatKind: { lerobot: 'LeRobot', mcap: 'MCAP', lancedb: 'LanceDB', lance: 'Lance', rrd: 'Rerun RRD', unknown: '未识别的格式' } as Record<string, string>,
+    formatKind: { lerobot: 'LeRobot', mcap: 'MCAP', lancedb: 'LanceDB', lance: 'Lance', rrd: 'Rerun RRD', umi_session: 'UMI 原始会话', unknown: '未识别的格式' } as Record<string, string>,
     formatOk: '（结构校验通过）',
     formatIssues: '（结构校验有问题，见「结构校验」）',
     formatUnsupported: (detail: string) => `（不支持：${detail}）`,

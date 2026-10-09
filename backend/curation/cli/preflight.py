@@ -143,6 +143,11 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
             preflight_containers.verify_manifest(manifest, listing, fmt.kind)
         preflight_containers.fill(ctx, args, storage, listing, fmt, specs, doc)
         return _done(ctx, doc)
+    if fmt.kind == "umi_session":
+        doc["meta_fingerprint"] = lerobot_meta.fingerprint(
+            [listing[k] for k in lerobot_meta.fingerprint_keys(listing, fmt.kind)])
+        _umi_session(ctx, args, storage, listing, specs, doc)
+        return _done(ctx, doc)
     if fmt.kind != "lerobot":
         reason = f"only {SUPPORTED} are supported; detected {_describe_kind(fmt)}"
         if fmt.kind == "unknown":
@@ -562,6 +567,57 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
             os.unlink(temp)
     if temp is not None:
         entry["notes"] = entry.get("notes", []) + [
-            "trajectory generated from the dataset's state and camera calibration" if how == "generate"
-            else "trajectory from the dataset's own trajectory.json"]
+            {"generate": "trajectory generated from the dataset's state and camera calibration",
+             "session": "trajectory computed from the raw UMI session (plan, SLAM camera poses, session calibration)"}
+            .get(how, "trajectory from the dataset's own trajectory.json")]
     return entry
+
+
+def _umi_session(ctx: Context, args, storage, listing, specs, doc: dict) -> None:
+    """A raw UMI / TRUMI session read in place (design doc 24 §6): the plan says how many episodes and cameras;
+    the EEF module runs on it (its trajectory is computed from the session), nothing else does - there are
+    no LeRobot columns and no task text."""
+    import os
+    import tempfile
+
+    import numpy as np
+
+    from ..extensions.eef_consistency.adapters import umi
+
+    fd, tmp = tempfile.mkstemp(prefix="umi-plan-", suffix=".pkl")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(storage.read_bytes("dataset_plan.pkl") if storage.remote
+                     else open(os.path.join(storage.root, "dataset_plan.pkl"), "rb").read())
+        plans = umi.read_plan(tmp)
+    except Exception as e:  # noqa: BLE001 - an unreadable plan is the dataset's problem
+        return mark_invalid(doc, specs, Format("umi_session"), [f"dataset_plan.pkl: {e}"])
+    finally:
+        os.unlink(tmp)
+    cams = len(plans[0]["cameras"])
+    frames = [len(p["episode_timestamps"]) for p in plans]
+    dt = np.median(np.diff(np.asarray(plans[0]["episode_timestamps"], float)))
+    doc["format"] = {"kind": "umi_session", "version": None, "supported": True,
+                     "detail": f"UMI raw session: {len(plans)} episode(s), {cams} wrist camera(s), "
+                               "read in place (videos not transcoded)"}
+    doc["dataset"] = {"episode_count": len(plans), "cameras": [f"camera{j}" for j in range(cams)],
+                      "fps": round(1.0 / float(dt), 6) if dt > 0 else None,
+                      "robot_type": "umi_dual_handheld_gripper" if cams == 2 else "umi_handheld_gripper",
+                      "total_frames": int(sum(frames)), "labels": {"with_task": 0, "without_task": len(plans)},
+                      "profile": None}
+    from ..extensions.eef_consistency import preflight as eef_preflight
+
+    vlm_backend = (args.vlm_backend or "").strip()
+    reason = ("a raw UMI session only has the EEF-video consistency check: it has no LeRobot columns "
+              "and no task text")
+    modules = []
+    for spec in specs:
+        if "eef_input" in spec.needs:
+            base = _eef_entry(eef_preflight, storage, listing, str(storage.uri), getattr(args, "module_params", {}),
+                              list(range(len(plans))))
+            modules.append({"id": spec.id, **eef_preflight.module_entry(base, vlm_backend=bool(vlm_backend))})
+        else:
+            modules.append({"id": spec.id, "availability": "unsupported", "reason": reason,
+                            "reason_code": "format_unsupported_by_module",
+                            "reason_args": {"format": "umi_session"}})
+    doc["modules"] = modules
