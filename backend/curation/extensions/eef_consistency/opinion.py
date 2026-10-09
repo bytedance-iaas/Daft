@@ -238,18 +238,10 @@ def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis
                                                                 point_id=point_id),
                                  fps=fps, end_s=(hi_m + 1) / fps,
                                  max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)))
-    clips = [clip]
-    if sample.hand_poses:
-        raw = encode_rendered_video(f"{camera_id} RAW", _render(sample, camera_id, marks, finger, media_root, lo_m,
-                                   hi_m, mapping, VIDEO_MAX_SIDE, marked=False),
-                                   fps=fps, end_s=(hi_m + 1) / fps,
-                                   max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)) - clip.byte_size)
-        clips = [raw, clip]
     key = hashlib.sha256(json.dumps({"protocol": PROTOCOL, "prompt": PROMPT_VERSION, "text": text, "model": model,
-                                     "fps": float(opts.get("fps", 5)),
-                                     "video": [c.metadata() for c in clips] if sample.hand_poses else clip.metadata()},
+                                     "fps": float(opts.get("fps", 5)), "video": clip.metadata()},
                                     sort_keys=True).encode()).hexdigest()
-    return R.Request(window=window, text=text, images=[], frame_ids=[lo, hi], key=key, videos=clips)
+    return R.Request(window=window, text=text, images=[], frame_ids=[lo, hi], key=key, videos=[clip])
 
 
 def _to_data(answer: dict) -> dict:

@@ -361,7 +361,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
 | 8 | 开口 | 编码器，米 | `opening_m = value`，手指沿光学系 x 开合 | 两指连线长度与方向；模型意见里的开口读数 | 标定 JSON 的 `finger_axis`、`opening.unit / scale`，有开口标定时给 `gripper_range`（设计 20） | 开口超出 [0, 0.2] m 报 `calibration_suspect` |
 | 9 | 轨迹时长 | — | 过去 1 s、未来 1 s | 只影响画面 | 模块参数 | — |
 | 10 | 自运动一致性阈值 | — | `demo` profile 未校准：旋转差 P95 > 5° 或时间差 > 0.15 s 判「不好」，幅度档按 5 / 10 / 20° | 意见的松紧 | 不是客户输入；用回归样本集校准后换正式 profile | 报告标「阈值未校准」 |
-| 11 | 模型意见的提示词 | 设计 20 的 `umi-action-prompt/7` | DAS 夹爪沿用，没有开口标定就不加饱和那段 | 意见文字 | 若 DAS 有开口标定视频，按设计 20 写 `gripper_range` | — |
+| 11 | 模型意见的提示词 | 设计 20 的 `umi-action-prompt/9`（只判接近轴朝向，只送 MARKED） | DAS 夹爪沿用 | 意见文字 | 若 DAS 有开口标定视频，按设计 20 写 `gripper_range` | — |
 
 DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能验精度；§7 第 1、2 项任一变成 `declared`，相应的注记自动去掉。
 

@@ -135,7 +135,7 @@ def _umi_layers(sample, camera_id: str) -> tuple[list[dict], list[dict]]:
         if len(ahead) > 1:
             fu, _ = umi.project(sample, camera_id, f, owner, indices=ahead)
             future[f] = _trail(fu)
-        tip, _ = umi.project(sample, camera_id, f, owner, offsets=[0, 0, .06])
+        tip, _ = umi.project(sample, camera_id, f, owner, offsets=[0, 0, umi.AXIS_M])
         axis[f] = _segment(c, tip[0])
         ends, _ = umi.project(sample, camera_id, f, owner, offsets=unit, indices=[f, f, f])
         for k, e in zip("xyz", ends):
@@ -151,7 +151,7 @@ def _umi_layers(sample, camera_id: str) -> tuple[list[dict], list[dict]]:
                default_on=False),
         _layer("finger_axis", "declared", "segment", "两指连线", color, 3, fingers, hand=owner, in_model=True),
         *[_layer(f"axis_{k}", "axes", "arrow", f"坐标轴 {k}", AXIS_COLORS[k], 2, axes[k], hand=owner) for k in "xyz"],
-        _layer("axis", "declared", "segment", "接近轴", color, 3, axis, hand=owner, default_on=False, in_model=True),
+        _layer("axis", "declared", "segment", "接近轴", color, 5, axis, hand=owner, default_on=False, in_model=True),
         _layer("point", "declared", "point", "中心点", color, 2, centre, hand=owner, label=owner, in_model=True),
     ]
     return layers, [{"id": owner, "title": owner, "color": color, "opening_m": _openings(sample.hand_openings[owner])}]

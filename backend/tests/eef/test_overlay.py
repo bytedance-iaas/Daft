@@ -144,7 +144,10 @@ def test_a_umi_camera_draws_its_own_hand(exported):  # noqa: F811
         f = 8
         p = _xy(layers["point"]["frames"][f])[0]
         assert np.allclose(_xy(layers["axis_z"]["frames"][f])[0], p)
-        assert np.allclose(layers["axis_z"]["frames"][f], layers["axis"]["frames"][f])   # the approach is the tool z
+        z, a = np.reshape(layers["axis_z"]["frames"][f], (2, 2)), np.reshape(layers["axis"]["frames"][f], (2, 2))
+        assert np.allclose(z[0], a[0])                     # the approach is the tool z, drawn longer (umi.AXIS_M)
+        dz, da = z[1] - z[0], a[1] - a[0]
+        assert abs(dz[0] * da[1] - dz[1] * da[0]) < 1e-6 * np.hypot(*dz) * np.hypot(*da) + 0.5 and dz @ da > 0
         assert np.allclose(_xy(layers["trail_future"]["frames"][f])[0], p, atol=0.15)
         assert layers["trail_future"]["color"] != layers["trail_past"]["color"]
 

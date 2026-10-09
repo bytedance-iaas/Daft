@@ -63,7 +63,7 @@ PYTHONPATH=backend .venv/bin/python -m curation.extensions.eef_consistency expor
 ```
 
 输出目录必须不存在。默认把原始鱼眼画面等比例缩到最长边 960，保留 plan 选中的全部帧；`--max-side` 控制尺寸。
-`--horizon-s 0` 关闭历史轨迹，只画当前几何。会话里有 `demos/gripper_calibration_<相机序列号>_*/gripper_range.json` 时，按序列号把每只手的开口标定写进 `sample.umi.gripper_range`，提示词据此说明开口 0 与上限的含义（设计 20「开口标定」）。标定 JSON 的 `cameras.cameraN` 必须与 plan 顺序一致，
+`--horizon-s 0` 关闭历史轨迹，只画当前几何。会话里有 `demos/gripper_calibration_<相机序列号>_*/gripper_range.json` 时，按序列号把每只手的开口标定写进 `sample.umi.gripper_range`（设计 20「开口标定」；`umi-action-prompt/8` 起只判朝向，这段标定不再进提示词）。标定 JSON 的 `cameras.cameraN` 必须与 plan 顺序一致，
 并明确 `K`、`model`、`distortion_coefficients`、`image_size_wh`、`T_camera_tcp`；`T_world_slam` 把 CSV 坐标转到 plan 坐标。
 换参考系由 `adapters/umi.py` 的 `slam_to_tag()` 完成：传入 SLAM 系下的 4×4 位姿（或 N×4×4 序列）和 SLAM → tag 变换，
 返回 tag 系下的位姿；测试集的变换为 `inverse(tx_slam_tag)`。plan 中已经对齐的 TCP 不再转换。
@@ -71,7 +71,7 @@ Camera→TCP 参数作为显式几何来源保存，投影相机位姿取 CSV，
 
 在控制台登记输出目录，勾选 EEF–视频一致性，上传输出的 `trajectory.json`，选择视频模型，不给观测种子/模板。
 任务自动使用 UMI 提问：每路只叠加 `umi.camera_hands` 指定的本手（camera0 为蓝色 robot0，camera1 为紫色 robot1），
-包含当前中心/朝向/开口与过去 1 秒到当前帧的历史轨迹；另一只手不画标记或文字。模型同时看 RAW/MARKED，并只评估本手叠加。
+包含当前中心/朝向/开口与过去 1 秒到当前帧的历史轨迹；另一只手不画标记或文字。模型只看 MARKED 连续视频（`umi-action-prompt/9`），只评估本手接近轴的朝向。
 标记视频只在内存里编码后内联发给模型，不保存；报告、裁决卡、任务详情的迷你播放器放原始视频，标记由 Daemon 现场算（`overlay.py`，接口 `GET /tasks/{id}/episodes/{index}/eef-overlay`）、浏览器叠加（设计 22 §3）：除了送模型的那几样，还有三根坐标轴、未来轨迹与判决模式的观测点；每层带 `id` / `group` / `default_on` / `in_model`，播放器的「叠加」菜单按它们勾选。
 `action` 类疑点表示动作或抓放时机与可见画面不符；沿用建议性意见，不因此自动判废。
 该测试集使用 `doubao-seed-2-1-pro-260915` 的 `minimal` 推理设置完成真实验证；默认推理曾超时。

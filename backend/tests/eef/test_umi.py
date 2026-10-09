@@ -158,14 +158,12 @@ def test_rejects_unanchored_or_mismatched_hands(exported, tmp_path):
         assert not load.load_bundle(path, check_media=False).ok
 
 
-def test_continuous_raw_marked_and_action_evidence(exported, tmp_path):
+def test_continuous_marked_and_action_evidence(exported, tmp_path):
     root, s = exported
     seen = []
 
     def ask(req, history):
-        assert len(req.videos) == 2
-        assert req.videos[0].camera.endswith("RAW") and req.videos[1].camera.endswith("MARKED")
-        assert req.videos[0].sha256 != req.videos[1].sha256
+        assert len(req.videos) == 1 and req.videos[0].camera.endswith("MARKED")
         assert "CURRENT frame" in req.text and "approximately fixed" in req.text
         assert "PAST recorded TCP positions" in req.text
         assert trail_history.prompt(1, "TCP") in req.text

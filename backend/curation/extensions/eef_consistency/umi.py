@@ -12,11 +12,12 @@ import numpy as np
 
 from . import geometry as G, history
 
-PROMPT_VERSION = "umi-action-prompt/7"  # 7: the hand's opening calibration, saturation reported as such
+PROMPT_VERSION = "umi-action-prompt/9"  # 9: the MARKED video only; 8: orientation only
 COLORS = ((255, 160, 0), (210, 60, 255))  # BGR, stable hand order
 #: the checks bridge gaps of up to this many sample intervals (30 fps: 100 ms); the player offers this range
 GAP_STEPS = 3
 GAP_RANGE_STEPS = (2, 5)
+AXIS_M = 0.30  # the drawn approach line, metres ahead of the TCP (long enough to read at the model's 448 px)
 
 
 def load_hands(sample, rows) -> None:
@@ -175,8 +176,8 @@ def draw(img, sample, camera_id: str, frame: int, scale: float):
             if 0 <= p[0] < w and 0 <= p[1] < h:
                 cv2.circle(out, p, 5, color, 2, cv2.LINE_AA)
                 cv2.putText(out, hand, (p[0] + 7, p[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, .42, color, 1, cv2.LINE_AA)
-            axis, _ = project(sample, camera_id, frame, hand, offsets=[0, 0, .06])
-            line(center, axis[0], color, 3)
+            axis, _ = project(sample, camera_id, frame, hand, offsets=[0, 0, AXIS_M])
+            line(center, axis[0], color, 5)
             opening = sample.hand_openings[hand][frame]
             if np.isfinite(opening):
                 # UMI fingers open along camera/TCP x; the optical and TCP axes agree.
@@ -190,23 +191,6 @@ def draw(img, sample, camera_id: str, frame: int, scale: float):
     return out
 
 
-def _calibration(r: dict | None) -> list[str]:
-    """What the hand's recorded opening means, from its gripper calibration; nothing when the input has none."""
-    if not r:
-        return []
-    lo, top = r["min_width_m"], r["max_width_m"] - r["min_width_m"]
-    return [
-        f"Opening calibration of this hand: recorded opening = finger-tag distance - {lo:.4f} m, clipped to "
-        f"0..{top:.4f} m (from its gripper calibration video). Fully closed fingers with nothing between them read 0, "
-        f"and fully open fingers read at or near {top:.4f}; both are normal. The reading is SATURATED only when it "
-        f"stays exactly at a bound (0, or {top:.4f}) while the fingers visibly differ from that state: held apart by "
-        "an object or still moving while the reading stays at 0, or visibly opening further while it stays at the "
-        "top. A reading close to but below the top while the fingers are fully open is normal, not saturation. "
-        "Report each saturated stretch as aspect action with an observation starting with '开口标定饱和：', in "
-        "every clip where it is visible. It is a calibration problem, not a timing error: do not also report "
-        "grasp/release timing because of it; judge timing only by when the reading changes."]
-
-
 def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
     cfg = sample.sample["umi"]
     owner = cfg['camera_hands'][camera_id]
@@ -214,41 +198,35 @@ def build_prompt(sample, camera_id: str, lo: int, hi: int) -> str:
     task = (sample.sample['source']['instruction'] or 'Assess the visible manipulation').strip().rstrip('.')
     return "\n".join([
         "Check a UMI recording: a person operates a handheld gripper with a camera on it. There is no robot and "
-        "no robot command; check whether the recorded gripper motion agrees with what the video shows. "
-        "You get continuous RAW and MARKED videos of the same window.",
+        "no robot command; check whether the recorded gripper orientation agrees with what the video shows. "
+        "You get one continuous MARKED video of the window: the camera view with the own hand's marks drawn on it.",
         f"Task: {task}. Camera {camera_id} is mounted on {owner}'s gripper. Printed frames {lo} to {hi}.",
         f"Identify {owner} first: because the camera is mounted on it, {owner}'s own fingers stay at about the same "
         "place in every frame. A gripper or hand that moves around the frame is a DIFFERENT hand, even if a person "
         f"holds it; never assess it as {owner}.",
-        f"Only the camera's own hand {owner} is annotated and assessed. Other hands in RAW are scene context; "
+        f"Only the camera's own hand {owner} is annotated and assessed. Other hands in the video are scene context; "
         "their trajectories, geometry and opening values are intentionally not overlaid. "
         "Do not report their missing annotations as discrepancies.",
         f"Legend: {owner} is {color}. A circle is the current TCP (tool center point, between the fingertips), a "
-        "short line is its approach axis, and a crossbar is the recorded finger opening. The text at the bottom "
+        "long thick line is its approach axis, and a crossbar is the recorded finger opening. The text at the bottom "
         "gives the recorded opening in meters. Colors identify hands, not correctness.",
         history.prompt(cfg["horizon_s"], "TCP"),
         "The own-hand current overlay is approximately fixed because the camera moves with the gripper. "
         "This is expected and cannot independently validate its world trajectory. Poses come from SLAM, "
         "not independent motion-capture ground truth. Projections do not account for occlusion or mirror reflections.",
-        "First watch RAW for the objects and the actual grasp, transfer and release events. Then compare MARKED. "
-        "position: the circle is not at the visible point between the fingertips. orientation: the approach line "
-        "does not follow the direction the fingers point. action: the recent motion or the opening/closing timing "
-        "disagrees with the visible events. Do not infer physical collisions from a 2D crossing alone. Distinguish "
-        "a visible discrepancy from occlusion, missing calibration evidence or an ambiguous target. Abstain when "
-        "not observable.",
-        "Opening: fingers holding an object stay apart by the object's contact width, so a stable opening "
-        "while an object is held, carried or manipulated is normal. The printed opening is a metric record; do not "
-        "compare it with a size guessed from the image. Judge grasp and release by the object actually between the "
-        "fingers, not by other objects it carries or that move with it. It is released when it stops moving with "
-        "the camera (it stays behind as the gripper moves away); while it is still between the fingers it is held. "
-        "Opening widening at or just before the release and staying open afterwards is a normal release. Report "
-        "opening or timing only when a visible finger opening/closing, or the held object leaving the fingers, "
-        "happens clearly before or after the recorded opening change.",
-        *_calibration(cfg.get("gripper_range", {}).get(owner)),
+        "Assess ORIENTATION only: whether the approach line follows the direction the own fingers point. The camera "
+        "is rigidly mounted on the gripper, so this line stays at the SAME place and direction in every frame of the "
+        "video; it does not move when the scene, the object or the arm move. Judge it once for the whole video: "
+        "either it follows the fingers throughout, or it is wrong throughout. If it is wrong, return ONE segment "
+        "covering the whole printed range; never report a part of the video. Do not assess "
+        "the circle's position, the past trajectory, the finger opening, the printed opening value, or grasp and "
+        "release timing; the crossbar and the printed opening are shown for context only and are never a "
+        "discrepancy. Distinguish a visible discrepancy from occlusion, motion blur, missing calibration evidence "
+        "or an ambiguous view of the fingers. Abstain when not observable.",
         "Return ONE JSON object only: "
         '{"gripper_visible": true, "segments": [{"start_frame": 1, "end_frame": 2, '
-        '"aspect": "position|orientation|both|action", "confidence": 0.0, "evidence_frames": [1], '
-        '"observation": "具体可见证据，中文"}], "summary": "中文总结，包括无法判断的部分"}.',
+        '"aspect": "orientation", "confidence": 0.0, "evidence_frames": [1], '
+        '"observation": "具体可见证据，中文"}], "summary": "中文总结朝向是否一致，包括无法判断的部分"}.',
         f"Use printed frame numbers {lo}..{hi}; evidence_frames must be inside their segment (1 to 5 frames). "
         "confidence is confidence in a DISCREPANCY, not action success. If no discrepancy is supported, return "
         "segments: []. If no gripper is visible, set gripper_visible to false and do not invent discrepancies.",
