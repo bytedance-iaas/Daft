@@ -183,7 +183,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     ctx.progress(STAGE, 2, 3)
     ctx.check_stop("after reading the metadata")
 
-    _fill_supported(doc, specs, meta, listing, args, storage.uri)
+    _fill_supported(doc, specs, meta, listing, args, storage.uri, storage=storage)
     _viz_descriptor(doc, info, listing, storage)
     return _done(ctx, doc)
 
@@ -283,7 +283,7 @@ def _viz_descriptor(doc: dict, info: dict, listing, storage) -> None:
 
 
 def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
-                    container: dict | None = None) -> None:
+                    container: dict | None = None, storage=None) -> None:
     """``container`` (D44, ``preflight_containers``): an mcap / lance dataset described as
     LeRobot metadata - ``kind``, ``detail``, ``cameras_present`` (the cameras whose videos
     exist; they live in the files / tables, not as mp4 objects), ``profile_name`` (the
@@ -406,11 +406,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
             from ..extensions.eef_consistency import preflight as eef_preflight
 
             if eef_base is None:
-                eef_base = eef_preflight.consistency_entry(
-                    modparams.with_defaults(eef_preflight.MODULE_ID,
-                                            getattr(args, "module_params", {}).get(eef_preflight.MODULE_ID)),
-                    episodes=[ep.index for ep in episodes], media_exists=lambda key: key in listing,
-                    lerobot_root=None if "://" in uri else uri)
+                eef_base = _eef_entry(eef_preflight, storage, listing, uri, getattr(args, "module_params", {}),
+                                      [ep.index for ep in episodes])
             entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
             # design doc 12 §8.7 (D-E17): the record mapping drafted from the metadata, for a person to confirm
             from ..extensions.eef_consistency import record_draft
@@ -532,3 +529,39 @@ def render(doc: dict) -> str:
         lines += [f"  - {w}" for w in doc["warnings"]]
     lines.append(f"meta fingerprint: {doc['meta_fingerprint']}")
     return "\n".join(lines)
+
+
+def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, episodes: list[int]) -> dict:
+    """The EEF module's entry (design doc 24): the trajectory a caller gave, else the one generated from the
+    dataset (or its own ``trajectory.json``); a dataset with neither is unsupported - nothing for the user to give."""
+    import os
+
+    from ..extensions.eef_consistency import contracts as EC
+    from ..extensions.eef_consistency import derive
+
+    params = modparams.with_defaults(eef_preflight.MODULE_ID, module_params.get(eef_preflight.MODULE_ID))
+    temp = None
+    if not (params.get("trajectory_json") or "").strip():
+        how = derive.source_of(listing)
+        if how is None:
+            return {"availability": EC.UNSUPPORTED, "reason_code": EC.TRAJECTORY_MISSING,
+                    "reason": "the dataset records no end-effector poses with the cameras' calibration "
+                              "(a handheld-gripper dataset's meta/umi_calibration.json, or a trajectory.json), "
+                              "so there is nothing to project onto its videos"}
+        try:
+            temp = derive.to_temp(storage, listing)
+        except Exception as e:  # noqa: BLE001 - the dataset's own data does not make a trajectory
+            return {"availability": EC.UNSUPPORTED, "reason_code": EC.TRAJECTORY_INVALID,
+                    "reason": f"the trajectory could not be generated from the dataset: {e}"[:300]}
+        params = {**params, "trajectory_json": temp}
+    try:
+        entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
+                                                lerobot_root=None if "://" in uri else uri)
+    finally:
+        if temp is not None:
+            os.unlink(temp)
+    if temp is not None:
+        entry["notes"] = entry.get("notes", []) + [
+            "trajectory generated from the dataset's state and camera calibration" if how == "generate"
+            else "trajectory from the dataset's own trajectory.json"]
+    return entry

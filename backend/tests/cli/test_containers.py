@@ -77,8 +77,8 @@ def test_preflight_reads_the_format(cli, mini_mcap, mini_lance, fmt):
               "video_action_sync", "task_success", "dedup"):
         assert by[m]["availability"] == "available", by[m]
     eef = by["eef_video_consistency"]
-    if fmt == "mcap":         # F5.13: it reads mcap image topics; the dataset preflight asks for the file
-        assert (eef["availability"], eef["reason_code"]) == ("needs_input", "trajectory_missing")
+    if fmt == "mcap":         # F5.13: it reads mcap image topics; no poses with calibration to generate from
+        assert (eef["availability"], eef["reason_code"]) == ("unsupported", "trajectory_missing")
     else:
         assert eef["availability"] == "unsupported"
         assert eef["reason_code"] == "format_unsupported_by_module"

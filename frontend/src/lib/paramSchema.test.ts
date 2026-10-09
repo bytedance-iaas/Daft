@@ -87,9 +87,9 @@ describe('param_schema → form fields (C1, D38)', () => {
 
   it('reads a file parameter as an upload whose value is the handle (registry 1.5, F5.5)', () => {
     const [traj, seeds] = paramFields(schemaOf('eef_video_consistency'));
-    expect(traj).toMatchObject({ key: 'trajectory_json', kind: 'upload', required: true, uploadKind: 'eef_trajectory', accept: ['.json'], maxMb: 64, default: '' });
+    expect(traj).toMatchObject({ key: 'trajectory_json', kind: 'upload', required: false, uploadKind: 'eef_trajectory', accept: ['.json'], maxMb: 64, default: '' });
     expect(seeds).toMatchObject({ key: 'observation_seeds', kind: 'upload', required: false, uploadKind: 'eef_observation_seeds', accept: ['.jsonl', '.json'] });
-    expect(validateParam(traj, '')).toBe('请填写trajectory.json');
+    expect(validateParam(traj, '')).toBeNull();                   // optional: generated from the dataset (design doc 24)
     expect(validateParam(traj, '/data/trajectory.json')).toBe('trajectory.json要先上传文件');
     expect(validateParam(traj, 'upload:upl-kqzmrtbwe')).toBeNull();
     expect(validateParam(traj, 'upload:upl_0123456789')).toBeNull(); // made before D45

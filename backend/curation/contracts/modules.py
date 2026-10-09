@@ -58,6 +58,8 @@ poses), its ``ego_motion_window_s`` parameter and ``eef_ego_motion`` table; the 
 offset it finds), which a record without that reading marks unassessable.
 4.2 (design doc 23 §3.1, D79): the data integrity module's ``full_read`` parameter, off by default - the whole read
 (L2: zero-filled blocks inside media, mcap CRCs, parquet pages) became a task's choice like the decode test.
+4.3 (design doc 24): the EEF module's ``trajectory_json`` is optional - without it the module generates the trajectory
+from the dataset (a handheld gripper's state and camera calibration) or reads the dataset's own trajectory.json.
 """
 from __future__ import annotations
 
@@ -65,7 +67,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.2"
+REGISTRY_VERSION = "4.3"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -378,18 +380,19 @@ def _integrity_params() -> dict:
 
 
 def _eef_params() -> dict:
-    """design doc 12 §11.1 / §12, C.9 (D49: the review's two parameters joined). ``trajectory_json`` is required;
+    """design doc 12 §11.1 / §12, C.9 (D49: the review's two parameters joined). ``trajectory_json`` is optional
+    since 4.3 (design doc 24: generated from the dataset);
     ``observation_seeds`` (a person's anchors)
     or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
     seeds win where both exist; without either (1.12, D-E15) the CPU measures nothing and the model gives an
     advisory opinion on each camera's whole clip (design doc 12 §10.5)."""
     return {
-        "type": "object", "additionalProperties": False, "required": ["trajectory_json"],
+        "type": "object", "additionalProperties": False,
         "properties": {
             "trajectory_json": _upload(
-                "eef_trajectory", [".json"], 64, minLength=1, title="trajectory.json",
-                description="约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影），"
-                            "上传即校验，错误会定位到样本、帧和字段", default=""),
+                "eef_trajectory", [".json"], 64, title="trajectory.json",
+                description="一般不用给：平台从数据集自己生成（手持夹爪数据集的状态与相机标定），或读数据集自带的 trajectory.json。"
+                            "只有要换一份轨迹时才上传：约定格式 eef-video/1.0.0 的单文件包，上传即校验", default=""),
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"

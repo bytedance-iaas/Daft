@@ -95,6 +95,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 21 | 可视化第二期其余几项（`21-visualizer-phase-two-rest.md`：深度图、v3 切片与转码对齐（含 moov 在尾）、展示配置、数据集信息原文与小修；决策 D68–D71；首节是开工指引） |
 | 22 | 轨迹叠加进迷你播放器；手持夹爪（DAS mcap）的意见路线（`22-eef-overlay-and-umi-mcap.md`：叠加图层与对时、`export-umi-mcap` 与夹爪标定 `umi-calibration/2`、EEF 1.1 的 `per_hand`、插值间隔、自运动一致性；决策 D74–D75；首节是开工指引，§7 是 DEMO 的假设与生产输入） |
 | 23 | EEF 与任务成败的 CPU 半段挪进 CPU 块、源数据按块读只下载一次、完整性缺省只做 L1（`23-model-prep-and-source-cache.md`，D76–D79 提议；S1 已落地：L2 缺省关，`vlm` 段内 EEF 与任务成败共用按块读的缓存） |
+| 24 | EEF 的轨迹由平台生成，用户不上传 trajectory.json（`24-eef-trajectory-generated.md`；注册表 4.3） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

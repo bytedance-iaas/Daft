@@ -174,7 +174,7 @@ def _mcap(ctx, args, storage, listing, fmt: Format, specs, doc: dict) -> None:
               f"from the action topic's log_time" + (f"; {', '.join(how)}" if how else ""))
     meta = DatasetMeta(info=info, fmt=Format("mcap"), cameras=cams, episodes=episodes,
                        warnings=warnings)
-    _fill_supported(doc, specs, meta, listing, args, storage.uri,
+    _fill_supported(doc, specs, meta, listing, args, storage.uri, storage=storage,
                     container={"kind": "mcap", "detail": detail, "cameras_present": cams,
                                "profile_name": "", "total_frames": total,
                                "robot_where": "the mcap metadata records"})
@@ -251,6 +251,6 @@ def _lance(ctx, args, storage, listing, fmt: Format, specs, doc: dict) -> None:
               f"{_plural(len(episodes), 'episode')}, {_plural(len(cameras), 'camera')}")
     name = storage.uri.rstrip("/").rsplit("/", 1)[-1]
     dm = DatasetMeta(info=info, fmt=fmt, cameras=cameras, episodes=episodes, warnings=warnings)
-    _fill_supported(doc, specs, dm, listing, args, storage.uri,
+    _fill_supported(doc, specs, dm, listing, args, storage.uri, storage=storage,
                     container={"kind": "lance", "detail": detail, "cameras_present": cameras,
                                "profile_name": name, "robot_where": "meta/info.json"})

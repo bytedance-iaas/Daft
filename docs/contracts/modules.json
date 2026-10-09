@@ -1,5 +1,5 @@
 {
- "registry_version": "4.2",
+ "registry_version": "4.3",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1711,9 +1711,6 @@
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": [
-     "trajectory_json"
-    ],
     "properties": {
      "trajectory_json": {
       "type": "string",
@@ -1723,9 +1720,8 @@
        ".json"
       ],
       "x-max-mb": 64,
-      "minLength": 1,
       "title": "trajectory.json",
-      "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影），上传即校验，错误会定位到样本、帧和字段",
+      "description": "一般不用给：平台从数据集自己生成（手持夹爪数据集的状态与相机标定），或读数据集自带的 trajectory.json。只有要换一份轨迹时才上传：约定格式 eef-video/1.0.0 的单文件包，上传即校验",
       "default": ""
      },
      "observation_seeds": {

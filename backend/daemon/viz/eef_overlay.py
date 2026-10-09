@@ -39,14 +39,27 @@ def _bundle(rt, task, owner: str) -> tuple[Path, dict]:
     from ..orchestr.service import orchestrator_of
     from ..results.store import store_of
 
+    from curation.extensions.eef_consistency import derive
+
     row = next((m for m in rt.repo.get_task_modules(task.id) if m.module_id == MODULE), None)
-    params = (row.params or {}) if row is not None else {}
-    handle = params.get(PARAM)
-    if not handle:
+    if row is None or not row.selected:
         raise ApiError("not_found", "这个任务没有勾选「EEF–视频一致性」，没有可叠加的投影",
                        details={"reason": "no_eef_module"})
+    params = row.params or {}
+    handle = params.get(PARAM)
     store = store_of(rt)
     run_dir = store.task_dir(task.id)
+    if not handle:                                  # design doc 24: generated from the dataset into the run
+        generated = run_dir / derive.RUN_COPY
+        if not generated.is_file() and int(task.result_rev or 0) > 0:
+            try:                                    # a cleaned work directory: restore it first
+                store.revision(task)
+            except ApiError:
+                pass
+        if generated.is_file():
+            return generated, params
+        raise ApiError("not_found", "这个任务的轨迹还没有生成（EEF 模块还没跑到这条）",
+                       details={"reason": "no_trajectory"})
     table_path = run_dir / "inputs" / "uploads.json"
     if not table_path.is_file() and int(task.result_rev or 0) > 0:
         try:                                            # a cleaned work directory: restore it first

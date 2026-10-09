@@ -127,8 +127,8 @@ def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
     traj = _files(tmp_path)
     doc = run("preflight", "--input", mini_dataset, "--modules", EEF).doc
     (entry,) = doc["modules"]
-    assert entry["availability"] == "needs_input" and entry["reason_code"] == "trajectory_missing"
-    assert entry["input_hint"] == {"field": "trajectory_json"}          # C1 1.5: the console asks for it
+    # design doc 24: nothing to upload - a dataset without poses and calibration is unsupported
+    assert entry["availability"] == "unsupported" and entry["reason_code"] == "trajectory_missing"
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF,
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
     assert entry["availability"] == "needs_input" and entry["input_hint"] == {"field": "vlm"}    # D49
@@ -156,7 +156,7 @@ def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
 def test_check_usage_and_whole_module_failures(mini_dataset, tmp_path):
     rd = str(tmp_path / "run")
     missing = run("check", "--modules", EEF, "--input", mini_dataset, "--run-dir", rd, "--episodes", "0-1")
-    assert missing.rc != 0 and "trajectory_json" in missing.doc["error"]["message"]
+    assert missing.rc != 0 and "no end-effector poses" in missing.doc["error"]["message"]
     mixed = run("check", "--modules", f"visual_quality,{EEF}", "--input", mini_dataset, "--run-dir", rd,
                 "--episodes", "0-1", "--param", f"{EEF}.trajectory_json=/nope")
     assert mixed.rc != 0 and "one call runs one stage" in mixed.doc["error"]["message"]

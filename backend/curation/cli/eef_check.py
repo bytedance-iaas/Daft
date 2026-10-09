@@ -124,12 +124,25 @@ class EefJudge:
         try:
             registry.validate_params(MODULE, params)
         except Exception as e:  # noqa: BLE001 - jsonschema's message names the field
-            raise UsageError(f"{MODULE}: {getattr(e, 'message', e)} "
-                             f"(pass --param {MODULE}.trajectory_json=PATH)") from None
-        traj = os.path.expanduser(params["trajectory_json"])
-        if not os.path.isfile(traj):
-            raise UsageError(f"{MODULE}: trajectory.json not found: {traj}")
+            raise UsageError(f"{MODULE}: {getattr(e, 'message', e)}") from None
         storage = getattr(source, "storage", source)
+        given = (params.get("trajectory_json") or "").strip()
+        if given:
+            traj = os.path.expanduser(given)
+            if not os.path.isfile(traj):
+                raise UsageError(f"{MODULE}: trajectory.json not found: {traj}")
+        else:                                          # design doc 24: generated from the dataset, kept in the run
+            from ..extensions.eef_consistency import derive
+
+            listing = getattr(source, "listing", None) or storage.list()
+            if derive.source_of(listing) is None:
+                raise ModuleFailed(f"{MODULE}: the dataset records no end-effector poses with the cameras' calibration",
+                                   {"reason": "trajectory_missing"})
+            try:
+                traj = derive.to_run(storage, listing, run_dir)
+            except Exception as e:  # noqa: BLE001
+                raise ModuleFailed(f"{MODULE}: the trajectory could not be generated from the dataset: {e}"[:300],
+                                   {"reason": "trajectory_invalid"}) from None
         self.src = source if source is not storage else None
         self.mcap = self.src is not None and self.src.kind == "mcap"
         if self.mcap:                                  # the episode files, from the one listing
