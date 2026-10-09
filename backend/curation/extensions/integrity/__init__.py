@@ -8,8 +8,9 @@ its files whole and readable? Four parts, cheapest first:
   for mcap, each episode against the others (a topic missing, a rate far below);
 * L1 structure (:mod:`files`, :mod:`mp4`): magics, footers, box sizes, sample tables,
   frame counts - a few ranged reads per file;
-* L2 whole read: mcap chunk and data-section CRCs, aligned blocks of zeros in compressed
-  media, parquet pages, and v1's per-episode validation (``validate_episode_row``, D51);
+* v1's per-episode validation (``validate_episode_row``, D51) on the rows the stage reads anyway;
+* L2 whole read (parameter ``full_read``, off by default since design doc 23 §3.1): mcap chunk and
+  data-section CRCs, aligned blocks of zeros in compressed media, parquet pages;
 * L3 (:mod:`decode`, parameter ``decode_test``, off by default): every frame decoded.
 
 Findings are ``reject`` (the gate fails the episode), ``suspect`` (kept, and a person is

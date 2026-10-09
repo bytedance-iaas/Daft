@@ -5,8 +5,8 @@ worker keeps it across batches). :meth:`open` does the dataset-level work - the 
 plan of every episode, the LeRobot v3 episode table, files nobody references, byte-equal
 files, v1's dark-camera prior, and for mcap the comparison with the other episodes - and
 writes ``checks/data_integrity/dataset.json``. :meth:`judge` then gives one episode's
-``{passed, score, detail}``: its files' structure (L1) and whole read (L2), v1's row
-validation (D51) and, with ``decode_test``, every frame decoded (L3).
+``{passed, score, detail}``: its files' structure (L1), v1's row validation (D51, counted as L1 since
+design doc 23 §3.1), with ``full_read`` the whole read (L2) and with ``decode_test`` every frame decoded (L3).
 
 A file shared by several episodes (LeRobot v3) is analysed once and remembered; a
 finding with a position concerns only the episodes whose window it overlaps.
@@ -56,6 +56,7 @@ class IntegrityJudge:
                  selection: list[int] | None = None, max_episodes: int | None = None):
         self.ctx, self.src, self.run_dir = ctx, src, run_dir
         self.decode_test = bool((params or {}).get("decode_test", False))
+        self.full_read = bool((params or {}).get("full_read", False))       # L2, off by default (design doc 23 §3.1)
         self.params = dict(params or {})
         conf = dict(DEFAULTS, **((cfg or {}).get("integrity") or {}))
         self.tolerance = int(conf["count_tolerance_frames"])
@@ -317,11 +318,13 @@ class IntegrityJudge:
             if ref.kind == "parquet":
                 blob = self._blob(ref.key)
                 F.parquet_l1(blob, rep)
-                F.parquet_l2(blob, rep)
+                if self.full_read:
+                    F.parquet_l2(blob, rep)
             elif ref.kind == "mp4":
                 blob = self._blob(ref.key)
                 F.mp4_l1(blob, rep)
-                F.mp4_l2(blob, rep)
+                if self.full_read:
+                    F.mp4_l2(blob, rep)
             else:
                 # mcap is read where it is: a local directory, or a streamed remote
                 # dataset by ranged GETs (streams.objects, the reader's own seam)
@@ -331,7 +334,8 @@ class IntegrityJudge:
                 objs = resolve(self.src.input_dir)
                 try:
                     F.mcap_l1(lambda: objs.open(ref.key), rep)
-                    F.mcap_l2(lambda: objs.open(ref.key), rep)
+                    if self.full_read:
+                        F.mcap_l2(lambda: objs.open(ref.key), rep)
                 except SourceChanged:
                     raise                       # D27: the command ends, exit 6
                 except Exception as e:  # noqa: BLE001 - the storage failed, not the file
@@ -396,14 +400,14 @@ class IntegrityJudge:
         if row_error is not None:
             cause = row_error.__cause__
             if isinstance(cause, IngestValidationError):
-                findings.append(Finding("row_invalid", f"数据不合规：{cause}", "L2",
+                findings.append(Finding("row_invalid", f"数据不合规：{cause}", "L1",
                                         args={"error": str(cause)[:300]}))
             elif rejected:
                 pass                            # the files already say why it cannot be read
             elif cut_off:
                 findings = [f for f in findings if f.code != "cut_off"]
                 why = type(row_error.__cause__ or row_error).__name__
-                findings.append(Finding("file_truncated", f"录制中断，且读不出数据（{why}）", "L2",
+                findings.append(Finding("file_truncated", f"录制中断，且读不出数据（{why}）", "L1",
                                         file=self.plan[ep][0].key, args={"error": str(row_error)[:300]}))
             else:
                 infra.append(f"read: {row_error}")
@@ -418,7 +422,7 @@ class IntegrityJudge:
         passed, reason = outcome(findings)
         details = {"outcome": {True: "pass", False: "reject", None: "suspect"}[passed],
                    "reason": reason,
-                   "tiers": {"L1": True, "L2": True, "L3": self.decode_test},
+                   "tiers": {"L1": True, "L2": self.full_read, "L3": self.decode_test},
                    "findings": [f.to_json() for f in ordered(findings) if f.level != DATASET],
                    "files": files}
         return {"passed": passed, "score": None,
@@ -431,7 +435,7 @@ class IntegrityJudge:
         except Exception:  # noqa: BLE001 - validate_episode_row already passed it
             return
         if length is not None and abs(n - length) > self.tolerance:
-            findings.append(Finding("count_mismatch", f"数据有 {n} 帧，episode 表记 {length} 帧", "L2",
+            findings.append(Finding("count_mismatch", f"数据有 {n} 帧，episode 表记 {length} 帧", "L1",
                                     args={"rows": n, "length": length}))
 
     def _decode(self, ep: int, row: dict, findings: list, video_counts: dict, infra: list) -> None:
@@ -463,11 +467,11 @@ class IntegrityJudge:
     # ------------------------------------------------------------ bookkeeping
 
     def stale(self, current: dict[int, dict]) -> set[int]:
-        """Episodes whose line was made with the other ``decode_test`` (redone on --resume)."""
+        """Episodes whose line was made with the other ``decode_test`` or ``full_read`` (redone on --resume)."""
         out = set()
         for ep, rec in current.items():
             tiers = (rec.get("details") or {}).get("tiers") or {}
-            if bool(tiers.get("L3")) != self.decode_test:
+            if bool(tiers.get("L3")) != self.decode_test or bool(tiers.get("L2", True)) != self.full_read:
                 out.add(int(ep))
         return out
 

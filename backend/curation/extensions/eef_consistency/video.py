@@ -36,8 +36,24 @@ def iter_clip(path: str, *, clip_start_s: float, clip_end_s: float | None, fps: 
               frame_count: int | None = None) -> Iterator[DecodedFrame]:
     import av
 
+    from ...cli.errors import SourceChanged
+    from ...streams import blockcache
+
     try:
-        container = av.open(str(path))
+        # a remote dataset's video: the vlm stage's shared blocks of the episode (design doc 23 §3.2),
+        # else a presigned URL - only the clip's window is read either way
+        handle = blockcache.open_remote(path) if "://" in str(path) else None
+        if handle is not None:
+            container = av.open(handle)
+        elif str(path).startswith("tos://"):
+            from ...adapters.decode import REMOTE_OPEN_OPTIONS
+            from ...ingest import dsfs
+
+            container = av.open(dsfs.media_source(str(path)), options=REMOTE_OPEN_OPTIONS)
+        else:
+            container = av.open(str(path))
+    except SourceChanged:
+        raise
     except Exception as exc:  # noqa: BLE001 - any container failure is a decode failure
         raise DecodeError(f"cannot open {path}: {exc}") from exc
     try:
@@ -64,7 +80,7 @@ def iter_clip(path: str, *, clip_start_s: float, clip_end_s: float | None, fps: 
             yield DecodedFrame(idx, float(t), fr.to_ndarray(format="gray"), fr)
             if frame_count is not None and idx >= frame_count - 1:
                 break
-    except DecodeError:
+    except (DecodeError, SourceChanged):
         raise
     except Exception as exc:  # noqa: BLE001
         raise DecodeError(f"decode failed in {path}: {exc}") from exc

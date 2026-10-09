@@ -163,6 +163,8 @@ mp4 的结构自己解析（`extensions/integrity/mp4.py`）：顶层 box 逐个
 
 ### 3.3 L2 整读（每个字节读一遍）
 
+> 2026-10-09 起缺省关（设计 23 §3.1，D79）：任务参数 `full_read` 打开才做；v1 的逐条结构校验不再归 L2，随读行照做、记在 L1 名下。
+
 | 检查 | 做法 | 结论 |
 |---|---|---|
 | mcap 数据块与数据区 CRC | mcap 读取器 `emit_chunks=True, validate_crcs=True` 读一遍，每个写了 CRC 的块解压后比对（没写 CRC 的块跳过、计数） | 不符 → 判废 `crc_mismatch`；读不下去（zstd / lz4 解压失败、记录损坏）→ 判废 `structure_invalid` |

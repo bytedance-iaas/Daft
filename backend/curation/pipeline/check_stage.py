@@ -120,6 +120,8 @@ class StageOptions:
     #: the EEF module's per-episode judge (D49, ``cli/eef_check.EefJudge``) and, per module, the
     #: episodes whose existing line was made from another input and must be redone on --resume
     eef: object | None = None
+    #: the vlm stage's per-episode scope of shared remote blocks (``streams.blockcache.episode``), or None
+    episode_blocks: Callable[[], object] | None = None
     stale: dict[str, set[int]] | None = None
     #: the data integrity module's judge (design doc 14, ``extensions.integrity.IntegrityJudge``)
     integrity: object | None = None
@@ -351,7 +353,18 @@ class StageRun:
         return structs
 
     def _vlm(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
-        """The vlm tier: task_success (v1) and the EEF module (D49), each when selected."""
+        """The vlm tier: task_success (v1) and the EEF module (D49), each when selected; both read the
+        episode's remote videos through one set of blocks (design doc 23 §3.2)."""
+        if self.o.episode_blocks is None:
+            return self._vlm_modules(ep, row, logs)
+        with self.o.episode_blocks() as blocks:
+            out = self._vlm_modules(ep, row, logs)
+            if blocks is not None:
+                st = blocks.stats
+                self.ctx.log("info", f"episode {ep}: 远端视频 {st.gets} 次读取、{st.bytes / 1e6:.1f} MB，块复用 {st.hits} 次")
+            return out
+
+    def _vlm_modules(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
         structs: dict[str, dict | None] = {}
         evidence: dict[str, list] = {}
         if "task_success" in self.o.modules:

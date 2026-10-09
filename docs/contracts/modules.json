@@ -1,5 +1,5 @@
 {
- "registry_version": "4.1",
+ "registry_version": "4.2",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1002,6 +1002,12 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+     "full_read": {
+      "type": "boolean",
+      "title": "整读校验",
+      "default": false,
+      "description": "把每个文件的每个字节从头到尾读一遍，查出文件中段整块被填零、mcap 数据块校验和（CRC）不符、parquet 数据页损坏。关着时只读每个文件的头尾，空文件、截断、结构损坏、帧数不符、数据行不合规照样查得出。读取量相当于把整个数据集下载一遍"
+     },
      "decode_test": {
       "type": "boolean",
       "title": "逐帧解码测试",

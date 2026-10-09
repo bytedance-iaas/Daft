@@ -122,6 +122,7 @@ def prepare_videos(video: dict, *, max_side: int = 720,
     """
     from .decode import REMOTE_ATTEMPTS, REMOTE_OPEN_OPTIONS
     from ..ingest import dsfs
+    from ..streams import blockcache
 
     if not video:
         raise ValueError("video input has no cameras")
@@ -139,10 +140,13 @@ def prepare_videos(video: dict, *, max_side: int = 720,
         path = str(item["path"])
         remote = dsfs.is_remote(path) or path.startswith(("https://", "http://"))
         for attempt in range(REMOTE_ATTEMPTS if remote else 1):
+            # the episode's shared blocks when the vlm stage opened them (design doc 23 §3.2),
+            # else a presigned URL
+            handle = blockcache.open_remote(path) if remote else None
             try:
-                clip = _encode(str(camera), dsfs.media_source(path), start, end,
+                clip = _encode(str(camera), handle if handle is not None else dsfs.media_source(path), start, end,
                                max_side=max_side, max_bytes=remaining, fps=fps,
-                               options=REMOTE_OPEN_OPTIONS if remote else None)
+                               options=REMOTE_OPEN_OPTIONS if remote and handle is None else None)
                 break
             except ValueError:
                 raise

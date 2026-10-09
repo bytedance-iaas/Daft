@@ -62,7 +62,7 @@ def test_a_clean_dataset_passes_but_its_byte_copies(cli, dataset, tmp_path):
     assert codes(recs[3]) == codes(recs[7]) == [("suspect", "duplicate_content")] * 2
     assert recs[3]["details"]["reason"].startswith("需要人工裁决：exterior 相机的视频与 ep 7 的内容完全相同")
     d = recs[0]["details"]
-    assert d["outcome"] == "pass" and d["tiers"] == {"L1": True, "L2": True, "L3": False}
+    assert d["outcome"] == "pass" and d["tiers"] == {"L1": True, "L2": False, "L3": False}
     by_kind = {f["file"].rsplit(".", 1)[1]: f for f in d["files"]}
     assert by_kind["parquet"]["rows"] == 75 and by_kind["mp4"]["frames"] == 75     # episode 0: 75 frames
     dataset_doc = json.load(open(os.path.join(rd, "checks", MOD, "dataset.json")))
@@ -227,13 +227,13 @@ def test_mcap_damage(cli, mini_mcap, tmp_path):
     ds = str(tmp_path / "mcap")
     shutil.copytree(mini_mcap, ds)
     rd = str(tmp_path / "clean")
-    check(cli, ds, rd)
+    check(cli, ds, rd, "0-7", "--param", f"{MOD}.full_read=true")
     assert verdicts(results(rd)) == {0: "pass", 1: "pass", 2: "pass", 3: "abstain", 4: "pass", 5: "pass",
                                      6: "pass", 7: "abstain"}
     assert results(rd)[0]["details"]["files"][0]["crc"] == "mcap_chunk"
     S.damage_mcap(ds)
     rd = str(tmp_path / "damaged")
-    check(cli, ds, rd)
+    check(cli, ds, rd, "0-7", "--param", f"{MOD}.full_read=true")
     recs = results(rd)
     assert codes(recs[2])[0] == ("reject", "structure_invalid") and "摘要区" in recs[2]["details"]["reason"]
     assert codes(recs[6])[0] in (("reject", "crc_mismatch"), ("reject", "structure_invalid"))
@@ -262,9 +262,9 @@ def test_mcap_on_tos_is_checked_through_ranged_reads(cli, tos, mini_mcap, tmp_pa
     the reader's seam by ranged GETs, and the verdicts are the local run's."""
     tos.upload_dir(mini_mcap, "src", "ds/mcap")
     remote = str(tmp_path / "tos-run")
-    check(cli, "tos://src/ds/mcap", remote)
+    check(cli, "tos://src/ds/mcap", remote, "0-7", "--param", f"{MOD}.full_read=true")
     local = str(tmp_path / "local-run")
-    check(cli, mini_mcap, local)
+    check(cli, mini_mcap, local, "0-7", "--param", f"{MOD}.full_read=true")
     assert verdicts(results(remote)) == verdicts(results(local))
     assert results(remote)[0]["details"]["files"][0]["crc"] == "mcap_chunk"
     assert not any(r["details"].get("read_error") for r in results(remote).values())

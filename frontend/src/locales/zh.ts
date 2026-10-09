@@ -1533,6 +1533,8 @@ export const zh = {
       filesFoot: (mb: string) => `共 ${mb} MB`,
       crc: 'CRC 覆盖',
       crcFoot: 'mcap 数据块 CRC 校验过的文件',
+      fullRead: '整读校验',
+      fullReadOffFoot: '只读了每个文件的头尾',
       decode: '逐帧解码测试',
       on: '开',
       off: '关',

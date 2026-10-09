@@ -159,6 +159,16 @@ def _container_options(args, src) -> dict:
             "row_instructions": True, "fmt": src.kind}
 
 
+def _episode_blocks(src):
+    """The vlm stage's per-episode block scope of a remote LeRobot dataset (design doc 23 §3.2): task_success
+    and the EEF module read the episode's videos once, only their windows. mcap / lance read their own way."""
+    if not src.remote or src.container:
+        return None
+    from ..streams import blockcache
+
+    return lambda: blockcache.episode(src.storage, src.listing)
+
+
 def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard,
                 info):
     from ..pipeline.check_stage import StageOptions, StageRun
@@ -321,6 +331,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
                         pipeline_next=args.pipeline_next,
                         episode_stream=getattr(args, "_episode_stream", None),
                         eef=judge, stale={judge.module: judge.stale(episodes)} if judge is not None else None,
+                        episode_blocks=_episode_blocks(src),
                         **_container_options(args, src))
     stage = StageRun(ctx, opts, EmbodimentRegistry())
     try:

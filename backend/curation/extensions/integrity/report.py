@@ -61,6 +61,7 @@ def markdown(s: dict, counts: dict, adjudication: dict | None) -> list[str]:
              f" · 出错 {counts.get('error', 0)}",
              f"- 读过 {f.get('files', 0)} 个文件,共 {f.get('bytes', 0) / 1e6:.1f} MB;"
              f"CRC 覆盖 {f.get('crc_files', 0)} 个(mcap 数据块)",
+             f"- 整读校验:{'开' if t.get('L2') else '关(只读每个文件的头尾)'}",
              f"- 逐帧解码测试:{'开' if t.get('L3') else '关'}"]
     codes = "、".join(f"{c['name']} {c['count']}" for c in s.get("integrity_codes") or []) or "无"
     lines.append(f"- 发现(条数):{codes}")

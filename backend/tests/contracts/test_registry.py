@@ -179,7 +179,8 @@ def test_the_data_integrity_module_is_the_first_stage():
     assert not spec.appealable and spec.review_lines == ("integrity_check",)
     assert {c.scope_kind for c in spec.codes if c.code in ("orphan_files", "dark_camera", "table_overlap")} == {"dataset"}
     props = spec.param_schema["properties"]
-    assert list(props) == ["decode_test"] and props["decode_test"]["default"] is False
+    assert list(props) == ["full_read", "decode_test"] and props["decode_test"]["default"] is False
+    assert props["full_read"]["default"] is False                  # L2 is a task's choice (design doc 23 §3.1)
     assert props["decode_test"]["description"].endswith("耗时相当于把全部视频完整解码一次")   # what it does and costs
     assert "native" not in M.export()["modules"][0]                # internal, not part of C1's JSON
 

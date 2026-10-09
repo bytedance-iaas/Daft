@@ -56,6 +56,8 @@ dataset-level readings (no item: the task and skill statistics item was dropped)
 4.1 (design doc 22 §5.3): the EEF module's ``ego_motion_suspect`` (a wrist camera's own motion against the recorded
 poses), its ``ego_motion_window_s`` parameter and ``eef_ego_motion`` table; the module also covers AV-1 (the time
 offset it finds), which a record without that reading marks unassessable.
+4.2 (design doc 23 §3.1, D79): the data integrity module's ``full_read`` parameter, off by default - the whole read
+(L2: zero-filled blocks inside media, mcap CRCs, parquet pages) became a task's choice like the decode test.
 """
 from __future__ import annotations
 
@@ -63,7 +65,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.1"
+REGISTRY_VERSION = "4.2"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -359,10 +361,15 @@ def _sync_params() -> dict:
 
 
 def _integrity_params() -> dict:
-    """design doc 14 §5.3: L3 is the one choice a task makes; the thresholds are the site's."""
+    """design doc 14 §5.3, design doc 23 §3.1: L2 and L3 are the choices a task makes; the thresholds are the site's."""
     return {
         "type": "object", "additionalProperties": False,
         "properties": {
+            "full_read": {
+                "type": "boolean", "title": "整读校验", "default": False,
+                "description": "把每个文件的每个字节从头到尾读一遍，查出文件中段整块被填零、mcap 数据块校验和（CRC）不符、"
+                               "parquet 数据页损坏。关着时只读每个文件的头尾，空文件、截断、结构损坏、帧数不符、数据行不合规照样查得出。"
+                               "读取量相当于把整个数据集下载一遍"},
             "decode_test": {
                 "type": "boolean", "title": "逐帧解码测试", "default": False,
                 "description": "把每路相机从头到尾严格解码一遍，能发现文件结构完好、但画面数据已经损坏的条目，"

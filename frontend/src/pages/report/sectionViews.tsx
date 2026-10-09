@@ -554,6 +554,7 @@ function integrityModel(s: Summary, section: ReportModuleSection): ViewModel {
     stats.push({ label: Z.suspect, value: num(o.suspect), tone: num(o.suspect) ? 'warn' : undefined, foot: num(o.suspect) ? Z.suspectFoot(section.adjudication?.pending ?? 0) : undefined });
   if (num(f.files) !== null) stats.push({ label: Z.files, value: num(f.files), foot: Z.filesFoot(((num(f.bytes) ?? 0) / 1e6).toFixed(1)) });
   if (num(f.crc_files) !== null) stats.push({ label: Z.crc, value: num(f.crc_files), foot: Z.crcFoot });
+  if (Object.keys(t).length) stats.push({ label: Z.fullRead, value: t.L2 ? Z.on : Z.off, foot: t.L2 ? undefined : Z.fullReadOffFoot });
   if (Object.keys(t).length) stats.push({ label: Z.decode, value: t.L3 ? Z.on : Z.off });
   const charts: ChartSpec[] = [];
   const rows = rowsOf<{ code: string; name?: string; level?: string; count: number }>(s.integrity_codes) ?? [];

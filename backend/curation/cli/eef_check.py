@@ -7,8 +7,9 @@ one point and at most one axis per request) and ``decide.py`` gives the verdict 
 (``passed=true``), ``reject`` (``passed=false``, the reason in ``details.reason``) or ``human``
 (``passed=null``: an adjudication card). An episode the file does not declare goes to a person; an
 episode the CPU fails on gets an error line (held, D33); a model that fails on an episode leaves the CPU
-without a second opinion. The whole call needs a VLM backend (probed first). A remote dataset's media
-are streamed into a temporary directory; ``--resume`` redoes a line made with another trajectory.json,
+without a second opinion. The whole call needs a VLM backend (probed first). A remote LeRobot dataset's
+videos are read in place, only each episode's window, through the vlm stage's shared blocks (design doc 23
+§3.2); ``--resume`` redoes a line made with another trajectory.json,
 other seeds or template, another configuration or another model, and ``input_digest`` covers them.
 """
 from __future__ import annotations
@@ -60,12 +61,6 @@ def _fetch_key(storage, key: str, root: str) -> None:
             fh.write(chunk)
             done += len(chunk)
     os.replace(part, dest)
-
-
-def _fetch_media(storage, sample, root: str) -> None:
-    """A remote dataset's media for one sample into ``root`` (a LeRobot v3 file holds many episodes)."""
-    for cam in sample.cameras.values():
-        _fetch_key(storage, cam.media["uri"], root)
 
 
 class _RemoteLeRobotRecords:
@@ -171,8 +166,10 @@ class EefJudge:
                 raise UsageError(f"{MODULE}: the record mapping is invalid: {e}") from None
         self.ctx, self.run_dir, self.storage, self.params = ctx, run_dir, storage, params
         self.out_dir = module_dir(run_dir, MODULE)
+        # a remote LeRobot dataset's videos are read where they are, only the episode's window, through the
+        # vlm stage's shared blocks (design doc 23 §3.2); the scratch directory keeps the record's meta and data
         self.scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote and not self.mcap else None
-        self.media_root = self.src.input_dir if self.mcap else self.scratch.name if self.scratch else storage.root
+        self.media_root = self.src.input_dir if self.mcap else storage.uri if storage.remote else storage.root
         lag = float(params["lag_search_s"])
         self.cfg = runner.RunConfig(
             lerobot_root=self.media_root, seed_root=seed_dir(params), profile=profile.load(params["threshold_profile"]),
@@ -295,9 +292,6 @@ class EefJudge:
                 if self.record_mapping is not None:    # the record's topics live in the episode's file
                     keys |= set(self.src.episode_keys([sample.episode_index]))
                 self.src.cache.fetch(sorted(keys))
-        elif self.scratch is not None:
-            with self._fetch_lock:
-                _fetch_media(self.storage, sample, self.scratch.name)
 
     def _opinion(self, ep: int, sample) -> tuple[dict, list[str]]:
         """No gripper reference (design doc 12 §10.5, D-E15): each camera's whole clip, marked, goes to the
