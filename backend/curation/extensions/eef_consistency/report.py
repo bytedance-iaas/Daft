@@ -180,11 +180,74 @@ def record_rows(results: dict) -> list[dict]:
     return out
 
 
+#: the wrist cameras' own motion (design doc 22 §5.3): bands and reasons in their order
+EGO_BANDS = ("minor", "moderate", "severe")
+EGO_REASONS = ("rotation", "time_offset")
+
+
+def ego_summary(results: dict) -> dict:
+    """The section's keys for the wrist cameras' own motion: episodes read, bad and unreadable, cameras, the bad
+    stretches by band and by reason, the time offsets found. Empty when no episode had a wrist camera to read."""
+    n = {"episodes": 0, "suspect": 0, "unknown": 0, "cameras": 0, "cameras_suspect": 0}
+    bands = {b: 0 for b in EGO_BANDS}
+    reasons = {r: 0 for r in EGO_REASONS}
+    lags: list[float] = []
+    for rec in results.values():
+        ego = (rec.get("details") or {}).get("ego_motion")
+        if not isinstance(ego, dict):
+            continue
+        n["episodes"] += 1
+        n["suspect"] += ego.get("status") == "suspect"
+        n["unknown"] += ego.get("status") == "unknown"
+        for cam in (ego.get("cameras") or {}).values():
+            n["cameras"] += 1
+            n["cameras_suspect"] += cam.get("status") == "suspect"
+            for seg in cam.get("segments") or []:
+                if seg.get("band") in bands:
+                    bands[seg["band"]] += 1
+                if seg.get("reason") in reasons:
+                    reasons[seg["reason"]] += 1
+            lag = cam.get("lag") or {}
+            if lag.get("flagged") and _num(lag.get("lag_s")) is not None:
+                lags.append(float(lag["lag_s"]))
+    if not n["episodes"]:
+        return {}
+    lags.sort()
+    return {"ego_motion_episodes": n["episodes"], "ego_motion_suspect": n["suspect"], "ego_motion_unknown": n["unknown"],
+            "ego_motion_cameras": n["cameras"], "ego_motion_cameras_suspect": n["cameras_suspect"],
+            "ego_motion_bands": [{"name": k, "count": v} for k, v in bands.items()],
+            "ego_motion_reasons": [{"name": k, "count": v} for k, v in reasons.items() if v],
+            "ego_motion_lag_median_s": lags[len(lags) // 2] if lags else None,
+            "ego_motion_uncalibrated": True}
+
+
+def ego_rows(results: dict) -> list[dict]:
+    """``eef_ego_motion``: one row an episode and wrist camera."""
+    out = []
+    for ep, rec in sorted(results.items()):
+        ego = (rec.get("details") or {}).get("ego_motion")
+        if not isinstance(ego, dict):
+            continue
+        for cid, cam in sorted((ego.get("cameras") or {}).items()):
+            m = cam.get("metrics") or {}
+            segs = cam.get("segments") or []
+            out.append({"episode_index": int(ep), "camera": cid, "status": cam.get("status"), "reason": cam.get("reason"),
+                        "rotation_median_deg": _num(m.get("rotation_median_deg")),
+                        "rotation_p95_deg": _num(m.get("rotation_p95_deg")),
+                        "direction_median_deg": _num(m.get("direction_median_deg")), "lag_s": _num(m.get("lag_s")),
+                        "lag_confidence": _num(m.get("lag_confidence")), "coverage": _num(m.get("coverage")),
+                        "segments": len(segs), "worst_band": segs[0].get("band") if segs else None,
+                        "unmatched": len(cam.get("unmatched") or [])})
+    return out
+
+
 def table_rows(table: str, results: dict) -> list[dict]:
     if table == "eef_review_windows":
         return review_rows(results)
     if table == "eef_record":
         return record_rows(results)
+    if table == "eef_ego_motion":
+        return ego_rows(results)
     out: list[dict] = []
     for ep, rec in sorted(results.items()):
         d = rec.get("details") or {}

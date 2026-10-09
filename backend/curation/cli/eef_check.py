@@ -178,7 +178,7 @@ class EefJudge:
             lerobot_root=self.media_root, seed_root=seed_dir(params), profile=profile.load(params["threshold_profile"]),
             out_dir=self.out_dir, evidence_mode=params["evidence_mode"], allowed_mounts=MOUNTS[params["camera_mounts"]],
             lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]),
-            template=template, record=self._record())
+            template=template, record=self._record(), ego_motion_window_s=float(params["ego_motion_window_s"]))
         self.config = runner.config_digest(self.cfg)
         # no gripper reference (design doc 12 §10.5, D-E15): no CPU measurement, the model's advisory opinion
         self.opinion = self.cfg.seed_root is None and template is None
@@ -326,6 +326,7 @@ class EefJudge:
         op["elapsed_s"] = round(time.perf_counter() - t1, 3)
         if bridged is not None:
             op["interpolation"] = bridged
+        ego = self._ego_motion(ep, sample)
         evidence: list[str] = []                                  # the overlay is drawn live
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
@@ -333,8 +334,40 @@ class EefJudge:
                   "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": "",
                   "vlm": {"model": self.model, "prompt_version": op.get("prompt_version", OP.PROMPT_VERSION), "answer_schema": OP.ANSWER_SCHEMA,
                           "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
+        if ego is not None:
+            detail["ego_motion"] = ego
         evidence += self._attach_record(detail, sample)           # needs no gripper reference (§8.7)
         return {"passed": True, "score": None, "detail": detail}, evidence
+
+    def _ego_motion(self, ep: int, sample) -> dict | None:
+        """Each wrist camera's own motion in its pictures against its recorded poses (design doc 22 §5.3):
+        a reading for the opinion, never a verdict; None without a wrist camera. A camera that fails is
+        reported as such, the others still count."""
+        from ..extensions.eef_consistency import egomotion as EM
+        from ..extensions.eef_consistency import observations as O
+
+        t1 = time.perf_counter()
+        cameras: dict[str, dict] = {}
+        for cid, cam in sample.cameras.items():
+            if cam.mount not in self.cfg.allowed_mounts:
+                continue
+            try:
+                got = EM.camera_ego_motion(sample, cid, lambda cid=cid: O.view_frames(sample, cid, self.media_root),
+                                           window_s=self.cfg.ego_motion_window_s, lag_search_s=self.cfg.lag_search_s[1],
+                                           profile=self.cfg.profile)
+            except Exception as e:  # noqa: BLE001 - a reading only: the episode goes on without it
+                self.ctx.log("warn", f"{MODULE}: the ego-motion of episode {ep} camera {cid} failed: {type(e).__name__}: {e}")
+                got = {"status": "unknown", "reason": "failed", "message": f"{type(e).__name__}: {e}"[:200], "metrics": {},
+                       "segments": [], "unmatched": [], "lag": None}
+            if got is not None:
+                cameras[cid] = got
+        if not cameras:
+            return None
+        assumed = next((n for n in sample.sample.get("notes") or [] if str(n).startswith("按假设值")), None)
+        out = EM.summarize(cameras, assumed=assumed, profile=self.cfg.profile)
+        out["window_s"] = self.cfg.ego_motion_window_s
+        out["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        return out
 
     def _attach_record(self, detail: dict, sample) -> list[str]:
         """The record comparison of an opinion-only episode: reported, its overlay evidence run-relative."""

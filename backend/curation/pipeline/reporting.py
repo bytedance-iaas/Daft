@@ -201,6 +201,7 @@ def _summary(rev: Revision, m: str) -> dict:
         out.update(eef_report.verdict_summary(res))
         out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
         out.update(eef_report.record_summary(res))     # the dataset's own record: reported only (§8.7)
+        out.update(eef_report.ego_summary(res))        # the wrist cameras' own motion: reported only (design doc 22 §5.3)
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -690,6 +691,11 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 lines.append(f"- 模型意见（没有夹爪参考，不参与判决）:问过 {s['opinion_episodes']} 条 · "
                              f"有不匹配片段(置信度 ≥ 0.5) {s.get('opinion_flagged', 0)} 条 · "
                              f"片段 {s.get('opinion_segments', 0)} 个 · 没问成 {s.get('opinion_failed', 0)} 条")
+            if s.get("ego_motion_episodes"):
+                bands = {x["name"]: x["count"] for x in s.get("ego_motion_bands") or []}
+                lines.append(f"- 腕部相机的自运动（只报告，阈值未校准）:读过 {s['ego_motion_episodes']} 条 · "
+                             f"与位姿不一致 {s.get('ego_motion_suspect', 0)} 条 · 画面匹配不足 {s.get('ego_motion_unknown', 0)} 条 · "
+                             f"片段 轻 {bands.get('minor', 0)} / 中 {bands.get('moderate', 0)} / 重 {bands.get('severe', 0)}")
             why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
             lines.append(f"- 转人工的原因(条数):{why}")
             adj = sec.get("adjudication") or {}

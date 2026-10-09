@@ -282,6 +282,106 @@ export function eefOpinion(details: D): EefOpinion | null {
   };
 }
 
+// ---------------------------------------------------------------- a wrist camera's own motion (design doc 22 §5.3)
+
+export interface EefEgoSegment {
+  key: string;
+  startFrame: number;
+  endFrame: number;
+  startS: number | null;
+  endS: number | null;
+  /** rotation | time_offset */
+  reason: string;
+  magnitude: number;
+  /** deg | s */
+  unit: string;
+  /** minor | moderate | severe */
+  band: string;
+  evidenceFrames: number[];
+  /** a time offset's lag (s): the picture at t shows the pose recorded at t + lag */
+  lagS: number | null;
+}
+
+export interface EefEgoCamera {
+  camera: string;
+  /** ok | suspect | unknown | unsupported */
+  status: string;
+  reason: string | null;
+  rotationMedian: number | null;
+  rotationP95: number | null;
+  directionMedian: number | null;
+  lagS: number | null;
+  lagConfidence: number | null;
+  lagFlagged: boolean;
+  coverage: number | null;
+  pairs: number | null;
+  segments: EefEgoSegment[];
+  unmatched: { startFrame: number; endFrame: number; startS: number | null; endS: number | null }[];
+}
+
+export interface EefEgoMotion {
+  status: string;
+  /** good | bad | unknown */
+  verdict: string;
+  explanation: string;
+  uncalibrated: boolean;
+  /** 「按假设值：…」 from the trajectory file, when it rests on assumptions */
+  assumed: string | null;
+  windowS: number | null;
+  cameras: EefEgoCamera[];
+}
+
+/** The wrist cameras' own motion against their recorded poses (``details.ego_motion``); null without it. */
+export function eefEgoMotion(details: D): EefEgoMotion | null {
+  const ego = obj(details.ego_motion);
+  if (!s(ego.status)) return null;
+  const cameras = Object.entries(obj(ego.cameras)).map(([camera, raw]): EefEgoCamera => {
+    const c = obj(raw);
+    const m = obj(c.metrics);
+    const lag = obj(c.lag);
+    return {
+      camera,
+      status: s(c.status) ?? 'unknown',
+      reason: s(c.reason),
+      rotationMedian: n(m.rotation_median_deg),
+      rotationP95: n(m.rotation_p95_deg),
+      directionMedian: n(m.direction_median_deg),
+      lagS: n(lag.lag_s) ?? n(m.lag_s),
+      lagConfidence: n(lag.confidence) ?? n(m.lag_confidence),
+      lagFlagged: lag.flagged === true,
+      coverage: n(m.coverage),
+      pairs: n(m.pairs),
+      segments: arr(c.segments)
+        .map(obj)
+        .map((g, i) => ({
+          key: `${camera}-${i}`,
+          startFrame: n(g.start_frame) ?? 0,
+          endFrame: n(g.end_frame) ?? 0,
+          startS: n(g.start_s),
+          endS: n(g.end_s),
+          reason: s(g.reason) ?? '',
+          magnitude: n(g.magnitude) ?? 0,
+          unit: s(g.unit) ?? '',
+          band: s(g.band) ?? '',
+          evidenceFrames: arr(g.evidence_frames).map(n).filter((f): f is number => f !== null),
+          lagS: n(g.lag_s),
+        })),
+      unmatched: arr(c.unmatched)
+        .map(obj)
+        .map((u) => ({ startFrame: n(u.start_frame) ?? 0, endFrame: n(u.end_frame) ?? 0, startS: n(u.start_s), endS: n(u.end_s) })),
+    };
+  });
+  return {
+    status: s(ego.status) ?? 'unknown',
+    verdict: s(ego.verdict) ?? 'unknown',
+    explanation: s(ego.explanation_zh) ?? '',
+    uncalibrated: ego.uncalibrated !== false,
+    assumed: s(ego.assumed),
+    windowS: n(ego.window_s),
+    cameras,
+  };
+}
+
 // ---------------------------------------------------------------- the dataset's own record (D-E16)
 
 export interface EefRecordCurves {

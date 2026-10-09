@@ -41,7 +41,7 @@
 | `report.py` | 报告小节摘要：判过 / 判废 / 转人工条数、转人工的原因、判废来自哪些分项、模型与 CPU 的一致率，以及候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；四张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows`；`record_summary` / `record_rows` 是轨迹与数据集记录的摘要与明细表 `eef_record` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口）、`umi`（原始 UMI 会话 → LeRobot 与上传件，设计 20）、`umi_mcap`（DAS / GenRobot 手持夹爪 mcap + `umi-calibration/2` → 上传件与 `umi-export-report.json`，设计 22 §5.2） |
 | `umi.py` | 手持夹爪：`load_hands`（`shared` / `per_hand` 世界系、缺测）、`fill_gaps`（前后有效位姿相隔不超过插值最大间隔时补，缺省 3 个样本间隔、容半个间隔）、本手投影、提示词 |
-| `egomotion.py` | 腕部相机自身的运动：画面（ORB、去畸变、本质矩阵）对位姿推出的相对运动，旋转差与平移方向差；`export-umi-mcap` 的报告用它抽查帧对（设计 22 §7 第 2 行） |
+| `egomotion.py` | 腕部相机自身的运动：画面（ORB、去畸变、本质矩阵）对位姿推出的相对运动，旋转差与平移方向差；`export-umi-mcap` 的报告用它抽查帧对（设计 22 §7 第 2 行）；意见模式下整条检查（F5.19）：每三分之一窗口一对帧、每张画面只提一次特征，逐对旋转差、错开位姿找时间差、滚动中位加迟滞分段，阈值在 profile 的 `ego_motion` 一节（未校准） |
 | `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`export-umi`、`export-umi-mcap`、`template-build`、`template-check` |
 
 ## 手动验证
@@ -131,8 +131,14 @@ fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的�
    点「可视化」，每路相机只画本手（中心点、两指连线与开口、坐标轴、过去轨迹），右侧「详细信息」的「叠加」一节有「插值最大间隔」，
    改大后有缺测的地方轨迹连上、改小后断开（只影响画面）。
 
-验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py`（合成的仿 DAS 录制在
-`tests/eef/das_mcap.py`，不依赖客户数据）。
+4. 同一个任务的 Episode 明细，「模型意见」下面是「自运动一致性（腕部相机）」：好 / 不好与一句话，每路腕部相机的旋转差中位与 P95、时间差与置信、
+   覆盖率、不一致的片段（帧、秒、原因、轻 / 中 / 重、证据帧）和画面匹配不足的段落，注明「阈值未校准」和「按假设值」。`00001(1).mcap` 两路一致、
+   旋转差中位 0.5–0.6°；把导出文件里 robot1 的位姿整体后移 15 帧（0.5 s）再跑：这一路「不一致」，时间差约 +0.47 s；用 `body_to_optical`
+   写成单位阵的标定重新导出再跑：片段全是「重」。报告 EEF 小节多「读过自运动」「与位姿不一致」两个数和两张片段图，有不一致时发现里多一条
+   info 级的「腕部相机的运动与记录的位姿不一致」（不影响判决）。
+
+验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py tests/eef/test_egomotion.py`
+（合成的仿 DAS 录制在 `tests/eef/das_mcap.py`，不依赖客户数据；`test_egomotion.py` 的真数据用例在本机有 DAS 录制与导出时才跑）。
 
 ### 原有 EEF 数据
 

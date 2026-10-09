@@ -412,3 +412,9 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **F5.18，C2（兼容扩充）**：手持夹爪的 EEF 意见记录多 `details.opinion.interpolation`（`max_gap_s`、`frames`：每只手补了几帧）。
 - **F5.18，C4 4.4.0**：`GET …/eef-overlay` 加查询参数 `max_gap_ms`（(0, 2000]）；`EefOverlay` 加 `interpolation`（`max_gap_s`、`default_s`、
   `step_s`、`range_steps`、`frames`；机械臂的轨迹为 null）。前端类型已重新生成。
+- **F5.19，C1 4.1**：EEF 模块加 info 级细码 `ego_motion_suspect`（MV-4，`scope_kind: camera`：腕部相机画面里的运动与记录的位姿不一致）、
+  参数 `ego_motion_window_s`（缺省 0.5，0.2–2.0）、明细表 `eef_ego_motion`，`also_covers` 加 AV-1（找到的时间差；没有时间读数的记录把 AV-1
+  记为评估不了）。`taxonomy.json` 的平台注记重新生成（MV-4 多一个细码）。
+- **F5.19，C2（兼容扩充）**：EEF 意见记录多 `details.ego_motion`（每路腕部相机的状态、指标、时间差、片段与匹配不足的段落，整条的好 / 不好与一句话，
+  `uncalibrated`、`assumed`）；预检的能力表多一个分项 `ego_motion`，原因码加 `ego_motion_wrist_only`、`camera_poses_missing`、`own_hand_camera`
+  （手持夹爪腕部相机的位置 / 朝向）。schema_version 不变，C4 不变。

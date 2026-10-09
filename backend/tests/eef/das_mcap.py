@@ -84,10 +84,11 @@ def opening(hand: str, i: int) -> float:
     return round(0.05 + 0.03 * math.sin(i / 9.0 + (0.0 if hand == "robot0" else 1.0)), 6)
 
 
-def stretched_K() -> np.ndarray:
+def stretched_K(wh=WH) -> np.ndarray:
+    """The calibration on a ``wh`` picture (the video's by default)."""
     K = np.asarray(K_CAL, float).copy()
-    K[0] *= WH[0] / CAL_WH[0]
-    K[1] *= WH[1] / CAL_WH[1]
+    K[0] *= wh[0] / CAL_WH[0]
+    K[1] *= wh[1] / CAL_WH[1]
     return K
 
 
@@ -107,19 +108,19 @@ def _texture(u: np.ndarray, v: np.ndarray, plane: int) -> np.ndarray:
     return out
 
 
-def _rays() -> np.ndarray:
-    """Every video pixel's ray in the camera (x, y, 1), through the stretched equidistant camera."""
+def _rays(wh=WH) -> np.ndarray:
+    """Every pixel's ray in the camera (x, y, 1), through the stretched equidistant camera, for a ``wh`` picture."""
     import cv2
 
-    W, H = WH
+    W, H = wh
     u, v = np.meshgrid(np.arange(W, dtype=np.float64), np.arange(H, dtype=np.float64))
     pts = np.stack([u.ravel(), v.ravel()], -1).reshape(-1, 1, 2)
-    n = cv2.fisheye.undistortPoints(pts, stretched_K(), np.asarray(D, float)).reshape(-1, 2)
+    n = cv2.fisheye.undistortPoints(pts, stretched_K(wh), np.asarray(D, float)).reshape(-1, 2)
     return np.c_[n, np.ones(len(n))]
 
 
-def render(T_wc: np.ndarray, rays: np.ndarray) -> np.ndarray:
-    """The room seen from camera pose ``T_wc`` (grey)."""
+def render(T_wc: np.ndarray, rays: np.ndarray, wh=WH) -> np.ndarray:
+    """The room seen from camera pose ``T_wc`` (grey, ``wh`` as the rays were made for)."""
     d = rays @ T_wc[:3, :3].T
     o = T_wc[:3, 3]
     best = np.full(len(d), np.inf)
@@ -147,7 +148,7 @@ def render(T_wc: np.ndarray, rays: np.ndarray) -> np.ndarray:
             idx = np.flatnonzero(hit)[on]
             val[idx] = _texture(p[on, a], p[on, b], 20 + 3 * bid + axis)
         best[hit] = s[hit]
-    return (40 + 190 * val).astype(np.uint8).reshape(WH[1], WH[0])
+    return (40 + 190 * val).astype(np.uint8).reshape(wh[1], wh[0])
 
 
 def _h264(frames: list[np.ndarray]) -> list[bytes]:

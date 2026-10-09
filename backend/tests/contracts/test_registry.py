@@ -162,7 +162,11 @@ def test_the_eef_module_takes_part_in_the_verdict():
     for gone in ("gate", "input_scope", "affects_dataset_verdict", "produces_adjudication", "review_lines",
                  "appealable"):
         assert gone not in exported["eef_video_consistency"], gone
-    assert exported["eef_video_consistency"]["covers"] == ["MV-4"]
+    # 4.1 (design doc 22 §5.3): a wrist camera's own motion against the poses, its time offset the episode's AV-1
+    assert exported["eef_video_consistency"]["covers"] == ["MV-4", "AV-1"]
+    ego = spec.code("ego_motion_suspect")
+    assert (ego.level, ego.item, ego.scope_kind) == ("info", "MV-4", "camera")
+    assert props["ego_motion_window_s"]["default"] == 0.5 and "eef_ego_motion" in [t.id for t in spec.tables]
 
 
 def test_the_data_integrity_module_is_the_first_stage():

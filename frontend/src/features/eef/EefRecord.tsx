@@ -11,9 +11,11 @@ import {
   eefCpuEvidence,
   eefCpuRows,
   eefDatasetRecord,
+  eefEgoMotion,
   eefOpinion,
   eefStateMotion,
   eefWindowRows,
+  type EefEgoCamera,
   type EefOpinionCamera,
   type EefRecordCurves,
   type EefWindowRow,
@@ -245,6 +247,105 @@ export function EefOpinion({ record }: { record: ResultRecord }) {
       {op.failure ? <div className="episode-line warn">{O.failed(op.failure)}</div> : null}
       {op.cameras.map((c) => (
         <OpinionCamera key={c.camera} c={c} />
+      ))}
+    </div>
+  );
+}
+
+const EGO_TONE: Record<string, string | undefined> = { ok: 'green', suspect: 'orange', good: 'green', bad: 'orange' };
+const BAND_TONE: Record<string, string | undefined> = { minor: undefined, moderate: 'orange', severe: 'red' };
+const fixed = (v: number | null, digits = 1) => (v === null ? '—' : v.toFixed(digits));
+const signed = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;
+
+/** One wrist camera: its readings, the bad stretches (worst first) with the frames that show them, the unmatched ones. */
+function EgoCamera({ c }: { c: EefEgoCamera }) {
+  const G = Z().ego;
+  const open = useContext(MiniPlayerOpen);
+  const readings = [
+    c.rotationMedian !== null ? G.rotation(fixed(c.rotationMedian), fixed(c.rotationP95)) : null,
+    c.lagS !== null ? G.lag(signed(c.lagS), fixed(c.lagConfidence, 2)) : null,
+    c.coverage !== null ? G.coverage(Math.round(c.coverage * 100), c.pairs ?? 0) : null,
+    c.directionMedian !== null ? G.direction(fixed(c.directionMedian, 0)) : null,
+  ].filter(Boolean);
+  return (
+    <div className="eef-window" data-testid={`eef-ego-${c.camera}`}>
+      <Space wrap size={8}>
+        <b>{c.camera}</b>
+        <Tag size="small" color={EGO_TONE[c.status]}>
+          {G.status[c.status] ?? c.status}
+        </Tag>
+        {c.reason ? <span className="muted">{G.reason[c.reason] ?? c.reason}</span> : null}
+      </Space>
+      {readings.length ? <div className="episode-line muted">{readings.join(' · ')}</div> : null}
+      {c.segments.map((g, i) => (
+        <div key={g.key} className="eef-opinion-segment" data-testid="eef-ego-segment">
+          <Space wrap size={6}>
+            <b>{G.segment(i + 1)}</b>
+            <span>{Z().frames(g.startFrame, g.endFrame, g.endFrame - g.startFrame + 1)}</span>
+            {g.startS !== null && g.endS !== null ? <span className="muted">{Z().opinion.seconds(g.startS, g.endS)}</span> : null}
+            <Tag size="small">{G.reasons[g.reason] ?? g.reason}</Tag>
+            <Tag size="small" color={BAND_TONE[g.band]}>
+              {G.band[g.band] ?? g.band}
+            </Tag>
+            <span>
+              {g.reason === 'time_offset'
+                ? (g.lagS ?? 0) < 0
+                  ? G.early(Math.abs(g.lagS ?? 0).toFixed(2))
+                  : G.late(Math.abs(g.lagS ?? g.magnitude).toFixed(2))
+                : G.rotated(g.magnitude.toFixed(1))}
+            </span>
+          </Space>
+          {g.evidenceFrames.length ? (
+            <Space wrap size={4} className="episode-line">
+              <span className="muted">{G.evidenceFrames}</span>
+              {g.evidenceFrames.map((f) => (
+                <Button key={f} size="mini" type="text" disabled={!open} title={G.evidenceHint} aria-label={Z().opinion.seekFrame(f + 1)} onClick={() => open?.({ camera: c.camera, frame: f })}>
+                  {f + 1}
+                </Button>
+              ))}
+            </Space>
+          ) : null}
+        </div>
+      ))}
+      {c.unmatched.length ? (
+        <div className="episode-line muted" data-testid="eef-ego-unmatched">
+          {G.unmatched}：
+          {c.unmatched
+            .map((u) => `${Z().frames(u.startFrame, u.endFrame, u.endFrame - u.startFrame + 1)}${u.startS !== null && u.endS !== null ? `（${Z().opinion.seconds(u.startS, u.endS)}）` : ''}`)
+            .join('、')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A handheld gripper's wrist cameras (design doc 22 §5.3): each camera's motion from its pictures against its
+ * recorded poses - good or bad in one sentence, every camera's readings and bad stretches. Reported only; the
+ * thresholds are uncalibrated and the trajectory may rest on assumed values (the note says which).
+ */
+export function EefEgoMotion({ record }: { record: ResultRecord }) {
+  const ego = eefEgoMotion(details(record));
+  if (!ego) return null;
+  const G = Z().ego;
+  return (
+    <div data-testid="eef-ego">
+      <div className="eef-head">{G.title}</div>
+      <div className="episode-line muted">{G.advisory}</div>
+      <div className="episode-line">
+        <Space wrap size={8}>
+          <Tag color={EGO_TONE[ego.verdict]} data-testid="eef-ego-verdict">
+            {G.verdict[ego.verdict] ?? ego.verdict}
+          </Tag>
+          <span>{ego.explanation}</span>
+        </Space>
+      </div>
+      <div className="episode-line muted">
+        {[ego.uncalibrated ? G.uncalibrated : null, ego.windowS !== null ? G.window(ego.windowS) : null].filter(Boolean).join(' · ')}
+      </div>
+      {ego.assumed ? <div className="episode-line warn">{ego.assumed}</div> : null}
+      {ego.cameras.map((c) => (
+        <EgoCamera key={c.camera} c={c} />
       ))}
     </div>
   );

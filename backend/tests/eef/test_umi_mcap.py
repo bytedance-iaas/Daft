@@ -107,14 +107,16 @@ def test_the_bundle_is_what_the_platform_accepts(exported, das):
 
 
 def test_the_module_can_give_its_opinion_on_each_hands_camera(exported, das):
-    """The task's preflight: each camera shows its own hand's tool centre, so the model can be asked."""
+    """The task's preflight: each camera shows its own hand's tool centre, so the model can be asked; the camera's
+    own motion is the sub-item that reads the trajectory - its own hand never moves in the picture (§5.3)."""
     from curation.extensions.eef_consistency import preflight as PF
 
     _, out, _, _ = exported
     entry = PF.consistency_entry({"trajectory_json": str(out)}, episodes=[0, 1], media_exists=None,
                                  lerobot_root=str(das / "data"))
     assert entry["availability"] == "available", entry
-    assert entry["subitems"]["position_2d"]["availability"] == "available"
+    assert entry["subitems"]["ego_motion"] == {"availability": "available", "reason_code": None}
+    assert entry["subitems"]["position_2d"] == {"availability": "unsupported", "reason_code": "own_hand_camera"}
     assert entry["episode_counts"] == {"available": 1, "unsupported": 1}       # episode 1 is not in the file
     s = load.load_bundle(out, check_media=False).samples[0]
     assert "tcp" in load.declared_point_ids(s, "robot1_camera0")

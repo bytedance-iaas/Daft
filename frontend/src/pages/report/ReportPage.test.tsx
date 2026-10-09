@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
-import { eefOpinionRecord, eefRecord } from '../../mocks/eef';
+import { eefHandheldRecord, eefOpinionRecord, eefRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -317,6 +317,29 @@ describe('质检报告 (07 §5)', () => {
     expect(await within(mini).findByTestId('vz-eef-ext')).toBeInTheDocument();
     // sample frame 52 of the mock clip is shown at 52 / 15 s
     await waitFor(() => expect(mini.querySelector('.vz-stamp')).toHaveTextContent(/^00:03\.5/));
+  });
+
+  it('Episode 明细: a handheld gripper\'s wrist cameras show their own motion against the poses, a cited frame opens the mini player (design doc 22 §5.3)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefHandheldRecord(12) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const ego = await screen.findByTestId('eef-ego');
+    expect(ego).toHaveTextContent('只报告，不参与判过 / 判废');
+    expect(within(ego).getByTestId('eef-ego-verdict')).toHaveTextContent('不好');
+    expect(ego).toHaveTextContent('ext：位姿约晚 0.47 s（第 51–251 帧，中）');
+    expect(ego).toHaveTextContent('阈值未校准（demo） · 每对画面相隔 0.5 秒');
+    expect(ego).toHaveTextContent('按假设值：T_camera_tcp');
+    const ext = within(ego).getByTestId('eef-ego-ext');
+    expect(ext).toHaveTextContent('不一致');
+    expect(ext).toHaveTextContent('旋转差 中位 2.0° · P95 8.0° · 时间差 +0.47 秒（置信 0.80） · 覆盖 97%（284 对） · 平移方向差中位 39°（只报读数）');
+    expect(within(ext).getByTestId('eef-ego-segment')).toHaveTextContent('片段 1帧 51–251（201 帧）1.7–8.3 秒时间差中位姿约晚 0.47 秒');
+    const wrist = within(ego).getByTestId('eef-ego-wrist');
+    expect(wrist).toHaveTextContent('判断不了画面匹配不足（白墙、模糊或动得太少）');
+    expect(within(wrist).getByTestId('eef-ego-unmatched')).toHaveTextContent('画面匹配不足的段落：帧 16–91（76 帧）（1.5–4.0 秒）');
+    expect(ego.textContent).not.toMatch(/[{}"]/);
+    fireEvent.click(within(ext).getByRole('button', { name: zh.eefDetail.opinion.seekFrame(121) }));
+    const mini = await screen.findByTestId('vz-mini');
+    // sample frame 120 of the mock clip is shown at 120 / 15 s
+    await waitFor(() => expect(mini.querySelector('.vz-stamp')).toHaveTextContent(/^00:08\.0/));
   });
 
   it('Episode 明细: the data integrity block lists every finding and every file it read (design doc 14 §5.2)', async () => {

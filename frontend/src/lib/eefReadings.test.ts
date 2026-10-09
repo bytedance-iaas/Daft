@@ -91,6 +91,20 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(zh.eefDetail.opinion.bridged(100, op.bridged!.hands)).toBe('位姿缺测：前后相隔不超过 100 ms 的已插值补上（robot0 2 帧、robot1 0 帧），只用于画标记；更长的缺测不画。');
   });
 
+  it('reads a wrist camera\'s own motion: the verdict, each camera\'s readings, stretches and unmatched parts (design doc 22 §5.3)', async () => {
+    const { eefHandheldRecord, eefOpinionRecord } = await import('../mocks/eef');
+    const { eefEgoMotion } = await import('./eefReadings');
+    const ego = eefEgoMotion(eefHandheldRecord(3).details as Record<string, unknown>)!;
+    expect(ego).toMatchObject({ status: 'suspect', verdict: 'bad', uncalibrated: true, windowS: 0.5 });
+    expect(ego.assumed).toMatch(/^按假设值：/);
+    const [ext, wrist] = ego.cameras;
+    expect(ext).toMatchObject({ camera: 'ext', status: 'suspect', rotationMedian: 1.99, lagS: 0.467, lagFlagged: true, coverage: 0.969, pairs: 284 });
+    expect(ext.segments).toEqual([expect.objectContaining({ startFrame: 50, endFrame: 250, reason: 'time_offset', band: 'moderate', evidenceFrames: [120, 135], lagS: 0.467 })]);
+    expect(wrist).toMatchObject({ status: 'unknown', reason: 'pictures_unmatched', rotationMedian: null, lagS: null, segments: [] });
+    expect(wrist.unmatched).toEqual([{ startFrame: 15, endFrame: 90, startS: 1.474, endS: 3.973 }]);
+    expect(eefEgoMotion(eefOpinionRecord(3).details as Record<string, unknown>)).toBeNull();
+  });
+
   it('says which part of a clip got no answer and why', async () => {
     const { eefOpinion } = await import('./eefReadings');
     const op = eefOpinion({

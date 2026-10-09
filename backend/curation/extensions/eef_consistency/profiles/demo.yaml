@@ -69,3 +69,19 @@ record:                              # design 12 §8.7 (D-E16): the upload again
   constant_deg: 2.0
   lag_min_frames: 1.0                # a time offset worth naming: at least a frame, residual 1.5x better
   lag_min_improvement: 1.5
+ego_motion:                          # design doc 22 §5.3 (F5.19): a wrist camera's motion in its pictures vs its poses,
+                                     # pairs 0.5 s apart (module parameter); not calibrated. DAS recording 00001 with the
+                                     # right convention: rotation difference median 0.56 / 0.54 deg, P95 1.6 / 2.0 deg,
+                                     # never 5 deg over half a second; body->optical forgotten: share of the turn 1.06-1.13
+                                     # (1.45 on pairs turning 5 deg or more); pose stream 0.5 s late: offset found +0.47 s
+  rotation_on_deg: 5.0               # a stretch (rolling median of 3 pairs) at least this far apart ...
+  rotation_off_deg: 3.0
+  relative_min: 0.5                  # ... and at least half the poses' own turn (floored at 2 deg) is bad
+  min_duration_s: 0.5                # pair starts; shorter stretches are noise
+  bands_deg: [5.0, 10.0, 20.0]       # minor / moderate / severe by the stretch's median difference ...
+  relative_bands: [0.75, 1.0]        # ... at least moderate / severe by its median share of the turn
+  lag_min_s: 0.15                    # a time offset worth naming (the right recordings: -0.03 s) ...
+  lag_confidence_min: 0.3            # ... found clearly (1 - best median / median over the offsets searched)
+  lag_bands_s: [0.15, 0.3, 0.5]
+  min_inliers: 100                   # fewer inliers: the pair says nothing (white walls, blur)
+  coverage_min: 0.5                  # under half the pairs measured: unknown, nothing judged

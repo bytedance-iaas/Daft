@@ -1,5 +1,5 @@
 {
- "registry_version": "4.0",
+ "registry_version": "4.1",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1687,10 +1687,20 @@
      "level": "info",
      "scope_kind": "episode",
      "appealable": false
+    },
+    {
+     "code": "ego_motion_suspect",
+     "item": "MV-4",
+     "name_zh": "腕部相机的运动与记录的位姿不一致",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
     }
    ],
    "covers": [
-    "MV-4"
+    "MV-4",
+    "AV-1"
    ],
    "param_schema": {
     "type": "object",
@@ -1792,6 +1802,14 @@
       "default": 1.0,
       "minimum": 0.2,
       "maximum": 3.0
+     },
+     "ego_motion_window_s": {
+      "type": "number",
+      "title": "自运动窗口（秒）",
+      "description": "腕部相机的自运动一致性：比较画面与位姿在这么长的间隔里各自推出的相机转动；只在没有夹爪参考（模型意见）时跑，时间错位在上面的搜索范围里找",
+      "default": 0.5,
+      "minimum": 0.2,
+      "maximum": 2.0
      },
      "interpolation_gap_factor": {
       "type": "number",
@@ -1897,6 +1915,20 @@
       "position_p95_mm",
       "rotation_p95_deg",
       "lag_frames"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_ego_motion",
+     "title_zh": "腕部相机的自运动",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "status",
+      "rotation_median_deg",
+      "rotation_p95_deg",
+      "lag_s",
+      "coverage"
      ],
      "default_sort": "episode_index"
     }

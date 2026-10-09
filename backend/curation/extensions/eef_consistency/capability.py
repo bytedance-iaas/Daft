@@ -14,6 +14,8 @@ from .load import EefSample, LoadResult, declared_point_ids
 
 DEFAULT_ALLOWED_MOUNTS = ("fixed_external", "wrist")
 CORE_SUBITEMS = (C.POSITION, C.ORIENTATION, C.TEMPORAL, C.STATE_MOTION, C.CAMERA_MOTION)
+#: what makes the module available: the CPU route's core, or a wrist camera's own motion (design doc 22 §5.3)
+AVAILABLE_BY = CORE_SUBITEMS + (C.EGO_MOTION,)
 _RANK = {C.AVAILABLE: 0, C.NEEDS_INPUT: 1, C.UNSUPPORTED: 2}
 
 
@@ -46,10 +48,10 @@ def camera_capability(sample: EefSample, camera_id: str, *, observable: Iterable
     cells: dict[str, dict] = {}
     allowed = set(allowed_mounts)
     if cam.mount == "moving":
-        cells = {k: _cell(C.UNSUPPORTED, C.MOVING_CAMERA_UNSUPPORTED) for k in C.CAMERA_SUBITEMS}
+        cells = {k: _cell(C.UNSUPPORTED, C.MOVING_CAMERA_UNSUPPORTED) for k in C.CAMERA_SUBITEMS + (C.EGO_MOTION,)}
         return {**info, "subitems": cells, "comparable_points": [], "observable_axes": []}
     if cam.mount not in allowed or cam.mount in ("unknown", "not_applicable"):
-        cells = {k: _cell(C.UNSUPPORTED, C.CAMERA_MOUNT_NOT_ALLOWED) for k in C.CAMERA_SUBITEMS}
+        cells = {k: _cell(C.UNSUPPORTED, C.CAMERA_MOUNT_NOT_ALLOWED) for k in C.CAMERA_SUBITEMS + (C.EGO_MOTION,)}
         return {**info, "subitems": cells, "comparable_points": [], "observable_axes": []}
     declared = set(declared_point_ids(sample, camera_id))
     comparable: list[str] = []
@@ -93,7 +95,36 @@ def camera_capability(sample: EefSample, camera_id: str, *, observable: Iterable
         cells[C.INPUT_CONSISTENCY] = _cell(C.UNSUPPORTED, _projection_reason_3d(sample, camera_id))
     else:
         cells[C.INPUT_CONSISTENCY] = _cell(C.UNSUPPORTED, C.PROJECTION_MISSING)
+    if own_hand_camera(sample, camera_id):
+        # a handheld gripper's camera: its own hand stays put in the picture, so its marks cannot tell whether the
+        # trajectory is right (design doc 22 §5.3); the camera's own motion can
+        cells[C.POSITION] = _cell(C.UNSUPPORTED, C.OWN_HAND_CAMERA)
+        cells[C.ORIENTATION] = _cell(C.UNSUPPORTED, C.OWN_HAND_CAMERA)
+        comparable, axes = [], []
+    cells[C.EGO_MOTION] = ego_motion_capability(sample, camera_id)
     return {**info, "subitems": cells, "comparable_points": comparable, "observable_axes": axes}
+
+
+def own_hand_camera(sample: EefSample, camera_id: str) -> bool:
+    """A handheld gripper's wrist camera: it belongs to a hand (``umi.camera_hands``)."""
+    return camera_id in ((sample.sample.get("umi") or {}).get("camera_hands") or {})
+
+
+def ego_motion_capability(sample: EefSample, camera_id: str) -> dict[str, Any]:
+    """design doc 22 §5.3: a wrist camera with a calibration, poses on at least two sample frames and a video."""
+    import numpy as np
+
+    cam = sample.cameras[camera_id]
+    if cam.mount != "wrist":
+        return _cell(C.UNSUPPORTED, C.EGO_MOTION_WRIST_ONLY)
+    if cam.calibration(sample) is None:
+        return _cell(C.UNSUPPORTED, C.CALIBRATION_MISSING)
+    T = cam.T_reference_camera
+    if sample.t is None or T.ndim != 3 or int(np.isfinite(T[:, 0, 0]).sum()) < 2:
+        return _cell(C.UNSUPPORTED, C.CAMERA_POSES_MISSING)
+    if cam.media.get("kind") != "video":
+        return _cell(C.UNSUPPORTED, C.VIDEO_MISSING)
+    return _cell(C.AVAILABLE)
 
 
 def _projection_reason_3d(sample: EefSample, camera_id: str) -> str:
@@ -146,13 +177,13 @@ def sample_capability(sample: EefSample, *, observable: Mapping[str, Iterable[st
     for cid in sample.cameras:
         obs = None if observable is None else observable.get(cid)
         cams[cid] = camera_capability(sample, cid, observable=obs, allowed_mounts=allowed_mounts)
-    subitems = {k: _best(c["subitems"][k] for c in cams.values()) for k in C.CAMERA_SUBITEMS}
+    subitems = {k: _best(c["subitems"][k] for c in cams.values()) for k in C.CAMERA_SUBITEMS + (C.EGO_MOTION,)}
     subitems[C.STATE_MOTION] = state_motion_capability(sample)
     subitems[C.VLM_REVIEW] = _cell(C.NEEDS_INPUT, C.VLM_BACKEND_MISSING) if not vlm_backend \
         else _cell(C.UNSUPPORTED, "review_not_in_first_cut")
     subitems[C.RECORD] = record_capability(sample, record)
     ordered = {k: subitems[k] for k in C.SUBITEMS}
-    core = {k: ordered[k] for k in CORE_SUBITEMS}
+    core = {k: ordered[k] for k in AVAILABLE_BY}
     return {"module": C.MODULE_ID, "episode_index": sample.episode_index, "sample_id": sample.sample_id,
             "availability": C.overall_availability(core), "subitems": ordered, "cameras": cams}
 

@@ -292,6 +292,13 @@ def test_a_handheld_gripper_recording_gets_an_opinion_camera_by_camera(cli, tmp_
     assert {c["status"] for c in op["cameras"].values()} == {"answered"}
     asked = [t for t in sent if "Only the camera's own hand" in t]
     assert len(asked) == 2 and any("robot0 is annotated" in t for t in asked) and any("robot1 is annotated" in t for t in asked)
+    # each wrist camera's own motion against its poses (design doc 22 §5.3): robot1's plain pictures say nothing
+    ego = d["ego_motion"]
+    assert set(ego["cameras"]) == {"robot0_camera0", "robot1_camera0"} and ego["window_s"] == 0.5
+    assert ego["cameras"]["robot1_camera0"]["status"] == "unknown"
+    assert ego["cameras"]["robot0_camera0"]["metrics"]["attempted"] > 0 and ego["uncalibrated"]
+    assert ego["assumed"].startswith("按假设值")
+    assert not [f for f in rec.get("findings") or [] if f["code"] == "ego_motion_suspect"]
 
 
 def test_opinion_answers_are_checked_against_the_clip():
@@ -407,9 +414,12 @@ def test_the_report_shows_the_eef_section(chain):
     assert all(set(x) == {"name", "count"} for x in s["human_reasons"])
     assert s["windows"] >= s["windows_answered"] and "model_cpu_agreement" in s
     tables = {t["id"]: t for t in sec["tables"]}
-    assert set(tables) == {"eef_camera_metrics", "eef_segments", "eef_diagnosis", "eef_review_windows", "eef_record"}
+    assert set(tables) == {"eef_camera_metrics", "eef_segments", "eef_diagnosis", "eef_review_windows", "eef_record",
+                           "eef_ego_motion"}
     # no record mapping given (design doc 12 §8.7): nothing to report, not a row per episode saying so
     assert tables["eef_record"]["rows"] == 0 and not any(k.startswith("record_") for k in s)
+    # no wrist camera to read its own motion (design doc 22 §5.3): likewise
+    assert tables["eef_ego_motion"]["rows"] == 0 and not any(k.startswith("ego_motion") for k in s)
     import pandas as pd
 
     tdir = os.path.join(chain["rd"], "revisions", "r0002", "tables")

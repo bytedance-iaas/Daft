@@ -452,7 +452,19 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     if (num(s.record_lag_median_frames) !== null) stats.push({ label: RC.lag, value: RC.lagValue(fmt(num(s.record_lag_median_frames))) });
     if (num(s.record_internal_inconsistent)) stats.push({ label: RC.internal, value: num(s.record_internal_inconsistent), tone: 'warn', foot: RC.internalFoot });
   }
+  // a wrist camera's own motion against its poses (design doc 22 §5.3): reported only
+  const EG = Z.ego;
+  if (num(s.ego_motion_episodes) !== null) {
+    stats.push({ label: EG.episodes, value: num(s.ego_motion_episodes), foot: EG.episodesFoot });
+    stats.push({ label: EG.suspect, value: num(s.ego_motion_suspect) ?? 0, tone: num(s.ego_motion_suspect) ? 'warn' : undefined, foot: EG.suspectFoot });
+    if (num(s.ego_motion_unknown)) stats.push({ label: EG.unknown, value: num(s.ego_motion_unknown) });
+    if (num(s.ego_motion_lag_median_s) !== null) stats.push({ label: EG.lag, value: EG.lagValue(fmt(num(s.ego_motion_lag_median_s))) });
+  }
   const charts: ChartSpec[] = [];
+  const egoBands = labelled(s.ego_motion_bands, EG.band);
+  if (anyValue(egoBands)) charts.push({ key: 'ego-bands', title: EG.bandsChart, items: egoBands, colors: egoBands.map((b) => (b.name === EG.band.minor ? undefined : ORANGE)) });
+  const egoReasons = labelled(s.ego_motion_reasons, EG.reason);
+  if (anyValue(egoReasons)) charts.push({ key: 'ego-reasons', title: EG.reasonsChart, items: egoReasons, horizontal: true });
   const confidence = seriesOf(s.opinion_confidence);
   if (anyValue(confidence)) charts.push({ key: 'opinion-confidence', title: O.confidenceChart, items: confidence!, colors: confidence!.map((c) => (c.name.startsWith('<') || c.name.startsWith('0.3') ? undefined : ORANGE)) });
   const aspects = labelled(s.opinion_aspects, O.aspect);

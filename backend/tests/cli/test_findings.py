@@ -127,6 +127,19 @@ EEF_OPINION = {"decision": {"outcome": "opinion", "confirmed": [], "human": [], 
                            "max_confidence": 0.85, "cameras": {"ext": {"status": "answered", "segments": [
                                {"start_s": 2.67, "end_s": 6.33, "aspect": "position", "confidence": 0.85}]}}},
                "record": {"status": "unsupported", "reasons": ["record_mapping_missing"]}}
+#: a handheld gripper's wrist camera whose poses come late (design doc 22 §5.3): the model saw nothing amiss
+_EGO_SEG = {"start_frame": 50, "end_frame": 250, "start_s": 1.683, "end_s": 8.35, "reason": "time_offset",
+            "magnitude": 0.467, "unit": "s", "band": "moderate", "band_level": 2, "evidence_frames": [120, 135],
+            "lag_s": 0.467}
+EEF_EGO = {**EEF_OPINION, "opinion": {**EEF_OPINION["opinion"], "flagged": False, "segments": 0, "cameras": {}},
+           "ego_motion": {"status": "suspect", "verdict": "bad", "explanation_zh": "x", "worst": {"camera": "robot0_camera0", **_EGO_SEG},
+                          "cameras": {"robot0_camera0": {"status": "suspect", "segments": [_EGO_SEG], "unmatched": [],
+                                                         "metrics": {"rotation_median_deg": 1.99, "rotation_p95_deg": 8.0,
+                                                                     "lag_s": 0.467, "lag_confidence": 0.8, "coverage": 0.97},
+                                                         "lag": {"lag_s": 0.467, "confidence": 0.8, "flagged": True}},
+                                      "robot1_camera0": {"status": "ok", "segments": [], "unmatched": [],
+                                                         "metrics": {"rotation_median_deg": 0.5, "lag_s": -0.033},
+                                                         "lag": {"lag_s": -0.033, "confidence": 0.84, "flagged": False}}}}}
 
 
 def _integ(*findings, files=None):
@@ -190,9 +203,11 @@ CASES = [
     ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
     ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
     ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
-    ("eef_video_consistency", False, None, EEF_REJECT, {"inconsistent", "record_mismatch"}, set()),
-    ("eef_video_consistency", None, None, EEF_HUMAN, {"unsettled"}, set()),
-    ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, set()),
+    # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
+    ("eef_video_consistency", False, None, EEF_REJECT, {"inconsistent", "record_mismatch"}, {"AV-1"}),
+    ("eef_video_consistency", None, None, EEF_HUMAN, {"unsettled"}, {"AV-1"}),
+    ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, {"AV-1"}),
+    ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
     ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
     ("dedup", True, None, {}, set(), set()),
 
@@ -231,6 +246,26 @@ def test_every_code_is_drawn_from_a_real_answer():
     wanted = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind != "dataset"}
     assert wanted - seen == NO_SOURCE_YET
 
+
+
+def test_a_wrist_camera_off_its_poses_is_one_finding_at_its_worst_stretch():
+    """design doc 22 §5.3: info level, at most one an episode, at the worst stretch of the camera it is on, with
+    every camera's readings; the episode is kept whatever it says."""
+    rec = _record("eef_video_consistency", True, None, EEF_EGO)
+    (f,) = rec["findings"]
+    assert f["code"] == "ego_motion_suspect" and f["item"] == "MV-4" and f["severity"] == "medium"
+    assert f["message_zh"] == "腕部相机的运动与记录的位姿不一致：位姿约晚 0.47 s（第 51–251 帧，中）"
+    assert f["time_s"] == [1.683, 8.35] and f["scope"] == {"camera": "robot0_camera0"}
+    assert f["readings"]["lag_s"] == {"robot0_camera0": 0.467}
+    assert f["readings"]["cameras"]["robot1_camera0"]["status"] == "ok"
+    assert rec["assessed"] == ["MV-4", "AV-1"] and passes_funnel(rec)
+    severe = {**EEF_EGO, "ego_motion": {**EEF_EGO["ego_motion"], "worst": {"camera": "robot1_camera0", **_EGO_SEG,
+                                                                          "reason": "rotation", "magnitude": 9.61,
+                                                                          "unit": "deg", "band": "severe"}}}
+    (f,) = _record("eef_video_consistency", True, None, severe)["findings"]
+    assert f["severity"] == "high" and f["message_zh"].endswith("画面里的转动与位姿差 9.6°（第 51–251 帧，重）")
+    calm = {**EEF_EGO, "ego_motion": {**EEF_EGO["ego_motion"], "status": "ok", "worst": None}}
+    assert _record("eef_video_consistency", True, None, calm)["findings"] == []
 
 
 def test_intervals_scopes_and_readings():

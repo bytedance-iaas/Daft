@@ -146,7 +146,7 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
     table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts, record=record)
     per = table["episodes"]
     subitems = {}
-    for k in CAP.CORE_SUBITEMS + (C.INPUT_CONSISTENCY, C.RECORD):
+    for k in CAP.AVAILABLE_BY + (C.INPUT_CONSISTENCY, C.RECORD):
         cells = [v["subitems"][k] for v in per.values() if "subitems" in v]
         if C.AVAILABLE in cells:
             subitems[k] = {"availability": C.AVAILABLE, "reason_code": None}

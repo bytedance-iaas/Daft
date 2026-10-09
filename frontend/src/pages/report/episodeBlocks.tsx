@@ -11,7 +11,7 @@ import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
-import { EefConclusion, EefDatasetRecord, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
+import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -393,6 +393,7 @@ function EefBlock({ taskId, record }: BlockProps) {
           <EefConclusion record={record} />
         </Space>
         <EefOpinion record={record} />
+        <EefEgoMotion record={record} />
         <EefDatasetRecord taskId={taskId} record={record} />
       </div>
     );

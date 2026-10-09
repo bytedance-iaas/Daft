@@ -45,6 +45,8 @@ class RunConfig:
     template: TP.GripperTemplate | None = None       # automatic anchors (F5.8); a camera with seeds keeps the seeds
     #: the dataset's own record (design 12 §8.7, D-E16): (record.RecordMapping, reader) or None - no mapping
     record: tuple | None = None
+    #: a wrist camera's own motion (design doc 22 §5.3): pictures and poses compared this far apart
+    ego_motion_window_s: float = 0.5
 
 
 @dataclasses.dataclass
@@ -198,7 +200,8 @@ def config_digest(cfg: RunConfig) -> str:
     return config_hash(cfg.profile, {"lag_search_s": cfg.lag_search_s, "tracker": dataclasses.asdict(cfg.tracker),
                                      "allowed_mounts": cfg.allowed_mounts, "gap_factor": cfg.interpolation_gap_factor,
                                      "module_version": C.MODULE_VERSION,
-                                     "record_mapping": cfg.record[0].sha256 if cfg.record else None})
+                                     "record_mapping": cfg.record[0].sha256 if cfg.record else None,
+                                     "ego_motion_window_s": cfg.ego_motion_window_s})
 
 
 def assess(measure: EpisodeMeasure, cfg: RunConfig) -> dict:

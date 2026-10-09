@@ -165,6 +165,48 @@ export function eefOpinionRecord(ep: number): ResultRecord {
 }
 
 /**
+ * {@link eefOpinionRecord} with a wrist camera's own motion against its poses (design doc 22 §5.3): camera `ext`
+ * (the one with marks in the mock) has its poses 0.47 s late, `wrist` matched too few pictures to say.
+ */
+export function eefHandheldRecord(ep: number): ResultRecord {
+  const base = eefOpinionRecord(ep);
+  const seg = { start_frame: 50, end_frame: 250, start_s: 1.683, end_s: 8.35, reason: 'time_offset', magnitude: 0.467, unit: 's', band: 'moderate', band_level: 2, evidence_frames: [120, 135], lag_s: 0.467 };
+  return {
+    ...base,
+    details: {
+      ...(base.details as Record<string, unknown>),
+      ego_motion: {
+        status: 'suspect',
+        verdict: 'bad',
+        explanation_zh: '腕部相机的运动与记录的位姿不一致：ext：位姿约晚 0.47 s（第 51–251 帧，中）',
+        uncalibrated: true,
+        window_s: 0.5,
+        assumed: '按假设值：T_camera_tcp、body_to_optical、pose_frame 是假设，不是夹爪厂商的声明（设计 22 §7）。',
+        worst: { camera: 'ext', ...seg },
+        cameras: {
+          ext: {
+            status: 'suspect',
+            reason: null,
+            metrics: { pairs: 284, attempted: 293, coverage: 0.969, rotation_median_deg: 1.99, rotation_p95_deg: 8.0, direction_median_deg: 39.2, lag_s: 0.467, lag_confidence: 0.8 },
+            lag: { lag_s: 0.467, confidence: 0.8, flagged: true, median_at_zero_deg: 1.99, median_at_lag_deg: 0.41, searched_s: 1.0 },
+            segments: [seg],
+            unmatched: [],
+          },
+          wrist: {
+            status: 'unknown',
+            reason: 'pictures_unmatched',
+            metrics: { pairs: 53, attempted: 124, coverage: 0.427 },
+            lag: null,
+            segments: [],
+            unmatched: [{ start_frame: 15, end_frame: 90, start_s: 1.474, end_s: 3.973, reason: 'pictures_unmatched' }],
+          },
+        },
+      },
+    },
+  };
+}
+
+/**
  * The marks of {@link eefOpinionRecord}'s camera `ext` (design docs 20, 22 §3.2): P circling slowly with
  * its past and future trails, A pointing down (off by default), B across the fingers, the tool's three
  * axes, over a 640×480 clip of 287 frames at 15 fps shown at frame / 15 s. ``observed`` adds the measured

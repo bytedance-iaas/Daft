@@ -326,6 +326,10 @@ runner.py        流式执行与编排（唯一做 I/O、解码、模型调用�
 
 reason code 目录：`projection_missing`、`pose_semantics_unknown`、`anchor_pose_missing`、`calibration_missing`、`calibration_direction_ambiguous`、`video_missing`、`media_transform_unknown`、`clock_alignment_unknown`、`visual_point_mapping_missing`、`axis_mapping_missing`、`moving_camera_unsupported`、`wrist_camera_spatial_only`、`decode_failed`、`vlm_backend_missing`。执行失败与输入缺失分开编码。
 
+设计 22 §5.3（F5.19）加分项 `ego_motion`（腕部相机的自运动一致性：画面推出的相机转动对位姿推出的）：不是腕部相机
+`ego_motion_wrist_only`、缺相机位姿 `camera_poses_missing`、缺标定 / 视频同上；它也能让模块可用（`AVAILABLE_BY`）。
+手持夹爪的腕部相机（属于 `umi.camera_hands` 的某只手）位置、朝向两项报 `own_hand_camera`：本手在画面里不动，看不出轨迹对错。
+
 ### 5.2 动态可评估性
 
 逐帧标记：遮挡、模糊、出画、跟踪不稳、方向投影长度退化、静止导致 lag 不可辨识。输出四个分母分开的覆盖：请求帧数、有媒体映射帧数、观测可见帧数、有效比较帧数；`coverage = 有效比较 / 请求`，另报「可见帧内定位成功率」。投影出画但夹爪在画面内是异常线索，不允许通过剔除这些帧抬高通过率。
@@ -682,6 +686,11 @@ revisions/rXXXX/tables/eef_camera_metrics.parquet · eef_segments.parquet · eef
 的原因」图（按来源 · 原因），一张按来源的状态表；明细表 `eef_record`（每条 × 每个来源：状态、原始残差 P95、时间差帧数）。
 Episode 明细与裁决卡片在 EEF 区块末尾逐来源显示：读的是哪一列 / topic、怎么对齐、两组残差、声明 / 拟合 / 相差的恒定差、
 时间差、随时间变化的差的片段、残差曲线、数据集内部一致与否和叠加图。
+
+腕部相机的自运动（设计 22 §5.3，只报告、阈值未校准）再起一组：读过的条数、与位姿不一致的条数、画面匹配不足的条数、时间差中位，
+「不一致片段的幅度」（轻 / 中 / 重）与「原因」（转动对不上 / 时间差）两张图；明细表 `eef_ego_motion`（每条 × 每路腕部相机：状态、
+旋转差中位与 P95、时间差、覆盖率、片段数、最重的档）。Episode 明细在「模型意见」下面显示：好 / 不好与一句话、每路的读数、
+片段（帧与秒、原因、档、证据帧，点帧号开迷你播放器）、画面匹配不足的段落、「阈值未校准」与「按假设值」注记。
 
 ### 11.5 资源与并发
 

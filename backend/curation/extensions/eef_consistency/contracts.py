@@ -39,8 +39,12 @@ INPUT_CONSISTENCY = "input_consistency"
 #: the upload's 3D trajectory against the dataset's own record (design 12 §8.7, D-E16): per episode,
 #: numeric, reported only - never part of the verdict
 RECORD = "record_consistency"
+#: a wrist camera's own motion in its pictures against its recorded poses (design doc 22 §5.3, F5.19): in the
+#: opinion's record (``details.ego_motion``), not one of the CPU route's measured sub-items
+EGO_MOTION = "ego_motion"
 #: Sub-items of the preflight capability table and of the per-camera assessment (design 12 §5.1).
-SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, STATE_MOTION, CAMERA_MOTION, VLM_REVIEW, INPUT_CONSISTENCY, RECORD)
+SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, STATE_MOTION, CAMERA_MOTION, VLM_REVIEW, INPUT_CONSISTENCY, RECORD,
+            EGO_MOTION)
 #: Sub-items measured per camera (D-E4); state_motion is per episode.
 CAMERA_SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, CAMERA_MOTION, INPUT_CONSISTENCY)
 
@@ -93,6 +97,10 @@ CONSTANT_MISMATCH = "constant_mismatch"
 RECORD_DEVIATION = "record_deviation"
 CONSTANT_UNCHECKED = "constant_unchecked"
 TIME_OFFSET = "time_offset"
+# a wrist camera's own motion (design doc 22 §5.3)
+OWN_HAND_CAMERA = "own_hand_camera"          # on a handheld gripper: its own hand never moves in the picture
+EGO_MOTION_WRIST_ONLY = "ego_motion_wrist_only"
+CAMERA_POSES_MISSING = "camera_poses_missing"
 
 
 @dataclasses.dataclass(frozen=True)

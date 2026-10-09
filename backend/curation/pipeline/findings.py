@@ -552,6 +552,7 @@ def _eef_video_consistency(passed, score, d, p) -> Derived:
             kw = {"time_s": (_num(best["start_s"]), _num(best["end_s"])), "scope": {"camera": str(best_cam)}}
         out.add(m, "opinion_mismatch", f"模型认为末端投影与画面不符（最高置信 {_num(opinion.get('max_confidence')) or 0:.2f}）",
                 readings={"max_confidence": _r(opinion.get("max_confidence")), "segments": opinion.get("segments")}, **kw)
+    _ego_motion(out, d)
     record = d.get("record") if isinstance(d.get("record"), dict) else {}
     if record.get("status") == "suspect":
         why = sorted({str(r) for src in (record.get("sources") or {}).values() if isinstance(src, dict)
@@ -559,6 +560,55 @@ def _eef_video_consistency(passed, score, d, p) -> Derived:
         out.add(m, "record_mismatch", "上传的轨迹与数据集自己记录的末端位姿不一致" + (f"：{'、'.join(why)}" if why else ""),
                 readings={"status": "suspect", "reasons": why})
     return out
+
+
+#: the band of a wrist camera's bad stretch -> the finding's severity (design doc 22 §5.3)
+_EGO_SEVERITY = {"minor": "low", "moderate": "medium", "severe": "high"}
+_EGO_BAND_ZH = {"minor": "轻", "moderate": "中", "severe": "重"}
+
+
+def _ego_motion(out: Derived, d: dict) -> None:
+    """A wrist camera's own motion against the recorded poses (design doc 22 §5.3): one ``ego_motion_suspect`` at
+    the episode's worst stretch; its time offset reading is the episode's AV-1 (unassessable without one)."""
+    m = "eef_video_consistency"
+    ego = d.get("ego_motion") if isinstance(d.get("ego_motion"), dict) else {}
+    cams = ego.get("cameras") if isinstance(ego.get("cameras"), dict) else {}
+    timed = [c for c in cams.values() if isinstance(c, dict) and c.get("status") in ("ok", "suspect") and c.get("lag")]
+    if not timed:
+        out.cannot("AV-1", "not_applicable", "没有腕部相机自运动的时间读数（只有带位姿的腕部相机才有）")
+    if ego.get("status") != "suspect":
+        return
+    worst = ego.get("worst") if isinstance(ego.get("worst"), dict) else None
+    lags = {cid: c["lag"].get("lag_s") for cid, c in cams.items() if isinstance(c, dict) and (c.get("lag") or {}).get("flagged")}
+    kw = {}
+    if worst is not None:
+        if _num(worst.get("start_s")) is not None and _num(worst.get("end_s")) is not None:
+            kw["time_s"] = (_num(worst["start_s"]), _num(worst["end_s"]))
+        if worst.get("camera"):
+            kw["scope"] = {"camera": str(worst["camera"])}
+        kw["severity"] = _EGO_SEVERITY.get(str(worst.get("band")), None)
+        band = _EGO_BAND_ZH.get(str(worst.get("band")), "")
+        where = f"第 {int(worst['start_frame']) + 1}–{int(worst['end_frame']) + 1} 帧" if worst.get("start_frame") is not None else ""
+        if worst.get("reason") == "time_offset":
+            lag = _num(worst.get("lag_s")) or 0.0
+            what = f"位姿约{'晚' if lag > 0 else '早'} {abs(lag):.2f} s"
+        else:
+            what = f"画面里的转动与位姿差 {_num(worst.get('magnitude')) or 0:.1f}°"
+        detail = "，".join(x for x in (where, band) if x)
+        message = f"腕部相机的运动与记录的位姿不一致：{what}" + (f"（{detail}）" if detail else "")
+    else:
+        message = "腕部相机的运动与记录的位姿不一致"
+    readings = {"status": "suspect",
+                "cameras": {cid: {k: c.get("metrics", {}).get(k) for k in ("rotation_median_deg", "rotation_p95_deg",
+                                                                            "direction_median_deg", "lag_s", "lag_confidence",
+                                                                            "coverage")} | {"status": c.get("status")}
+                            for cid, c in cams.items() if isinstance(c, dict)},
+                "segments": [{"camera": cid, **{k: s.get(k) for k in ("start_frame", "end_frame", "start_s", "end_s",
+                                                                        "reason", "magnitude", "unit", "band")}}
+                             for cid, c in cams.items() if isinstance(c, dict) for s in c.get("segments") or []]}
+    if lags:
+        readings["lag_s"] = lags
+    out.add(m, "ego_motion_suspect", message, readings=readings, **kw)
 
 
 # ---------------------------------------------------------------- data integrity

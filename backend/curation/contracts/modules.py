@@ -53,6 +53,9 @@ policy grades a module's findings (design doc 17 §4) and the two blocks hand ev
 dataset-level readings (no item: the task and skill statistics item was dropped), which motion_quality covered too.
 3.0 binds taxonomy 2.0, which numbers the items of every dimension again without gaps (C6 ``renumbered`` maps
 1.3 ids to 2.0); results of tasks run before keep the ids they were run with.
+4.1 (design doc 22 §5.3): the EEF module's ``ego_motion_suspect`` (a wrist camera's own motion against the recorded
+poses), its ``ego_motion_window_s`` parameter and ``eef_ego_motion`` table; the module also covers AV-1 (the time
+offset it finds), which a record without that reading marks unassessable.
 """
 from __future__ import annotations
 
@@ -60,7 +63,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.0"
+REGISTRY_VERSION = "4.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -410,6 +413,11 @@ def _eef_params() -> dict:
                 "type": "number", "title": "时间错位搜索范围（秒）",
                 "description": "在 ±这么多秒内找画面与记录的时间错位", "default": 1.0,
                 "minimum": 0.2, "maximum": 3.0},
+            "ego_motion_window_s": {
+                "type": "number", "title": "自运动窗口（秒）",
+                "description": "腕部相机的自运动一致性：比较画面与位姿在这么长的间隔里各自推出的相机转动；"
+                               "只在没有夹爪参考（模型意见）时跑，时间错位在上面的搜索范围里找",
+                "default": 0.5, "minimum": 0.2, "maximum": 2.0},
             "interpolation_gap_factor": {
                 "type": "number", "title": "插值缺口倍数",
                 "description": "相邻采样间隔超过局部中位间隔的这么多倍就不跨缺口插值", "default": 2.0,
@@ -543,8 +551,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_blocking("inconsistent", "MV-4", "末端投影与画面不符", appealable=True),
                _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check"),
                _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符"),
-               _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符")),
+               _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符"),
+               # 4.1 (design doc 22 §5.3): a wrist camera's own motion in its pictures against the recorded poses;
+               # its time offsets are the episode's timing too (AV-1, also_covers)
+               _info("ego_motion_suspect", "MV-4", "腕部相机的运动与记录的位姿不一致", "medium", scope_kind="camera")),
         param_schema=_eef_params(),
+        also_covers=("AV-1",),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
                            "lag_s", "coverage")),
@@ -554,7 +566,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                 TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
                                                           "review_status", "conflict")),
                 TableSpec("eef_record", "轨迹与数据集记录", ("episode_index", "source", "status", "position_p95_mm",
-                                                          "rotation_p95_deg", "lag_frames"))),
+                                                          "rotation_p95_deg", "lag_frames")),
+                TableSpec("eef_ego_motion", "腕部相机的自运动", ("episode_index", "camera", "status", "rotation_median_deg",
+                                                              "rotation_p95_deg", "lag_s", "coverage"))),
         native=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",

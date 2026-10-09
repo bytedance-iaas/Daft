@@ -135,6 +135,22 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(await within(screen.getByTestId('chart-opinion-aspects')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中心 5'));
   });
 
+  it('EEF: the wrist cameras\' own motion - figures and the bad stretches by band and reason, reported only (design doc 22 §5.3)', async () => {
+    render('eef_video_consistency', {
+      judged_pass: 0, judged_reject: 0, to_human: 0, opinion_episodes: 2, opinion_flagged: 0, opinion_segments: 0,
+      ego_motion_episodes: 2, ego_motion_suspect: 1, ego_motion_unknown: 1, ego_motion_cameras: 4, ego_motion_cameras_suspect: 1,
+      ego_motion_bands: [{ name: 'minor', count: 0 }, { name: 'moderate', count: 5 }, { name: 'severe', count: 0 }],
+      ego_motion_reasons: [{ name: 'time_offset', count: 5 }], ego_motion_lag_median_s: 0.467, ego_motion_uncalibrated: true,
+    });
+    const figures = screen.getByTestId('summary-eef_video_consistency');
+    expect(figures).toHaveTextContent('读过自运动2腕部相机，只报告；阈值未校准');
+    expect(figures).toHaveTextContent('与位姿不一致1画面里的转动或时间与位姿对不上');
+    expect(figures).toHaveTextContent('画面匹配不足1');
+    expect(figures).toHaveTextContent('时间差（中位）0.47 秒');
+    expect(await within(screen.getByTestId('chart-ego-bands')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中 5'));
+    expect(await within(screen.getByTestId('chart-ego-reasons')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('时间差 5'));
+  });
+
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
     render('eef_video_consistency', EEF, { adjudication: { pending: 3, appealable: 2 } });
     const figures = screen.getByTestId('summary-eef_video_consistency');

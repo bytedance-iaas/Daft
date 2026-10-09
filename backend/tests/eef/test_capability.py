@@ -32,6 +32,8 @@ def test_form_b_with_observations_is_available_everywhere():
     assert cap["availability"] == C.AVAILABLE
     for k in CAP.CORE_SUBITEMS + (C.INPUT_CONSISTENCY,):
         assert av[k] == C.AVAILABLE, k
+    # a fixed camera does not move: its own motion says nothing (design doc 22 §5.3)
+    assert cap["subitems"][C.EGO_MOTION] == {"availability": C.UNSUPPORTED, "reason_code": C.EGO_MOTION_WRIST_ONLY}
     assert av[C.VLM_REVIEW] == C.NEEDS_INPUT
     cam = cap["cameras"]["cam0"]
     assert cam["calibration"] == "declared" and set(cam["observable_axes"]) == {"z", "finger_line"}
