@@ -137,6 +137,19 @@ describe('vizLayout', () => {
     expect(miniLayout(null, null, { cameras: [], streams: [stream('arm')] }).cells).toEqual([{ kind: 'curve', key: 'arm' }]);
   });
 
+  it('lays out an EEF finding over every camera with marks, the one in scope first (design doc 22 §3.3)', () => {
+    const arms = { cameras: MODEL.cameras, streams: [stream('left_arm')] };
+    expect(miniLayout('eef_video_consistency', { camera: 'right_wrist' }, arms, ['head', 'right_wrist']).cells).toEqual([
+      { kind: 'video', key: 'right_wrist' },
+      { kind: 'video', key: 'head' },
+    ]);
+    // a camera the model does not have is not laid out; none with marks: the motion rule as before
+    expect(miniLayout('eef_video_consistency', null, arms, ['gone', 'head']).cells).toEqual([{ kind: 'video', key: 'head' }]);
+    expect(miniLayout('eef_video_consistency', { camera: 'head' }, arms).cells).toEqual([{ kind: 'video', key: 'head' }, { kind: 'curve', key: 'left_arm' }]);
+    // other modules ignore the marks
+    expect(miniLayout('kinematic_limits', { camera: 'head' }, arms, ['head', 'right_wrist']).cells).toEqual([{ kind: 'video', key: 'head' }, { kind: 'curve', key: 'left_arm' }]);
+  });
+
   it('finds the camera a scope names by its short name (an mcap topic too) and the group of an arm', () => {
     const cams = [cam('robot0_sensor_camera0_compressed'), cam('wrist')];
     cams[0].source = '/robot0/sensor/camera0/compressed';

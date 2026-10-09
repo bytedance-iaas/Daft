@@ -1384,14 +1384,16 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
-         * @description Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
-         *     plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
-         *     `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
-         *     bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
-         *     own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
-         *     past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
-         *     bundle has no such episode.
+         * The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0)
+         * @description Design docs 20 and 22. The marked clip sent to the model is encoded in memory and never saved; the
+         *     mini player plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+         *     `viz_camera`) and draws these layers on top, each sample frame at `times_s` - where the player
+         *     shows its paired video frame. Computed on request from the task's trajectory bundle (no frame is
+         *     decoded) with the same choices as the request: a UMI sample draws its camera's own hand (trail,
+         *     fingers, approach axis, centre), any other sample the declared P, A, B and P's past trail; 4.3.0
+         *     adds the tool's three axes, the future trail and, when a gripper reference was given, the observed
+         *     point with its trail and the residual line. 404 `no_eef_module` when the task did not run the EEF
+         *     module, `no_episode` when the bundle has no such episode.
          */
         get: operations["getTaskEpisodeEefOverlay"];
         put?: never;
@@ -3357,20 +3359,50 @@ export interface components {
             fps: number | null;
             /** @description per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps. */
             media_frames: (number | null)[];
+            /** @description 4.3.0: per sample frame, the episode time (seconds, the player's clock) at which the player shows its paired video frame - frame k of a LeRobot clip at k / fps, message k of an mcap topic at its own time; null when there is none or it is never shown (before an mcap stream's first keyframe), all null when `viz_camera` is null */
+            times_s: (number | null)[];
+            /** @description 4.3.0: the hands drawn on this camera (the one tool, or a UMI camera's own hand) */
+            hands: components["schemas"]["EefOverlayHand"][];
             /** @description why the opinion skipped this camera; its layers are then empty */
             skipped: string | null;
             /** @description drawn in order, later on top */
             layers: components["schemas"]["EefOverlayLayer"][];
         };
+        /** @description 4.3.0: a hand the layers belong to */
+        EefOverlayHand: {
+            id: string;
+            /** @description the tool's frame name, or the UMI hand */
+            title: string;
+            color: string;
+            /** @description per sample frame the recorded opening in metres (null where none); null when the input has none */
+            opening_m: (number | null)[] | null;
+        };
         EefOverlayLayer: {
+            /** @description 4.3.0: what the layer is, the same on every camera and hand - point, finger_axis, axis, axis_x, axis_y, axis_z, trail_past, trail_future, observed_point, observed_trail, residual */
+            id: string;
             /**
-             * @description point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end); polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+             * @description 4.3.0
              * @enum {unknown}
              */
-            kind: "point" | "segment" | "arrow" | "polyline";
+            group: "declared" | "axes" | "trail_past" | "trail_future" | "observed" | "residual";
+            /** @description 4.3.0: its name in the layer list, with the point or axis it draws */
+            title: string;
+            /**
+             * @description point: a circle at [x, y]; cross: a cross at [x, y] (4.3.0); segment / arrow: [x1, y1, x2, y2] (arrow head at the second end); polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+             * @enum {unknown}
+             */
+            kind: "point" | "cross" | "segment" | "arrow" | "polyline";
             /** @description text by the mark (P, A, B, a UMI hand) */
             label: string | null;
             color: string;
+            /** @description 4.3.0: drawn until the viewer chooses otherwise */
+            default_on: boolean;
+            /** @description 4.3.0: `hands[].id` of the hand it belongs to */
+            hand: string;
+            /** @description 4.3.0: the model was shown this mark (the opinion's marked clip, or the review windows when a gripper reference was given) */
+            in_model: boolean;
+            /** @description 4.3.0: the colour the model saw it in, when that is not `color` */
+            model_color: string | null;
             /** @description line width in source pixels at full size */
             width: number;
             /** @description one entry per sample frame; null where nothing is drawn */

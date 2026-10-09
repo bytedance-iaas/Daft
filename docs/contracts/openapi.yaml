@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.2.0
+  version: 4.3.0
   description: |
     ## Overview
 
@@ -136,6 +136,13 @@ info:
     viz segments, depth and display configuration, taxonomy 2.0) and every 3.0.0-4.1.0 removal are in
     the one API; the task_success items are the taxonomy 2.0 numbers (TASK-4, TASK-10, LABEL-2, LABEL-4).
 
+    **4.3.0** (2026-10-08): the EEF overlay is drawn in the mini player. `EefOverlayCamera` adds
+    `times_s` (where the player shows each sample frame's video frame) and `hands` (with the recorded
+    opening); every `EefOverlayLayer` says what it is (`id`, `group`, `title`, `hand`), whether it is
+    drawn by default (`default_on`) and whether the model was shown it (`in_model`, `model_color`). New
+    layers: the tool's three axes, the future trail and, when a gripper reference was given, the
+    observed point (a new `kind`, `cross`), its trail and the residual line.
+
   x-description-zh: |
     ## 概览
 
@@ -218,6 +225,11 @@ info:
 
     **4.2.0**（2026-10-08）：两条线合到一起——2.6.0 到 2.8.0 的新增（EEF 叠加、可视化切片 / 深度 / 展示配置、分类表 2.0）
     与 3.0.0 到 4.1.0 的删减都在这一份接口里；任务成败判定的检测项用分类表 2.0 的编号（TASK-4、TASK-10、LABEL-2、LABEL-4）。
+
+    **4.3.0**（2026-10-08）：EEF 叠加画进迷你播放器。`EefOverlayCamera` 加 `times_s`（每个样本帧所配的那一帧画面在播放器里的时刻）
+    与 `hands`（含记录的开口）；每个 `EefOverlayLayer` 说明自己是什么（`id`、`group`、`title`、`hand`）、默认画不画（`default_on`）、
+    模型看没看到（`in_model`、`model_color`）。新图层：工具的三根坐标轴、未来轨迹，以及给了夹爪参考时的观测点（新的 `kind`：`cross`）、
+    观测轨迹与残差线。
 
 servers:
   - url: "{base}/api/v1"
@@ -2806,15 +2818,17 @@ paths:
     get:
       tags: [viz]
       operationId: getTaskEpisodeEefOverlay
-      summary: The EEF video opinion's marks for one episode, to draw over the task's camera videos (2.6.0)
+      summary: The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0)
       description: |
-        Design doc 20. The marked clip sent to the model is encoded in memory and never saved; the report
-        plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
-        `viz_camera`) and draws these layers on top. Computed on request from the task's trajectory
-        bundle (no frame is decoded) with the same choices as the request: a UMI sample draws its camera's
-        own hand (trail, fingers, approach axis, centre), any other sample the declared P, A, B and P's
-        past trail. 404 `no_eef_module` when the task did not run the EEF module, `no_episode` when the
-        bundle has no such episode.
+        Design docs 20 and 22. The marked clip sent to the model is encoded in memory and never saved; the
+        mini player plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
+        `viz_camera`) and draws these layers on top, each sample frame at `times_s` - where the player
+        shows its paired video frame. Computed on request from the task's trajectory bundle (no frame is
+        decoded) with the same choices as the request: a UMI sample draws its camera's own hand (trail,
+        fingers, approach axis, centre), any other sample the declared P, A, B and P's past trail; 4.3.0
+        adds the tool's three axes, the future trail and, when a gripper reference was given, the observed
+        point with its trail and the residual line. 404 `no_eef_module` when the task did not run the EEF
+        module, `no_episode` when the bundle has no such episode.
       responses:
         "200":
           description: one entry per camera of the bundle's sample
@@ -5616,7 +5630,7 @@ components:
     EefOverlayCamera:
       type: object
       additionalProperties: false
-      required: [camera_id, viz_camera, image_size_wh, fps, media_frames, skipped, layers]
+      required: [camera_id, viz_camera, image_size_wh, fps, media_frames, times_s, hands, skipped, layers]
       properties:
         camera_id: {type: string, description: "the bundle's camera id, as in the opinion record's `cameras`"}
         viz_camera:
@@ -5635,23 +5649,67 @@ components:
           description: >-
             per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a
             LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps.
+        times_s:
+          type: array
+          items: {type: [number, "null"]}
+          description: >-
+            4.3.0: per sample frame, the episode time (seconds, the player's clock) at which the player shows
+            its paired video frame - frame k of a LeRobot clip at k / fps, message k of an mcap topic at its
+            own time; null when there is none or it is never shown (before an mcap stream's first keyframe),
+            all null when `viz_camera` is null
+        hands:
+          type: array
+          description: "4.3.0: the hands drawn on this camera (the one tool, or a UMI camera's own hand)"
+          items: {$ref: "#/components/schemas/EefOverlayHand"}
         skipped: {type: [string, "null"], description: "why the opinion skipped this camera; its layers are then empty"}
         layers:
           type: array
           description: drawn in order, later on top
           items: {$ref: "#/components/schemas/EefOverlayLayer"}
+    EefOverlayHand:
+      type: object
+      additionalProperties: false
+      required: [id, title, color, opening_m]
+      description: "4.3.0: a hand the layers belong to"
+      properties:
+        id: {type: string}
+        title: {type: string, description: "the tool's frame name, or the UMI hand"}
+        color: {type: string, pattern: "^#[0-9a-f]{6}$"}
+        opening_m:
+          type: [array, "null"]
+          items: {type: [number, "null"]}
+          description: "per sample frame the recorded opening in metres (null where none); null when the input has none"
     EefOverlayLayer:
       type: object
       additionalProperties: false
-      required: [kind, label, color, width, frames]
+      required: [id, group, title, kind, label, color, width, frames, default_on, hand, in_model, model_color]
       properties:
-        kind:
-          enum: [point, segment, arrow, polyline]
+        id:
+          type: string
           description: >-
-            point: a circle at [x, y]; segment / arrow: [x1, y1, x2, y2] (arrow head at the second end);
-            polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line breaks
+            4.3.0: what the layer is, the same on every camera and hand - point, finger_axis, axis, axis_x,
+            axis_y, axis_z, trail_past, trail_future, observed_point, observed_trail, residual
+        group: {enum: [declared, axes, trail_past, trail_future, observed, residual], description: "4.3.0"}
+        title: {type: string, description: "4.3.0: its name in the layer list, with the point or axis it draws"}
+        kind:
+          enum: [point, cross, segment, arrow, polyline]
+          description: >-
+            point: a circle at [x, y]; cross: a cross at [x, y] (4.3.0); segment / arrow: [x1, y1, x2, y2]
+            (arrow head at the second end); polyline: [x1, y1, x2, y2, ...], a pair of nulls where the line
+            breaks
         label: {type: [string, "null"], description: "text by the mark (P, A, B, a UMI hand)"}
         color: {type: string, pattern: "^#[0-9a-f]{6}$"}
+        default_on: {type: boolean, description: "4.3.0: drawn until the viewer chooses otherwise"}
+        hand: {type: string, description: "4.3.0: `hands[].id` of the hand it belongs to"}
+        in_model:
+          type: boolean
+          description: >-
+            4.3.0: the model was shown this mark (the opinion's marked clip, or the review windows when a
+            gripper reference was given)
+        model_color:
+          type: [string, "null"]
+          pattern: "^#[0-9a-f]{6}$"
+          description: "4.3.0: the colour the model saw it in, when that is not `color`"
         width: {type: number, minimum: 0, description: "line width in source pixels at full size"}
         frames:
           type: array

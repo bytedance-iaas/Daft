@@ -70,7 +70,7 @@ Camera→TCP 参数作为显式几何来源保存，投影相机位姿取 CSV，
 在控制台登记输出目录，勾选 EEF–视频一致性，上传输出的 `trajectory.json`，选择视频模型，不给观测种子/模板。
 任务自动使用 UMI 提问：每路只叠加 `umi.camera_hands` 指定的本手（camera0 为蓝色 robot0，camera1 为紫色 robot1），
 包含当前中心/朝向/开口与过去 1 秒到当前帧的历史轨迹；另一只手不画标记或文字。模型同时看 RAW/MARKED，并只评估本手叠加。
-标记视频只在内存里编码后内联发给模型，不保存；报告 Episode 的模型意见区播放原始视频，标记由 Daemon 现场算（`overlay.py`，接口 `GET /tasks/{id}/episodes/{index}/eef-overlay`）、浏览器叠加。
+标记视频只在内存里编码后内联发给模型，不保存；报告、裁决卡、任务详情的迷你播放器放原始视频，标记由 Daemon 现场算（`overlay.py`，接口 `GET /tasks/{id}/episodes/{index}/eef-overlay`）、浏览器叠加（设计 22 §3）：除了送模型的那几样，还有三根坐标轴、未来轨迹与判决模式的观测点；每层带 `id` / `group` / `default_on` / `in_model`，播放器的「叠加」菜单按它们勾选。
 `action` 类疑点表示动作或抓放时机与可见画面不符；沿用建议性意见，不因此自动判废。
 该测试集使用 `doubao-seed-2-1-pro-260915` 的 `minimal` 推理设置完成真实验证；默认推理曾超时。
 受控外参和时间偏移仍存在漏检，详细结果见设计 20，不能把模型意见当作已校准的自动判定器。

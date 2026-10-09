@@ -2,9 +2,11 @@ import { Button, Dropdown, Menu, Message, Modal, Select } from '@arco-design/web
 import { IconClose, IconExpand, IconInfoCircle, IconLayout, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VizCamera, VizDataset, VizEpisode, VizEpisodeCamera, VizStream } from '../../api/types';
+import type { EefOverlayCamera, VizCamera, VizDataset, VizEpisode, VizEpisodeCamera, VizStream } from '../../api/types';
 import { CAMERA_PALETTE } from '../../lib/vizCurves';
 import { errorMessage } from '../../api/errors';
+import { parseChoice, type OverlayChoice } from '../../lib/eefOverlay';
+import { readPrefs, writePrefs } from '../../lib/prefs';
 import { DEFAULT_DEPTH_VIEW, overlayFits } from '../../lib/vizDepth';
 import { hasLayout, startOf, withLayout, withoutLayout } from '../../lib/vizDisplay';
 import {
@@ -30,16 +32,26 @@ import { CellMenu } from './CellMenu';
 import { CurveCell, type Band } from './cells/CurveCell';
 import { DepthCell, DepthSettings } from './cells/DepthCell';
 import { FramesCell } from './cells/FramesCell';
+import { OverlayCanvas } from './cells/OverlayCanvas';
 import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
 import { fetchVizDisplay, prefetchVizEpisode, saveVizDisplay, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
+import { OverlayMenu } from './OverlayMenu';
 import { SidePanel } from './SidePanel';
 import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
 import './visualizer.css';
 
 export type { Evidence } from './Transport';
+
+/** The EEF marks over the cameras (design doc 22 §3): a task that ran the EEF module, in the mini player. */
+export interface PlayerOverlays {
+  /** VizEpisode camera key -> the marks drawn over it */
+  cameras: Record<string, EefOverlayCamera>;
+  /** the focused finding's camera: its marks bold, the others faint; null: all alike */
+  focus: string | null;
+}
 
 /** What a page around the player may do to it. */
 export interface PlayerControl {
@@ -71,6 +83,8 @@ export interface PlayerProps {
   lead?: React.ReactNode;
   /** the episode to prepare once this one is on screen (the visualize page's next one) */
   prefetch?: number | null;
+  /** the EEF marks over the cameras, with the 「叠加」 menu (the mini player, design doc 22 §3) */
+  overlays?: PlayerOverlays | null;
 }
 
 /** The player: loads the model and the episode, keeps the last episode on screen while the next loads. */
@@ -149,8 +163,16 @@ function PlayerView({
   arrangement = null,
   lead,
   prefetch = null,
+  overlays = null,
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
+  // the EEF marks: what the viewer chose to see, the same for every task (kept in this browser)
+  const [choice, setChoiceState] = useState<OverlayChoice>(() => parseChoice(readPrefs().eefOverlay));
+  const setChoice = useCallback((c: OverlayChoice) => {
+    setChoiceState(c);
+    writePrefs({ eefOverlay: c });
+  }, []);
+  const overlayCams = useMemo(() => (overlays ? Object.values(overlays.cameras) : []), [overlays]);
   // once this episode is on screen, the next one is prepared in the background: clicking 下一条 on an mcap
   // dataset then finds its scan done (design doc 18 §10, 预生成 for one episode ahead)
   const qc = useQueryClient();
@@ -461,6 +483,7 @@ function PlayerView({
             </Button>
           </Dropdown>
         ) : null}
+        {overlayCams.length ? <OverlayMenu cameras={overlayCams} choice={choice} onChange={setChoice} /> : null}
         <Button size="small" className={sideOpen ? 'on' : ''} title={zh.viz.infoTitle} icon={<IconInfoCircle />} onClick={() => setSideOpen((v) => !v)}>
           {zh.viz.info}
         </Button>
@@ -572,6 +595,15 @@ function PlayerView({
                 return (
                   <div key={i} className={cls} onPointerDown={() => setFocus(i)} data-testid={`vz-cell-${i}`}>
                     {cameraView(cam, e)}
+                    {overlays?.cameras[cam.key] ? (
+                      <OverlayCanvas
+                        cam={overlays.cameras[cam.key]}
+                        ep={e}
+                        clock={clock}
+                        choice={choice}
+                        emphasis={overlays.focus ? (overlays.focus === cam.key ? 'strong' : 'dim') : 'normal'}
+                      />
+                    ) : null}
                     <span className="vz-cap">
                       <i className="dot" style={{ color: cameraColor(cam.key) }} />
                       {cam.name}
@@ -699,6 +731,7 @@ function PlayerView({
             onClose={() => setSideOpen(false)}
             points={2000}
             clientDecoded={clientKeys}
+            overlay={focusedCell?.kind === 'video' ? (overlays?.cameras[focusedCell.key] ?? null) : null}
           />
         ) : null}
       </div>
@@ -828,6 +861,7 @@ function SideFor({
   onClose: () => void;
   points: number;
   clientDecoded: ReadonlySet<string>;
+  overlay: EefOverlayCamera | null;
 }) {
   const stream = focused?.kind === 'curve' ? focused.key : '';
   const series = useVizSeries(source, ep.index, stream, points, !!stream);

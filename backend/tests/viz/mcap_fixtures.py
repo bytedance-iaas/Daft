@@ -7,7 +7,8 @@ chunks, so a file cut short still has whole chunks before the cut.
 ``RobotState`` (``repeated double q``) on ``/left-arm-state`` and ``/left-arm-action``, an
 ``/instruction`` topic, a segments topic.
 ``make_default`` - the check reader's own convention: JSON ``/action`` / ``/observation.state``,
-``/observation.images.front`` and ``/task``.
+``/observation.images.front`` and ``/task``; ``action_lag`` starts the arm that many frames after the camera
+(the checks' clock then starts later than the episode).
 """
 from __future__ import annotations
 
@@ -149,7 +150,7 @@ def make_abc(root: str, episodes: int = 1, n: int = 20, wrist_skip: int = 0) -> 
     return root
 
 
-def make_default(root: str, episodes: int = 1, n: int = 15) -> str:
+def make_default(root: str, episodes: int = 1, n: int = 15, action_lag: int = 0) -> str:
     from foxglove_schemas_protobuf.CompressedImage_pb2 import CompressedImage
     from mcap.writer import Writer as RawWriter
     from mcap_protobuf.writer import Writer
@@ -164,8 +165,9 @@ def make_default(root: str, episodes: int = 1, n: int = 15) -> str:
             raw.add_message(ch["/task"], log_time=T0, data=json.dumps({"data": "pick the cube"}).encode(), publish_time=T0)
             for i in range(n):
                 t = T0 + i * STEP
-                raw.add_message(ch["/action"], log_time=t, data=json.dumps({"data": [0.1 * i, 0.2, 0.3]}).encode(), publish_time=t)
-                raw.add_message(ch["/observation.state"], log_time=t, data=json.dumps({"data": [0.1 * i - 0.01, 0.2, 0.3]}).encode(), publish_time=t)
+                if i >= action_lag:
+                    raw.add_message(ch["/action"], log_time=t, data=json.dumps({"data": [0.1 * i, 0.2, 0.3]}).encode(), publish_time=t)
+                    raw.add_message(ch["/observation.state"], log_time=t, data=json.dumps({"data": [0.1 * i - 0.01, 0.2, 0.3]}).encode(), publish_time=t)
                 img = CompressedImage()
                 img.format = "jpeg"
                 img.data = _jpeg(i)

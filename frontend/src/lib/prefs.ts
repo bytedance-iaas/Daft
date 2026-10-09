@@ -29,6 +29,8 @@ export interface Prefs {
   vizRailCollapsed?: boolean;
   /** The app's sidebar collapsed to its icons. */
   siderCollapsed?: boolean;
+  /** The EEF overlay's choice in the mini player, for every task (design doc 22 §3.3; lib/eefOverlay.ts). */
+  eefOverlay?: unknown;
 }
 
 function storage(): Storage | null {

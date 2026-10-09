@@ -14,7 +14,9 @@ What the pass leaves behind, in ``out_dir`` (the Daemon's disk cache):
   (``VizFrameIndex`` with the 2 % / 98 % range);
 * ``series.npz`` - every curve topic's message times and numbers;
 * ``episode.json`` - the clock (zero, the frame reference's times, the checks' anchor and rate), the
-  cameras' indexes, the task text, the segments, the warnings.
+  cameras' indexes, the task text, the segments, the warnings; per camera also ``times``, every image
+  message's episode time in time order (message ``k`` is the EEF bundle's ``video_frame_index`` ``k``,
+  design doc 22 §3.4: the overlay is drawn when the player shows that frame).
 
 Times are nanoseconds on the mapping's clock (``timeline.source``); the episode's zero is the first
 message of any mapped camera or curve topic.
@@ -45,6 +47,8 @@ from .mcap_mapping import check_mapping
 
 #: the first samples of a video camera kept in memory, to read its picture size from
 VIDEO_HEAD = 30
+#: ``episode.json``'s layout: a cached scan of another one is read again (2: ``times`` per camera)
+SCAN_FORMAT = 2
 
 
 @dataclass
@@ -339,7 +343,8 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
     for topic, cam in cams.items():
         key = cam["key"]
         doc = {"topic": topic, "key": key, "codec": cam["codec"], "width": cam["width"], "height": cam["height"],
-               "count": len(cam["t"]), "offset_s": rel(cam["t"][0]) if cam["t"] else 0.0}
+               "count": len(cam["t"]), "offset_s": rel(cam["t"][0]) if cam["t"] else 0.0,
+               "times": [rel(x) for x in sorted(cam["t"])]}
         if cam["codec"] in ("jpeg", "png") and cam["t"]:
             os.replace(out / f"{key}.frames.part", out / f"{key}.frames")
             order = sorted(range(len(cam["t"])), key=cam["t"].__getitem__)      # the index in time order
@@ -445,7 +450,8 @@ def scan(stream, mapping: dict, out_dir: os.PathLike | str, *, client_decode: bo
                 segs.append({"start_s": a, "end_s": max(a, b), "label": s["label"], "quality": None,
                              "contribution": None, "arm": None, "flags": []})
         segs.sort(key=lambda x: x["start_s"])
-    doc = {"zero_ns": zero, "duration_s": rel(end) + (1.0 / check_clock["fps"] if check_clock["fps"] else 0.0),
+    doc = {"format": SCAN_FORMAT, "zero_ns": zero,
+           "duration_s": rel(end) + (1.0 / check_clock["fps"] if check_clock["fps"] else 0.0),
            "frame_reference": ref, "frame_times": [rel(x) for x in ref_times], "check_clock": check_clock,
            "cameras": cam_docs, "depths": depth_docs, "series": series_docs, "task": task_text, "segments": segs,
            "segments_source": (f"附件 {seg_spec['attachment']}" if seg_spec and seg_spec.get("attachment")

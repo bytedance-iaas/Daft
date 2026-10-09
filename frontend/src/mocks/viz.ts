@@ -32,6 +32,8 @@ import {
   vizStatusOf,
 } from './vizWorld';
 
+const EEF = 'eef_video_consistency';
+
 // ------------------------------------------------------------------ sources
 
 interface Source {
@@ -234,11 +236,16 @@ function scoped(prefix: string, make: (id: string) => Source | Response) {
 export const vizHandlers = [
   ...scoped('datasets', datasetSource),
   ...scoped('tasks', taskSource),
-  // the EEF opinion's marks (design doc 20): the opinion record's camera `ext` over the input's first camera
+  // the EEF marks (design docs 20, 22): the opinion record's camera `ext` over the input's first camera, for a
+  // task that ran the module (selected it, or an EEF record was put in); 404 no_eef_module otherwise
   http.get(`${API}/tasks/:id/episodes/:index/eef-overlay`, withSource(taskSource, (s, _request, params) => {
     const index = episodeOf(s, params.index);
     if (index instanceof Response) return index;
-    return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null));
+    const records = [...(db.extraRecords.get(s.id)?.values() ?? [])];
+    const ran = !!findTask(s.id)?.modules.some((m) => m.id === EEF && m.selected) || records.some((r) => EEF in r);
+    if (!ran) return err(404, 'not_found', '这个任务没有勾选「EEF–视频一致性」，没有可叠加的投影', { reason: 'no_eef_module' });
+    const measured = records.some((r) => r[EEF]?.details && (r[EEF].details as Record<string, unknown>).assessment_mode !== 'vlm_opinion');
+    return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null, measured));
   })),
   http.get(`${API}/datasets/:id/viz/episodes`, ({ request, params }) => {
     const s = datasetSource(String(params.id));

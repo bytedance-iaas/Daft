@@ -22,7 +22,7 @@ import numpy as np
 from curation.streams.rangefile import RangeFile
 from curation.viz import mcap_messages as MM
 from curation.viz import mcap_probe as MP
-from curation.viz.mcap_episode import camera_keys, depth_keys, remux_samples, scan
+from curation.viz.mcap_episode import SCAN_FORMAT, camera_keys, depth_keys, remux_samples, scan
 from curation.viz.series import json_values, thin, window
 
 from ..errors import ApiError
@@ -332,6 +332,8 @@ class McapReader:
                 doc = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return None
+            if doc.get("format") != SCAN_FORMAT:             # an older layout: scanned again
+                return None
             wanted = [path, d / "series.npz"]
             for key, cd in (doc.get("cameras") or {}).items():
                 name = (f"{key}.frames" if cd.get("codec") in ("jpeg", "png") and "t" in cd
@@ -371,6 +373,13 @@ class McapReader:
             for f in d.iterdir():
                 self.svc.disk.added(f)
             return doc, d
+
+    def frame_times(self, src: VizSource, index: int) -> dict[str, tuple[list[float], float]]:
+        """Per camera key: every image message's episode time in time order, and the first the player can
+        show (its ``offset_s``: messages before the first keyframe are never shown) - design doc 22 §3.4."""
+        doc, _ = self.episode_doc(src, index)
+        return {key: (list(cd.get("times") or []), float(cd.get("offset_s") or 0.0))
+                for key, cd in (doc.get("cameras") or {}).items() if not cd.get("error")}
 
     def episode_model(self, src: VizSource, index: int, urls) -> dict:
         doc, d = self.episode_doc(src, index)

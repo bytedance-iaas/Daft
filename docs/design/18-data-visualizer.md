@@ -208,12 +208,13 @@ flowchart LR
 
 - `EpisodeView.findings[].finding` 的 `frames` / `time_s` / `scope.camera(s)`（记录 2.0，设计 17 §1.2）→ 进度条下方的色段，颜色按级别（blocking `#F53F3F`、review `#FF7D00`、info `#86909C`），聚焦的那条加外圈；单帧用点标。换算用任务级 episode 记录的 `check_clock`（§4.4）；`EpisodeView` 也补 `fps`（LeRobot 为数据集 fps，mcap 为 null），供不开播放器时把帧号写成秒。旧任务读不到 fps 时，色段只按 `time_s` 画，只有 `frames` 的发现列在芯片里、写明「无法定位」，不报错。
 - `EpisodeView.evidence[]`（证据帧）→ 进度条上的点标，点开跳到那一帧。
+- 跑过 EEF 模块的任务：`eef-overlay` 的矢量图层画在相机格子上（设计 22 §3，D74）；EEF 记录里「模型意见」的证据帧也从这里打开（按相机、样本帧）。
 - 智能布局（按发现所属模块）：
 
 | 模块 | 迷你版格子 |
 |---|---|
 | visual_quality、camera_defects、data_integrity（视频类） | 范围里的相机 + 另一路相机（1 × 2） |
-| video_action_sync、eef_video_consistency、motion_quality、kinematic_limits、timestamp_check | 范围里的相机 + 该臂的关节曲线（1 × 2）；有任务产出的同步曲线时可加第三格（第二期） |
+| video_action_sync、eef_video_consistency、motion_quality、kinematic_limits、timestamp_check | 范围里的相机 + 该臂的关节曲线（1 × 2）；有任务产出的同步曲线时可加第三格（第二期）。eef_video_consistency 有轨迹叠加时改为所有带叠加的相机（至多 3 路，范围里的那路在前；设计 22 §3.3） |
 | task_success、dedup、标注类 | 全部相机（1 × N，N ≤ 3；更多的收进「更换」） |
 
 ### 4.7 与现有部件的关系

@@ -194,17 +194,30 @@ export function armStream(scope: FindingScope | null | undefined, streams: Pick<
   return (drawable.find((s) => s.smart) ?? drawable[0])?.key ?? null;
 }
 
+/** The module whose marks the mini player draws over the cameras (design doc 22 §3). */
+export const EEF_MODULE = 'eef_video_consistency';
+
 /**
  * The mini player's cells for a finding of `module` (design doc 18 §4.6): a picture finding shows the
  * camera in scope and another camera; a motion finding the camera and the arm's curves; anything else
- * (and no finding) every camera, at most three in a row.
+ * (and no finding) every camera, at most three in a row. An EEF finding over cameras with its marks
+ * drawn (`overlaid`, design doc 22 §3.3) shows those cameras, the one in scope first, at most three.
  */
-export function miniLayout(module: string | null, scope: FindingScope | null | undefined, model: Pick<VizDataset, 'cameras' | 'streams'>): { cells: CellContent[]; shape: GridShape } {
+export function miniLayout(
+  module: string | null,
+  scope: FindingScope | null | undefined,
+  model: Pick<VizDataset, 'cameras' | 'streams'>,
+  overlaid: readonly string[] = [],
+): { cells: CellContent[]; shape: GridShape } {
   // the cameras the display configuration hides are not picked, unless a finding is about one
   const keys = model.cameras.filter((c) => !c.hidden).map((c) => c.key);
   const scoped = cameraOfScope(scope, model.cameras) ?? keys[0] ?? null;
   let cells: CellContent[];
-  if (module && PICTURE_MODULES.has(module) && scoped) {
+  const marked = overlaid.filter((k) => model.cameras.some((c) => c.key === k));
+  if (module === EEF_MODULE && marked.length) {
+    const first = scoped && marked.includes(scoped) ? scoped : marked[0];
+    cells = [first, ...marked.filter((k) => k !== first)].slice(0, MINI_MAX_CELLS).map((key) => ({ kind: 'video', key }));
+  } else if (module && PICTURE_MODULES.has(module) && scoped) {
     const other = keys.find((k) => k !== scoped);
     cells = [scoped, other].filter((k): k is string => !!k).map((key) => ({ kind: 'video', key }));
   } else if (module && MOTION_MODULES.has(module) && (scoped || armStream(scope, model.streams))) {

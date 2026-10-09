@@ -162,7 +162,7 @@ Python 依赖装在仓库根目录的 `.venv`（配方见对账工具 README 的
 Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标准库。前端要 Node 20.19+ 或 22.13+，装依赖只用 `npm ci`；增删依赖用
 `npx -y npm@11 install …`（npm 10.9.2 解析依赖树会崩）。本机起服务可以用 `.claude/launch.json` 里的配置：`curator-daemon-dev`
 （`/curation` 前缀、不鉴权、临时数据目录）、`curator-daemon-local`（再加本地数据根与本地交付替身，都在 `$TMPDIR/curator-local` 下；
-放一份 `make_mini_lerobot` 数据集、起一个 `FakeVlmServer(port=8766)` 登记成 custom 后端，就能真跑一个带模型模块的任务）和 `curator-frontend-dev`。
+放一份 `make_mini_lerobot` 数据集、起一个 `FakeVlmServer(port=8766)` 登记成 custom 后端，就能真跑一个带模型模块的任务）、`curator-daemon-eef`（数据根是 dataset2，本地交付在 `$TMPDIR/curator-eef/tos`，EEF 模块与叠加用）、`curator-fakevlm`（上面那个假模型）和 `curator-frontend-dev`。
 
 ### 测试
 

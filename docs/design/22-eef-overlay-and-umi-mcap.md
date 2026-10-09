@@ -40,7 +40,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
 | F5.17 mcap | dataset2 的 mcap 孪生：`backend/scripts/make_mcap_twin.py` 把 `eef_ds2_lr3` 写成每条 episode 一个 `.mcap`（两路相机 H.264，码流故意从 GOP 中间开始、开头 3 帧解不出；其余 topic 与相机同时开始），轨迹用 `tools/eef_convert.py to-mcap` 转 | 复现 DAS 的「首个关键帧前解不出」，验 §3.4 的对时；质检时钟 `offset_s ≠ 0` 的情况放在 `tests/daemon` 里（孪生的轨迹时间以相机第一帧为零，action 晚开始会让发现的色块整体偏移，验收时容易误读） |
 | F5.18 / F5.19 | `tos://galbot/mcap/00001(1).mcap`（两手、带 `camera_info`、robot1 有抓放）、`umi_sample.mcap`（倒水，**没有** `camera_info`） | 或样本集 `tos://curation-robo-anchor/anchor/v1/mcap/genrobot_fold_and_store_clothes/`（公开，CC BY-SA 4.0） |
 
-本机看效果：`.claude/launch.json` 的 `curator-daemon-eef`（数据根 dataset2，托管 `frontend/dist`，先 `npm run build`）；控制台 tasks/new → 本地路径 `eef_ds2_lr3` → 勾 EEF 模块 → 第二屏传 `dataset2/trajectory.json`，判决模式再传种子或模板。
+本机看效果：`.claude/launch.json` 的 `curator-fakevlm`（假模型，`http://127.0.0.1:8766/v1`）与 `curator-daemon-eef`（数据根 dataset2，本地交付目录 `$TMPDIR/curator-eef/tos`，托管 `frontend/dist`，先 `npm run build`）；控制台登记一把随便的访问密钥与自定义 VLM 后端，tasks/new → 本地路径 `eef_ds2_lr3` → 勾 EEF 模块 → 第二屏传 `dataset2/trajectory.json`，判决模式再传种子或模板（步骤见 frontend README「EEF 轨迹叠加」）。
 
 ## 1. 现状与缺口
 
@@ -122,7 +122,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
 |---|---|
 | `id` | 稳定标识，按角色取：`point`、`finger_axis`、`axis`、`axis_x` / `axis_y` / `axis_z`、`trail_past`、`trail_future`、`observed_point`、`observed_trail`、`residual`；同一个 id 在各路相机、各只手上是同一种图层，勾选按 id 记 |
 | `group` | `declared` / `axes` / `trail_past` / `trail_future` / `observed` / `residual` |
-| `title` | 清单里显示的名字，带真实的点名 / 轴名（如「指尖中心 P（tcp）」，P、A 由 `opinion.select` 挑，未必是 TCP 与接近轴）；组名是固定的几种，放 `locales` |
+| `title` | 清单里显示的名字，带真实的点名 / 轴名（如「中心点 P（tcp）」，P、A 由 `opinion.select` 挑，未必是 TCP 与接近轴）；组名是固定的几种，放 `locales` |
 | `default_on: boolean` | 默认是否画 |
 | `hand` | 属于哪只手（`hands[].id`） |
 | `in_model: boolean` | 送模型的标注片段里画了这一层（「与送模型的一致」预设只开这些） |
@@ -161,7 +161,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
   - 顶部三选一：原图 / 叠加 / 只看观测；
   - 预设：「默认」（各图层的 `default_on`）、「与送模型的一致」（只开 `in_model` 的图层、按 `model_color` 上色、三轴关）；
   - 按手、按图层的勾选清单，来自接口的 `hands` 与图层声明；外加「标签」开关；
-  - 选择记在 `localStorage`（键 `curator.eefOverlay.layers`，按图层 `id`，不分任务），首次按 `default_on`。
+  - 选择记在浏览器的界面偏好里（`curator.ui.prefs` 的 `eefOverlay`，按图层 `id`，不分任务），首次按 `default_on`。
 - 选中某条发现时，该相机的叠加线加粗、其余相机的变淡（已有的色块、片段带照旧）。
 - 右侧「详细信息」：焦点落在带叠加的相机格子上时多一节「叠加」，写轨迹来源、画的手、当前样本帧号与它对应的画面帧；F5.18 起再加插值间隔的设置（§5.2）。
 - Episode 明细「模型意见」块里的独立播放器删掉（`EefOverlayVideo.tsx`），证据帧按钮改为驱动迷你播放器：打开迷你播放器、该相机排在前面，
@@ -425,3 +425,20 @@ DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能
 | 14 | 过去轨迹时长取送模型时的值、未来同长，不做成模块参数；坐标轴 6 cm，与现有接近轴一样长 | 少一次 C1 变更；与模型所见一致 |
 
 （各 F 落地时在下面补：日期、提交、偏离本篇的地方。）
+
+### F5.17（2026-10-08）
+
+按 §3 落地，偏离与细化：
+
+- 契约：`EefOverlayLayer.kind` 加 `cross`（观测点画十字，与声明点的圆区分）；`hands[]` 是单独的 Schema `EefOverlayHand`（含 `opening_m`）。
+- `in_model` 按任务的模式：意见模式是 P、A、B 与过去轨迹（送模型的标注片段）；判决模式是 P、A 与观测点（复核窗口只画这三样）。
+- mcap 扫描：`episode.json` 加 `format: 2` 与每路相机的 `times`（全部图像消息的时间，按时间排序）；旧格式的缓存当作没有、重扫一次。
+  首个关键帧之前的消息用这一路的 `offset_s` 判（三种取画面的路子里它都是第一张能放的画面的时刻）。
+- 测试：接口的用例放在 `backend/tests/viz/test_eef_overlay.py`（借可视化的 LeRobot / mcap 夹具），不在 `tests/daemon`；`tests/viz/mcap_fixtures.py` 的
+  `make_default` 加 `action_lag`，造质检时钟晚于相机的数据。
+- 选择存在浏览器的界面偏好里（`curator.ui.prefs` 的 `eefOverlay`），与别的偏好同一把键，不另开 `curator.eefOverlay.layers`。
+- 帧号文字只在画了东西时写，位置在画面左下角、时间戳上方，与「标签」开关一起开关。
+- 顺带修：`tools/eef_convert.py` 探测 mcap 画面尺寸时，首个关键帧之前的 P 帧会让解码器抛错（GenRobot / DAS 都是这样开头），改为跳过。
+- 本机配置：`curator-daemon-eef` 加本地交付目录与 `CURATOR_VERIFY_VISIBILITY_S=0`，新增 `curator-fakevlm`。
+- 实测（本机，假模型）：dataset2 判决 / 意见两个任务与 mcap 孪生的意见任务都跑通；ep6 相机 1 的声明点偏在夹爪左侧、残差线连到夹爪上的观测十字，
+  相机 2 几乎重合；ep5 第 60 帧声明点落在夹爪后面（晚 5 帧）；mcap 孪生前 3 帧 `times_s` 为 null、此后与 LeRobot 版逐帧相同，第 150 帧标记落在同一处。

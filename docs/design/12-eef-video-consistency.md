@@ -613,7 +613,8 @@ dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position
 **结果**：记录 `passed = true`（不影响判决、不进人工裁决），`details.assessment_mode = "vlm_opinion"`，
 `details.opinion` 按相机给出答复或失败原因、每个片段的帧、时间、方面、置信度、证据帧号。标记视频和证据帧图都不落盘
 （2026-10-06，设计 20）：Episode 明细里每路相机播放原始视频，标记由 `GET /tasks/{id}/episodes/{index}/eef-overlay`
-现场算出、浏览器叠加，点证据帧号跳到该帧。报告小节单列「模型意见」：问过的条数、
+现场算出、浏览器叠加，点证据帧号跳到该帧。2026-10-08 起（设计 22 §3，D74）叠加画进迷你播放器（报告、裁决卡、任务详情共用），
+补了坐标轴、未来轨迹与判决模式的观测点；「模型意见」块里的独立播放器删除，证据帧号打开迷你播放器停在那一帧。报告小节单列「模型意见」：问过的条数、
 有不匹配片段的条数（置信度 ≥ 0.5）、片段数与置信度分布，不计入判过 / 判废 / 转人工；Episode 明细里列出各片段与证据帧，
 标明「只是意见，不参与判决」。送模型的视频长边上限 448（`opinion.VIDEO_MAX_SIDE`）。
 
@@ -651,6 +652,7 @@ dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position
 | `backend/daemon/orchestr/delivery.py` | 证据 / 曲线 / 观测目录进交付过滤 | B |
 | `frontend/src/pages/report/ModuleSection.tsx`、`features/report/EpisodeDrawer.tsx` | 先用默认表格渲染器上线；二期做时间轴 + 相机切换 + 原图/叠加/观测切换 | 前端 |
 | `backend/daemon/routes/`（上传） + `docs/contracts/openapi.yaml` | 任务输入文件上传接口（POST，返回句柄与 hash）；曲线 / 证据接口按需 | B + 契约 |
+| `extensions/eef_consistency/overlay.py`、`daemon/viz/eef_overlay.py`、`frontend/src/features/visualizer/`（2026-10-08，设计 22 §3） | 轨迹叠加并入迷你播放器：图层声明、坐标轴、未来轨迹、观测组，按画面帧的时刻对时（C4 4.3.0） | B |
 
 不改 `core/`、`registry/`、`ingest/` 等 A 类目录；旧算法原样调用。
 

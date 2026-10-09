@@ -392,7 +392,7 @@ function EefBlock({ taskId, record }: BlockProps) {
         <Space wrap>
           <EefConclusion record={record} />
         </Space>
-        <EefOpinion taskId={taskId} record={record} />
+        <EefOpinion record={record} />
         <EefDatasetRecord taskId={taskId} record={record} />
       </div>
     );

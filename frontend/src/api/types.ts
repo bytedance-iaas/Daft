@@ -159,6 +159,7 @@ export type VizSeries = S['VizSeries'];
 export type EefOverlay = S['EefOverlay'];
 export type EefOverlayCamera = S['EefOverlayCamera'];
 export type EefOverlayLayer = S['EefOverlayLayer'];
+export type EefOverlayHand = S['EefOverlayHand'];
 export type VizFrameIndex = S['VizFrameIndex'];
 export type VizMediaPending = S['VizMediaPending'];
 export type VizMetaFile = S['VizMetaFile'];

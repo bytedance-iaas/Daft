@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
@@ -7,6 +7,7 @@ import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
+import { zh } from '../../locales/zh';
 
 const REPORT = `/tasks/${MAIN_TASK}/report`;
 
@@ -304,6 +305,18 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('eef-record-status')).toHaveTextContent('不支持');
     expect(within(block).getByTestId('eef-record')).toHaveTextContent('没有给数据集记录映射');
     expect(block.textContent).not.toMatch(/[{}"]/);
+  });
+
+  it('Episode 明细: an evidence frame of the opinion opens the mini player there, with the marks drawn (design doc 22 §3.3)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefOpinionRecord(12) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const op = await screen.findByTestId('eef-opinion');
+    expect(within(op).queryByText(/动作投影视频/)).toBeNull();               // no player of its own any more
+    fireEvent.click(within(op).getByRole('button', { name: zh.eefDetail.opinion.seekFrame(53) }));
+    const mini = await screen.findByTestId('vz-mini');
+    expect(await within(mini).findByTestId('vz-eef-ext')).toBeInTheDocument();
+    // sample frame 52 of the mock clip is shown at 52 / 15 s
+    await waitFor(() => expect(mini.querySelector('.vz-stamp')).toHaveTextContent(/^00:03\.5/));
   });
 
   it('Episode 明细: the data integrity block lists every finding and every file it read (design doc 14 §5.2)', async () => {

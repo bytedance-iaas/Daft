@@ -203,9 +203,11 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     这时缓存目录里有 `camera_wrist.annexb`、还没有 `camera_wrist.mp4`。`curl -s -o /tmp/w.mp4 $B/datasets/$D/episodes/0/cameras/camera_wrist.mp4` 才转封装（之后 `episode.json` 里这路 `mp4: true`），
     `ffprobe /tmp/w.mp4`（或 PyAV）有 20 帧。用 `CURATOR_VIZ_CLIENT_DECODE=0` 重启：相机没有 `samples_url`，`.json` 回 404，扫描时就转封装，与阶段 13 一样。
 
-20. **EEF 标记叠加（设计 20）**：跑一条勾了「EEF–视频一致性」、没给夹爪参考的任务（UMI 数据见 EEF extension README 的 `export-umi`）。
-    `curl -s $B/tasks/$T/episodes/0/eef-overlay | jq '.cameras[] | {camera_id, viz_camera, image_size_wh, skipped, layers: [.layers[] | {kind, label, color}]}'`：
-    每路参与的相机有四层，`viz_camera` 等于 `curl -s $B/tasks/$T/episodes/0/viz | jq '[.cameras[].key]'` 里的一项；`layers[].frames` 的长度等于这条的样本帧数。
+20. **EEF 标记叠加（设计 20、22 §3）**：跑一条勾了「EEF–视频一致性」的任务（dataset2 见前端 README「EEF 轨迹叠加」；UMI 数据见 EEF extension README 的 `export-umi`）。
+    `curl -s $B/tasks/$T/episodes/0/eef-overlay | jq '.cameras[] | {camera_id, viz_camera, times: .times_s[:4], hands: [.hands[].title], layers: [.layers[] | {id, group, kind, default_on, in_model}]}'`：
+    `viz_camera` 等于 `curl -s $B/tasks/$T/episodes/0/viz | jq '[.cameras[].key]'` 里的一项；`times_s` 是每个样本帧所配画面帧在播放器里的时刻（LeRobot 为帧号 / fps；mcap 为该消息在扫描里的时间，
+    首个关键帧之前为 null，与这一路的 `offset_s` 对得上）；普通 EEF 有 `point`、`finger_axis`、`axis`（`default_on: false`）、`axis_x/y/z`、`trail_past`、`trail_future`，
+    给了夹爪参考的任务再多 `observed_point`、`observed_trail`、`residual`；`layers[].frames` 的长度等于这条的样本帧数。
     `ls $D/data/runs/$T/checks/eef_video_consistency/` 没有 `opinion/`。没勾 EEF 的任务回 404，`error.details.reason` 是 `no_eef_module`。
 
 21. **转码的时间口径（设计 21 §4.5，F15.1）**：把第 1 步的 `viz_v3` 复制一份 `viz_v3_mpeg4`，`meta/info.json` 里 `observation.images.top` 的 `video.codec` 改成 `mpeg4`（字节仍是 H.264，转码器照样读）后登记。

@@ -1,6 +1,6 @@
 // A test fixture (F5.11 / F5.12): the EEF module's record of an episode it sent to a person. The mock
 // world's tasks do not select the module; tests add it through db.extraRecords.
-import type { EefOverlay, ResultRecord } from '../api/types';
+import type { EefOverlay, EefOverlayLayer, ResultRecord } from '../api/types';
 
 const EEF = 'eef_video_consistency';
 
@@ -165,16 +165,39 @@ export function eefOpinionRecord(ep: number): ResultRecord {
 }
 
 /**
- * The marks of {@link eefOpinionRecord}'s camera `ext` (design doc 20): P circling slowly with its
- * past trail, A pointing down, B across the fingers, over a 640×480 clip of 287 frames at 15 fps.
+ * The marks of {@link eefOpinionRecord}'s camera `ext` (design docs 20, 22 §3.2): P circling slowly with
+ * its past and future trails, A pointing down (off by default), B across the fingers, the tool's three
+ * axes, over a 640×480 clip of 287 frames at 15 fps shown at frame / 15 s. ``observed`` adds the measured
+ * episode's group: the observed P a few pixels off, its trail and the residual line.
  */
-export function eefOverlay(taskId: string, episode: number, vizCamera: string | null): EefOverlay {
+export function eefOverlay(taskId: string, episode: number, vizCamera: string | null, observed = false): EefOverlay {
   const frames = 287;
   const at = (f: number): [number, number] => [320 + 120 * Math.cos(f / 40), 260 + 60 * Math.sin(f / 40)];
   const round = (v: number) => Math.round(v * 10) / 10;
-  const trail = Array.from({ length: frames }, (_, f) =>
-    f < 1 ? null : Array.from({ length: Math.min(f, 15) + 1 }, (_, i) => at(f - Math.min(f, 15) + i)).flat().map(round));
+  const span = (f: number, from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => at(f + from + i)).flat().map(round);
+  const trail = Array.from({ length: frames }, (_, f) => (f < 1 ? null : span(f, -Math.min(f, 15), 0)));
+  const future = Array.from({ length: frames }, (_, f) => (f > frames - 2 ? null : span(f, 0, Math.min(frames - 1 - f, 15))));
   const each = (fn: (p: [number, number]) => number[]) => Array.from({ length: frames }, (_, f) => fn(at(f)).map(round));
+  const layer = (id: string, group: EefOverlayLayer['group'], kind: EefOverlayLayer['kind'], title: string, color: string, fr: EefOverlayLayer['frames'], more: Partial<EefOverlayLayer> = {}): EefOverlayLayer => ({
+    id, group, title, kind, label: null, color, width: 2, frames: fr, default_on: true, hand: 'eef', in_model: false, model_color: null, ...more,
+  });
+  const seen = ([x, y]: [number, number]) => [x + 6, y - 3];
+  const layers: EefOverlayLayer[] = [
+    layer('trail_past', 'trail_past', 'polyline', '过去轨迹', '#00dcff', trail, { in_model: !observed }),
+    layer('trail_future', 'trail_future', 'polyline', '未来轨迹', '#a5f3fc', future, { default_on: false }),
+    ...(observed ? [layer('observed_trail', 'observed', 'polyline', '观测轨迹', '#00ff00', Array.from({ length: frames }, (_, f) => (f < 1 ? null : span(f, -Math.min(f, 15), 0).map((v, i) => (i % 2 ? v - 3 : v + 6)))))] : []),
+    layer('finger_axis', 'declared', 'segment', '两指连线 B（y）', '#ffa500', each(([x, y]) => [x - 30, y, x + 30, y]), { label: 'B', in_model: !observed }),
+    layer('axis_x', 'axes', 'arrow', '坐标轴 x', '#ff3b30', each(([x, y]) => [x, y, x + 40, y + 8])),
+    layer('axis_y', 'axes', 'arrow', '坐标轴 y', '#34c759', each(([x, y]) => [x, y, x - 12, y - 36])),
+    layer('axis_z', 'axes', 'arrow', '坐标轴 z', '#2f7bff', each(([x, y]) => [x, y, x, y + 50])),
+    layer('axis', 'declared', 'arrow', '朝向 A（z）', '#b26bff', each(([x, y]) => [x, y, x, y + 50]), { label: 'A', default_on: false, in_model: true, model_color: '#ff0000' }),
+    ...(observed
+      ? [layer('residual', 'residual', 'segment', '残差线', '#ffd400', each((p) => [...p, ...seen(p)]), { default_on: false }),
+         layer('observed_point', 'observed', 'cross', '观测点（tcp）', '#00ff00', each(seen), { in_model: true })]
+      : []),
+    layer('point', 'declared', 'point', '中心点 P（tcp）', '#ff0000', each(([x, y]) => [x, y]), { label: 'P', in_model: true }),
+  ];
   return {
     task_id: taskId,
     episode_index: episode,
@@ -185,15 +208,12 @@ export function eefOverlay(taskId: string, episode: number, vizCamera: string | 
         image_size_wh: [640, 480],
         fps: 15,
         media_frames: Array.from({ length: frames }, (_, f) => f),
+        times_s: Array.from({ length: frames }, (_, f) => (vizCamera ? Math.round((f / 15) * 1e6) / 1e6 : null)),
+        hands: [{ id: 'eef', title: 'panda_link8', color: '#ff0000', opening_m: Array.from({ length: frames }, (_, f) => Math.round(0.085 * (0.5 + 0.5 * Math.cos(f / 30)) * 1e4) / 1e4) }],
         skipped: null,
-        layers: [
-          { kind: 'polyline', label: null, color: '#00dcff', width: 2, frames: trail },
-          { kind: 'segment', label: 'B', color: '#ffa500', width: 2, frames: each(([x, y]) => [x - 30, y, x + 30, y]) },
-          { kind: 'arrow', label: 'A', color: '#ff0000', width: 2, frames: each(([x, y]) => [x, y, x, y + 50]) },
-          { kind: 'point', label: 'P', color: '#ff0000', width: 2, frames: each(([x, y]) => [x, y]) },
-        ],
+        layers,
       },
-      { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, media_frames: [], skipped: 'mount wrist does not take part', layers: [] },
+      { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, media_frames: [], times_s: [], hands: [], skipped: 'mount wrist does not take part', layers: [] },
     ],
   };
 }

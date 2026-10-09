@@ -189,3 +189,13 @@
 .vz-keys kbd { display: inline-block; min-width: 16px; padding: 0 4px; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 3px; background: var(--color-bg-2); font: 10px/16px "SF Mono", ui-monospace, Menlo, monospace; color: var(--c-text-3); text-align: center; }
 .vz-warn { padding: 6px 16px; font-size: 12px; color: var(--c-warning); background: rgb(var(--warning-1)); border-bottom: 1px solid var(--c-border); }
 .vz-skeleton { display: grid; place-items: center; min-height: 240px; color: var(--c-text-3); font-size: 13px; }
+
+/* EEF 叠加（设计 22 §3.3）：相机格子上的透明画布与工具条「叠加」菜单 */
+.vz-cell.kind-video canvas.vz-eef, .vz-cell.kind-depth canvas.vz-eef { background: transparent; z-index: 1; pointer-events: none; }
+.vz-ovm { width: 300px; display: grid; gap: 10px; font-size: 12px; }
+.vz-ovm .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vz-ovm .row .spacer { flex: 1; }
+.vz-ovm .k { color: var(--c-text-3); min-width: 36px; }
+.vz-ovm .grp { display: grid; gap: 4px; }
+.vz-ovm .grp .k { margin-bottom: 2px; }
+.vz-ovm .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }

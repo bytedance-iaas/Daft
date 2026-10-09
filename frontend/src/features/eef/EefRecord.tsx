@@ -2,7 +2,7 @@
 // the CPU's sub-item readings, and the model's answer on every review window next to the marked crops
 // it was shown. The adjudication card (F5.11) and the report's Episode tab (F5.12) both show it.
 import { Button, Space, Table, Tag } from '@arco-design/web-react';
-import { useState } from 'react';
+import { useContext } from 'react';
 import type { ResultRecord } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import {
@@ -20,7 +20,7 @@ import {
 } from '../../lib/eefReadings';
 import { zh } from '../../locales/zh';
 import { SignedImage } from '../media/SignedMedia';
-import { EefOverlayVideo, type SeekAsk } from './EefOverlayVideo';
+import { MiniPlayerOpen } from '../visualizer/miniPlayer';
 
 type D = Record<string, unknown>;
 const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
@@ -172,13 +172,13 @@ export function EefCpuEvidence({ taskId, record }: { taskId: string; record: Res
 
 /**
  * No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on each camera's whole clip -
- * the stretches it finds mismatched, the most confident first, with the frames it cited. The camera's own
- * video plays with the marks drawn live over it (design doc 20); a cited frame seeks it there. It is only
- * an opinion: the episode's verdict does not depend on it.
+ * the stretches it finds mismatched, the most confident first, with the frames it cited. A cited frame
+ * opens the mini player there, the marks drawn over the camera's own video (design doc 22 §3.3). It is
+ * only an opinion: the episode's verdict does not depend on it.
  */
-function OpinionCamera({ taskId, episode, c }: { taskId: string; episode: number; c: EefOpinionCamera }) {
+function OpinionCamera({ c }: { c: EefOpinionCamera }) {
   const O = Z().opinion;
-  const [seek, setSeek] = useState<SeekAsk | null>(null);
+  const open = useContext(MiniPlayerOpen);
   return (
     <div className="eef-window" data-testid={`eef-opinion-${c.camera}`}>
       <Space wrap size={8}>
@@ -204,7 +204,6 @@ function OpinionCamera({ taskId, episode, c }: { taskId: string; episode: number
         </div>
       ))}
       {c.status !== 'skipped' && !c.segments.length && !c.failures.length ? <div className="episode-line">{O.none}</div> : null}
-      {c.status !== 'skipped' ? <EefOverlayVideo taskId={taskId} episode={episode} camera={c.camera} seek={seek} /> : null}
       {c.segments.map((g, i) => (
         <div key={g.key} className="eef-opinion-segment" data-testid="eef-opinion-segment">
           <Space wrap size={6}>
@@ -221,7 +220,7 @@ function OpinionCamera({ taskId, episode, c }: { taskId: string; episode: number
             <Space wrap size={4} className="episode-line">
               <span className="muted">{O.evidenceFrames}</span>
               {g.evidenceFrames.map((f) => (
-                <Button key={f} size="mini" type="text" aria-label={O.seekFrame(f + 1)} onClick={() => setSeek((s) => ({ frame: f, n: (s?.n ?? 0) + 1 }))}>
+                <Button key={f} size="mini" type="text" disabled={!open} title={O.evidenceHint} aria-label={O.seekFrame(f + 1)} onClick={() => open?.({ camera: c.camera, frame: f })}>
                   {f + 1}
                 </Button>
               ))}
@@ -234,7 +233,7 @@ function OpinionCamera({ taskId, episode, c }: { taskId: string; episode: number
   );
 }
 
-export function EefOpinion({ taskId, record }: { taskId: string; record: ResultRecord }) {
+export function EefOpinion({ record }: { record: ResultRecord }) {
   const op = eefOpinion(details(record));
   if (!op) return null;
   const O = Z().opinion;
@@ -244,7 +243,7 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
       <div className="episode-line muted">{O.advisory}</div>
       {op.failure ? <div className="episode-line warn">{O.failed(op.failure)}</div> : null}
       {op.cameras.map((c) => (
-        <OpinionCamera key={c.camera} taskId={taskId} episode={record.episode_index} c={c} />
+        <OpinionCamera key={c.camera} c={c} />
       ))}
     </div>
   );

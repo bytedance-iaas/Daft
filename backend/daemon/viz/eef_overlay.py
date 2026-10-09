@@ -1,11 +1,17 @@
-"""The EEF opinion's marks for one episode, computed on request (design doc 20; C4 ``EefOverlay``).
+"""The EEF marks of one episode, computed on request (design docs 20, 22 §3; C4 ``EefOverlay``).
 
-The model's marked clip is encoded in memory and never saved, so the report plays the camera's own
-video (the task's ``VizEpisode`` camera) and paints these layers on a canvas above it. They come from
-the task's trajectory bundle alone - no frame is decoded: the copy made at start
-(``inputs/uploads.json``, brought back from the delivery when the work directory was cleaned), else the
-upload itself. Each bundle camera is matched to the ``VizEpisode`` camera playing the same file (LeRobot)
-or topic (mcap); ``viz_camera`` is null when none does.
+The model's marked clip is encoded in memory and never saved, so the mini player plays the camera's own
+video (the task's ``VizEpisode`` camera) and paints these layers on a canvas above it. They come from the
+task's trajectory bundle - no frame is decoded: the copy made at start (``inputs/uploads.json``, brought
+back from the delivery when the work directory was cleaned), else the upload itself - and, when the
+module measured the episode (a gripper reference was given), from its observation rows in the run
+directory. Each bundle camera is matched to the ``VizEpisode`` camera playing the same file (LeRobot) or
+topic (mcap); ``viz_camera`` is null when none does.
+
+``times_s`` places every sample frame where the player shows its paired video frame, from the same data
+the player plays (design doc 22 §3.4): frame k of a LeRobot clip at k / fps, message k of an mcap topic
+at its time in the episode's scan (null before the first keyframe, which is never shown). The bundle's
+own timeline plays no part: its zero and clock need not be the player's.
 """
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ import logging
 from pathlib import Path
 
 from curation.contracts import modules as registry
+from curation.pipeline.records import module_dir
 
 from ..errors import ApiError
 from ..results.files import LRU
@@ -22,16 +29,19 @@ log = logging.getLogger("daemon.viz")
 
 MODULE = "eef_video_consistency"
 PARAM = "trajectory_json"
+#: a gripper reference: the module measured the episode, and the model saw its review windows
+REFERENCES = ("observation_seeds", "gripper_template")
 _CACHE = LRU(max_items=32, max_bytes=64 << 20)
 
 
-def _bundle(rt, task, owner: str) -> Path:
-    """The trajectory bundle the task's EEF module read."""
+def _bundle(rt, task, owner: str) -> tuple[Path, dict]:
+    """The trajectory bundle the task's EEF module read, and the module's parameters."""
     from ..orchestr.service import orchestrator_of
     from ..results.store import store_of
 
     row = next((m for m in rt.repo.get_task_modules(task.id) if m.module_id == MODULE), None)
-    handle = (row.params or {}).get(PARAM) if row is not None else None
+    params = (row.params or {}) if row is not None else {}
+    handle = params.get(PARAM)
     if not handle:
         raise ApiError("not_found", "这个任务没有勾选「EEF–视频一致性」，没有可叠加的投影",
                        details={"reason": "no_eef_module"})
@@ -49,39 +59,79 @@ def _bundle(rt, task, owner: str) -> Path:
         except (OSError, ValueError):
             entry = None
         if entry and (run_dir / entry["path"]).is_file():
-            return run_dir / entry["path"]
+            return run_dir / entry["path"], params
     kind = registry.upload_params(MODULE)[PARAM]
     path, _ = orchestrator_of(rt).uploads.resolve(owner, handle, kind=kind, field=f"modules.{MODULE}.params.{PARAM}")
     if not path.is_file():
         raise ApiError("not_found", "这个任务的 trajectory.json 已不在（运行目录和上传件都找不到）",
                        details={"reason": "no_trajectory"})
-    return path
+    return path, params
 
 
-def _viz_cameras(svc, task_id: str, owner: str, index: int) -> tuple[dict[str, str], dict[str, str]]:
-    """(file -> VizEpisode camera key, topic -> key) of the task's input; empty when it cannot be read."""
+def _observation_files(rt, task_id: str, index: int) -> list[Path]:
+    """The episode's observation rows, one file a camera (``<camera>.jsonl``); none in the opinion mode."""
+    from ..results.store import store_of
+
+    d = Path(module_dir(str(store_of(rt).task_dir(task_id)), MODULE)) / "observations" / f"{int(index):06d}"
+    return sorted(d.glob("*.jsonl")) if d.is_dir() else []
+
+
+def _rows(path: Path) -> list[dict]:
+    out = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        if line.strip():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+    return out
+
+
+def _viz(svc, task_id: str, owner: str, index: int):
+    """(file -> VizEpisode camera key, topic -> key, the episode times of a camera's frames); empty maps and
+    no times when the task's input cannot be read."""
     try:
         src = svc.task_source(task_id, owner)
         reader = svc.reader_of(src)
         if reader == "lerobot":
             m, row = svc.lerobot.row(src, index)
-            return {row.videos[f]: key for key, f in m.camera_features.items() if f in row.videos}, {}
+            fps = float(m.fps or 0)
+
+            def lerobot_times(key: str, frames: list) -> list:
+                return [round(k / fps, 6) if k is not None and fps > 0 else None for k in frames]
+
+            return ({row.videos[f]: key for key, f in m.camera_features.items() if f in row.videos}, {},
+                    lerobot_times)
         if reader == "mcap":
             cams = svc.dataset(src).get("cameras") or []
-            return {}, {c["source"]: c["key"] for c in cams if c.get("source")}
-    except Exception:  # noqa: BLE001 - the layers still draw; the report just has no video to put them on
+            scanned = svc.mcap.frame_times(src, index)
+
+            def mcap_times(key: str, frames: list) -> list:
+                ts, first = scanned.get(key, ([], 0.0))
+                return [ts[k] if k is not None and 0 <= k < len(ts) and ts[k] >= first - 1e-6 else None
+                        for k in frames]
+
+            return {}, {c["source"]: c["key"] for c in cams if c.get("source")}, mcap_times
+    except Exception:  # noqa: BLE001 - the layers still come back; the player just has nothing to put them on
         log.warning("eef overlay: the cameras of task %s episode %s could not be matched", task_id, index,
                     exc_info=True)
-    return {}, {}
+    return {}, {}, None
 
 
 def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
     from curation.extensions.eef_consistency import load, overlay
 
     task = rt.repo.get_task(task_id, owner=owner)
-    path = _bundle(rt, task, owner)
+    path, params = _bundle(rt, task, owner)
+    judged = any(params.get(p) for p in REFERENCES)
     stat = path.stat()
-    key = (task.id, str(path), stat.st_size, stat.st_mtime_ns, int(index))
+    observations = _observation_files(rt, task.id, index) if judged else []
+    seen = tuple((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in observations)
+    key = (task.id, str(path), stat.st_size, stat.st_mtime_ns, int(index), judged, seen)
     cameras = _CACHE.get(key)
     if cameras is None:
         result = load.load_bundle(path, check_media=False, episodes=[int(index)])
@@ -91,14 +141,18 @@ def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
         sample = result.samples.get(int(index))
         if sample is None:
             raise ApiError("not_found", f"trajectory.json 里没有 episode {index}", details={"reason": "no_episode"})
-        cameras = overlay.episode_overlay(sample)
+        observed = {f.stem: overlay.observed_tracks(_rows(f), sample.n_frames) for f in observations
+                    if f.stem in sample.cameras}
+        cameras = overlay.episode_overlay(sample, observed, judged)
         for c in cameras:
             media = sample.cameras[c["camera_id"]].media
             c["media_uri"], c["topic"] = media.get("uri"), media.get("topic")
         _CACHE.put(key, cameras, len(json.dumps(cameras)))
-    files, topics = _viz_cameras(svc, task.id, owner, int(index))
+    files, topics, times = _viz(svc, task.id, owner, int(index))
     out = []
     for c in cameras:
         viz = topics.get(c["topic"]) if c["topic"] else files.get(c["media_uri"])
-        out.append({k: v for k, v in c.items() if k not in ("media_uri", "topic")} | {"viz_camera": viz})
+        frames = c["media_frames"]
+        out.append({k: v for k, v in c.items() if k not in ("media_uri", "topic")}
+                   | {"viz_camera": viz, "times_s": times(viz, frames) if viz and times else [None] * len(frames)})
     return {"task_id": task.id, "episode_index": int(index), "cameras": out}

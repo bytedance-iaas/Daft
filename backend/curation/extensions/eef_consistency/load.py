@@ -102,6 +102,7 @@ class EefSample:
     warnings: list[C.Issue]
     hand_poses: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
     hand_openings: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
+    gripper_opening: np.ndarray = dataclasses.field(default_factory=lambda: np.zeros(0))  # (N,) metres, NaN unknown
 
     @property
     def has_absolute_pose(self) -> bool:
@@ -397,6 +398,7 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
     T_abs = np.repeat(eye4[None], n, 0)
     eef_mask = np.zeros(n, bool)
     grip = np.full(n, np.nan)
+    opening = np.full(n, np.nan)
     ssi = np.full(n, -1, int)
     t = np.full(n, np.nan)
     pose_types = set()
@@ -470,6 +472,8 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
         g = r["gripper"]
         if g is not None and g["closed_fraction"] is not None:
             grip[i] = g["closed_fraction"]
+        if g is not None and g.get("opening_m") is not None:
+            opening[i] = g["opening_m"]
         for cid, cf in r["cameras"].items():
             cw = f"{fw}/cameras/{cid}"
             if not col.require(cid in cams, f"frame {i}: camera {cid} has no camera view", path=cw,
@@ -572,7 +576,7 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
         eef_frame=s["eef_frame"], reference_frame=s["reference_frame"],
         pose_type=next(iter(pose_types)) if pose_types else None, T_reference_eef=T_abs, T_declared=T_decl,
         eef_mask=eef_mask, anchor_missing=anchor_missing, gripper=grip, source_state_index=ssi, clocks=clocks,
-        points=points, axes=axes, cameras=streams, consistency={}, warnings=[])
+        points=points, axes=axes, cameras=streams, consistency={}, warnings=[], gripper_opening=opening)
     from .umi import load_hands
 
     try:

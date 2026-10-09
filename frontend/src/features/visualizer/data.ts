@@ -4,7 +4,7 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { ApiError } from '../../api/errors';
-import type { VizDataset, VizDisplay, VizDisplayConfig, VizEpisode, VizFrameIndex, VizMediaPending, VizSeries } from '../../api/types';
+import type { EefOverlay, VizDataset, VizDisplay, VizDisplayConfig, VizEpisode, VizFrameIndex, VizMediaPending, VizSeries } from '../../api/types';
 
 /** Which reader input the player shows: a dataset's registration or a task's frozen input. */
 export interface VizRef {
@@ -203,3 +203,23 @@ export async function probeMedia(url: string, signal?: AbortSignal): Promise<Med
   const body = await res.json().catch(() => undefined);
   return { state: 'failed', message: ApiError.fromResponse(res.status, body).message };
 }
+
+/** A task's EEF marks are not there to draw: it did not run the module, or its bundle has no such episode. */
+export function noEefOverlay(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 404 && ['no_eef_module', 'no_episode'].includes(String(e.details?.reason ?? ''));
+}
+
+/**
+ * The EEF marks of a task's episode (design doc 22 §3.3), asked once the episode is on screen (an mcap
+ * episode has been scanned by then, and the marks are placed on its frames). Not retried on a 4xx.
+ */
+export function useEefOverlay(taskId: string, episode: number, enabled = true) {
+  return useQuery<EefOverlay>({
+    queryKey: ['eef-overlay', taskId, episode],
+    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}/eef-overlay', { params: { path: { id: taskId, index: episode } } })),
+    enabled,
+    staleTime: Infinity,
+    retry: (n, e) => n < 1 && !(e instanceof ApiError && e.status >= 400 && e.status < 500),
+  });
+}
+

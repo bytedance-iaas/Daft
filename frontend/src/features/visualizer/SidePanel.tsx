@@ -1,5 +1,7 @@
 import { Button, Select } from '@arco-design/web-react';
-import type { VizCamera, VizEpisode, VizEpisodeCamera, VizSeries, VizStream } from '../../api/types';
+import { useMemo } from 'react';
+import type { EefOverlayCamera, VizCamera, VizEpisode, VizEpisodeCamera, VizSeries, VizStream } from '../../api/types';
+import { overlayTimeline, sampleAt } from '../../lib/eefOverlay';
 import { fmtNum, legendEntries, valueAt } from '../../lib/vizCurves';
 import type { CellContent } from '../../lib/vizLayout';
 import { fmtClock, frameAt } from '../../lib/vizTime';
@@ -59,6 +61,24 @@ function DepthInfo({ stream, ep, model, clock }: { stream: VizStream; ep: VizEpi
   );
 }
 
+/** The EEF marks over the focused camera (design doc 22 §3.3): which bundle camera, the hands, the sample frame of the moment. */
+function OverlayInfo({ cam, clock }: { cam: EefOverlayCamera; clock: PlayerClock }) {
+  const tl = useMemo(() => overlayTimeline(cam.times_s), [cam]);
+  const f = useClockValue(clock, (s) => sampleAt(tl, s.t));
+  const media = f !== null ? cam.media_frames[f] : null;
+  const S = zh.viz.overlay.side;
+  return (
+    <>
+      <div className="sec">{S.title}</div>
+      <Kv k={S.camera} v={<span className="mono">{cam.camera_id}</span>} />
+      <Kv k={S.hands} v={cam.hands.map((h) => h.title).join('、') || '—'} />
+      <Kv k={S.sample} v={f !== null ? f + 1 : S.none} />
+      <Kv k={S.media} v={media !== null && media !== undefined ? media + 1 : '—'} />
+      <div className="note">{S.note}</div>
+    </>
+  );
+}
+
 /**
  * The info panel (design doc 18 §5.6): it follows the focused cell; with several annotation tracks
  * it also chooses the one the subtitle shows.
@@ -75,6 +95,7 @@ export function SidePanel({
   onTrack,
   onClose,
   clientDecoded,
+  overlay = null,
 }: {
   focused: CellContent | null;
   model: { cameras: VizCamera[]; streams: VizStream[] };
@@ -89,6 +110,8 @@ export function SidePanel({
   onClose: () => void;
   /** cameras the browser decodes itself (design doc 19 §3) */
   clientDecoded?: ReadonlySet<string>;
+  /** the EEF marks over the focused camera, if any (design doc 22 §3.3) */
+  overlay?: EefOverlayCamera | null;
 }) {
   let title = zh.viz.side.title;
   let body: React.ReactNode;
@@ -122,6 +145,7 @@ export function SidePanel({
           <Kv k={zh.viz.side.access} v={clientDecoded?.has(cam.key) ? zh.viz.access.client : (zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access)} />
           <div className="sec">{zh.viz.side.current}</div>
           <Now clock={clock} ep={ep} />
+          {overlay ? <OverlayInfo cam={overlay} clock={clock} /> : null}
           {openable ? (
             <div style={{ marginTop: 14 }}>
               <Button size="small" onClick={() => window.open(e?.url as string, '_blank', 'noopener')}>

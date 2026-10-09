@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, Empty, Radio, Select, Space, Spin, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { IconLeft, IconRight } from '@arco-design/web-react/icon';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
@@ -9,6 +9,7 @@ import { moduleName, qk, useModules } from '../../api/queries';
 import type { EpisodeView, ModuleRegistry, Report, ReportV2, TaskEpisode, TaskEpisodePage } from '../../api/types';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
+import { MiniPlayerOpen, type MiniSeek } from '../../features/visualizer/miniPlayer';
 import { reasonLine, recordError } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { BlockError, EPISODE_BLOCKS, GenericBlock, blockTitleExtra } from './episodeBlocks';
@@ -423,7 +424,9 @@ export function EpisodesTab({
   const [filter, setFilter] = useState<EpisodeFilter>('all');
   const [findingFilter, setFindingFilter] = useState<FindingFilter>(NO_FINDING_FILTER);
   // the mini player (design doc 18 §4.6): on a finding's moment, or on the whole episode
-  const [mini, setMini] = useState<{ focus: number | null } | null>(null);
+  const [mini, setMini] = useState<{ focus: number | null; seek?: MiniSeek } | null>(null);
+  // the EEF opinion's evidence frames open it on a camera's sample frame (design doc 22 §3.3)
+  const openSeek = useCallback((seek: MiniSeek) => setMini({ focus: null, seek }), []);
   const fq = filterQuery(filter, v2 ? findingFilter : NO_FINDING_FILTER);
   // Without ?ep, the first episode of the filtered order.
   const first = useQuery({
@@ -455,7 +458,7 @@ export function EpisodesTab({
     body = (
       <div className="card-gap" data-testid="episode-view">
         <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onOpen={(i) => setMini({ focus: i })} onOpenAll={() => setMini({ focus: null })} />
-        {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
+        {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} seek={mini.seek ?? null} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
         <Card title={E().evidence} size="small">
           {evidence.length ? (
             <div className="evidence-grid">
@@ -472,7 +475,9 @@ export function EpisodesTab({
             <Typography.Text type="secondary">{zh.report.evidenceNone}</Typography.Text>
           )}
         </Card>
-        <ModuleBlocks taskId={taskId} rev={rev} view={v} report={report} v2={v2} onSelect={onSelect} />
+        <MiniPlayerOpen.Provider value={openSeek}>
+          <ModuleBlocks taskId={taskId} rev={rev} view={v} report={report} v2={v2} onSelect={onSelect} />
+        </MiniPlayerOpen.Provider>
       </div>
     );
   }

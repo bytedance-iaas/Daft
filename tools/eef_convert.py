@@ -118,8 +118,11 @@ def _first_size(path: str, topic: str) -> tuple[list[int] | None, str]:
             if codec != "h264":
                 return None, codec
             ctx = ctx or av.CodecContext.create("h264", "r")
-            for f in ctx.decode(av.Packet(frame[1])):
-                return [int(f.width), int(f.height)], codec
+            try:
+                for f in ctx.decode(av.Packet(frame[1])):
+                    return [int(f.width), int(f.height)], codec
+            except av.error.InvalidDataError:      # a stream started mid-GOP: wait for its first keyframe
+                pass
             if n > 300:
                 break
     return None, "h264" if ctx is not None else "none"

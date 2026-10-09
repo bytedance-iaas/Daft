@@ -26,7 +26,7 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": [
         "-c",
-        "cd backend && CURATOR_BASE_PATH=/curation CURATOR_PORT=${PORT:-8080} CURATOR_DATA_DIR=${CURATOR_DATA_DIR:-${TMPDIR:-/tmp}/curator-eef} CURATOR_LOCAL_DATA_ROOT=${CURATOR_LOCAL_DATA_ROOT:-$HOME/ws/ws_general/galbot/dataset2} CURATOR_AUTH_MODE=none CURATOR_MASTER_KEY=${CURATOR_MASTER_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=} CURATOR_STATIC_DIR=../frontend/dist CURATOR_LOG_FORMAT=text ../.venv/bin/python -m daemon"
+        "E=${CURATOR_DATA_DIR:-${TMPDIR:-/tmp}/curator-eef} && mkdir -p $E/tos && cd backend && CURATOR_BASE_PATH=/curation CURATOR_PORT=${PORT:-8080} CURATOR_DATA_DIR=$E CURATOR_LOCAL_DATA_ROOT=${CURATOR_LOCAL_DATA_ROOT:-$HOME/ws/ws_general/galbot/dataset2} CURATOR_LOCAL_DELIVERY_ROOT=$E/tos CURATOR_VERIFY_VISIBILITY_S=0 CURATOR_AUTH_MODE=none CURATOR_MASTER_KEY=${CURATOR_MASTER_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=} CURATOR_STATIC_DIR=../frontend/dist CURATOR_LOG_FORMAT=text ../.venv/bin/python -m daemon"
       ],
       "port": 8080,
       "autoPort": true
@@ -50,6 +50,15 @@
       ],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "curator-fakevlm",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && PYTHONPATH=.:../tools ../.venv/bin/python -c \"import time; from tests.cli.fakevlm_server import FakeVlmServer; s = FakeVlmServer(port=${PORT:-8766}).__enter__(); print(s.url, flush=True); time.sleep(86400)\""
+      ],
+      "port": 8766
     }
   ]
 }

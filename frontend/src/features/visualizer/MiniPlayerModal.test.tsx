@@ -1,10 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { StrictMode, useState } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { api, unwrap } from '../../api/client';
 import type { EpisodeView } from '../../api/types';
+import { readPrefs } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
+import { db } from '../../mocks/db';
+import { eefOpinionRecord } from '../../mocks/eef';
 import { FINDINGS_TASK } from '../../mocks/findings';
 import { server } from '../../mocks/server';
 import { renderWithProviders } from '../../test/render';
@@ -79,3 +82,75 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
     if (view.dataset_id) expect(screen.getByRole('link', { name: zh.viz.mini.openFull })).toHaveAttribute('href', `/visualize?dataset=${view.dataset_id}&ep=6`);
   });
 });
+
+describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)', () => {
+  beforeEach(() => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
+    window.localStorage.clear();
+  });
+  const ran = () => {
+    db.extraRecords = new Map([[FINDINGS_TASK, new Map([[6, { eef_video_consistency: eefOpinionRecord(6) }]])]]);
+  };
+
+  it('a task without the EEF module gets no menu and no complaint', async () => {
+    const view = await episode(6);
+    renderWithProviders(<Harness view={view} start={null} />);
+    await screen.findByTestId('vz-progress');
+    await new Promise((r) => setTimeout(r, 300));                      // the 404 has come back
+    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+    expect(screen.queryByTestId('vz-overlay-failed')).toBeNull();
+    expect(document.querySelector('canvas.vz-eef')).toBeNull();
+  });
+
+  it('draws the marks over the camera; the menu changes them and remembers the choice', async () => {
+    ran();
+    const view = await episode(6);
+    renderWithProviders(<Harness view={view} start={null} />);
+    const button = await screen.findByTestId('vz-overlay');
+    expect(await screen.findByTestId('vz-eef-ext')).toBeInTheDocument();
+    fireEvent.click(button);
+    const menu = await screen.findByTestId('vz-overlay-menu');
+    const box = (id: string) => within(screen.getByTestId(`vz-layer-${id}`)).getByRole('checkbox');
+    expect(box('axis_x')).toBeChecked();
+    expect(box('axis')).not.toBeChecked();                             // A is off by default
+    expect(box('trail_future')).not.toBeChecked();
+    fireEvent.click(within(menu).getByRole('button', { name: zh.viz.overlay.presets.model }));
+    await waitFor(() => expect(box('axis')).toBeChecked());
+    expect(box('axis_x')).not.toBeChecked();
+    expect(readPrefs().eefOverlay).toMatchObject({ mode: 'on', preset: 'model' });
+    fireEvent.click(box('trail_future'));
+    await waitFor(() => expect(readPrefs().eefOverlay).toMatchObject({ preset: 'custom', layers: { trail_future: true, axis: true } }));
+  });
+
+  it('says one line when the marks cannot be read, and the cameras still play', async () => {
+    ran();
+    server.use(http.get('*/api/v1/tasks/:id/episodes/:index/eef-overlay', () => HttpResponse.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })));
+    const view = await episode(6);
+    renderWithProviders(<Harness view={view} start={null} />);
+    expect(await screen.findByTestId('vz-overlay-failed')).toHaveTextContent(zh.viz.overlay.failed);
+    expect(screen.getByTestId('vz-player')).toBeInTheDocument();
+    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+  });
+
+  it('lays out an EEF finding over the cameras with marks, the finding\'s one bold', async () => {
+    ran();
+    const view = await episode(6);
+    const base = view.findings![0];
+    const eef = { ...view, findings: [{ ...base, module: 'eef_video_consistency', level: 'info' as const, finding: { ...base.finding, code: 'opinion_mismatch', item: 'MV-4', message_zh: '模型认为末端投影与画面不符', frames: undefined, time_s: [2.67, 6.33] as [number, number], scope: { camera: 'ext' } } }] };
+    renderWithProviders(<Harness view={eef} start={0} />);
+    const canvas = await screen.findByTestId('vz-eef-ext');
+    await waitFor(() => expect(document.querySelectorAll('.vz-cell.kind-curve')).toHaveLength(0));
+    expect(document.querySelectorAll('.vz-cell.kind-video')).toHaveLength(1);
+    expect(canvas.closest('.vz-cell')).toBeTruthy();
+  });
+
+  it('opens on a frame the opinion cites, paused there', async () => {
+    ran();
+    const view = await episode(6);
+    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={null} seek={{ camera: 'ext', frame: 30 }} onFocus={() => undefined} onClose={() => undefined} />);
+    await screen.findByTestId('vz-eef-ext');
+    // the mock shows sample frame 30 at 30 / 15 s
+    await waitFor(() => expect(document.querySelector('.vz-stamp')).toHaveTextContent(/^00:02\.0/));
+  });
+});
+
