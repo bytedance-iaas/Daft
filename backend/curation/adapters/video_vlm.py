@@ -18,8 +18,9 @@ PROTOCOL = "video-task/2"
 #: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
 #: stale, so ``check --resume`` judges them again. ``camera-check/1`` and ``1.1`` were the two-pass
 #: review's; ``2`` is the single-pass block's; ``3`` adds occlusion and the camera's view (what the
-#: camera physically is, against its name).
-CAMERA_CHECK_PROTOCOL = "camera-check/3"
+#: camera physically is, against its name); ``4`` tells occlusion from the manipulation itself and
+#: from glitch, and has the kind read from the picture before the name.
+CAMERA_CHECK_PROTOCOL = "camera-check/4"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
@@ -79,21 +80,32 @@ scene that jumps is shake, a broken-looking scene is glitch; report both only wh
 there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
 "minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
 the episode. occlusion: the working area - the gripper, the object being handled or the place it
-goes - is hidden from THIS camera by something between the lens and the scene: the robot's own arm
-or body, a person, a cable, a held object, or the scene pressed against the lens; the lens itself
-is clean (a thing stuck ON the lens is contamination). "minor" hides it briefly or in part,
-"severe" hides the action for a stretch long enough that it cannot be followed; source names what
-hides it. times are episode-relative seconds within that camera's own window, like evidence;
+goes - is hidden from THIS camera by something between the lens and the scene: an opaque patch,
+shape or dark block laid over part of an otherwise intact picture, a person, a cable, the robot's
+body, an object that is not being handled, or the scene pressed against the lens; the lens itself
+is clean (a thing stuck ON the lens is contamination). The arm, the gripper or the object it holds
+standing in front of the work while handling it is the task being done, NOT occlusion; a wrist
+camera filled by what the gripper holds is normal; a held object leaving the frame is not
+occlusion either. "minor" hides the work briefly or in part, "severe" hides it for a stretch long
+enough that the action cannot be followed; source names what hides it. Tell occlusion from
+glitch by the picture around it: a flat shape covering part of a picture that is otherwise whole
+and sharp is occlusion (something in front of the lens), however straight its edges; a glitch is
+damage INSIDE the picture - blocks of wrong pixels, tearing, smearing, garbled colours. Never
+report the same stretch as both. times are episode-relative seconds within that camera's own window, like evidence;
 leave times empty for "none". Give up to four intervals; when the defect recurs in short bursts
 across the clip, give the span that encloses them rather than one burst, and say "intermittent" in
 the note. When the defect is there for the whole clip, leave times empty and write "persistent" in
-the note. view: what THIS camera physically is, read from the picture alone - "wrist" when the
-picture moves with the arm and shows the gripper from behind it, "fixed" when the scene stays put;
-arm is the arm the camera is mounted on or mainly looks at, "single" when the robot has one arm.
-matches_name is "no" ONLY when the picture plainly contradicts the camera's supplied name: a name
-saying wrist, hand or gripper on a fixed view, a fixed-sounding name on a wrist view, or left/right
-in the name on the other arm of a two-arm robot. Left or right in the name of a single-arm robot or
-of a stereo pair says nothing about arms: answer "unknown" rather than guess. same_as names
+the note. view: what THIS camera physically is. Decide kind from the picture BEFORE you read the
+camera's name, and never from the name: when the whole room swings and turns as the arm moves
+while the gripper fingers stay in the same place in the frame, it is "wrist", whatever it is
+called; when the room stays still and the arm travels through it, it is "fixed", whatever it is
+called. Say in the note what you saw. arm is the arm the camera is mounted on or mainly looks at,
+"single" when the robot has one arm. matches_name compares that kind with the supplied name: "no"
+when a name saying wrist, hand or gripper sits on a picture whose room stays still, when a name
+saying exterior, front, side, top, overhead or external sits on a picture that swings with the
+arm, or when left/right in the name is on the other arm of a two-arm robot; "yes" when the name
+agrees; Left or right in the name of a single-arm robot or of a stereo pair says nothing about
+arms: that part is "unknown" rather than a guess, and the kind still counts. same_as names
 another supplied camera when the two pictures are the same recording, else leave it empty. Keep
 every note under twelve words. Use "unknown" when you cannot judge an item. These items never
 change verdict, completion or evidence."""

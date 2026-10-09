@@ -406,7 +406,7 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 
 - **C1 4.1**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，severity medium，按机位），
   明细表加 `occlusion`、`view_matches_name` 两列；`covers` 相应多 IMG-8、MV-2。其他模块不变。
-- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/3`，`items` 多 `occlusion`，
+- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/4`（`3` 是同日第一版措辞），`items` 多 `occlusion`，
   新增 `identity`（`consistent` / `inconsistent` / `unknown`），`per_camera` 每路多 `occlusion`（`level`、`times`、`source`、`share`）
   与 `view`（`kind`、`arm`、`matches_name`、`same_as`、`note`）；旧协议的记录视为过期，重试会重判，读出来 IMG-8 / MV-2 记 unassessable。
   `task_success` 记录里 `cameras[*].camera_check` 同样多这两块。
