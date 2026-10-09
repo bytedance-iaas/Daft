@@ -1,0 +1,824 @@
+{
+  "schema": "eef/umi_calibration.schema.json",
+  "valid": [
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "tcp",
+      "body_to_optical": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "none",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "maker",
+        "method": "CAD",
+        "assurance": "declared"
+      },
+      "topics": {
+        "pose": "/{hand}/tcp_pose"
+      },
+      "instruction": "fold the towel"
+    }
+  ],
+  "invalid": [
+    {
+      "schema_version": "umi-calibration/1",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "inch",
+        "scale": 1
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "design doc 22 §7 (DEMO)",
+        "method": "inferred from recordings",
+        "assurance": "model_assumed",
+        "items": {
+          "T_camera_tcp": {
+            "assurance": "model_assumed",
+            "method": "fingertips in one frame and the widest opening"
+          },
+          "body_to_optical": {
+            "assurance": "model_assumed",
+            "method": "the picture's own motion against VIO, 24 axis-aligned rotations"
+          }
+        }
+      },
+      "topics": {
+        "pose": "robot0/pose"
+      }
+    },
+    {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "T_camera_tcp": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0.086
+        ],
+        [
+          0,
+          0,
+          1,
+          0.17
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+        "unit": "m",
+        "scale": 1.0
+      },
+      "intrinsics_fallback": {
+        "robot0": {
+          "model": "opencv_fisheye",
+          "K": [
+            [
+              300.0,
+              0,
+              320.0
+            ],
+            [
+              0,
+              277.0,
+              240.0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "D": [
+            -0.02,
+            0.001,
+            -0.001,
+            0.0
+          ],
+          "image_size_wh": [
+            640,
+            480
+          ],
+          "t_bc": [
+            0.013,
+            0.022,
+            0.013
+          ]
+        }
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+        "source": "x",
+        "method": "y",
+        "assurance": "guessed"
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
-import { Button, Select } from '@arco-design/web-react';
+import { Button, InputNumber, Select } from '@arco-design/web-react';
 import { useMemo } from 'react';
-import type { EefOverlayCamera, VizCamera, VizEpisode, VizEpisodeCamera, VizSeries, VizStream } from '../../api/types';
-import { overlayTimeline, sampleAt } from '../../lib/eefOverlay';
+import type { EefOverlay, EefOverlayCamera, VizCamera, VizEpisode, VizEpisodeCamera, VizSeries, VizStream } from '../../api/types';
+import { gapHint, MAX_GAP_MS, overlayTimeline, sampleAt, type OverlayChoice } from '../../lib/eefOverlay';
 import { fmtNum, legendEntries, valueAt } from '../../lib/vizCurves';
 import type { CellContent } from '../../lib/vizLayout';
 import { fmtClock, frameAt } from '../../lib/vizTime';
@@ -61,12 +61,24 @@ function DepthInfo({ stream, ep, model, clock }: { stream: VizStream; ep: VizEpi
   );
 }
 
-/** The EEF marks over the focused camera (design doc 22 §3.3): which bundle camera, the hands, the sample frame of the moment. */
-function OverlayInfo({ cam, clock }: { cam: EefOverlayCamera; clock: PlayerClock }) {
+/** The EEF marks over the focused camera, with what the viewer may change of them (design doc 22 §3.3, §5.2). */
+export interface OverlaySide {
+  cam: EefOverlayCamera;
+  interpolation: EefOverlay['interpolation'];
+  choice: OverlayChoice;
+  onChoice: (c: OverlayChoice) => void;
+}
+
+/** The EEF marks over the focused camera (design doc 22 §3.3): which bundle camera, the hands, the sample frame of
+ * the moment; for a handheld gripper the longest pose gap bridged for the drawing (§5.2). */
+function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock }) {
+  const { cam, interpolation, choice, onChoice } = side;
   const tl = useMemo(() => overlayTimeline(cam.times_s), [cam]);
   const f = useClockValue(clock, (s) => sampleAt(tl, s.t));
   const media = f !== null ? cam.media_frames[f] : null;
   const S = zh.viz.overlay.side;
+  const hint = gapHint(interpolation);
+  const filled = cam.hands.reduce((n, h) => n + (interpolation?.frames[h.id] ?? 0), 0);
   return (
     <>
       <div className="sec">{S.title}</div>
@@ -74,6 +86,37 @@ function OverlayInfo({ cam, clock }: { cam: EefOverlayCamera; clock: PlayerClock
       <Kv k={S.hands} v={cam.hands.map((h) => h.title).join('、') || '—'} />
       <Kv k={S.sample} v={f !== null ? f + 1 : S.none} />
       <Kv k={S.media} v={media !== null && media !== undefined ? media + 1 : '—'} />
+      {hint ? (
+        <>
+          <Kv
+            k={S.gap}
+            v={
+              <InputNumber
+                size="mini"
+                min={1}
+                max={MAX_GAP_MS}
+                step={10}
+                precision={0}
+                suffix="ms"
+                style={{ width: 112 }}
+                value={choice.maxGapMs ?? hint.defaultMs}
+                onChange={(v) => onChoice({ ...choice, maxGapMs: typeof v === 'number' && v > 0 && v !== hint.defaultMs ? Math.min(v, MAX_GAP_MS) : null })}
+                aria-label={S.gap}
+                data-testid="vz-gap"
+              />
+            }
+          />
+          <div className="note">
+            {S.gapHint(hint.defaultMs, hint.lo, hint.hi, hint.fps)}
+            {S.gapFilled(filled)}
+            {choice.maxGapMs !== null ? (
+              <Button size="mini" type="text" onClick={() => onChoice({ ...choice, maxGapMs: null })}>
+                {S.gapReset}
+              </Button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
       <div className="note">{S.note}</div>
     </>
   );
@@ -111,7 +154,7 @@ export function SidePanel({
   /** cameras the browser decodes itself (design doc 19 §3) */
   clientDecoded?: ReadonlySet<string>;
   /** the EEF marks over the focused camera, if any (design doc 22 §3.3) */
-  overlay?: EefOverlayCamera | null;
+  overlay?: OverlaySide | null;
 }) {
   let title = zh.viz.side.title;
   let body: React.ReactNode;
@@ -145,7 +188,7 @@ export function SidePanel({
           <Kv k={zh.viz.side.access} v={clientDecoded?.has(cam.key) ? zh.viz.access.client : (zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access)} />
           <div className="sec">{zh.viz.side.current}</div>
           <Now clock={clock} ep={ep} />
-          {overlay ? <OverlayInfo cam={overlay} clock={clock} /> : null}
+          {overlay ? <OverlayInfo side={overlay} clock={clock} /> : null}
           {openable ? (
             <div style={{ marginTop: 14 }}>
               <Button size="small" onClick={() => window.open(e?.url as string, '_blank', 'noopener')}>

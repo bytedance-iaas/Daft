@@ -230,6 +230,13 @@ class FakeVlm:
                                                "confidence": 0.8, "evidence_frames": [lo],
                                                "observation": "红圈偏离夹爪中心"}]
             return json.dumps({"gripper_visible": True, "segments": segments, "summary": "fake"})
+        if "Check a UMI recording: a person operates a handheld gripper" in text:
+            # the handheld gripper's opinion (design doc 22 §5.2): the same, as an action stretch
+            lo, hi = (int(x) for x in re.search(r"Printed frames (\d+) to (\d+)\.", text).groups())
+            segments = [] if n % 2 == 0 else [{"start_frame": lo, "end_frame": min(hi, lo + 5), "aspect": "action",
+                                               "confidence": 0.7, "evidence_frames": [lo],
+                                               "observation": "开合时机与画面不符"}]
+            return json.dumps({"gripper_visible": True, "segments": segments, "summary": "fake"})
         if "You review ONE point P" in text:
             # the EEF-video review (design doc 12 §10.2): a well-formed, cautious answer
             frames = [int(x) for x in re.findall(r"\d+", text.split("Frames ", 1)[1].split("(", 1)[0])][:1]

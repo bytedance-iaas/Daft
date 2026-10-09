@@ -2,7 +2,8 @@
 the player shows its paired video frame (``times_s`` from the player's own frame times: LeRobot frame k at
 k / fps, an mcap topic's message k at its scanned time, never before the first keyframe) - not at the
 bundle's own clock, nor on the checks' clock; the observed group of a measured episode, the cache keyed
-by the observation files, and a cleaned run directory brought back first."""
+by the observation files, and a cleaned run directory brought back first. A handheld gripper's pose gaps
+are bridged as far as the viewer asks (§5.2, C4 4.4.0 ``max_gap_ms``)."""
 from __future__ import annotations
 
 import json
@@ -50,8 +51,9 @@ def _entry(ep: int, n: int, media: dict) -> dict:
     return e
 
 
-def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None = None):
-    """A task with the EEF module selected, its bundle copied into the run directory as at start."""
+def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None = None, bundle: dict | None = None):
+    """A task with the EEF module selected, its bundle (``entries``, or a whole ``bundle``) copied into the run
+    directory as at start."""
     from curation.contracts import modules as registry
     from daemon.repo import protocol as P
     from daemon.results.store import store_of
@@ -65,7 +67,7 @@ def _task(c, dataset_id: str, uri, entries: list[dict], *, params: dict | None =
         episode_selector={"mode": "all"}, params={}, modules=rows, dataset_id=dataset_id))
     run_dir = store_of(rt).task_dir(task.id)
     (run_dir / "inputs").mkdir(parents=True, exist_ok=True)
-    synth.write_bundle(run_dir / "inputs" / "trajectory.json", synth.make_bundle(entries))
+    synth.write_bundle(run_dir / "inputs" / "trajectory.json", bundle or synth.make_bundle(entries))
     (run_dir / "inputs" / "uploads.json").write_text(json.dumps({HANDLE: {"path": "inputs/trajectory.json"}}))
     return task, run_dir
 
@@ -111,6 +113,7 @@ def test_a_lerobot_camera_draws_each_sample_on_its_own_frame(lr, data_root):
     assert (layers["axis"]["color"], layers["axis"]["model_color"]) == ("#b26bff", "#ff0000")
     assert layers["axis_x"]["kind"] == "arrow" and layers["axis_x"]["group"] == "axes"
     assert cam["hands"] == [{"id": "eef", "title": "panda_link8", "color": "#ff0000", "opening_m": None}]
+    assert _overlay(lr, task.id, 2)["interpolation"] is None            # an arm's bundle has nothing to bridge
     # a task without the module, an episode the bundle does not have
     assert_error(lr.get(f"{API}/tasks/{task.id}/episodes/1/eef-overlay"), "not_found")
 
@@ -230,3 +233,44 @@ def test_an_old_scan_is_read_again(mc):
         d.write_text(json.dumps(doc))
     cam = _overlay(mc, task.id, 0)["cameras"][0]
     assert cam["times_s"] == pytest.approx([0.05 + 0.1 * k for k in range(20)])
+
+
+def test_a_handheld_gripper_bridges_its_pose_gaps_as_far_as_asked(mc, tmp_path):
+    """The checks' default (3 sample intervals) unless the viewer asks for another gap (the side panel's
+    setting, ``max_gap_ms``); only the drawing changes."""
+    from curation.extensions.eef_consistency.adapters import umi_mcap
+
+    from ..eef import das_mcap
+
+    cfg = das_mcap.calibration(pairing_tolerance_s=0.06)      # make_umi's frames come 50 ms after the poses
+    del cfg["intrinsics_fallback"]
+    (tmp_path / "cal.json").write_text(json.dumps(cfg))
+    out = tmp_path / "umi" / "trajectory.json"
+    umi_mcap.export(mc.data / "umi", tmp_path / "cal.json", out, episodes=[0], ego_check=False)
+    bundle = json.loads(out.read_text())
+    for f in bundle["samples"][0]["frames"][5:7]:              # the VIO lost two poses
+        f["hands"]["robot0"] = None
+        f["cameras"]["robot0_camera0"].update(T_reference_camera=None, calibration_id=None)
+    ds = _mcap_dataset(mc, mc.data / "umi", "umi")
+    task, _ = _task(mc, ds, mc.data / "umi", [], bundle=bundle)
+
+    def point(body: dict) -> list:
+        (cam,) = body["cameras"]
+        assert cam["viz_camera"] == "robot0_sensor_camera0_compressed"
+        return next(x for x in cam["layers"] if x["id"] == "point")["frames"]
+
+    body = _overlay(mc, task.id, 0)
+    assert body["interpolation"] == {"max_gap_s": pytest.approx(0.3), "default_s": pytest.approx(0.3),
+                                     "step_s": pytest.approx(0.1), "range_steps": [2, 5], "frames": {"robot0": 2}}
+    assert all(p is not None for p in point(body))
+    r = mc.get(f"{API}/tasks/{task.id}/episodes/0/eef-overlay", params={"max_gap_ms": 150})
+    assert r.status_code == 200, r.text
+    narrow = r.json()
+    assert_schema("EefOverlay", narrow)
+    assert narrow["interpolation"]["max_gap_s"] == pytest.approx(0.15) and narrow["interpolation"]["frames"] == {"robot0": 0}
+    marks = point(narrow)
+    assert marks[5] is None and marks[6] is None and marks[4] is not None and marks[7] is not None
+    assert all(p is not None for p in point(_overlay(mc, task.id, 0)))  # the default again, from the cache
+    for bad in (0, -5, 2001, "soon"):
+        assert_error(mc.get(f"{API}/tasks/{task.id}/episodes/0/eef-overlay", params={"max_gap_ms": bad}),
+                     "validation_failed")

@@ -1,8 +1,9 @@
 > 本文件是 EEF–视频一致性模块的输入格式规范，随 12 篇设计文档进仓库（2026-09-22），F5.1（2026-09-23）冻结在 `docs/contracts/eef/`，五份 Schema 与本文件同目录、受 `CONTRACTS.lock` 保护；合法与不合法的最小示例在 `docs/contracts/examples/eef-*.json`。原件与六组可打开的样例、参考校验器在 `~/ws/ws_general/galbot/eef_video_consistency/`；DEMO 上传件的实例是 `~/ws/ws_general/galbot/dataset2/trajectory.json`。平台的读取与校验实现在 `backend/curation/extensions/eef_consistency/load.py`。
 
-# EEF–视频一致性统一格式 1.0
+# EEF–视频一致性统一格式 1.0 / 1.1
 
-版本：`eef-video/1.0.0`。本文件中的“必须”描述新格式的接入要求；不表示源数据已经满足，也不代表现有平台已经实现。
+版本：`eef-video/1.0.0`；`eef-video/1.1.0`（2026-10-08，F5.18）只多一个可选字段 `umi.world_frames`（§9），1.0.0 的文件照样有效。
+本文件中的“必须”描述新格式的接入要求；不表示源数据已经满足，也不代表现有平台已经实现。
 
 ## 1. 范围和文件边界
 
@@ -41,7 +42,7 @@ Schema：[sample.schema.json](sample.schema.json)。完整实例见参考设计�
 
 | 字段 | 说明 |
 |---|---|
-| `schema_version` | 固定 `eef-video/1.0.0` |
+| `schema_version` | `eef-video/1.0.0`，或用到 `umi.world_frames` 时 `eef-video/1.1.0`（§9） |
 | `sample_id` | 稳定、不包含故障类别的 ID；跨运行不可按遍历顺序重新分配 |
 | `source` | 数据集名、源 episode ID、可空的任务文字；仅作溯源 |
 | `frame_count` | JSONL 行数，指统一样本时序索引；不等于每个视图实际媒体帧数 |
@@ -249,3 +250,29 @@ Schema：[gripper_template.schema.json](gripper_template.schema.json)，示例�
 与观测种子的关系：模块参数里两者**二选一**；同一路相机两样都给时以种子为准（人点的锚点等级更高）。
 模板描述的是夹爪长什么样，与账本对不对无关，所以从一个数据集的合格 episode 建一次，可以查这个数据集的全部 episode。
 条目 `provenance.method = synthetic_fixture` 的模板只用于 DEMO，不能用于视觉精度验收。
+
+## 9. 手持夹爪：`umi` 块与 1.1.0 的 `world_frames`（设计 20、22 §5.2）
+
+手持夹爪（UMI）的样本不写逐帧 `eef`，而是 `sample.umi`（`camera_hands`：每路相机属于哪只手；`horizon_s`：过去轨迹的时长；
+`provenance`；可选 `gripper_range`）加逐帧 `hands`（每只手的绝对位姿 `pose` 与开口 `opening_m`，缺测写 `null`）。每路相机都是某只手的
+腕部相机，只画、只查本手。
+
+1.1.0 加 `umi.world_frames`：
+
+| 取值 | 含义 | 填法 |
+|---|---|---|
+| `shared`（缺省） | 所有手和所有相机在样本的 `reference_frame` 里（设计 20 的原始 UMI 会话） | 与 1.0.0 相同 |
+| `per_hand` | 每只手在自己的世界系里（两只各带 VIO 的手持夹爪，例如 DAS 的 mcap），两只手之间没有关系 | 样本级 `reference_frame` 写 `per_hand`；手的位姿与本手相机的标定 `reference_frame`、逐帧 `T_reference_camera` 都写这只手的世界系（导出器写 `<hand>_vio_world`）；逐帧 `eef` 为 `null` |
+
+`per_hand` 时读方不做跨手的几何（画另一只手、`declared_track`）；同一只手的几路相机必须在同一个世界系里。用到 `world_frames` 的文件
+`schema_version` 必须是 `eef-video/1.1.0`。
+
+缺测：某帧没有这只手的位姿（`hands.<hand>` 为 `null`），本手相机这一帧的 `T_reference_camera` 与 `calibration_id` 也写 `null`；
+文件里不插值。读方在前后两个有效位姿相隔不超过「插值最大间隔」时在中间补（位置线性、姿态球面插值，按整样本间隔计、容半个间隔的抖动）：
+质检用缺省值（3 个样本间隔）并在记录的 `opinion.interpolation` 里写明，播放器可以改、只影响画面。
+
+DAS / GenRobot 的 mcap 由 `python -m curation.extensions.eef_consistency export-umi-mcap` 生成这种文件，它要的夹爪标定是
+`umi-calibration/2`（Schema：[umi_calibration.schema.json](umi_calibration.schema.json)，示例 `docs/contracts/examples/eef-umi-calibration.json`）：
+位姿是什么（`pose_frame`）、机体→光学的旋转、相机→指尖中心、开口的单位、`camera_info` 缺失时的内参回退、内参怎样换到视频尺寸、
+配对容差，每项带 assurance；不是 `declared` 的项在样本 `notes` 与导出报告里写「按假设值」。
+

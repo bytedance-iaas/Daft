@@ -1,4 +1,11 @@
-"""UMI absolute hand trajectories in the current camera, never incremental deltas."""
+"""UMI absolute hand trajectories in the current camera, never incremental deltas.
+
+A hand's poses and its wrist camera's poses may be missing on some frames (a VIO stream slower than the
+video, a dropped message): nothing is drawn there and trails break. :func:`fill_gaps` bridges short gaps
+for whoever reads the sample (design doc 22 §5.2); the bundle itself is never filled. Two handheld
+grippers may each be in their own VIO world (``umi.world_frames: per_hand``): each camera only ever
+draws its own hand, in the world its calibration names.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -7,6 +14,9 @@ from . import geometry as G, history
 
 PROMPT_VERSION = "umi-action-prompt/7"  # 7: the hand's opening calibration, saturation reported as such
 COLORS = ((255, 160, 0), (210, 60, 255))  # BGR, stable hand order
+#: the checks bridge gaps of up to this many sample intervals (30 fps: 100 ms); the player offers this range
+GAP_STEPS = 3
+GAP_RANGE_STEPS = (2, 5)
 
 
 def load_hands(sample, rows) -> None:
@@ -29,11 +39,16 @@ def load_hands(sample, rows) -> None:
             raise ValueError(f"umi.gripper_range names {hand}, which no camera belongs to")
         if not (np.isfinite([r["min_width_m"], r["max_width_m"]]).all() and 0 <= r["min_width_m"] < r["max_width_m"]):
             raise ValueError(f"umi.gripper_range.{hand}: min_width_m must be below max_width_m")
+    per_hand = cfg.get("world_frames") == "per_hand"
+    world: dict[str, str] = {}                    # hand -> the reference frame its poses are in
     for cid, cam in sample.cameras.items():
-        if cam.mount != "wrist" or cam.calibration(sample) is None:
+        cal = cam.calibration(sample)
+        if cam.mount != "wrist" or cal is None:
             raise ValueError(f"{cid}: UMI requires a calibrated wrist camera")
-        if not np.isfinite(cam.T_reference_camera).all():
-            raise ValueError(f"{cid}: UMI requires camera poses on the sample timeline")
+        hand = owners[cid]
+        frame = cal["reference_frame"] if per_hand else sample.reference_frame
+        if world.setdefault(hand, frame) != frame:
+            raise ValueError(f"{cid}: the cameras of {hand} name different worlds")
     for hand in sorted(ids):
         poses = np.full((sample.n_frames, 4, 4), np.nan)
         widths = np.full(sample.n_frames, np.nan)
@@ -45,8 +60,8 @@ def load_hands(sample, rows) -> None:
                 continue
             pose = data["pose"]
             if (pose["pose_type"] != "absolute" or pose["relative_to"] is not None
-                    or pose["reference_frame"] != sample.reference_frame or pose["frame_id"] != hand):
-                raise ValueError(f"frame {i}/{hand}: expected absolute pose in {sample.reference_frame}")
+                    or pose["reference_frame"] != world[hand] or pose["frame_id"] != hand):
+                raise ValueError(f"frame {i}/{hand}: expected absolute pose in {world[hand]}")
             q = np.asarray(pose["quaternion_xyzw"])
             if not np.isfinite(q).all() or abs(np.linalg.norm(q) - 1) > 1e-5:
                 raise ValueError(f"frame {i}/{hand}: quaternion must be finite and unit length")
@@ -58,6 +73,60 @@ def load_hands(sample, rows) -> None:
                 widths[i] = data["opening_m"]
         sample.hand_poses[hand] = poses
         sample.hand_openings[hand] = widths
+
+
+def default_gap_s(sample) -> float | None:
+    """The gap the checks bridge: GAP_STEPS sample intervals (None without a timeline)."""
+    step = history._step(sample.t) if sample.t is not None else np.inf
+    return round(GAP_STEPS * step, 6) if np.isfinite(step) else None
+
+
+def _bridge(t: np.ndarray, T: np.ndarray, limit: float) -> list[int]:
+    """Fill the NaN poses between two known ones at most ``limit`` seconds apart (position linear, rotation
+    slerp), in place; the frames filled."""
+    from scipy.spatial.transform import Rotation, Slerp
+
+    known = np.flatnonzero(np.isfinite(T[:, 0, 0]) & np.isfinite(t))
+    filled: list[int] = []
+    for a, b in zip(known[:-1], known[1:]):
+        if b - a < 2 or t[b] - t[a] > limit:
+            continue
+        inner = np.arange(a + 1, b)
+        alpha = (t[inner] - t[a]) / (t[b] - t[a])
+        rot = Slerp([0.0, 1.0], Rotation.from_matrix(np.stack([T[a, :3, :3], T[b, :3, :3]])))(alpha).as_matrix()
+        T[inner] = G.se3(rot, (1 - alpha)[:, None] * T[a, :3, 3] + alpha[:, None] * T[b, :3, 3])
+        filled += inner.tolist()
+    return filled
+
+
+def fill_gaps(sample, max_gap_s: float | None = None) -> dict:
+    """Bridge short stretches of missing poses (design doc 22 §5.2): a hand's pose, its cameras' poses and
+    its opening on the frames between two known ones at most ``max_gap_s`` apart (default
+    :func:`default_gap_s`), in place. Counted in whole sample intervals: half an interval of the clock's
+    jitter is allowed (3 intervals of 30 fps are 100 ms, give or take). The checks bridge with the default
+    and say so in the record; the player with the viewer's choice. ``{"max_gap_s", "frames": {hand: frames
+    filled}}``."""
+    if not sample.hand_poses or sample.t is None:
+        return {"max_gap_s": None, "frames": {}}
+    gap = default_gap_s(sample) if max_gap_s is None else float(max_gap_s)
+    step = history._step(sample.t)
+    limit = gap + (0.5 * step if np.isfinite(step) else 1e-9)
+    owners = sample.sample["umi"]["camera_hands"]
+    out = {}
+    for hand, poses in sample.hand_poses.items():
+        filled = set(_bridge(sample.t, poses, limit))
+        for cid, owner in owners.items():
+            if owner == hand:
+                filled |= set(_bridge(sample.t, sample.cameras[cid].T_reference_camera, limit))
+        widths = sample.hand_openings[hand]
+        known = np.flatnonzero(np.isfinite(widths))
+        for a, b in zip(known[:-1], known[1:]):
+            if b - a > 1 and sample.t[b] - sample.t[a] <= limit:
+                inner = np.arange(a + 1, b)
+                widths[inner] = np.interp(sample.t[inner], [sample.t[a], sample.t[b]], [widths[a], widths[b]])
+                filled |= set(inner.tolist())
+        out[hand] = len(filled)
+    return {"max_gap_s": gap, "frames": out}
 
 
 def project(sample, camera_id: str, frame: int, hand: str, offsets=None, indices=None):

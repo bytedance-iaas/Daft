@@ -307,6 +307,11 @@ class EefJudge:
         from . import eef_review
 
         t1 = time.perf_counter()
+        bridged = None
+        if sample.hand_poses:              # short pose gaps bridged with the default (design doc 22 §5.2), and said so
+            from ..extensions.eef_consistency import umi
+
+            bridged = umi.fill_gaps(sample)
         try:
             self._fetch(sample)
             op = OP.opinion_episode(sample, media_root=self.media_root, ask=self.ask, cache=self.cache,
@@ -319,6 +324,8 @@ class EefJudge:
                   "failure": f"{type(e).__name__}: {e}"[:300]}
             self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {type(e).__name__}: {e}")
         op["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        if bridged is not None:
+            op["interpolation"] = bridged
         evidence: list[str] = []                                  # the overlay is drawn live
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,

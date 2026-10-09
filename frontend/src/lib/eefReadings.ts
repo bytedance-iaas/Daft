@@ -210,6 +210,10 @@ export interface EefOpinion {
   maxConfidence: number | null;
   failure: string | null;
   cameras: EefOpinionCamera[];
+  /** a handheld gripper (design doc 22 §5.2): each wrist camera marks only its own hand */
+  handheld: boolean;
+  /** the pose gaps the checks bridged (the default gap, and how many frames per hand), or null */
+  bridged: { maxGapMs: number; hands: [string, number][] } | null;
 }
 
 const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -264,7 +268,18 @@ export function eefOpinion(details: D): EefOpinion | null {
         .sort((a, b) => b.confidence - a.confidence || a.startFrame - b.startFrame),
     };
   });
-  return { status: s(op.status) ?? 'failed', flagged: op.flagged === true, maxConfidence: n(op.max_confidence), failure: s(op.failure), cameras };
+  const interp = obj(op.interpolation);
+  const gap = n(interp.max_gap_s);
+  const bridged = gap !== null ? { maxGapMs: Math.round(gap * 1000), hands: Object.entries(obj(interp.frames)).map(([h, v]): [string, number] => [h, n(v) ?? 0]) } : null;
+  return {
+    status: s(op.status) ?? 'failed',
+    flagged: op.flagged === true,
+    maxConfidence: n(op.max_confidence),
+    failure: s(op.failure),
+    cameras,
+    handheld: (s(op.prompt_version) ?? '').startsWith('umi-'),
+    bridged,
+  };
 }
 
 // ---------------------------------------------------------------- the dataset's own record (D-E16)

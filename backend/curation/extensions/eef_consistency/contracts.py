@@ -9,6 +9,8 @@ import dataclasses
 from typing import Any
 
 SCHEMA_VERSION = "eef-video/1.0.0"
+#: 1.1.0 adds umi.world_frames (two hands each in its own world, design doc 22 §5.2)
+SCHEMA_VERSION_1_1 = "eef-video/1.1.0"
 CONTAINER = "trajectory-bundle/1.0"
 MODULE_ID = "eef_video_consistency"
 REVIEW_MODULE_ID = "eef_video_review"

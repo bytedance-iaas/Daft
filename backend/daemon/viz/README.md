@@ -18,7 +18,7 @@
 | `display.py` | 展示配置（设计 21 §6，C4 `VizDisplay`）：存在登记的 `display_config` 列里（`{version, updated_at, config}`）；读的时候叠在缓存的读取器元数据上——相机的顺序、显示名与 `hidden`、字幕轨的主轨由这里做，LeRobot / Lance 的曲线分组由读取器换成配置里的组（字段树与曲线接口跟着走）；保存前按不带配置的模型逐项校验，数据集后来变了对不上的键读的时候跳过；任务级只取相机、分组与字幕轨 |
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
-| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；按任务、文件与 episode 缓存在内存，不落盘 |
+| `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；手持夹爪的位姿缺测按 `max_gap_ms`（缺省 3 个样本间隔，C4 4.4.0）补上再画，`interpolation` 说补了多少；按任务、文件、episode 与间隔缓存在内存，不落盘 |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
 
 内核（`backend/curation/viz/`）：`lerobot_info.py`（features、names 的几种写法、相机编码与 `needs_transcode`、RFC 6381 编码串）、`groups.py`（曲线分组 §5.3）、
@@ -209,6 +209,9 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     首个关键帧之前为 null，与这一路的 `offset_s` 对得上）；普通 EEF 有 `point`、`finger_axis`、`axis`（`default_on: false`）、`axis_x/y/z`、`trail_past`、`trail_future`，
     给了夹爪参考的任务再多 `observed_point`、`observed_trail`、`residual`；`layers[].frames` 的长度等于这条的样本帧数。
     `ls $D/data/runs/$T/checks/eef_video_consistency/` 没有 `opinion/`。没勾 EEF 的任务回 404，`error.details.reason` 是 `no_eef_module`。
+    机械臂的轨迹 `interpolation` 是 null。手持夹爪的任务（EEF extension README「手持夹爪 mcap」）：`curl -s "$B/tasks/$T/episodes/0/eef-overlay" | jq .interpolation`
+    给出 `default_s`（3 个样本间隔，30 fps 约 0.1）、`step_s`、`range_steps: [2, 5]` 与每只手补了几帧；加 `?max_gap_ms=300` 后 `max_gap_s` 是 0.3、
+    补的帧数不少于缺省时；`max_gap_ms=0` 或大于 2000 回 400 `validation_failed`。
 
 21. **转码的时间口径（设计 21 §4.5，F15.1）**：把第 1 步的 `viz_v3` 复制一份 `viz_v3_mpeg4`，`meta/info.json` 里 `observation.images.top` 的 `video.codec` 改成 `mpeg4`（字节仍是 H.264，转码器照样读）后登记。
     `curl -s $B/datasets/$D/episodes/1/viz | jq '.cameras[] | {key, access, from_ts, to_ts}'` 是 `transcode`、`0`、`2.4`（这条 24 帧）；等 `.mp4` 转好（202 期间带进度）后

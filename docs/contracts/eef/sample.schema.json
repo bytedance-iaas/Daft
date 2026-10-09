@@ -1,10 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "EEF-video 1.0.0 sample",
+  "title": "EEF-video 1.0.0 / 1.1.0 sample",
   "type": "object",
   "properties": {
     "schema_version": {
-      "const": "eef-video/1.0.0"
+      "enum": [
+        "eef-video/1.0.0",
+        "eef-video/1.1.0"
+      ],
+      "description": "1.1.0 (2026-10-08) adds umi.world_frames; 1.0.0 files stay valid"
     },
     "sample_id": {
       "type": "string",
@@ -198,6 +202,13 @@
               }
             }
           }
+        },
+        "world_frames": {
+          "description": "1.1.0: shared (default) - every hand's pose and every camera in the sample's reference_frame; per_hand - each hand in its own world (two handheld grippers each with its own VIO): the hand's poses and its camera's calibration name that world as reference_frame, the sample's reference_frame is 'per_hand', and nothing relates one hand to another (each camera draws only its own hand). Needs schema_version eef-video/1.1.0.",
+          "enum": [
+            "shared",
+            "per_hand"
+          ]
         }
       }
     }

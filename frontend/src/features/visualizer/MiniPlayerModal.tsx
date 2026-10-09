@@ -1,7 +1,9 @@
 import { Button, Modal, Space } from '@arco-design/web-react';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { EpisodeView } from '../../api/types';
 import { getBase } from '../../base';
+import { parseChoice, type OverlayChoice } from '../../lib/eefOverlay';
+import { readPrefs, writePrefs } from '../../lib/prefs';
 import { cameraOfScope, EEF_MODULE, miniLayout, type FindingScope } from '../../lib/vizLayout';
 import { evidenceRange, frameCount } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
@@ -41,7 +43,14 @@ export function MiniPlayerModal({
   const source: VizRef = useMemo(() => ({ scope: 'task', id: taskId }), [taskId]);
   const model = useVizModel(source);
   const ep = useVizEpisode(source, view.episode_index);
-  const overlay = useEefOverlay(taskId, view.episode_index, !!ep.data);
+  // what the viewer chose to see of the EEF marks, the same for every task (kept in this browser); the gap of a
+  // handheld gripper's poses to bridge goes into the request
+  const [choice, setChoiceState] = useState<OverlayChoice>(() => parseChoice(readPrefs().eefOverlay));
+  const setChoice = useCallback((c: OverlayChoice) => {
+    setChoiceState(c);
+    writePrefs({ eefOverlay: c });
+  }, []);
+  const overlay = useEefOverlay(taskId, view.episode_index, !!ep.data, choice.maxGapMs);
   const findings = useMemo(() => view.findings ?? [], [view.findings]);
   const evidence: Evidence[] = useMemo(
     () =>
@@ -61,13 +70,18 @@ export function MiniPlayerModal({
     return s ? { ...s, camera: s.camera ? (alias[s.camera] ?? s.camera) : undefined, cameras: s.cameras?.map((c) => alias[c] ?? c) } : null;
   }, [seek, focused, alias]);
   const module = seek ? EEF_MODULE : (focused?.module ?? null);
-  const overlays: PlayerOverlays | null = useMemo(() => {
+  const cameras = useMemo(() => {
     const cams = (overlay.data?.cameras ?? []).filter((c) => c.viz_camera && !c.skipped && c.layers.length);
-    if (!cams.length) return null;
+    return cams.length ? Object.fromEntries(cams.map((c) => [c.viz_camera as string, c])) : null;
+  }, [overlay.data]);
+  const overlays: PlayerOverlays | null = useMemo(() => {
+    if (!cameras) return null;
     const at = module === EEF_MODULE && model.data ? cameraOfScope(scope, model.data.cameras) : null;
-    return { cameras: Object.fromEntries(cams.map((c) => [c.viz_camera as string, c])), focus: at };
-  }, [overlay.data, module, scope, model.data]);
-  const overlaid = useMemo(() => (overlays ? Object.keys(overlays.cameras) : []), [overlays]);
+    return { cameras, focus: at, choice, onChoice: setChoice, interpolation: overlay.data?.interpolation ?? null };
+  }, [cameras, module, scope, model.data, choice, setChoice, overlay.data]);
+  // the cameras with marks, by name: another gap brings new marks for the same cameras, the layout stays
+  const overlaidKey = cameras ? Object.keys(cameras).join('\n') : '';
+  const overlaid = useMemo(() => (overlaidKey ? overlaidKey.split('\n') : []), [overlaidKey]);
   const arrangement = useMemo(() => (model.data ? miniLayout(module, scope, model.data, overlaid) : null), [model.data, module, scope, overlaid]);
   const seekAt = seek ? (overlay.data?.cameras.find((c) => c.camera_id === seek.camera)?.times_s[seek.frame] ?? null) : null;
   const startAt = seek ? seekAt : focus !== null ? (evidence[focus]?.start ?? null) : null;

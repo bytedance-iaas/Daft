@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "EEF-video 1.0.0 trajectory bundle (single uploadable file)",
-  "description": "Container that packs one eef-video/1.0.0 sample per episode into a single trajectory.json. Each sample/calibration/frame object must validate against sample.schema.json, calibration.schema.json and frame.schema.json; annotations_path is the literal '#frames' and calibration_path is '#calibration' or null.",
+  "description": "Container that packs one eef-video/1.0.0 or 1.1.0 sample per episode into a single trajectory.json. Each sample/calibration/frame object must validate against sample.schema.json, calibration.schema.json and frame.schema.json; annotations_path is the literal '#frames' and calibration_path is '#calibration' or null.",
   "type": "object",
   "properties": {
-    "schema_version": {"const": "eef-video/1.0.0"},
+    "schema_version": {"enum": ["eef-video/1.0.0", "eef-video/1.1.0"]},
     "container": {"const": "trajectory-bundle/1.0"},
     "dataset": {
       "type": "object",

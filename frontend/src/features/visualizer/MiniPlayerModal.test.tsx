@@ -7,7 +7,7 @@ import type { EpisodeView } from '../../api/types';
 import { readPrefs } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
-import { eefOpinionRecord } from '../../mocks/eef';
+import { eefOpinionRecord, eefOverlay } from '../../mocks/eef';
 import { FINDINGS_TASK } from '../../mocks/findings';
 import { server } from '../../mocks/server';
 import { renderWithProviders } from '../../test/render';
@@ -152,5 +152,37 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     // the mock shows sample frame 30 at 30 / 15 s
     await waitFor(() => expect(document.querySelector('.vz-stamp')).toHaveTextContent(/^00:02\.0/));
   });
-});
 
+  it('a handheld gripper: the side panel sets the gap of its poses to bridge, and the marks are asked again (design doc 22 §5.2)', async () => {
+    ran();
+    const asked: (string | null)[] = [];
+    // the marks over the input's first camera, as the mock world puts them
+    const first = (await unwrap(api().GET('/tasks/{id}/viz', { params: { path: { id: FINDINGS_TASK } } }))).cameras[0].key;
+    server.use(
+      http.get('*/api/v1/tasks/:id/episodes/:index/eef-overlay', ({ request, params }) => {
+        const gap = new URL(request.url).searchParams.get('max_gap_ms');
+        asked.push(gap);
+        const body = eefOverlay(String(params.id), Number(params.index), first);
+        return HttpResponse.json({ ...body, interpolation: { max_gap_s: gap ? Number(gap) / 1000 : 0.1, default_s: 0.1, step_s: 1 / 30, range_steps: [2, 5], frames: { eef: gap ? 7 : 3 } } });
+      }),
+    );
+    const view = await episode(6);
+    renderWithProviders(<Harness view={view} start={null} />);
+    await screen.findByTestId('vz-overlay');
+    fireEvent.click(screen.getByRole('button', { name: zh.viz.info }));
+    const cell = (await screen.findByTestId('vz-eef-ext')).closest('.vz-cell') as HTMLElement;
+    fireEvent.pointerDown(cell);
+    const gap = await screen.findByTestId('vz-gap');
+    const input = (gap.tagName === 'INPUT' ? gap : gap.querySelector('input')) as HTMLInputElement;
+    expect(input.value).toMatch(/^100/);
+    expect(screen.getByTestId('vz-side')).toHaveTextContent('参考 67–167 ms');
+    expect(screen.getByTestId('vz-side')).toHaveTextContent('补了 3 帧');
+    fireEvent.change(input, { target: { value: '150' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(asked).toContain('150'));
+    await waitFor(() => expect(screen.getByTestId('vz-side')).toHaveTextContent('补了 7 帧'));
+    expect(readPrefs().eefOverlay).toMatchObject({ maxGapMs: 150 });
+    fireEvent.click(within(screen.getByTestId('vz-side')).getByRole('button', { name: zh.viz.overlay.side.gapReset }));
+    await waitFor(() => expect(readPrefs().eefOverlay).toMatchObject({ maxGapMs: null }));
+  });
+});

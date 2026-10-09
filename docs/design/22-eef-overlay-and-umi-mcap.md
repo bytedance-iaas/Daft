@@ -442,3 +442,34 @@ DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能
 - 本机配置：`curator-daemon-eef` 加本地交付目录与 `CURATOR_VERIFY_VISIBILITY_S=0`，新增 `curator-fakevlm`。
 - 实测（本机，假模型）：dataset2 判决 / 意见两个任务与 mcap 孪生的意见任务都跑通；ep6 相机 1 的声明点偏在夹爪左侧、残差线连到夹爪上的观测十字，
   相机 2 几乎重合；ep5 第 60 帧声明点落在夹爪后面（晚 5 帧）；mcap 孪生前 3 帧 `times_s` 为 null、此后与 LeRobot 版逐帧相同，第 150 帧标记落在同一处。
+
+### F5.18（2026-10-08）
+
+按 §5.2 落地：契约 EEF 1.1.0 与 `umi-calibration/2`（`docs/contracts/eef/format.md` §9）、导出器 `adapters/umi_mcap.py`
+（`python -m curation.extensions.eef_consistency export-umi-mcap`）、`load.py` 与 `umi.load_hands` 的 `per_hand` 与缺测放宽、`umi.fill_gaps`、
+意见记录的 `interpolation`、C4 4.4.0（`max_gap_ms`、`interpolation`）、「详细信息」的「插值最大间隔」。偏离与细化：
+
+- 插值按整样本间隔比：前后有效位姿相隔不超过「插值最大间隔 + 半个样本间隔」就补。30 fps 的 3 个间隔是 99.99… ms，时间戳取整与时钟抖动下
+  严格按 100 ms 比，恰好缺两帧的口子会时补时不补。
+- §7 第 2 行的导出检查（`egomotion.py`，F5.19 扩成整条的分项）：从时间线上挑转得最多的帧对（间隔 0.5 s、互相至少隔两个帧对长）至多 10 对；
+  画面取鱼眼圆内的上 62%（避开夹爪），ORB 4000、比率 0.75，按相机模型去畸变后求本质矩阵；好匹配不到 100 或内点不到 40 的帧对不算（白墙、
+  糊帧）。判 `calibration_suspect`：旋转差中位 > 3°，**或**旋转差 / 位姿自身的转动（至少按 1° 算）的中位 > 1.0。只看绝对 3° 不够：手持动作
+  0.5 s 常只转几度，轴向写错时旋转差也在 3° 以内；轴向写错时这个比在 1.2 以上，写对时 DAS 两个文件是 0.06–0.85。
+- 「低频段」报在 episode 时间线上：手的设备时钟按本手相机消息的「log_time − header 时间」换过来（两只手的时钟不必是主机的）。
+- 预检：手持夹爪的相机，本手有位姿就算「声明了可投影的点」（`load.declared_point_ids`），模型意见可用。此前 Daemon 建任务时被拒
+  （「no selected episode can be assessed」），CLI 直接 `check` 不经这一步、所以没暴露。
+- 报告 Episode 明细的「模型意见」：手持夹爪有自己的说明（每路只画本手、每只手一种颜色），并写出质检用的插值间隔与每只手补了几帧。
+- 叠加的开口读数挪到两指连线端点下方：手持夹爪的两指连线以中心点为中点，读数和手名会叠在一起。
+- 对账工具的假模型（`tools/parity/fakevlm.py`）认得手持夹爪的提示词（隔一段报一段动作不符），本机任务与 CLI 用例能拿到作答的意见；
+  不影响黄金基线（基线里没有这种请求）。
+- 测试：`tests/eef/das_mcap.py` 造一份仿 DAS 的录制（protobuf 带 `header.timestamp`、H.264 从 GOP 中间开始、robot0 的画面是按真实相机位姿
+  渲染的鱼眼房间、robot1 没有 `camera_info` 且设备时钟不同、两手各缺几帧位姿）；`tests/eef/test_umi_mcap.py` 验位姿换算、按 header 配对、
+  锚点与首个关键帧、报告的各项与 §7 第 2、3、7、8 行、写错 `body_to_optical` 三种（单位阵、转置、绕相机 x 轴转 90°）都报、没有内参回退的相机
+  `unsupported`、1.0.0 / 缺 `world_frames` / 手放进别人世界系都被拒、插值、命令行；`tests/viz/test_eef_overlay.py` 验 `max_gap_ms`；
+  `tests/cli/test_eef_check.py` 用这份录制跑 `curation check` 的意见模式（两路各问一次、记录里有 `interpolation`）。
+- 实测（DEMO 标定 `das_gripper_demo.json`，T_camera_tcp / body_to_optical / pose_frame 按假设值）：`00001(1).mcap` 1493 帧（锚点前丢 27 帧），
+  配对 99.87% / 98.19%，fx / fy 0.9995，自运动旋转差中位 0.83° / 0.78°，没有 suspect；`umi_sample.mcap` 两路用内参回退，robot0 的首个关键帧
+  在第 29 条，配对 99.84% / 100%，旋转差中位 2.48° / 2.30°（robot0 的比 0.85，离界限近：这一段转得少，F5.19 再看）。两份文件按缺省间隔都没有
+  要补的帧——仅有的缺测是位姿流比画面先结束（`00001(1)` 的 robot1 最后 27 帧），有位姿的帧 ≥ 98.2%。本机任务（假模型）两路都作答；
+  迷你播放器里两路各画本手，robot1 第 900 帧附近过去轨迹从画面上方（货架那一侧）落到中心点；在一份挖掉 robot1 第 880–883 帧位姿的副本上，
+  「插值最大间隔」100 ms 时轨迹在缺口处断开、200 ms 时连上（「本手这一条为画面补了 4 帧」）。

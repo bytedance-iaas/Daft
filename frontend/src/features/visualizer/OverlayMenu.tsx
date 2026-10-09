@@ -37,7 +37,7 @@ export function OverlayMenu({ cameras, choice, onChange }: { cameras: readonly E
         <Button size="mini" type={choice.preset === 'default' ? 'primary' : 'secondary'} onClick={() => onChange({ ...choice, mode: 'on', preset: 'default', layers: {} })}>
           {O().presets.default}
         </Button>
-        <Button size="mini" type={choice.preset === 'model' ? 'primary' : 'secondary'} title={O().presets.modelTitle} onClick={() => onChange({ ...choice, mode: 'on', preset: 'model' })}>
+        <Button size="mini" type={choice.preset === 'model' ? 'primary' : 'secondary'} title={O().presets.modelTitle} onClick={() => onChange({ ...choice, mode: 'on', preset: 'model', maxGapMs: null })}>
           {O().presets.model}
         </Button>
       </div>

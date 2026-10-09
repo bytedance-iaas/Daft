@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EefOverlayCamera, EefOverlayLayer } from '../api/types';
-import { containFit, DEFAULT_CHOICE, drawFrame, layerColor, layerEntries, layerOn, overlayTimeline, parseChoice, sampleAt, toggleLayer, type OverlayChoice } from './eefOverlay';
+import { containFit, DEFAULT_CHOICE, drawFrame, gapHint, layerColor, layerEntries, layerOn, overlayTimeline, parseChoice, sampleAt, toggleLayer, type OverlayChoice } from './eefOverlay';
 
 const layer = (id: string, group: EefOverlayLayer['group'], more: Partial<EefOverlayLayer> = {}): EefOverlayLayer => ({
   id, group, title: id, kind: 'point', label: null, color: '#123456', width: 2, frames: [[10, 20], null, [30, 40]], default_on: true, hand: 'eef', in_model: false, model_color: null, ...more,
@@ -70,6 +70,15 @@ describe('eefOverlay: what is drawn (design doc 22 §3.3)', () => {
   it('reads a stored choice safely', () => {
     expect(parseChoice(null)).toEqual(DEFAULT_CHOICE);
     expect(parseChoice({ mode: 'weird', preset: 'model', layers: { a: true, b: 'x' }, labels: false })).toEqual({ ...DEFAULT_CHOICE, preset: 'model', layers: { a: true }, labels: false });
+    expect(parseChoice({ maxGapMs: 150 }).maxGapMs).toBe(150);
+    for (const bad of [0, -5, 5000, '150', null]) expect(parseChoice({ maxGapMs: bad }).maxGapMs).toBeNull();
+  });
+
+  it('says the gap a handheld gripper is bridged with in ms, with the 2-5 interval range of its rate (design doc 22 §5.2)', () => {
+    expect(gapHint({ default_s: 0.1, step_s: 1 / 30, range_steps: [2, 5] })).toEqual({ defaultMs: 100, lo: 67, hi: 167, fps: 30 });
+    expect(gapHint({ default_s: 0.2, step_s: 1 / 15, range_steps: [2, 5] })).toEqual({ defaultMs: 200, lo: 133, hi: 333, fps: 15 });
+    expect(gapHint(null)).toBeNull();
+    expect(gapHint({ default_s: null, step_s: null, range_steps: [2, 5] })).toBeNull();
   });
 
   it('lists every layer once, across cameras and hands', () => {
@@ -107,6 +116,14 @@ describe('eefOverlay: drawing', () => {
     expect(calls.some((c) => c.startsWith('fillText(P'))).toBe(true);
     expect(calls.some((c) => c.startsWith('fillText(frame 1'))).toBe(true);
     expect(calls).not.toContain('strokeStyle=#b26bff');                   // A is off by default
+  });
+
+  it('writes the opening under the fingers\' line, clear of the point\'s label', () => {
+    const fingers = layer('finger_axis', 'declared', { kind: 'segment', label: 'B', frames: [[0, 20, 40, 20], null, null] });
+    const { ctx, calls } = recorder();
+    drawFrame(ctx, cam([fingers, layer('point', 'declared', { label: 'robot1' })]), 0, containFit(640, 480, 640, 480), { w: 640, h: 480 }, { choice: DEFAULT_CHOICE, opening: () => '开口 50 mm' });
+    expect(calls).toContain('fillText(B 开口 50 mm,46,36)');
+    expect(calls).toContain('fillText(robot1,18,14)');
   });
 
   it('only clears with the marks off, a frame without a sample, or nothing chosen there', () => {

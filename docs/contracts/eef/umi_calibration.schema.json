@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UMI handheld-gripper calibration 2 (umi-calibration/2)",
+  "description": "One file per gripper model, shared by every recording of it: what turns a handheld-gripper mcap (DAS / GenRobot: per hand a VIO body pose, a gripper opening, a wrist fisheye camera and its camera_info) into an eef-video 1.1 trajectory bundle (export-umi-mcap, design doc 22 §5.2, §7). It declares what the recordings do not say: what the pose is, how the body turns into the optical frame, where the tool centre is from the camera, how the opening reads, how the recorded intrinsics fit the video. A value the maker did not declare is an assumption: provenance.items says which (model_assumed), and reports and opinions built on it say so.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gripper", "pose_frame", "body_to_optical", "T_camera_tcp", "finger_axis", "opening", "intrinsics_scaling", "pairing_tolerance_s", "provenance"],
+  "properties": {
+    "schema_version": {"const": "umi-calibration/2"},
+    "gripper": {"type": "string", "minLength": 1, "description": "the gripper model, e.g. das_gripper_v3"},
+    "pose_frame": {
+      "enum": ["vio_body_flu", "camera_optical", "tcp"],
+      "description": "what the recorded pose is: vio_body_flu - the VIO body (x forward, y left, z up) at the IMU, turned into the optical frame by body_to_optical and moved by camera_info's T_b_c translation; camera_optical - the camera itself (x right, y down, z forward); tcp - the tool centre already (T_camera_tcp then places the camera)"
+    },
+    "body_to_optical": {"$ref": "#/$defs/mat3", "description": "rotation whose columns are the optical frame's x / y / z in the body frame; identity unless pose_frame is vio_body_flu"},
+    "T_camera_tcp": {"$ref": "#/$defs/mat4", "description": "the tool centre (between the fingertips; x along the fingers' opening, z the approach) in the camera's optical frame, metres"},
+    "finger_axis": {"enum": ["camera_x", "camera_y"], "description": "the camera axis the fingers open along"},
+    "opening": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "scale"],
+      "properties": {
+        "unit": {"enum": ["m", "mm"], "description": "the recorded opening's unit"},
+        "scale": {"type": "number", "exclusiveMinimum": 0, "description": "opening_m = value x scale (x 0.001 for mm)"}
+      }
+    },
+    "intrinsics_fallback": {
+      "type": "object",
+      "description": "per hand id (robot0, robot1, ...): the intrinsics a recording without camera_info borrows (same device)",
+      "additionalProperties": {"$ref": "#/$defs/intrinsics"}
+    },
+    "intrinsics_scaling": {"enum": ["stretch_to_video", "none"], "description": "stretch_to_video: the camera_info is the whole picture resized to its size (H_media_from_calibration = diag(video w / w, video h / h, 1)); none: it is at the video's size"},
+    "pairing_tolerance_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5, "description": "a pose or an opening pairs with a camera frame when their header times are at most this far apart; further is missing"},
+    "gripper_range": {
+      "type": "object",
+      "description": "optional, per hand id: the opening calibration (eef-video umi.gripper_range)",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["min_width_m", "max_width_m", "source"],
+        "properties": {
+          "min_width_m": {"type": "number", "minimum": 0},
+          "max_width_m": {"type": "number", "exclusiveMinimum": 0},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "topics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "where each stream is, with {hand} for robot0, robot1, ...; the defaults are the DAS ones",
+      "properties": {
+        "pose": {"type": "string", "pattern": "^/", "default": "/{hand}/vio/eef_pose"},
+        "opening": {"type": "string", "pattern": "^/", "default": "/{hand}/sensor/magnetic_encoder"},
+        "image": {"type": "string", "pattern": "^/", "default": "/{hand}/sensor/camera0/compressed"},
+        "camera_info": {"type": "string", "pattern": "^/", "default": "/{hand}/sensor/camera0/camera_info"}
+      }
+    },
+    "instruction": {"type": ["string", "null"], "description": "the task text when the recordings carry none"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "method", "assurance"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "method": {"type": "string", "minLength": 1},
+        "assurance": {"$ref": "#/$defs/assurance", "description": "the file as a whole"},
+        "items": {
+          "type": "object",
+          "description": "the assurance of single fields, where it differs from the whole (T_camera_tcp, body_to_optical, pose_frame, intrinsics_scaling, opening, intrinsics_fallback)",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assurance"],
+            "properties": {
+              "assurance": {"$ref": "#/$defs/assurance"},
+              "method": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "assurance": {"enum": ["declared", "model_assumed", "independently_calibrated", "unknown", "synthetic"]},
+    "mat3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}},
+    "mat4": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}},
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "K", "D", "image_size_wh"],
+      "properties": {
+        "model": {"enum": ["opencv_fisheye", "opencv_brown", "pinhole"]},
+        "K": {"$ref": "#/$defs/mat3"},
+        "D": {"type": "array", "items": {"type": "number"}},
+        "image_size_wh": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}},
+        "t_bc": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}, "description": "the body->camera translation (camera_info's T_b_c), metres"}
+      }
+    }
+  }
+}

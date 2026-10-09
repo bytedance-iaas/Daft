@@ -54,9 +54,14 @@ export interface OverlayChoice {
   /** hand id -> drawn (default true) */
   hands: Record<string, boolean>;
   labels: boolean;
+  /** a handheld gripper's pose gaps bridged up to this long (ms); null: the checks' default (design doc 22 §5.2) */
+  maxGapMs: number | null;
 }
 
-export const DEFAULT_CHOICE: OverlayChoice = { mode: 'on', preset: 'default', layers: {}, hands: {}, labels: true };
+export const DEFAULT_CHOICE: OverlayChoice = { mode: 'on', preset: 'default', layers: {}, hands: {}, labels: true, maxGapMs: null };
+
+/** The longest gap the overlay may be asked to bridge (C4 `max_gap_ms`). */
+export const MAX_GAP_MS = 2000;
 
 const MODES: readonly OverlayMode[] = ['off', 'on', 'observed'];
 const PRESETS: readonly OverlayPreset[] = ['default', 'model', 'custom'];
@@ -72,7 +77,15 @@ export function parseChoice(raw: unknown): OverlayChoice {
     layers: flags(o.layers),
     hands: flags(o.hands),
     labels: typeof o.labels === 'boolean' ? o.labels : DEFAULT_CHOICE.labels,
+    maxGapMs: typeof o.maxGapMs === 'number' && o.maxGapMs > 0 && o.maxGapMs <= MAX_GAP_MS ? o.maxGapMs : null,
   };
+}
+
+/** The interpolation hint: the default and the reference range in ms, from the sample interval. */
+export function gapHint(interp: { default_s: number | null; step_s: number | null; range_steps: number[] } | null): { defaultMs: number; lo: number; hi: number; fps: number } | null {
+  if (!interp || !interp.default_s || !interp.step_s) return null;
+  const ms = (s: number) => Math.round(s * 1000);
+  return { defaultMs: ms(interp.default_s), lo: ms(interp.range_steps[0] * interp.step_s), hi: ms(interp.range_steps[1] * interp.step_s), fps: Math.round(1 / interp.step_s) };
 }
 
 const OBSERVED_GROUPS = new Set(['observed']);
@@ -205,7 +218,8 @@ function drawLayer(ctx: CanvasRenderingContext2D, layer: EefOverlayLayer, v: rea
     ctx.lineTo(p[2] - head * Math.cos(ang + 0.4), p[3] - head * Math.sin(ang + 0.4));
     ctx.stroke();
   }
-  if (labels && (layer.label || tag)) label(ctx, [layer.label, tag].filter(Boolean).join(' '), p[2] + 6, p[3] - 6);
+  // the opening goes under the line's end: the point's own label sits above it, to the right
+  if (labels && (layer.label || tag)) label(ctx, [layer.label, tag].filter(Boolean).join(' '), p[2] + 6, tag ? p[3] + 16 : p[3] - 6);
 }
 
 /** Clears the canvas and draws sample frame `f`'s chosen marks (null: only clears). Sizes are CSS pixels. */

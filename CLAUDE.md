@@ -93,6 +93,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 18 | 数据可视化（`18-data-visualizer.md`：控制台内置播放器——独立的「可视化」页（完整版）与报告 / 裁决 / 任务详情里的迷你版、读取器与统一展示模型、mcap 字段映射模版 C7；决策 D60–D64；首节是开工指引，§9 是各 feature 落地时的细化与样本集实测，§10 是第二期清单；静态稿在 `frontend/mockups/`（`visualize.html`、`episode-visualize-mini.html`、`dataset-add-mcap.html`）） |
 | 19 | 可视化第二期先行三项（`19-visualizer-phase-two.md`：相机多于 9 路、浏览器内解码（WebCodecs）、Lance 读取器；决策 D65–D67；首节是开工指引） |
 | 21 | 可视化第二期其余几项（`21-visualizer-phase-two-rest.md`：深度图、v3 切片与转码对齐（含 moov 在尾）、展示配置、数据集信息原文与小修；决策 D68–D71；首节是开工指引） |
+| 22 | 轨迹叠加进迷你播放器；手持夹爪（DAS mcap）的意见路线（`22-eef-overlay-and-umi-mcap.md`：叠加图层与对时、`export-umi-mcap` 与夹爪标定 `umi-calibration/2`、EEF 1.1 的 `per_hand`、插值间隔、自运动一致性；决策 D74–D75；首节是开工指引，§7 是 DEMO 的假设与生产输入） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

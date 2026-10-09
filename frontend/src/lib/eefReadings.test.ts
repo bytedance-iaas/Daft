@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { zh } from '../locales/zh';
 import { eefConclusion, eefCpuEvidence, eefCpuRows, eefStateMotion, eefWindowRows } from './eefReadings';
 
 const details = {
@@ -72,12 +73,22 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     const { eefOpinionRecord, eefRecord } = await import('../mocks/eef');
     const { eefOpinion } = await import('./eefReadings');
     const op = eefOpinion(eefOpinionRecord(3).details as Record<string, unknown>)!;
-    expect(op).toMatchObject({ status: 'answered', flagged: true, maxConfidence: 0.85, failure: null });
+    expect(op).toMatchObject({ status: 'answered', flagged: true, maxConfidence: 0.85, failure: null, handheld: false, bridged: null });
     const [ext, wrist] = op.cameras;
     expect(ext).toMatchObject({ camera: 'ext', status: 'answered', point: 'tcp', axis: 'z', fingerAxis: 'y', summaries: ['前半段中心偏得明显'], failures: [], unseen: false });
     expect(ext.segments.map((g) => [g.startFrame, g.confidence, g.evidenceFrames.length])).toEqual([[40, 0.85, 2], [180, 0.4, 1]]);
     expect(wrist).toMatchObject({ camera: 'wrist', status: 'skipped', segments: [] });
     expect(eefOpinion(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
+  });
+
+  it('knows a handheld gripper\'s opinion and the pose gaps the checks bridged (design doc 22 §5.2)', async () => {
+    const { eefOpinion } = await import('./eefReadings');
+    const op = eefOpinion({
+      assessment_mode: 'vlm_opinion',
+      opinion: { status: 'answered', prompt_version: 'umi-action-prompt/7', interpolation: { max_gap_s: 0.100005, frames: { robot0: 2, robot1: 0 } }, cameras: {} },
+    })!;
+    expect(op).toMatchObject({ handheld: true, bridged: { maxGapMs: 100, hands: [['robot0', 2], ['robot1', 0]] } });
+    expect(zh.eefDetail.opinion.bridged(100, op.bridged!.hands)).toBe('位姿缺测：前后相隔不超过 100 ms 的已插值补上（robot0 2 帧、robot1 0 帧），只用于画标记；更长的缺测不画。');
   });
 
   it('says which part of a clip got no answer and why', async () => {

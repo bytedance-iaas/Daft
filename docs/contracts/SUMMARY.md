@@ -399,3 +399,16 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 TASK-4 / TASK-10 / LABEL-2 / LABEL-4，`motion_quality` 不再覆盖已删的 SET-3）、**C4 4.2.0**（2.6.0–2.8.0 的新增与 3.0.0–4.1.0 的删减都在，
 changelog 两边的条目按版本号排在一起）。这之前跑的任务，记录里是各自当时的编号，读方按当时的注册表显示。
 
+### EEF 叠加进迷你播放器与手持夹爪 mcap（2026-10-08，设计 22，D74–D75）
+
+- **F5.17，C4 4.3.0**：`EefOverlay` 只加字段——每路相机的 `times_s`（每个样本帧所配画面在播放器里的时刻）、`hands[]`（`EefOverlayHand`，含
+  `opening_m`），图层的 `id` / `group` / `title` / `default_on` / `hand` / `in_model` / `model_color`，`kind` 加 `cross`。
+- **F5.18，EEF 1.1.0**：`sample.umi` 加可选的 `world_frames`（`shared` 缺省 / `per_hand`）；四份 Schema 的 `schema_version` 接受
+  `eef-video/1.0.0` 与 `1.1.0`，用到 `world_frames` 必须是 1.1.0；`per_hand` 时样本级 `reference_frame` 写 `per_hand`、每只手与本手相机在自己的
+  世界系里（`format.md` §9）。1.0.0 的文件照样有效。
+- **F5.18，新 Schema `eef/umi_calibration.schema.json`**（`umi-calibration/2`，每种手持夹爪一份的标定：`pose_frame`、`body_to_optical`、
+  `T_camera_tcp`、`finger_axis`、`opening`、`intrinsics_fallback`、`intrinsics_scaling`、`pairing_tolerance_s`、`gripper_range`、`topics`、
+  `provenance` 与逐项 assurance），示例 `examples/eef-umi-calibration.json`。它是导出器 `export-umi-mcap` 的输入，平台的上传件仍是 `trajectory.json`。
+- **F5.18，C2（兼容扩充）**：手持夹爪的 EEF 意见记录多 `details.opinion.interpolation`（`max_gap_s`、`frames`：每只手补了几帧）。
+- **F5.18，C4 4.4.0**：`GET …/eef-overlay` 加查询参数 `max_gap_ms`（(0, 2000]）；`EefOverlay` 加 `interpolation`（`max_gap_s`、`default_s`、
+  `step_s`、`range_steps`、`frames`；机械臂的轨迹为 null）。前端类型已重新生成。

@@ -1384,7 +1384,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0)
+         * The EEF marks for one episode, to draw over the task's camera videos in the mini player (2.6.0; 4.3.0; 4.4.0)
          * @description Design docs 20 and 22. The marked clip sent to the model is encoded in memory and never saved; the
          *     mini player plays each camera's own video (`VizEpisodeCamera` of `getTaskEpisodeViz`, matched by
          *     `viz_camera`) and draws these layers on top, each sample frame at `times_s` - where the player
@@ -1392,8 +1392,10 @@ export interface paths {
          *     decoded) with the same choices as the request: a UMI sample draws its camera's own hand (trail,
          *     fingers, approach axis, centre), any other sample the declared P, A, B and P's past trail; 4.3.0
          *     adds the tool's three axes, the future trail and, when a gripper reference was given, the observed
-         *     point with its trail and the residual line. 404 `no_eef_module` when the task did not run the EEF
-         *     module, `no_episode` when the bundle has no such episode.
+         *     point with its trail and the residual line. A handheld gripper's poses missing on a few frames are
+         *     bridged for the drawing when the known poses around them are at most `max_gap_ms` apart (default:
+         *     three sample intervals, what the checks bridged; 4.4.0). 404 `no_eef_module` when the task did not
+         *     run the EEF module, `no_episode` when the bundle has no such episode.
          */
         get: operations["getTaskEpisodeEefOverlay"];
         put?: never;
@@ -3347,6 +3349,21 @@ export interface components {
             task_id: string;
             episode_index: number;
             cameras: components["schemas"]["EefOverlayCamera"][];
+            /** @description 4.4.0: the gaps of a handheld gripper's poses bridged for the drawing; null for a tool on a robot */
+            interpolation: null | {
+                /** @description the longest gap bridged now (max_gap_ms, else the default) */
+                max_gap_s: number | null;
+                /** @description the default: what the checks bridged */
+                default_s: number | null;
+                /** @description the sample interval */
+                step_s: number | null;
+                /** @description the reference range, in sample intervals */
+                range_steps: number[];
+                /** @description per hand, the frames bridged */
+                frames: {
+                    [key: string]: number;
+                };
+            };
         };
         EefOverlayCamera: {
             /** @description the bundle's camera id, as in the opinion record's `cameras` */
@@ -6570,7 +6587,10 @@ export interface operations {
     };
     getTaskEpisodeEefOverlay: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 4.4.0: bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals */
+                max_gap_ms?: number;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["PathId"];

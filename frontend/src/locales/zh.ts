@@ -1664,6 +1664,10 @@ export const zh = {
     opinion: {
       title: '模型意见',
       advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P、接近方向红箭头 A 和手指连线橙线 B），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
+      advisoryHandheld:
+        '手持夹爪：每路腕部相机只画本手（每只手一种颜色：中心点、两指连线与开口、接近轴、过去轨迹），模型看整段视频，指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
+      bridged: (ms: number, hands: [string, number][]) =>
+        `位姿缺测：前后相隔不超过 ${ms} ms 的已插值补上（${hands.map(([h, k]) => `${h} ${k} 帧`).join('、') || '没有'}），只用于画标记；更长的缺测不画。`,
       finger: (axis: string) => (axis === 'finger_line' ? ' · 手指连线' : ` · 手指连线沿 ${eefAxisName(axis)}`),
       failed: (why: string) => `没问成：${why}`,
       skipped: '没有问',
@@ -2301,6 +2305,11 @@ export const zh = {
         sample: '样本帧',
         media: '画面帧',
         none: '这一刻没有可画的样本帧',
+        gap: '插值最大间隔',
+        gapHint: (d: number, lo: number, hi: number, fps: number) =>
+          `位姿缺测时，前后两个位姿相隔不超过这么久就在中间补上（只影响画面）。缺省 ${d} ms，是质检用的值；参考 ${lo}–${hi} ms（按 ${fps} fps 的 2–5 个样本间隔）。`,
+        gapFilled: (n: number) => (n ? `本手这一条为画面补了 ${n} 帧。` : '本手这一条没有要补的帧。'),
+        gapReset: '恢复缺省',
         note: '标记画在配对的那一帧画面上：按这一帧在播放器里的显示时刻对时。轨迹来自任务冻结的 trajectory.json。',
       },
     },

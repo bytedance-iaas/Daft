@@ -215,5 +215,6 @@ export function eefOverlay(taskId: string, episode: number, vizCamera: string | 
       },
       { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, media_frames: [], times_s: [], hands: [], skipped: 'mount wrist does not take part', layers: [] },
     ],
+    interpolation: null,
   };
 }

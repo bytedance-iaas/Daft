@@ -122,8 +122,8 @@ def _viz(svc, task_id: str, owner: str, index: int):
     return {}, {}, None
 
 
-def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
-    from curation.extensions.eef_consistency import load, overlay
+def episode_overlay(rt, svc, task_id: str, owner: str, index: int, *, max_gap_ms: float | None = None) -> dict:
+    from curation.extensions.eef_consistency import load, overlay, umi
 
     task = rt.repo.get_task(task_id, owner=owner)
     path, params = _bundle(rt, task, owner)
@@ -131,8 +131,9 @@ def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
     stat = path.stat()
     observations = _observation_files(rt, task.id, index) if judged else []
     seen = tuple((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in observations)
-    key = (task.id, str(path), stat.st_size, stat.st_mtime_ns, int(index), judged, seen)
-    cameras = _CACHE.get(key)
+    key = (task.id, str(path), stat.st_size, stat.st_mtime_ns, int(index), judged, seen, max_gap_ms)
+    cached = _CACHE.get(key)
+    cameras, bridged = cached if cached is not None else (None, None)
     if cameras is None:
         result = load.load_bundle(path, check_media=False, episodes=[int(index)])
         if not result.ok:
@@ -143,11 +144,18 @@ def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
             raise ApiError("not_found", f"trajectory.json 里没有 episode {index}", details={"reason": "no_episode"})
         observed = {f.stem: overlay.observed_tracks(_rows(f), sample.n_frames) for f in observations
                     if f.stem in sample.cameras}
+        bridged = None
+        if sample.hand_poses:              # a UMI hand's short pose gaps (design doc 22 §5.2): the checks' default or the viewer's
+            default = umi.default_gap_s(sample)
+            done = umi.fill_gaps(sample, max_gap_ms / 1000 if max_gap_ms is not None else None)
+            bridged = {"max_gap_s": done["max_gap_s"], "default_s": default,
+                       "step_s": round(default / umi.GAP_STEPS, 6) if default else None,
+                       "range_steps": list(umi.GAP_RANGE_STEPS), "frames": done["frames"]}
         cameras = overlay.episode_overlay(sample, observed, judged)
         for c in cameras:
             media = sample.cameras[c["camera_id"]].media
             c["media_uri"], c["topic"] = media.get("uri"), media.get("topic")
-        _CACHE.put(key, cameras, len(json.dumps(cameras)))
+        _CACHE.put(key, (cameras, bridged), len(json.dumps(cameras)))
     files, topics, times = _viz(svc, task.id, owner, int(index))
     out = []
     for c in cameras:
@@ -155,4 +163,4 @@ def episode_overlay(rt, svc, task_id: str, owner: str, index: int) -> dict:
         frames = c["media_frames"]
         out.append({k: v for k, v in c.items() if k not in ("media_uri", "topic")}
                    | {"viz_camera": viz, "times_s": times(viz, frames) if viz and times else [None] * len(frames)})
-    return {"task_id": task.id, "episode_index": int(index), "cameras": out}
+    return {"task_id": task.id, "episode_index": int(index), "cameras": out, "interpolation": bridged}

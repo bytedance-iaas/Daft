@@ -1,4 +1,4 @@
-"""Read and validate ``trajectory.json`` (``trajectory-bundle/1.0`` of ``eef-video/1.0.0`` samples).
+"""Read and validate ``trajectory.json`` (``trajectory-bundle/1.0`` of ``eef-video/1.0.0`` / ``1.1.0`` samples).
 
 Order (design 12 §3.7): strict JSON (no NaN / Infinity) -> evaluation keys anywhere reject the file
 -> container Schema -> per sample: sample / calibration / frame Schemas -> cross-section semantics
@@ -371,13 +371,19 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
             col.require(abs(length - a["length_m"]) < 1e-8, f"axis {aid} length_m={a['length_m']} but points "
                         f"are {length:.6f} m apart", path=f"{where}/sample/axis_definitions/{aid}")
 
+    # two handheld grippers each in its own VIO world (1.1.0, design doc 22 §5.2): a camera's calibration names
+    # its hand's world, which umi.load_hands checks against that hand's poses
+    per_hand = (s.get("umi") or {}).get("world_frames") == "per_hand"
+    if (s.get("umi") or {}).get("world_frames") is not None:
+        col.require(s["schema_version"] == "eef-video/1.1.0", "umi.world_frames needs schema_version eef-video/1.1.0",
+                    path=f"{where}/sample/umi/world_frames")
     calibs = {}
     if cal is not None:
         calibs = cal["calibrations"]
         for cid, c in calibs.items():
             cw = f"{where}/calibration/calibrations/{cid}"
             col.require(c["camera_id"] in cams, f"calibration {cid} names a camera without a view", path=cw)
-            col.require(c["reference_frame"] == s["reference_frame"],
+            col.require(per_hand or c["reference_frame"] == s["reference_frame"],
                         f"calibration {cid} reference_frame differs from the sample's", path=cw)
             K = np.asarray(c["K"], float)
             col.require(K[0, 0] > 0 and K[1, 1] > 0 and np.allclose(K[2], [0, 0, 1]) and K[1, 0] == 0,
@@ -667,9 +673,18 @@ def declared_track(sample: EefSample, camera_id: str, point_id: str) -> Projecte
     return recompute_projection(sample, camera_id, point_id)
 
 
+def _own_hand_posed(sample: EefSample, camera_id: str) -> bool:
+    """A handheld gripper's camera (design doc 22 §5.2) whose own hand has a pose somewhere."""
+    owner = ((sample.sample.get("umi") or {}).get("camera_hands") or {}).get(camera_id)
+    poses = sample.hand_poses.get(owner) if owner else None
+    return poses is not None and bool(np.isfinite(poses[:, 0, 0]).any())
+
+
 def declared_point_ids(sample: EefSample, camera_id: str) -> list[str]:
+    """The points a camera can show: its provided projections, and the declared 3D points once they can be
+    projected - by the EEF pose, or by a handheld gripper's own hand (its camera draws only that hand)."""
     cam = sample.cameras[camera_id]
     ids = set(cam.provided)
-    if cam.calibration(sample) is not None and sample.has_absolute_pose:
+    if cam.calibration(sample) is not None and (sample.has_absolute_pose or _own_hand_posed(sample, camera_id)):
         ids |= {pid for pid, d in sample.points.items() if d["model"] != "external_2d"}
     return sorted(ids)

@@ -6,6 +6,8 @@ run        assess episodes offline: one detail line per episode (JSON Lines) plu
            evidence under --out
 export     write trajectory.json from a LeRobot dataset's columns by an explicit eef-mapping/1.0 file
            (design 12 §3.3; a convenience, the platform itself only reads the uploaded file)
+export-umi-mcap  handheld-gripper mcap recordings (DAS / GenRobot) with the gripper's umi-calibration/2 file to
+           trajectory.json and umi-export-report.json (design doc 22 §5.2)
 template-build   a gripper template (gripper-template/1.0, F5.8) from a few seed / clicked rows
 template-check   the re-detector alone over the clips: detection rate, and errors against seed rows
 """
@@ -218,6 +220,19 @@ def _export_umi(a: argparse.Namespace) -> int:
     return 0
 
 
+def _export_umi_mcap(a: argparse.Namespace) -> int:
+    from .adapters import umi_mcap
+
+    try:
+        result = umi_mcap.export(a.mcap_root, a.calibration, a.out, episodes=a.episodes, dataset_id=a.dataset_id,
+                                 horizon_s=a.horizon_s, anchor_topic=a.anchor_topic, ego_check=not a.no_ego_check)
+    except (ValueError, OSError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m curation.extensions.eef_consistency", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -253,6 +268,17 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--max-side", type=int, default=960)
     u.add_argument("--out", required=True, help="new output directory")
     u.set_defaults(fn=_export_umi)
+    m = sub.add_parser("export-umi-mcap", help="handheld-gripper mcap recordings to trajectory.json (design doc 22 §5.2)")
+    m.add_argument("--mcap-root", required=True, help="directory of the episodes' .mcap files (the dataset root)")
+    m.add_argument("--calibration", required=True, help="the gripper's umi-calibration/2 JSON")
+    m.add_argument("--out", required=True, help="trajectory.json to write; umi-export-report.json goes beside it")
+    m.add_argument("--episodes", type=int, nargs="*", default=None)
+    m.add_argument("--dataset-id", default=None, help="dataset.id of the bundle (default: the directory's name)")
+    m.add_argument("--horizon-s", type=float, default=1.0, help="past trail the opinion's marks draw, in seconds")
+    m.add_argument("--anchor-topic", default="/robot0/vio/eef_pose",
+                   help="the topic whose first message starts the checks' clock (the mapping's first action source)")
+    m.add_argument("--no-ego-check", action="store_true", help="skip the camera-motion check of the report")
+    m.set_defaults(fn=_export_umi_mcap)
     b = sub.add_parser("template-build", help="gripper template from seed / clicked observation rows")
     b.add_argument("--trajectory", required=True)
     b.add_argument("--lerobot-root", required=True)

@@ -213,12 +213,19 @@ export function noEefOverlay(e: unknown): boolean {
  * The EEF marks of a task's episode (design doc 22 §3.3), asked once the episode is on screen (an mcap
  * episode has been scanned by then, and the marks are placed on its frames). Not retried on a 4xx.
  */
-export function useEefOverlay(taskId: string, episode: number, enabled = true) {
+export function useEefOverlay(taskId: string, episode: number, enabled = true, maxGapMs: number | null = null) {
   return useQuery<EefOverlay>({
-    queryKey: ['eef-overlay', taskId, episode],
-    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}/eef-overlay', { params: { path: { id: taskId, index: episode } } })),
+    queryKey: ['eef-overlay', taskId, episode, maxGapMs],
+    queryFn: () =>
+      unwrap(
+        api().GET('/tasks/{id}/episodes/{index}/eef-overlay', {
+          params: { path: { id: taskId, index: episode }, query: maxGapMs !== null ? { max_gap_ms: maxGapMs } : {} },
+        }),
+      ),
     enabled,
     staleTime: Infinity,
+    // another gap: the marks on screen stay until the new ones come
+    placeholderData: (prev) => (prev && prev.task_id === taskId && prev.episode_index === episode ? prev : undefined),
     retry: (n, e) => n < 1 && !(e instanceof ApiError && e.status >= 400 && e.status < 500),
   });
 }

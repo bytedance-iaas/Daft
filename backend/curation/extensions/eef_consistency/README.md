@@ -7,7 +7,7 @@
 （F5.4–F5.8 期间是两个建议性模块 `eef_video_consistency` / `eef_video_review`，不影响判决。）
 
 设计：[docs/design/12-eef-video-consistency.md](../../../../docs/design/12-eef-video-consistency.md)；
-输入契约：[docs/contracts/eef/](../../../../docs/contracts/eef/)（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器）。
+输入契约：[docs/contracts/eef/](../../../../docs/contracts/eef/)（`eef-video/1.0.0` / `1.1.0` 四段 + `trajectory-bundle/1.0` 单文件容器；1.1.0 只多手持夹爪的 `umi.world_frames`）。
 本目录是 B 类新代码，不碰 A 类目录；检测器与观测 provider 只读白名单输入，真值只在仓库外的离线评估器里读。
 
 | 文件 | 内容 |
@@ -39,8 +39,10 @@
 | `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；标记视频与证据帧都不落盘（设计 20），记录只留视频元数据与证据帧号；送模型的视频长边上限 448；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
 | `report.py` | 报告小节摘要：判过 / 判废 / 转人工条数、转人工的原因、判废来自哪些分项、模型与 CPU 的一致率，以及候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；四张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows`；`record_summary` / `record_rows` 是轨迹与数据集记录的摘要与明细表 `eef_record` |
-| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口） |
-| `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`template-build`、`template-check` |
+| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口）、`umi`（原始 UMI 会话 → LeRobot 与上传件，设计 20）、`umi_mcap`（DAS / GenRobot 手持夹爪 mcap + `umi-calibration/2` → 上传件与 `umi-export-report.json`，设计 22 §5.2） |
+| `umi.py` | 手持夹爪：`load_hands`（`shared` / `per_hand` 世界系、缺测）、`fill_gaps`（前后有效位姿相隔不超过插值最大间隔时补，缺省 3 个样本间隔、容半个间隔）、本手投影、提示词 |
+| `egomotion.py` | 腕部相机自身的运动：画面（ORB、去畸变、本质矩阵）对位姿推出的相对运动，旋转差与平移方向差；`export-umi-mcap` 的报告用它抽查帧对（设计 22 §7 第 2 行） |
+| `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`export-umi`、`export-umi-mcap`、`template-build`、`template-check` |
 
 ## 手动验证
 
@@ -99,6 +101,38 @@ PYTHONPATH=backend .venv/bin/python data/umi-test/render_own_hand.py \
 已有本地 Daemon 服务时可访问 `/curation/umi-preview/index.html`（应在前端 build 后生成，避免被清理）。
 脚本已入库，数据、生成的 MP4、JSON 和 HTML 仍由 `data/` 忽略规则排除。
 控制台正式报告不依赖此静态预览页：它播放原始视频，标记在线叠加（设计 20）。
+
+### 手持夹爪 mcap（DAS / GenRobot，设计 22 §5.2）
+
+每只手 `robotN` 有 `/robotN/vio/eef_pose`（VIO 机体位姿）、`/robotN/sensor/magnetic_encoder`（开口）、`/robotN/sensor/camera0/compressed`
+（腕部鱼眼，H.264）与通常有的 `/robotN/sensor/camera0/camera_info`。录制里没有的（位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、
+缺 `camera_info` 时的内参）写在每种夹爪一份的标定文件里（`umi-calibration/2`，Schema `docs/contracts/eef/umi_calibration.schema.json`，
+示例 `docs/contracts/examples/eef-umi-calibration.json`；DAS 的 DEMO 标定在仓库外 `~/ws/ws_general/galbot/umi/das_gripper_demo.json`）。
+
+仓库根目录运行（`--mcap-root` 是数据集目录，episode 编号与平台相同：`episode_<N>.mcap` 按名，否则按排序）：
+
+```bash
+PYTHONPATH=backend .venv/bin/python -m curation.extensions.eef_consistency export-umi-mcap \
+  --mcap-root /path/to/mcap-dataset --calibration /path/to/das_gripper.json --out /path/to/out/trajectory.json
+```
+
+stdout 是一行 JSON（样本数、每条的状态与行数、可疑项数、按假设值的字段）；`trajectory.json` 写出前按平台上传的标准校验过，
+旁边是 `umi-export-report.json`：每路相机的配对率、缺测段与低频段（episode 时间）、首个能解的帧、内参来源（`camera_info` / 回退）与换到视频后的
+fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的转动对位姿的转动），以及 `suspects`（设计 22 §7 第 2、3、7、8 行）。
+`--no-ego-check` 跳过自运动抽查（快很多）；`--episodes 0 3` 只导出几条。
+
+检查：
+
+1. 报告里每条 `status: ok`；有 `camera_info` 的相机 `intrinsics: camera_info`，没有的走回退；标定文件去掉 `intrinsics_fallback` 再导一次，
+   缺 `camera_info` 的相机变成 `unsupported` 并写明原因，其他相机照常导出。
+2. 标定文件的 `body_to_optical` 改成单位阵再导一次：报告出现 `row: 2` 的 `calibration_suspect`（画面转动与位姿对不上）。
+3. 控制台登记这个 mcap 数据集（本地挂载、内置 UMI 模版），新建任务勾 EEF–视频一致性、上传 `trajectory.json`、不给夹爪参考、选视频模型；
+   跑完后报告 Episode 明细的「模型意见」写的是手持夹爪的说明和「位姿缺测：前后相隔不超过 100 ms 的已插值补上（…）」；
+   点「可视化」，每路相机只画本手（中心点、两指连线与开口、坐标轴、过去轨迹），右侧「详细信息」的「叠加」一节有「插值最大间隔」，
+   改大后有缺测的地方轨迹连上、改小后断开（只影响画面）。
+
+验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py`（合成的仿 DAS 录制在
+`tests/eef/das_mcap.py`，不依赖客户数据）。
 
 ### 原有 EEF 数据
 

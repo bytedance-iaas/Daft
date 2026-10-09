@@ -240,7 +240,8 @@ export function EefOpinion({ record }: { record: ResultRecord }) {
   return (
     <div data-testid="eef-opinion">
       <div className="eef-head">{O.title}</div>
-      <div className="episode-line muted">{O.advisory}</div>
+      <div className="episode-line muted">{op.handheld ? O.advisoryHandheld : O.advisory}</div>
+      {op.bridged ? <div className="episode-line muted">{O.bridged(op.bridged.maxGapMs, op.bridged.hands)}</div> : null}
       {op.failure ? <div className="episode-line warn">{O.failed(op.failure)}</div> : null}
       {op.cameras.map((c) => (
         <OpinionCamera key={c.camera} c={c} />

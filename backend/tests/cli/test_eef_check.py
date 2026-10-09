@@ -259,6 +259,41 @@ def test_without_a_gripper_reference_the_model_gives_an_advisory_opinion(cli, mi
     assert not [t for t in texts if "You check a recorded robot trajectory" in t]
 
 
+def test_a_handheld_gripper_recording_gets_an_opinion_camera_by_camera(cli, tmp_path):
+    """Design doc 22 §5.2 (F5.18): a DAS-like mcap and the bundle ``export-umi-mcap`` wrote from it. Each wrist
+    camera's clip (H.264 from its first keyframe on), marked with its own hand only, goes to the model; the
+    short pose gaps are bridged with the default and the record says so."""
+    from parity.fakevlm import _texts
+
+    from curation.extensions.eef_consistency.adapters import umi_mcap
+
+    from ..eef import das_mcap as F
+
+    data = tmp_path / "das"
+    F.make_das(data)
+    (tmp_path / "cal.json").write_text(json.dumps(F.calibration()))
+    traj = tmp_path / "eef" / "trajectory.json"
+    umi_mcap.export(data, tmp_path / "cal.json", traj, ego_check=False)
+    rd = str(tmp_path / "run")
+    sent: list[str] = []
+    with fake_vlm(tmp_path) as fake:
+        answer = fake.answer
+        fake.answer = lambda payload: (sent.append(_texts(payload)), answer(payload))[1]
+        res = cli("check", "--modules", EEF, "--input", str(data), "--run-dir", rd, "--episodes", "0",
+                  "--param", f"{EEF}.trajectory_json={traj}", *VLM)
+    assert res.rc == 0, res.doc
+    assert res.doc["modules"][EEF]["episodes"]["error"] == 0
+    (rec,) = results(rd, EEF).values()
+    d = rec["details"]
+    assert d["assessment_mode"] == "vlm_opinion" and verdict_of(rec) == "pass"
+    op = d["opinion"]
+    assert op["interpolation"] == {"max_gap_s": pytest.approx(0.1, abs=1e-4), "frames": {"robot0": 2, "robot1": 0}}
+    assert set(op["cameras"]) == {"robot0_camera0", "robot1_camera0"}
+    assert {c["status"] for c in op["cameras"].values()} == {"answered"}
+    asked = [t for t in sent if "Only the camera's own hand" in t]
+    assert len(asked) == 2 and any("robot0 is annotated" in t for t in asked) and any("robot1 is annotated" in t for t in asked)
+
+
 def test_opinion_answers_are_checked_against_the_clip():
     from curation.extensions.eef_consistency import opinion as OP
 
