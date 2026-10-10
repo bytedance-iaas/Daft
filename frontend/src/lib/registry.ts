@@ -7,13 +7,13 @@ type WithCodes = Pick<ModuleSpec, 'codes'>;
 
 /** A reject it causes may be appealed (D42): one of its blocking codes is appealable. */
 export function isAppealable(m: WithCodes | undefined): boolean {
-  return Boolean(m?.codes.some((c) => c.appealable));
+  return Boolean(m?.codes.some((c) => c.appealable && !c.retired));
 }
 
 /** The review lines its review-level codes raise (D43), in code order. */
 export function reviewLinesOf(m: WithCodes | undefined): string[] {
   const out: string[] = [];
-  for (const c of m?.codes ?? []) if (c.level === 'review' && c.review_line && !out.includes(c.review_line)) out.push(c.review_line);
+  for (const c of m?.codes ?? []) if (c.level === 'review' && c.review_line && !c.retired && !out.includes(c.review_line)) out.push(c.review_line);
   return out;
 }
 

@@ -85,3 +85,9 @@ ego_motion:                          # design doc 22 §5.3 (F5.19): a wrist came
   lag_bands_s: [0.15, 0.3, 0.5]
   min_inliers: 100                   # fewer inliers: the pair says nothing (white walls, blur)
   coverage_min: 0.5                  # under half the pairs measured: unknown, nothing judged
+merge:                               # design doc 25 §7.1-§7.2 (D82): an inconsistency confidence p per sub-item and camera;
+                                     # p orders, it is not a probability - not calibrated (requester 2026-10-09)
+  high: 0.7                          # p >= high: "inconsistent"; one side here and the other below `low` is a conflict
+  low: 0.4                           # [low, high): "possibly inconsistent"; below: "consistent"
+  single_source_cap: 0.8             # one channel alone never says more than this
+  full_at: 3.0                       # a CPU reading this many times its open threshold is full strength

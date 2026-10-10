@@ -67,7 +67,7 @@ export function eefDatasetRecordOf(ep: number): Record<string, unknown> {
   };
 }
 
-/** The EEF module's record of an episode it sent to a person: a candidate the model finds consistent, a window that timed out. */
+/** The EEF module's record of an episode it sent to a person (before registry 5.0): a candidate the model finds consistent, a window that timed out. */
 export function eefRecord(ep: number, why: string): ResultRecord {
   const dir = `checks/${EEF}/evidence/${String(ep).padStart(6, '0')}/ext`;
   const record = eefDatasetRecordOf(ep);
@@ -121,6 +121,42 @@ export function eefRecord(ep: number, why: string): ResultRecord {
   };
 }
 
+/** A merged cell of registry 5.0 (design doc 25 §7). */
+function cell(subitem: string, camera: string | null, p: number | null, sources: Record<string, Record<string, unknown>>, extra: Record<string, unknown> = {}) {
+  const label = p === null ? 'cannot_tell' : p >= 0.7 ? 'inconsistent' : p >= 0.4 ? 'possibly_inconsistent' : 'consistent';
+  return { subitem, camera, p, label, flags: [] as string[], sources, ...extra };
+}
+
+/**
+ * {@link eefRecord} as registry 5.0 writes it (design doc 25 §7, D81): no verdict - the CPU finds position off on
+ * `ext` (0.95), the model's candidate windows say it is fine (0.1): a conflict, the card a person answers; time
+ * alignment is the CPU's alone.
+ */
+export function eefConflictRecord(ep: number): ResultRecord {
+  const base = eefRecord(ep, 'x');
+  const { decision: _decision, ...details } = base.details as Record<string, unknown>;
+  const pos = cell('position_2d', 'ext', 0.95, { cpu: { verdict: 'issue', p: 0.95, confidence: 0.9 }, vlm_review: { verdict: 'ok', p: 0.1, confidence: 0.8 } }, {
+    flags: ['conflict'],
+    time_s: [8.0, 10.0],
+  });
+  const tem = cell('temporal_alignment', 'ext', 0.05, { cpu: { verdict: 'ok', p: 0.05, confidence: 0.9 } }, { flags: ['single_source'], missing: 'model_cannot_see' });
+  const ori = cell('orientation_2d', 'ext', null, { cpu: { verdict: 'cannot_tell', p: null, why: 'axis_mapping_missing' }, vlm_review: { verdict: 'cannot_tell', p: null, why: 'no_vote' } }, { why: ['axis_mapping_missing', 'no_vote'] });
+  return {
+    ...base,
+    verdict: 'abstain',
+    passed: true,
+    details: {
+      ...details,
+      reason: '不一致 · 0.95 · 冲突：位置（相机 ext），CPU认为不一致（0.95），模型复核认为一致（0.10）',
+      merged: {
+        cells: [pos, tem, ori],
+        episode: { label: 'inconsistent', p: 0.95, subitem: 'position_2d', camera: 'ext', flags: ['conflict'], conflicts: 1, reason: '不一致 · 0.95 · 冲突：位置（相机 ext），CPU认为不一致（0.95），模型复核认为一致（0.10）' },
+        profile: { calibrated: false, name: 'demo' },
+      },
+    },
+  };
+}
+
 /** No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on the episode, one stretch flagged. */
 export function eefOpinionRecord(ep: number): ResultRecord {
   return {
@@ -136,8 +172,16 @@ export function eefOpinionRecord(ep: number): ResultRecord {
     details: {
       assessment_mode: 'vlm_opinion',
       overall: 'opinion',
-      reason: '',
-      decision: { outcome: 'opinion', human: [], confirmed: [], unchecked: [] },
+      reason: '不一致 · 0.80：位置（相机 ext），模型意见认为不一致（0.85），只有一个渠道：没给夹爪参考',
+      merged: {
+        cells: [
+          cell('position_2d', 'ext', 0.8, { vlm_opinion: { verdict: 'issue', p: 0.85, confidence: 0.7 } }, { flags: ['single_source'], missing: 'no_gripper_reference', time_s: [2.67, 6.33] }),
+          cell('orientation_2d', 'ext', 0.4, { vlm_opinion: { verdict: 'ok', p: 0.4, confidence: 0.2 } }, { flags: ['single_source'], missing: 'no_gripper_reference' }),
+          cell('temporal_alignment', 'ext', 0.0, { vlm_opinion: { verdict: 'ok', p: 0.0, confidence: 1.0 } }, { flags: ['single_source'], missing: 'no_gripper_reference' }),
+        ],
+        episode: { label: 'inconsistent', p: 0.8, subitem: 'position_2d', camera: 'ext', flags: ['single_source'], conflicts: 0, reason: '不一致 · 0.80：位置（相机 ext），模型意见认为不一致（0.85），只有一个渠道：没给夹爪参考' },
+        profile: { calibrated: false, name: 'demo' },
+      },
       record: { status: 'unsupported', reasons: ['record_mapping_missing'], sources: {} },
       opinion: {
         protocol: 'eef-opinion/1',
@@ -171,10 +215,19 @@ export function eefOpinionRecord(ep: number): ResultRecord {
 export function eefHandheldRecord(ep: number): ResultRecord {
   const base = eefOpinionRecord(ep);
   const seg = { start_frame: 50, end_frame: 250, start_s: 1.683, end_s: 8.35, reason: 'time_offset', magnitude: 0.467, unit: 's', band: 'moderate', band_level: 2, evidence_frames: [120, 135], lag_s: 0.467 };
+  const merged = (base.details as { merged: { cells: unknown[]; episode: unknown; profile: unknown } }).merged;
   return {
     ...base,
     details: {
       ...(base.details as Record<string, unknown>),
+      // the wrist camera's own motion is its own cell, the ego-motion channel's alone (design doc 25 §6)
+      merged: {
+        ...merged,
+        cells: [
+          ...merged.cells,
+          cell('ego_motion', 'ext', 0.8, { ego: { verdict: 'issue', p: 0.97, confidence: 0.94 } }, { flags: ['single_source'], missing: 'model_cannot_see', time_s: [1.683, 8.35] }),
+        ],
+      },
       // no trajectory.json: the platform derived it from the recording (design doc 22 §5.4)
       trajectory_source: {
         kind: 'derived',
@@ -234,7 +287,7 @@ export function eefUnderivedRecord(ep: number): ResultRecord {
       assessment_mode: 'vlm_opinion',
       overall: 'opinion',
       reason: '',
-      decision: { outcome: 'opinion', human: [], confirmed: [], unchecked: [] },
+      merged: { cells: [], episode: { label: 'cannot_tell', p: null, flags: [], why: [], conflicts: 0, reason: `判断不了：${why}` }, profile: { calibrated: false, name: 'demo' } },
       opinion: { protocol: 'eef-opinion/1', status: 'not_assessable', cameras: {}, segments: 0, flagged: false, max_confidence: null, requests: 0, failure: why },
       trajectory_source: {
         kind: 'derived',

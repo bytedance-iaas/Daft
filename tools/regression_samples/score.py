@@ -462,8 +462,20 @@ def _v1_episode(ep, rules, modules, recs, verdicts, availability, mapped_codes, 
             "verdict": v.get("verdict") if v else None, "by": by, "per_module": None}
 
 
-def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals):
-    """The evidence of one episode of a run of findings (C2 2.0): its records' findings, what they assessed, what failed."""
+#: the EEF module's opinions (registry 5.0, design doc 25 §7): a finding of it counts as a detection from this
+#: inconsistency confidence on - the demo profile's high band, "inconsistent" (a conflict reaches it by definition)
+EEF_MODULE, EEF_MIN_P = "eef_video_consistency", 0.7
+
+
+def _eef_below(f: dict, min_p: float) -> bool:
+    """An EEF opinion under the bar: a "possibly inconsistent" one does not count as found (an older finding has no p)."""
+    p = (f.get("readings") or {}).get("p")
+    return isinstance(p, (int, float)) and not isinstance(p, bool) and p < min_p
+
+
+def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals, eef_min_p=EEF_MIN_P):
+    """The evidence of one episode of a run of findings (C2 2.0): its records' findings, what they assessed, what failed.
+    The EEF module's opinions count from ``eef_min_p`` on (label + p, design doc 25 §7)."""
     hits = defaultdict(list)
     per_module = defaultdict(lambda: defaultdict(list))      # item -> module -> cameras
     assessed = defaultdict(set)                              # item -> modules that assessed it
@@ -480,6 +492,8 @@ def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals):
         for f in rec.get("findings") or []:
             item = f.get("item")
             if not item or f.get("unit") == "dataset":
+                continue
+            if m == EEF_MODULE and _eef_below(f, eef_min_p):
                 continue
             cams = finding_cameras(f)
             hits[item].extend(cams)
@@ -503,7 +517,7 @@ def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals):
             "per_module": {"items": per_module, "assessed": assessed, "errored": errored}}
 
 
-def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, registry=None):
+def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, registry=None, eef_min_p=EEF_MIN_P):
     """runs: {subset: run_dir}; registry: the C1 export (modules.json) for the runs of findings. Returns the score document."""
     idx, meta = expectation_index(expectation, taxonomy)
     items_meta = {i["id"]: i for i in taxonomy["items"]}
@@ -592,7 +606,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
             ep = key[1]
             scored_eps += 1
             if fmt == "2.0":
-                ev = _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals)
+                ev = _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals, eef_min_p)
             else:
                 ev = _v1_episode(ep, rules, modules, recs, verdicts, availability, mapped_codes, rule_hits, unmapped_codes)
             hits = ev["hits"]
@@ -852,6 +866,8 @@ def main(argv=None):
     ap.add_argument("--max-drop", type=float, default=0.05, help="tolerated fall of a precision / recall / pass rate (default 0.05)")
     ap.add_argument("--min-support", type=int, default=5, help="compare a metric only with at least this many counted episodes (default 5)")
     ap.add_argument("--require-all-runs", action="store_true", help="exit 2 when a subset of the expectation has no run")
+    ap.add_argument("--eef-min-p", type=float, default=EEF_MIN_P,
+                    help="the EEF module's opinions count as found from this inconsistency confidence on (default 0.7)")
     a = ap.parse_args(argv)
     try:
         exp = load_json(a.expectation)
@@ -868,7 +884,7 @@ def main(argv=None):
         if not runs:
             raise InputError("no run directories: pass --runs-map / --run")
         registry = load_json(a.registry) if a.registry and os.path.exists(a.registry) else None
-        doc = score(exp, tax, fmap, runs, by_lineage=a.by_lineage, registry=registry)
+        doc = score(exp, tax, fmap, runs, by_lineage=a.by_lineage, registry=registry, eef_min_p=a.eef_min_p)
     except InputError as ex:
         print(f"error: {ex}", file=sys.stderr)
         return 2

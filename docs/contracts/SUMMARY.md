@@ -431,3 +431,13 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **轨迹能算就可选、算不了就必选（设计 24 修订，C1 4.4 / C2 兼容 / C4 4.6.0）**：EEF 预检在平台算不出轨迹（或生成出错）时报
   `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`），不再是设计 24 起的 `unsupported`——模块照常可勾选，
   控制台第二屏把 trajectory.json 标为必填，Daemon 不传就拒绝建任务；`trajectory_json` 的说明改成「能算时不用给、算不出必须上传」。
+- **F5.22，C1 5.0（设计 25 §7，D81、D82）**：EEF 只出意见与置信度、不判废——`inconsistent` 缺省 info（严重度随档：不一致 high、可能不一致
+  medium，`scope_kind: camera`），新细码 `conflict`（review，裁决线 `eef_check`，两个渠道结论相反，唯一出卡）；`unsettled`、`opinion_mismatch`
+  标 `retired: true`（留在目录里，旧记录取级别用）；新明细表 `eef_opinions`（逐条 × 分项 × 相机的标签、p、两边各自的 p 与标记）；
+  demo profile 加 `merge` 一节（高 0.7、低 0.4、单渠道封顶 0.8，未校准）。
+- **F5.22，C2（兼容扩充）**：EEF 记录多 `details.merged`（`cells[]`：分项、相机、`p`、`label`、`flags`、`missing`、各渠道的
+  `verdict / p / confidence / why`；`episode`：标签、p、依据、冲突数；`tracking`；`profile.calibrated`），5.0 的记录不再写 `decision`；
+  报告的 EEF 小节多 `labels`、`p_bins`、`conflict_episodes`、`single_source_missing`、`cannot_tell_reasons`、`inconsistent_by_subitem`、
+  `confidence_uncalibrated`；`run.json` 的 `policy` 多 `defaults`（所选模块各细码的缺省级别）与 `appealable`（可复议的细码），任务按开跑时的
+  冻结判决，没有它们的旧运行按 `registry_version` 用旧表（4.x 的 EEF `inconsistent` 仍是 blocking、可复议）。
+- **F5.22，C4 4.7.0**：模块目录里的发现码可带 `retired: true`；EEF 不再判废条目、`conflict` 是唯一请人看的；客户可见变更记录中英两版。

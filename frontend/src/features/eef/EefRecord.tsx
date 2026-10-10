@@ -12,10 +12,12 @@ import {
   eefCpuRows,
   eefDatasetRecord,
   eefEgoMotion,
+  eefMerged,
   eefOpinion,
   eefStateMotion,
   eefTrajectorySource,
   eefWindowRows,
+  type EefCell,
   type EefEgoCamera,
   type EefOpinionCamera,
   type EefRecordCurves,
@@ -29,6 +31,95 @@ type D = Record<string, unknown>;
 const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
 const Z = () => zh.eefDetail;
 const OUTCOME_COLOR: Record<string, string> = { pass: 'green', reject: 'red', human: 'orange', opinion: 'arcoblue' };
+
+const LABEL_COLOR: Record<string, string | undefined> = { inconsistent: 'red', possibly_inconsistent: 'orange', consistent: 'green', cannot_tell: undefined };
+const FLAG_COLOR: Record<string, string | undefined> = { conflict: 'orangered', single_source: undefined, tracking_invalid: 'gold' };
+const pFmt = (p: number | null) => (p === null ? '—' : p.toFixed(2));
+
+/** One side of a cell: the channel, its verdict and p, or why it said nothing. */
+function SideCell({ cell, side }: { cell: EefCell; side: 'cpu' | 'vlm' }) {
+  const O = Z().output;
+  const src = cell.sources.find((x) => (side === 'cpu' ? x.channel === 'cpu' || x.channel === 'ego' : x.channel.startsWith('vlm_')));
+  if (!src) {
+    const gone = (side === 'cpu') === (cell.missing === 'tracking_invalid' || ['no_gripper_reference', 'not_measured', 'cpu_cannot_tell'].includes(cell.missing ?? ''));
+    return <span className="muted">{gone && cell.missing ? O.missing[cell.missing] ?? cell.missing : '—'}</span>;
+  }
+  const voided = side === 'cpu' && cell.flags.includes('tracking_invalid');
+  return (
+    <span className={voided ? 'muted' : undefined} style={voided ? { textDecoration: 'line-through' } : undefined}>
+      {O.channel[src.channel] ?? src.channel}：{O.verdict[src.verdict] ?? src.verdict}
+      {src.p !== null ? `（${pFmt(src.p)}）` : src.why ? `（${O.why[src.why] ?? O.missing[src.why] ?? src.why}）` : ''}
+    </span>
+  );
+}
+
+/**
+ * The opinion of registry 5.0 (design doc 25 §7): label · confidence · grounds for the episode, then every
+ * sub-item and camera with what each side said and the merge - the largest p, a conflict, a single source capped.
+ */
+export function EefOutput({ record }: { record: ResultRecord }) {
+  const m = eefMerged(details(record));
+  if (!m) return null;
+  const O = Z().output;
+  return (
+    <div data-testid="eef-output">
+      <div className="episode-line">
+        <Space wrap size={8}>
+          <Tag color={LABEL_COLOR[m.label]} data-testid="eef-label">
+            {O.label[m.label] ?? m.label}
+          </Tag>
+          {m.p !== null ? <b data-testid="eef-p">{O.p(pFmt(m.p))}</b> : null}
+          {m.flags.map((f) => (
+            <Tag key={f} size="small" color={FLAG_COLOR[f]}>
+              {O.flag[f] ?? f}
+            </Tag>
+          ))}
+        </Space>
+      </div>
+      {m.reason ? (
+        <div className="episode-line" data-testid="eef-reason">
+          {m.reason}
+        </div>
+      ) : null}
+      {m.uncalibrated && m.p !== null ? <div className="episode-line muted">{O.uncalibrated}</div> : null}
+      {m.cells.length ? (
+        <Table
+          size="mini"
+          rowKey="key"
+          pagination={false}
+          border={false}
+          data-testid="eef-cells"
+          rowClassName={(c: EefCell) => (c.flags.includes('conflict') ? 'eef-conflict-row' : '')}
+          data={m.cells}
+          columns={[
+            { title: O.cols.subitem, dataIndex: 'subitem', render: (v: string) => O.subitem[v] ?? v },
+            { title: O.cols.camera, dataIndex: 'camera', render: (v: string | null) => v ?? O.episode },
+            { title: O.cols.cpu, render: (_: unknown, c: EefCell) => <SideCell cell={c} side="cpu" /> },
+            { title: O.cols.vlm, render: (_: unknown, c: EefCell) => <SideCell cell={c} side="vlm" /> },
+            {
+              title: O.cols.merged,
+              render: (_: unknown, c: EefCell) =>
+                c.p === null ? (
+                  <span className="muted">{O.label.cannot_tell}</span>
+                ) : (
+                  <Tag size="small" color={LABEL_COLOR[c.label]}>
+                    {O.label[c.label] ?? c.label} · {pFmt(c.p)}
+                  </Tag>
+                ),
+            },
+            {
+              title: O.cols.flags,
+              render: (_: unknown, c: EefCell) =>
+                [...c.flags.map((f) => O.flag[f] ?? f), ...(c.missing && c.flags.includes('single_source') ? [O.missing[c.missing] ?? c.missing] : [])].join('；') || '—',
+            },
+          ]}
+        />
+      ) : (
+        <div className="episode-line muted">{O.noCells}</div>
+      )}
+    </div>
+  );
+}
 
 /** 判过 / 判废 / 转人工 and why: the person's reasons, the confirmed defects, what was not checked. */
 export function EefConclusion({ record, tag = true }: { record: ResultRecord; tag?: boolean }) {

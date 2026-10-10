@@ -1951,6 +1951,8 @@ export interface components {
             /** @description blocking codes only: a reject it caused may be appealed (D42) */
             appealable: boolean;
             review_line?: components["schemas"]["ReviewLineId"];
+            /** @description no longer reported (4.7.0): kept so older results still get a level */
+            retired?: boolean;
         };
         /** @description a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check */
         ReviewLineId: string;

@@ -150,7 +150,7 @@
 | 硬门 `passed=False` | 一条 severity high 的发现，默认 blocking |
 | 完整性「可疑」`passed=None` | 可疑码的发现（severity low / medium），默认 review，裁决线 `integrity_check` |
 | 任务成败弃权 `uncertain` | `uncertain`（TASK-4，medium），默认 review，裁决线 `task_verdict` |
-| EEF 转人工 | `unsettled`（MV-4，medium），默认 review，裁决线 `eef_check` |
+| EEF 转人工 | `unsettled`（MV-4，medium），默认 review，裁决线 `eef_check`（注册表 5.0 起停用：EEF 只出意见，冲突出 `conflict`，设计 25） |
 | 标注分歧 | `label_disagreement`（LABEL-4，medium），默认 review，裁决线 `label` |
 | 软分模块的分数 | 各子项的读数；低于子项阈值出发现，默认 info |
 | 建议项（画面缺陷、EEF 模型意见） | 发现，默认 info |
@@ -288,9 +288,10 @@ A 类算法不动，壳里读 `details` 生成。
 
 | 细码 | 项 | 严重度 | 默认级别 | 来源 |
 |---|---|---|---|---|
-| `inconsistent` | MV-4 | high | blocking，可复议 | 判废 |
-| `unsettled` | MV-4 | medium | review（eef_check） | 转人工 |
-| `opinion_mismatch` | MV-4 | low | info | 没有夹爪参考时的模型意见 |
+| `inconsistent` | MV-4 | 随档：不一致 high、可能不一致 medium | info（注册表 5.0 前 blocking、可复议） | 意见：分项 × 相机达到「可能不一致」（设计 25 §7，D81） |
+| `conflict` | MV-4 | medium | review（eef_check） | 两个渠道结论相反，唯一出卡的情形（5.0） |
+| `unsettled` | MV-4 | medium | review（eef_check） | 转人工（5.0 起停用，`retired`，旧记录照读） |
+| `opinion_mismatch` | MV-4 | low | info | 没有夹爪参考时的模型意见（5.0 起停用，并进 `inconsistent`） |
 | `record_mismatch` | MV-4 | low | info | 与数据集记录的比对 |
 
 **任务成败判定**
@@ -472,7 +473,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
   `eef_check` 的 inconsistent / consistent 同理；`task_verdict` 的 failure → blocking（human）、success → 撤销 `failure` 发现；
   `label` 线的改标重判照 D39；`unsure` 不改任何东西、仍计待裁；`discard` 压过一切。
 - **复议按发现**（D42 的推广）：一条被拒的 episode 可复议，当且仅当它的全部 blocking 发现都来自 `appealable` 的细码（第一版：
-  `task_success.failure`、`eef_video_consistency.inconsistent`、`dedup.duplicate`）、且没有人工已定的结论；「恢复为可用」撤销这些发现的 blocking
+  `task_success.failure`、`eef_video_consistency.inconsistent`（注册表 5.0 前的任务）、`dedup.duplicate`）、且没有人工已定的结论；「恢复为可用」撤销这些发现的 blocking
   级别，再按 §4.3 重算（别的模块出错的仍 held，P11）。物理与结构硬门的拒绝仍是终局。
 - 已被拒的条目不再出 review 卡片（D42 延伸到所有裁决线）。
 

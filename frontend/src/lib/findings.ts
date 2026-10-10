@@ -61,7 +61,8 @@ export const REPORT_ONLY_GATES: readonly string[] = ['data_integrity'];
  * nothing (design doc 17 §4.1). No version: the policy a new task gets.
  */
 export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, preset?: string, policyVersion?: string | null): Level {
-  const levels = new Set((m?.codes ?? []).map((c) => c.level));
+  // a retired code (C4 4.7.0) is no longer reported: it says nothing of what the module does now
+  const levels = new Set((m?.codes ?? []).filter((c) => !c.retired).map((c) => c.level));
   if (preset === 'report_only') {
     const gate = policyVersion !== '1' && m !== undefined && REPORT_ONLY_GATES.includes(m.id);
     return gate && levels.has('blocking') ? 'blocking' : 'info';

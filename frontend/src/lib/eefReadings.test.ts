@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { zh } from '../locales/zh';
-import { eefConclusion, eefCpuEvidence, eefCpuRows, eefStateMotion, eefWindowRows } from './eefReadings';
+import { eefConclusion, eefCpuEvidence, eefCpuRows, eefMerged, eefStateMotion, eefWindowRows } from './eefReadings';
 
 const details = {
   reason: '「位置」（相机 wrist）CPU 与模型都认为不一致（模型反对 2、支持 0）',
@@ -195,5 +195,23 @@ describe('eefDatasetRecord (design doc 12 §8.7, D-E16)', () => {
     const d = rec.details as Record<string, unknown>;
     const rest = eefCpuEvidence(rec.evidence as string[], eefWindowRows(d), eefDatasetRecord(d)!.overlays.map((o) => o.path));
     expect(rest).toEqual(['checks/eef_video_consistency/overlays/3_ext.jpg']);
+  });
+});
+
+
+describe('the opinion with its confidence (registry 5.0, design doc 25 §7)', () => {
+  it('reads the episode and every cell, worst first, each side with its verdict and p', async () => {
+    const { eefConflictRecord, eefRecord, eefUnderivedRecord } = await import('../mocks/eef');
+    const m = eefMerged(eefConflictRecord(3).details as Record<string, unknown>)!;
+    expect([m.label, m.p, m.flags, m.conflicts, m.uncalibrated]).toEqual(['inconsistent', 0.95, ['conflict'], 1, true]);
+    expect(m.cells.map((c) => [c.subitem, c.p])).toEqual([['position_2d', 0.95], ['temporal_alignment', 0.05], ['orientation_2d', null]]);
+    const pos = m.cells[0];
+    expect(pos.sources.map((x) => [x.channel, x.verdict, x.p])).toEqual([['cpu', 'issue', 0.95], ['vlm_review', 'ok', 0.1]]);
+    expect(pos.timeS).toEqual([8, 10]);
+    expect(m.cells[1].missing).toBe('model_cannot_see');
+    // a record made before 5.0 has none; an episode nothing could be said about has no p and no cell
+    expect(eefMerged(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
+    const none = eefMerged(eefUnderivedRecord(3).details as Record<string, unknown>)!;
+    expect([none.label, none.p, none.cells]).toEqual(['cannot_tell', null, []]);
   });
 });

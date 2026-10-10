@@ -6,7 +6,7 @@ import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, Decision, DecisionValue, EpisodeView } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
-import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefWindows } from '../../features/eef/EefRecord';
+import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefOutput, EefWindows } from '../../features/eef/EefRecord';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
@@ -219,6 +219,8 @@ function EefEvidence({ taskId, ep, rev }: { taskId: string; ep: number; rev: num
   if (!record) return <div className="muted">{zh.eefDetail.noRecord}</div>;
   return (
     <div data-testid={`eef-evidence-${ep}`}>
+      {/* registry 5.0 (design doc 25 §7.3): a card is a conflict - both sides first, their evidence below */}
+      <EefOutput record={record} />
       <EefCpuTable record={record} />
       <EefWindows taskId={taskId} record={record} />
       <EefCpuEvidence taskId={taskId} record={record} />

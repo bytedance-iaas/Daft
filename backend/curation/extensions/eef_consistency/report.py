@@ -241,7 +241,29 @@ def ego_rows(results: dict) -> list[dict]:
     return out
 
 
+def opinion_rows(results: dict) -> list[dict]:
+    """Every merged cell (design doc 25 §7): one row per episode, sub-item and camera."""
+    from . import channels as CH
+
+    out: list[dict] = []
+    for ep, rec in sorted(results.items()):
+        merged = (rec.get("details") or {}).get("merged")
+        if not isinstance(merged, dict):
+            continue
+        for c in merged.get("cells") or []:
+            src = c.get("sources") or {}
+            cpu = next((src[k] for k in CH.CPU_SIDE if k in src), None) or {}
+            vlm = next((src[k] for k in CH.VLM_SIDE if k in src), None) or {}
+            out.append({"episode_index": int(ep), "subitem": c.get("subitem"), "camera": c.get("camera") or "",
+                        "label": c.get("label"), "p": _num(c.get("p")), "cpu_p": _num(cpu.get("p")),
+                        "vlm_p": _num(vlm.get("p")), "flags": ";".join(c.get("flags") or []),
+                        "missing": c.get("missing") or "", "time_s": json.dumps(c.get("time_s")) if c.get("time_s") else ""})
+    return out
+
+
 def table_rows(table: str, results: dict) -> list[dict]:
+    if table == "eef_opinions":
+        return opinion_rows(results)
     if table == "eef_review_windows":
         return review_rows(results)
     if table == "eef_record":
@@ -317,6 +339,60 @@ def review_summary(results: dict) -> dict:
             "windows_failed": n["failed"], "truncated_episodes": n["truncated"], "vlm_requests": n["requests"],
             "cache_hits": n["cache_hits"], "model_cpu_agreement": round(agree / votes, 3) if votes else None,
             "model_votes": votes, "review_classes": series(classes), "failure_codes": series(failures)}
+
+
+#: the bins of the episodes' inconsistency confidence (design doc 25 §7.2; the demo bands are 0.4 and 0.7)
+P_BINS = (("<0.2", 0.2), ("0.2–0.4", 0.4), ("0.4–0.7", 0.7), ("0.7–0.9", 0.9), ("≥0.9", None))
+
+
+def merged_summary(results: dict) -> dict:
+    """The opinions of registry 5.0 (design doc 25 §7): the episodes by label and by p, the conflicts (the only
+    cards), what single sources missed, why an episode could not be told, and the CPU voided by tracking."""
+    from . import combine as CB
+
+    labels = {CB.INCONSISTENT: 0, CB.POSSIBLY: 0, CB.CONSISTENT: 0, CB.CANNOT_TELL: 0}
+    bins = {name: 0 for name, _ in P_BINS}
+    missing: dict[str, int] = {}
+    cannot: dict[str, int] = {}
+    worst_sub: dict[str, int] = {}
+    conflicts = conflict_cells = single = voided = 0
+    calibrated, seen = True, False
+    for rec in results.values():
+        merged = (rec.get("details") or {}).get("merged")
+        if not isinstance(merged, dict):
+            continue
+        seen = True
+        ep = merged.get("episode") or {}
+        label = ep.get("label") if ep.get("label") in labels else CB.CANNOT_TELL
+        labels[label] += 1
+        p = _num(ep.get("p"))
+        if p is not None:
+            bins[next(name for name, hi in P_BINS if hi is None or p < hi)] += 1
+        if label in (CB.INCONSISTENT, CB.POSSIBLY) and ep.get("subitem"):
+            worst_sub[ep["subitem"]] = worst_sub.get(ep["subitem"], 0) + 1
+        if label == CB.CANNOT_TELL:
+            for w in ep.get("why") or ["unknown"]:
+                cannot[w] = cannot.get(w, 0) + 1
+        conflicts += bool(ep.get("conflicts"))
+        if CB.SINGLE_SOURCE in (ep.get("flags") or []):
+            single += 1
+        for cell in merged.get("cells") or []:
+            flags = cell.get("flags") or []
+            conflict_cells += CB.CONFLICT in flags
+            voided += CB.TRACKING_INVALID in flags
+            if CB.SINGLE_SOURCE in flags and cell.get("missing"):
+                missing[cell["missing"]] = missing.get(cell["missing"], 0) + 1
+        calibrated = calibrated and bool((merged.get("profile") or {}).get("calibrated"))
+    if not seen:
+        return {}
+    series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
+    return {"labels": [{"name": k, "count": v} for k, v in labels.items()],
+            "p_bins": [{"name": k, "count": v} for k, v in bins.items()],
+            "conflict_episodes": conflicts, "conflict_cells": conflict_cells, "single_source_episodes": single,
+            "single_source_missing": series(dict(sorted(missing.items(), key=lambda kv: -kv[1]))),
+            "cannot_tell_reasons": series(dict(sorted(cannot.items(), key=lambda kv: -kv[1]))),
+            "inconsistent_by_subitem": series(dict(sorted(worst_sub.items(), key=lambda kv: -kv[1]))),
+            "tracking_invalid_cells": voided, "confidence_uncalibrated": not calibrated}
 
 
 def verdict_summary(results: dict) -> dict:

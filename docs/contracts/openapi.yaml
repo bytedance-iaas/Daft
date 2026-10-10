@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.6.0
+  version: 4.7.0
   description: |
     ## Overview
 
@@ -162,6 +162,13 @@ info:
     upload reads the trajectory the platform computed, and answers 404 `not_derived` for an episode that
     has none yet or cannot have one.
 
+    **4.7.0** (2026-10-09): the EEF module gives opinions with a confidence and no longer rejects an
+    episode. Its finding `inconsistent` is reported only (its severity follows the confidence), the new
+    finding `conflict` - the two ways of checking disagree - is the only one a person is asked about (review
+    line `eef_check`; answering "inconsistent" still rejects). A finding code a module no longer reports
+    carries `retired: true` in the module catalogue (`unsettled` and `opinion_mismatch` of the EEF module),
+    kept so older results still read. A task keeps the default finding levels it started with.
+
   x-description-zh: |
     ## 概览
 
@@ -261,6 +268,10 @@ info:
     或数据集自带的 `trajectory.json`）；原始手持夹爪的 mcap 逐条从录制推出轨迹，夹爪标定可以用新的上传种类 `eef_gripper_calibration` 传，
     不传用内置的缺省值。别的数据集预检报 `needs_input`（`trajectory_missing`），必须上传。没上传的任务，叠加读平台算出的轨迹，
     某条还没有或得不到时回 404 `not_derived`。
+
+    **4.7.0**（2026-10-09）：EEF 模块只给带置信度的意见，不再判废条目。它的发现 `inconsistent` 只报告（严重度随置信度），新发现 `conflict`
+    （两种检查方式结论相反）是唯一要人看的（裁决线 `eef_check`；人答「不一致」照样判废）。模块不再报告的发现码在模块目录里带
+    `retired: true`（EEF 模块的 `unsettled`、`opinion_mismatch`），留着让旧结果照常读。任务按开始时的缺省级别判决。
 
 servers:
   - url: "{base}/api/v1"
@@ -3891,6 +3902,7 @@ components:
         scope_kind: {enum: [episode, camera, channel, dataset]}
         appealable: {type: boolean, description: "blocking codes only: a reject it caused may be appealed (D42)"}
         review_line: {$ref: "#/components/schemas/ReviewLineId"}
+        retired: {type: boolean, description: "no longer reported (4.7.0): kept so older results still get a level"}
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"

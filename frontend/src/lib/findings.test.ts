@@ -39,7 +39,7 @@ describe('the findings views read the registry and the report 2.0', () => {
 
   it('a module rejects, asks or only reports by its codes; under report_only only data integrity rejects', () => {
     expect(moduleRole(spec('timestamp_check'))).toBe('blocking');
-    expect(moduleRole(spec('eef_video_consistency'))).toBe('blocking');
+    expect(moduleRole(spec('eef_video_consistency'))).toBe('review');      // registry 5.0 (D81): a conflict asks, nothing rejects
     expect(moduleRole(spec('visual_quality'))).toBe('info');
     expect(moduleRole(spec('task_success'), 'report_only')).toBe('info');
     expect(moduleRole(spec('timestamp_check'), 'report_only')).toBe('info');

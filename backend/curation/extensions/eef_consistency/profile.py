@@ -33,6 +33,8 @@ class Profile:
     record: dict = dataclasses.field(default_factory=dict)
     #: a wrist camera's own motion (design doc 22 §5.3); optional - egomotion.DEFAULTS fill the gaps
     ego_motion: dict = dataclasses.field(default_factory=dict)
+    #: the channels' merge (design doc 25 §7.2): bands and the single-source cap; optional - combine.DEFAULTS fill the gaps
+    merge: dict = dataclasses.field(default_factory=dict)
 
     def summary(self) -> dict:
         return {"name": self.name, "version": self.version, "calibrated": self.calibrated, "sha256": self.sha256}
@@ -53,6 +55,7 @@ def load(name_or_path: str | None) -> Profile | None:
     return Profile(name=str(doc["name"]), version=str(doc["version"]), calibrated=bool(doc["calibrated"]),
                    source=str(doc["source"]), sha256=hashlib.sha256(raw).hexdigest(),
                    record=dict(doc.get("record") or {}), ego_motion=dict(doc.get("ego_motion") or {}),
+                   merge=dict(doc.get("merge") or {}),
                    **{s: dict(doc[s]) for s in SECTIONS})
 
 

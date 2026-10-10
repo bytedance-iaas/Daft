@@ -57,6 +57,91 @@ export function eefConclusion(details: D): EefConclusion {
   };
 }
 
+// ---------------------------------------------------------------- the opinion and its confidence (registry 5.0, design doc 25 §7)
+
+export interface EefSource {
+  /** cpu / ego / vlm_review / vlm_opinion */
+  channel: string;
+  /** issue / ok / cannot_tell */
+  verdict: string;
+  p: number | null;
+  confidence: number | null;
+  why: string | null;
+}
+
+export interface EefCell {
+  key: string;
+  subitem: string;
+  camera: string | null;
+  p: number | null;
+  /** inconsistent / possibly_inconsistent / consistent / cannot_tell */
+  label: string;
+  /** conflict / single_source / tracking_invalid */
+  flags: string[];
+  /** what a single source missed */
+  missing: string | null;
+  sources: EefSource[];
+  timeS: [number, number] | null;
+  hypotheses: string[];
+  why: string[];
+}
+
+export interface EefMerged {
+  label: string;
+  p: number | null;
+  reason: string;
+  flags: string[];
+  conflicts: number;
+  subitem: string | null;
+  camera: string | null;
+  /** worst first, the ones nothing could be said about last */
+  cells: EefCell[];
+  uncalibrated: boolean;
+}
+
+/** The episode's merged opinion (``details.merged``, registry 5.0): null for a record made before. */
+export function eefMerged(details: D): EefMerged | null {
+  const m = details.merged;
+  if (!m || typeof m !== 'object') return null;
+  const mm = obj(m);
+  const ep = obj(mm.episode);
+  const cells = arr(mm.cells)
+    .map(obj)
+    .map((c, i): EefCell => {
+      const t = arr(c.time_s);
+      return {
+        key: `${s(c.subitem) ?? ''}@${s(c.camera) ?? ''}#${i}`,
+        subitem: s(c.subitem) ?? '',
+        camera: s(c.camera),
+        p: num(c.p),
+        label: s(c.label) ?? 'cannot_tell',
+        flags: arr(c.flags).map((x) => String(x)),
+        missing: s(c.missing),
+        sources: Object.entries(obj(c.sources)).map(([channel, raw]) => {
+          const x = obj(raw);
+          return { channel, verdict: s(x.verdict) ?? 'cannot_tell', p: num(x.p), confidence: num(x.confidence), why: s(x.why) };
+        }),
+        timeS: t.length === 2 && num(t[0]) !== null && num(t[1]) !== null ? [num(t[0])!, num(t[1])!] : null,
+        hypotheses: arr(c.supported_hypotheses).map((x) => String(x)),
+        why: arr(c.why).map((x) => String(x)),
+      };
+    })
+    .sort((a, b) => (b.p ?? -1) - (a.p ?? -1));
+  return {
+    label: s(ep.label) ?? 'cannot_tell',
+    p: num(ep.p),
+    reason: s(ep.reason) ?? '',
+    flags: arr(ep.flags).map((x) => String(x)),
+    conflicts: num(ep.conflicts) ?? 0,
+    subitem: s(ep.subitem),
+    camera: s(ep.camera),
+    cells,
+    uncalibrated: !obj(mm.profile).calibrated,
+  };
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
 export interface EefCpuRow {
   key: string;
   camera: string;

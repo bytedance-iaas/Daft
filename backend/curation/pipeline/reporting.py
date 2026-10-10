@@ -67,10 +67,10 @@ class Revision:
         from . import policy as policy_mod
 
         frozen = _read(os.path.join(self.dir, policy_mod.POLICY_NAME), None)
-        #: the policy the revision's verdicts were computed with (aggregate froze it)
-        self.policy = (policy_mod.Policy.from_json(frozen) if isinstance(frozen, dict)
-                       else policy_mod.load(run_dir))
         self.run = _read(os.path.join(run_dir, "run.json"), {}) or {}
+        #: the policy the revision's verdicts were computed with (aggregate froze it)
+        self.policy = (policy_mod.Policy.from_json(frozen, self.run.get("registry_version")) if isinstance(frozen, dict)
+                       else policy_mod.load(run_dir))
 
     def module_params(self, module: str) -> dict:
         """The module's parameters as the task gave them (``run.json``; defaults are filled in later)."""
@@ -198,7 +198,8 @@ def _summary(rev: Revision, m: str) -> dict:
 
         out.update(eef_report.summary(res))
         out.update(eef_report.review_summary(res))
-        out.update(eef_report.verdict_summary(res))
+        out.update(eef_report.verdict_summary(res))     # records before registry 5.0 (pass / reject / a person)
+        out.update(eef_report.merged_summary(res))      # 5.0 on: opinions with a confidence (design doc 25 §7)
         out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
         out.update(eef_report.record_summary(res))     # the dataset's own record: reported only (§8.7)
         out.update(eef_report.ego_summary(res))        # the wrist cameras' own motion: reported only (design doc 22 §5.3)
@@ -468,8 +469,9 @@ def _adjudication(review: list, module: str, spec) -> dict:
         return False
 
     out = {"pending": sum(1 for e in review if has(e, True))}
-    if spec.appealable:
-        out["appealable"] = sum(1 for e in review if has(e, False))
+    appeals = sum(1 for e in review if has(e, False))
+    if spec.appealable or appeals:                  # an older run's rejects may still be appealable (design doc 25 §7.3)
+        out["appealable"] = appeals
     return out
 
 
@@ -682,11 +684,24 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append("")
             continue
         if spec is not None and sec["id"] == "eef_video_consistency":
-            # the EEF module (D49): CPU first, the model second; pass / reject / a person's card
             s = sec["summary"]
-            lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "
-                         f"转人工 {s.get('to_human', 0)} · 出错 {cnt['error']}"
-                         f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
+            if s.get("labels"):
+                # registry 5.0 (design doc 25 §7, D81): opinions with a confidence; a conflict is the only card
+                lab = {x["name"]: x["count"] for x in s["labels"]}
+                lines.append(f"- 结论(意见,不判废):不一致 {lab.get('inconsistent', 0)} · 可能不一致 "
+                             f"{lab.get('possibly_inconsistent', 0)} · 一致 {lab.get('consistent', 0)} · 判断不了 "
+                             f"{lab.get('cannot_tell', 0)} · 出错 {cnt['error']}"
+                             f"{'（置信度未校准,是序不是概率）' if s.get('confidence_uncalibrated') else ''}")
+                lines.append(f"- 冲突(两个渠道结论相反,转人工裁决):{s.get('conflict_episodes', 0)} 条")
+                miss = "、".join(f"{x['name']} {x['count']}" for x in s.get("single_source_missing") or []) or "无"
+                lines.append(f"- 只有一个渠道的分项(格数):{miss}")
+                why = "、".join(f"{x['name']} {x['count']}" for x in s.get("cannot_tell_reasons") or []) or "无"
+                lines.append(f"- 判断不了的原因(条数):{why}")
+            else:
+                # the EEF module before 5.0 (D49): CPU first, the model second; pass / reject / a person's card
+                lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "
+                             f"转人工 {s.get('to_human', 0)} · 出错 {cnt['error']}"
+                             f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
             if s.get("opinion_episodes"):
                 lines.append(f"- 模型意见（没有夹爪参考，不参与判决）:问过 {s['opinion_episodes']} 条 · "
                              f"有不匹配片段(置信度 ≥ 0.5) {s.get('opinion_flagged', 0)} 条 · "
@@ -696,8 +711,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 lines.append(f"- 腕部相机的自运动（只报告，阈值未校准）:读过 {s['ego_motion_episodes']} 条 · "
                              f"与位姿不一致 {s.get('ego_motion_suspect', 0)} 条 · 画面匹配不足 {s.get('ego_motion_unknown', 0)} 条 · "
                              f"片段 轻 {bands.get('minor', 0)} / 中 {bands.get('moderate', 0)} / 重 {bands.get('severe', 0)}")
-            why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
-            lines.append(f"- 转人工的原因(条数):{why}")
+            if not s.get("labels"):
+                why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
+                lines.append(f"- 转人工的原因(条数):{why}")
             adj = sec.get("adjudication") or {}
             lines.append(f"- 人工裁决:待裁 {adj.get('pending', 0)} 条(转人工而仍在通过清单里、还没人裁的),"
                          f"可复议 {adj.get('appealable', 0)} 条(只被本模块判废的)")

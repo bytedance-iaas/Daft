@@ -11,7 +11,7 @@ import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
-import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
+import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -385,13 +385,19 @@ function DedupBlock({ record, onEpisode }: BlockProps) {
 function EefBlock({ taskId, record }: BlockProps) {
   const d = details(record);
   const overall = str(d.overall);
+  // registry 5.0 (design doc 25 §7): label · confidence · grounds and every sub-item; before it the module's verdict
+  const head = d.merged ? (
+    <EefOutput record={record} />
+  ) : (
+    <Space wrap>
+      <EefConclusion record={record} />
+    </Space>
+  );
   if (d.assessment_mode === 'vlm_opinion') {
-    // no gripper reference (design doc 12 §10.5): the model's opinion only, no CPU reading, no verdict
+    // no gripper reference (design doc 12 §10.5): the model's opinion only, no CPU reading
     return (
       <div data-testid="episode-eef">
-        <Space wrap>
-          <EefConclusion record={record} />
-        </Space>
+        {head}
         <EefTrajectorySource record={record} />
         <EefOpinion record={record} />
         <EefEgoMotion record={record} />
@@ -401,9 +407,7 @@ function EefBlock({ taskId, record }: BlockProps) {
   }
   return (
     <div data-testid="episode-eef">
-      <Space wrap>
-        <EefConclusion record={record} />
-      </Space>
+      {head}
       <EefTrajectorySource record={record} />
       <div className="episode-line muted">
         {E().eef.overall}：{overall ? zh.sections.eef.overall[overall] ?? zh.sections.eef.overall[`${overall}s`] ?? overall : '—'}

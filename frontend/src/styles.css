@@ -949,6 +949,11 @@ body {
   font-weight: 600;
 }
 
+/* registry 5.0 (design doc 25 §7): the cell two channels disagree on, the one a person is asked */
+.eef-conflict-row td {
+  background: rgba(255, 125, 0, 0.08);
+}
+
 .eef-window {
   border: 1px solid var(--c-border);
   border-radius: 4px;

@@ -75,3 +75,26 @@ def test_frozen_in_the_run_directory(tmp_path):
     again = P.load(str(tmp_path))
     assert again == pol and again.to_json()["version"] == P.POLICY_VERSION
     assert P.from_task_params({}).preset == "default"
+
+
+def test_a_task_keeps_the_default_levels_it_started_with(tmp_path):
+    """Design doc 25 §7.3: 5.0 made the EEF module's ``inconsistent`` info; a task frozen with its modules' default
+    levels keeps them whatever a later registry says, and a run frozen before 5.0 (no defaults in run.json) keeps
+    4.x's - an older task's next revision does not quietly bring its EEF rejects back."""
+    eef = {"code": "inconsistent", "item": "MV-4", "severity": "high"}
+    now = P.Policy.of().with_defaults(["eef_video_consistency", "dedup"])
+    table = now.to_json()["defaults"]
+    assert table["eef_video_consistency"]["inconsistent"] == "info" and table["eef_video_consistency"]["conflict"] == "review"
+    assert set(table) == {"eef_video_consistency", "dedup"} and now.level("eef_video_consistency", eef) == "info"
+    # what was frozen wins over the registry, even where they differ
+    frozen = {**now.to_json(), "defaults": {"eef_video_consistency": {"inconsistent": "blocking"}}}
+    assert P.Policy.from_json(frozen, "5.0").level("eef_video_consistency", eef) == "blocking"
+    # a run of 4.x without frozen defaults: the default it had
+    old = {"preset": "default", "rules": [], "version": "2"}
+    for ver, want in (("4.4", "blocking"), ("4.0", "blocking"), ("5.0", "info"), (None, "info")):
+        assert P.Policy.from_json(old, ver).level("eef_video_consistency", eef) == want, ver
+    (tmp_path / "run.json").write_text(json.dumps({"policy": old, "registry_version": "4.2"}))
+    assert P.load(str(tmp_path)).level("eef_video_consistency", eef) == "blocking"
+    # rules still decide first: report_only makes it info even on an old run
+    ro = P.Policy.from_json({"preset": "report_only", "rules": P.PRESETS["report_only"], "version": "2"}, "4.2")
+    assert ro.level("eef_video_consistency", eef) == "info"

@@ -1,13 +1,15 @@
 """``check --modules eef_video_consistency`` - the EEF-video consistency module (design doc 12, D49).
 
-A vlm-tier hard gate on the funnel's survivors. For every episode: the CPU
-measures (``runner.run_episode``: sub-item statuses, coverage, segments, diagnosis; observations, curves
-and evidence under ``checks/eef_video_consistency/``), the model reviews the windows (``eef_review``,
-one point and at most one axis per request) and ``decide.py`` gives the verdict (appendix C.9): ``pass``
-(``passed=true``), ``reject`` (``passed=false``, the reason in ``details.reason``) or ``human``
-(``passed=null``: an adjudication card). An episode the file does not declare goes to a person; an
-episode the CPU fails on gets an error line (held, D33); a model that fails on an episode leaves the CPU
-without a second opinion. The whole call needs a VLM backend (probed first). A remote LeRobot dataset's
+Opinions with a confidence, never a reject (registry 5.0, design doc 25 §6-§7, D81, D82). For every episode:
+the CPU measures (``runner.run_episode``: sub-item statuses, coverage, segments, diagnosis; observations,
+curves and evidence under ``checks/eef_video_consistency/``) and the model reviews the windows (``eef_review``,
+one point and at most one axis per request) - or, without a gripper reference, the model gives its opinion on
+each whole marked clip and a wrist camera's own motion is read; ``channels`` turns each into a verdict and a
+confidence per sub-item and camera and ``combine`` merges them (``details.merged``: per cell the largest p, a
+conflict, a single source capped; the episode's label, p and grounds). The record always passes; its findings
+carry the opinion and a conflict is the only adjudication card (records before 5.0 carry the pass / reject /
+person verdict of design doc 12 appendix C.9). An episode the file does not declare "cannot tell"; an episode the CPU fails on gets an error line
+(held, D33); a model that fails on an episode leaves the CPU alone, capped. The whole call needs a VLM backend (probed first). A remote LeRobot dataset's
 videos are read in place, only each episode's window, through the vlm stage's shared blocks (design doc 23
 §3.2); ``--resume`` redoes a line made with another trajectory.json,
 other seeds or template, another configuration or another model, and ``input_digest`` covers them.
@@ -330,15 +332,14 @@ class EefJudge:
             sort_keys=True).encode()).hexdigest()
 
     def judge(self, ep: int, log) -> tuple[dict | None, list[str]]:
-        """CPU, then the model, then the verdict (design doc 12 C.9). ``None``: the CPU failed (the
-        cause is on ``log``; the record is an error line, held)."""
-        from ..extensions.eef_consistency import decide as D
-
+        """The channels, then their merge (design doc 25 §6-§7): an opinion with a confidence, never a reject.
+        ``None``: the CPU failed (the cause is on ``log``; the record is an error line, held)."""
         sample, source = self._sample(ep)
-        if sample is None:
-            if self.opinion:                        # an opinion asks nobody (design doc 12 §10.5): nothing to show
+        if sample is None:                          # nothing to compare: "cannot tell", nobody asked (§7.5)
+            if self.opinion:
                 return self._unassessed(int(ep), source), []
-            return self._judged(D.decide(None, None), _unsupported_detail(int(ep), "projection_missing"), None, [])
+            return self._judged(self._merged(why="trajectory.json 里没有这一条"),
+                                _unsupported_detail(int(ep), "projection_missing"), None, [])
         try:
             return self._judge(ep, sample, log)
         finally:
@@ -386,10 +387,11 @@ class EefJudge:
             op["interpolation"] = bridged
         ego = self._ego_motion(ep, sample)
         evidence: list[str] = []                                  # the overlay is drawn live
+        merged = self._merged(opinion=op, ego=ego)
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
                   "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,
-                  "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": "",
+                  "merged": merged, "reason": merged["episode"]["reason"],
                   "vlm": {"model": self.model, "prompt_version": op.get("prompt_version", OP.PROMPT_VERSION), "answer_schema": OP.ANSWER_SCHEMA,
                           "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
         if ego is not None:
@@ -412,10 +414,11 @@ class EefJudge:
             why = "；".join(["这一条推不出轨迹", *cams] if cams else ["这一条推不出轨迹", str(source.get("message") or source.get("reason"))])
         op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "not_assessable", "cameras": {},
               "segments": 0, "flagged": False, "max_confidence": None, "requests": 0, "failure": why}
+        merged = self._merged(why=why)
         detail = {"sample_id": None, "episode_index": int(ep), "assessment_mode": "vlm_opinion", "overall": "opinion",
                   "opinion": op, "config_hash": self.config, "seeds_sha256": None, "template_sha256": None,
                   "input_file_sha256": self.result.sha256, "review_config": self.review_config,
-                  "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": ""}
+                  "merged": merged, "reason": ""}
         if source is not None:
             detail["trajectory_source"] = source
         return {"passed": True, "score": None, "detail": detail}
@@ -471,8 +474,30 @@ class EefJudge:
         for e in (detail.get("record") or {}).get("evidence") or []:
             e["path"] = self._rel(e["path"])
 
+    def _merged(self, *, detail: dict | None = None, review: dict | None = None, opinion: dict | None = None,
+                ego: dict | None = None, why: str | None = None) -> dict:
+        """The episode's channels merged (design doc 25 §6-§7, ``combine``): ``details.merged``."""
+        from ..extensions.eef_consistency import channels as CH
+        from ..extensions.eef_consistency import combine as CB
+
+        prof = self.cfg.profile
+        cfg = CB.settings(prof)
+        cpu = CH.cpu_channel(detail, prof, full_at=cfg["full_at"]) if detail else None
+        rev = CH.review_channel(review, detail) if review is not None else None
+        vlm_missing = CB.MODEL_NO_ANSWER if review is not None and not (review.get("cameras") or {}) else None
+        op = CH.opinion_channel(opinion, umi=self.umi) if opinion is not None else None
+        eg = CH.ego_channel(ego, getattr(prof, "ego_motion", None), full_at=cfg["full_at"]) if ego else None
+        merged = CB.merge(cpu=cpu, review=rev, opinion=op, ego=eg, cfg=cfg, vlm_missing=vlm_missing,
+                          hypotheses=(detail or {}).get("diagnosis"))
+        if rev is not None and rev[1]:
+            merged["tracking"] = rev[1]
+        if why and merged["episode"]["p"] is None:
+            merged["episode"]["reason"] = f"判断不了：{why}"
+        merged["profile"] = {"calibrated": bool(getattr(prof, "calibrated", False)),
+                             "name": getattr(prof, "name", None)}
+        return merged
+
     def _judge(self, ep: int, sample, log) -> tuple[dict | None, list[str]]:
-        from ..extensions.eef_consistency import decide as D
         from ..extensions.eef_consistency import review as R
         from ..extensions.eef_consistency import runner
         from . import eef_review
@@ -502,22 +527,23 @@ class EefJudge:
                       "failure": f"{type(e).__name__}: {e}"[:300]}
             self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {type(e).__name__}: {e}")
         review["elapsed_s"] = round(time.perf_counter() - t1, 3)
-        decision = D.decide(detail, review)
-        if decision["outcome"] == D.HUMAN:          # the person's card shows every window
+        merged = self._merged(detail=detail, review=review)
+        if merged["episode"]["conflicts"]:          # the person's card shows every window (a conflict is the only card)
             eef_review.write_card_evidence(review, requests, self.run_dir)
         evidence += list(review.get("evidence") or [])
-        return self._judged(decision, detail, review, evidence)
+        return self._judged(merged, detail, review, evidence)
 
-    def _judged(self, decision: dict, detail: dict, review: dict | None, evidence: list[str]):
+    def _judged(self, merged: dict, detail: dict, review: dict | None, evidence: list[str]):
+        """The record of a measured episode: it never fails (D81) - the findings carry the opinion."""
         from ..extensions.eef_consistency import review as R
         from . import eef_review
 
         detail.update(input_file_sha256=self.result.sha256, review_config=self.review_config,
                       assessment_mode="verdict", review=review or {"status": R.NOT_REVIEWED},
-                      decision={k: v for k, v in decision.items() if k != "passed"}, reason=decision["reason"],
+                      merged=merged, reason=merged["episode"]["reason"],
                       vlm={"model": self.model, "prompt_version": R.PROMPT_VERSION, "answer_schema": R.ANSWER_SCHEMA,
                            "timeout_s": self.timeout_s, "call_kind": eef_review.TAG})
-        return {"passed": decision["passed"], "score": None, "detail": detail}, evidence
+        return {"passed": True, "score": None, "detail": detail}, evidence
 
     def close(self) -> None:
         if self.scratch is not None:

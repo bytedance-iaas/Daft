@@ -68,6 +68,8 @@ def test_topic_frames_are_numbered_like_the_video(mini_dataset, mini_mcap, tmp_p
     video = list(O.view_frames(a.samples[1], CAM, mini_dataset))
     topic = list(O.view_frames(b.samples[1], CAM, mini_mcap))
     assert [f.index for f in topic] == [f.index for f in video] == list(range(len(_truth(1))))
+    # on the episode's timeline, not the local video's synthetic rate: a review or opinion clip plays at its speed
+    assert max(abs(x.pts_s - y.pts_s) for x, y in zip(topic, video)) < 1e-3
     assert topic[0].bgr().shape == video[0].bgr().shape
     offs = [np.abs(_centre(x.bgr()) - _centre(y.bgr())).max() for x, y in zip(topic, video)]
     assert max(offs) < 1.5                                  # the same picture at every index
@@ -110,7 +112,8 @@ def _readings(rd: str) -> dict:
     out = {}
     for ep, r in results(rd, EEF).items():
         d = r["details"]
-        out[ep] = (verdict_of(r), d["decision"]["outcome"],
+        merged = d["merged"]["episode"]                     # registry 5.0: the opinion, label and p (design doc 25 §7)
+        out[ep] = (verdict_of(r), merged["label"], merged["p"],
                    {k: v["status"] for k, v in d["cameras"][CAM]["subitems"].items()},
                    (d.get("state_motion") or {}).get("status"))
     return out
@@ -132,7 +135,7 @@ def test_preflight_and_check_on_mcap_read_as_on_lerobot(mini_dataset, mini_mcap,
     assert on_mcap["episodes"]["error"] == on_lerobot["episodes"]["error"] == 0
     got, want = _readings(str(tmp_path / "run-mc")), _readings(str(tmp_path / "run-lr"))
     assert sorted(got) == [0, 1, 2, 3] and got == want
-    assert {ep: r[2]["position_2d"] for ep, r in got.items()}[2] == "suspect"     # the 9 px offset is seen
+    assert {ep: r[3]["position_2d"] for ep, r in got.items()}[2] == "suspect"     # the 9 px offset is seen
     assert not MM._videos                                    # every episode's topic videos were dropped
 
 

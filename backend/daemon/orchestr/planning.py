@@ -94,7 +94,8 @@ def write_run_json(run, plan: dict) -> None:
 
     doc = {"schema": "curator.run/1", "c2": C2_VERSION, "registry_version": registry.REGISTRY_VERSION,
            # the verdict policy, frozen at start (design doc 17 §4.1): aggregate grades the findings with it
-           "policy": policy_mod.from_task_params(task.params).to_json(),
+           # with the default levels of its modules (design doc 25 §7.3): a later registry does not regrade it
+           "policy": policy_mod.from_task_params(task.params).with_defaults([m["id"] for m in modules]).to_json(),
            "task_id": task.id, "run_id": task.run_id,
            "name": task.name, "created_at": task.created_at, "started_at": task.started_at,
            "input": {"source": task.input_source, "uri": task.input_uri,

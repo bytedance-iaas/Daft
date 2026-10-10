@@ -116,7 +116,8 @@ def derive(module: str, passed: bool | None, score: float | None, details: dict 
     fail, defer = FALLBACK.get(module, (None, None))
     spec = registry.get(module)
     levels = {c.code: c.level for c in spec.codes}
-    if passed is False and fail and not any(levels.get(f["code"]) == "blocking" for f in out.findings):
+    if passed is False and fail and not any(levels.get(f["code"]) == "blocking" or f["code"] == fail
+                                            for f in out.findings):
         why = str(details.get("reason") or details.get("why") or "").strip()
         out.add(module, fail, f"「{spec.name_zh}」判定不通过" + (f"：{why}" if why else ""))
     # a record that says ``skipped`` holds no judgement to defer to a person (task_success on an
@@ -522,8 +523,12 @@ def _camera_defects(passed, score, d, p) -> Derived:
 
 @deriver("eef_video_consistency", fail="inconsistent", defer="unsettled")
 def _eef_video_consistency(passed, score, d, p) -> Derived:
-    """The decision (design doc 12 appendix C.9): reject, a person to settle, or - without a gripper
-    reference - the model's opinion; plus the comparison with the dataset's own record (reported only)."""
+    """Registry 5.0 (design doc 25 §7, D81): the merged cells' opinions - ``inconsistent`` (info) per sub-item and
+    camera at "possibly" or above, ``conflict`` (review, ``eef_check``) where the two channels say opposite things,
+    ``ego_motion_suspect`` for a wrist camera's own motion; a record from before 5.0 (no ``merged``): the decision
+    of design doc 12 appendix C.9. Both: the comparison with the dataset's own record, reported only."""
+    if isinstance(d.get("merged"), dict):
+        return _eef_merged(d)
     out = Derived()
     m = "eef_video_consistency"
     dec = d.get("decision") if isinstance(d.get("decision"), dict) else {}
@@ -555,12 +560,60 @@ def _eef_video_consistency(passed, score, d, p) -> Derived:
         out.add(m, "opinion_mismatch", f"模型认为末端投影与画面不符（最高置信 {_num(opinion.get('max_confidence')) or 0:.2f}）",
                 readings={"max_confidence": _r(opinion.get("max_confidence")), "segments": opinion.get("segments")}, **kw)
     _ego_motion(out, d)
+    _eef_record(out, d)
+    return out
+
+
+def _eef_record(out: Derived, d: dict) -> None:
+    """The upload against the dataset's own record (design doc 12 §8.7): reported only."""
     record = d.get("record") if isinstance(d.get("record"), dict) else {}
     if record.get("status") == "suspect":
         why = sorted({str(r) for src in (record.get("sources") or {}).values() if isinstance(src, dict)
                       for r in src.get("reasons") or []})
-        out.add(m, "record_mismatch", "上传的轨迹与数据集自己记录的末端位姿不一致" + (f"：{'、'.join(why)}" if why else ""),
+        out.add("eef_video_consistency", "record_mismatch",
+                "上传的轨迹与数据集自己记录的末端位姿不一致" + (f"：{'、'.join(why)}" if why else ""),
                 readings={"status": "suspect", "reasons": why})
+
+
+#: a merged cell's label -> its finding's severity (design doc 25 §7.3)
+_EEF_SEVERITY = {"inconsistent": "high", "possibly_inconsistent": "medium"}
+
+
+def _eef_merged(d: dict) -> Derived:
+    out = Derived()
+    m = "eef_video_consistency"
+    merged = d["merged"]
+    for cell in merged.get("cells") or []:
+        if not isinstance(cell, dict) or cell.get("p") is None:
+            continue
+        flags = list(cell.get("flags") or [])
+        label = str(cell.get("label") or "")
+        conflict = "conflict" in flags
+        if not conflict and label not in _EEF_SEVERITY:
+            continue
+        sub, cam = cell.get("subitem"), cell.get("camera")
+        code = "conflict" if conflict else "ego_motion_suspect" if sub == "ego_motion" else "inconsistent"
+        sources = {name: {k: src.get(k) for k in ("verdict", "p", "confidence", "why") if src.get(k) is not None}
+                   for name, src in (cell.get("sources") or {}).items() if isinstance(src, dict)}
+        readings = {"subitem": sub, "p": _r(cell.get("p"), 3), "label": label, "flags": flags, "sources": sources}
+        for k in ("missing", "supported_hypotheses"):
+            if cell.get(k):
+                readings[k] = cell[k]
+        kw: dict = {"severity": "medium" if conflict else _EEF_SEVERITY[label]}
+        if cam:
+            kw["scope"] = {"camera": str(cam)}
+        span = cell.get("time_s")
+        if isinstance(span, (list, tuple)) and len(span) == 2 and _num(span[0]) is not None and _num(span[1]) is not None:
+            kw["time_s"] = (_num(span[0]), _num(span[1]))
+        from ..extensions.eef_consistency import combine as CB
+
+        out.add(m, code, CB.grounds(cell)[:300], readings=readings, **kw)
+    episode = merged.get("episode") if isinstance(merged.get("episode"), dict) else {}
+    if episode.get("p") is None:                    # no channel said anything: nothing was compared
+        why = str(episode.get("reason") or (d.get("opinion") or {}).get("failure") or "没有任何渠道给出结论")
+        out.cannot("MV-4", "not_applicable", why[:200])
+    _ego_motion(out, d, emit=False)                 # AV-1 without a timed reading (the finding is the cell's)
+    _eef_record(out, d)
     return out
 
 
@@ -569,16 +622,17 @@ _EGO_SEVERITY = {"minor": "low", "moderate": "medium", "severe": "high"}
 _EGO_BAND_ZH = {"minor": "轻", "moderate": "中", "severe": "重"}
 
 
-def _ego_motion(out: Derived, d: dict) -> None:
+def _ego_motion(out: Derived, d: dict, emit: bool = True) -> None:
     """A wrist camera's own motion against the recorded poses (design doc 22 §5.3): one ``ego_motion_suspect`` at
-    the episode's worst stretch; its time offset reading is the episode's AV-1 (unassessable without one)."""
+    the episode's worst stretch (before 5.0; ``emit=False`` from 5.0, the merged cell reports it); its time offset
+    reading is the episode's AV-1 (unassessable without one)."""
     m = "eef_video_consistency"
     ego = d.get("ego_motion") if isinstance(d.get("ego_motion"), dict) else {}
     cams = ego.get("cameras") if isinstance(ego.get("cameras"), dict) else {}
     timed = [c for c in cams.values() if isinstance(c, dict) and c.get("status") in ("ok", "suspect") and c.get("lag")]
     if not timed:
         out.cannot("AV-1", "not_applicable", "没有腕部相机自运动的时间读数（只有带位姿的腕部相机才有）")
-    if ego.get("status") != "suspect":
+    if not emit or ego.get("status") != "suspect":
         return
     worst = ego.get("worst") if isinstance(ego.get("worst"), dict) else None
     lags = {cid: c["lag"].get("lag_s") for cid, c in cams.items() if isinstance(c, dict) and (c.get("lag") or {}).get("flagged")}

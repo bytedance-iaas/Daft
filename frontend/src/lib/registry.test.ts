@@ -8,7 +8,7 @@ const ids = (pick: (m: ModuleRegistry['modules'][number]) => boolean) => reg.mod
 
 describe('registry 2.0: what the finding codes say about a module', () => {
   it('appealable modules are the ones with an appealable blocking code (D42)', () => {
-    expect(ids(isAppealable)).toEqual(['eef_video_consistency', 'task_success', 'dedup']);
+    expect(ids(isAppealable)).toEqual(['task_success', 'dedup']);         // the EEF module rejects nothing since 5.0 (D81)
   });
 
   it('review lines come from the review-level codes (D43)', () => {

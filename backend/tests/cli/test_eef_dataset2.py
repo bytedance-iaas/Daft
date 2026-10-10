@@ -1,4 +1,4 @@
-"""F5.9 acceptance ① on the DEMO dataset2 (design doc 12 appendix C.9): the original and its six faults.
+"""F5.9 acceptance ① on the DEMO dataset2 (design doc 12 appendix C.9), read as opinions (design doc 25 §7).
 
 The whole ``check`` command runs the module one episode per call with a stand-in model that answers as
 an ideal observer of a few crops would, from the evaluator's truth of that episode (never seen by the
@@ -6,9 +6,9 @@ module): a trajectory drift is visibly off in position and direction, a rotated 
 only, a camera with a wrong extrinsic shows P beside the gripper on that camera only; jitter and a
 time shift are not clear on three crops (uncertain); a shaking video and the original look right. The
 calls are recorded on a tape and replayed offline into a fresh run directory: the same records. The
-original passes; every fault is rejected or goes to a person as the table says, with reasons that
-name the sub-item, the camera and both opinions. Skipped without the DEMO data (outside the repo); about
-three minutes with it.
+original reads consistent; every fault is at least possibly inconsistent on the sub-item it touches, its
+grounds naming the sub-item, the camera and what each channel said; nothing is rejected (D81). Skipped
+without the DEMO data (outside the repo); about three minutes with it.
 """
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ from .pipeline import passed_of, results
 from .test_eef_check import EEF, URL
 from .test_eef_review import _details, _hooks
 
-NAMES = {"position_2d": "位置", "orientation_2d": "朝向", "temporal_alignment": "时间对齐",
-         "state_motion": "状态运动", "camera_motion": "相机运动"}
 CAMERA_KEY = {"exterior_1_left": "27432424_left", "exterior_2_left": "28221883_left"}
 #: fault -> (position, direction) as an ideal observer of a few marked crops would answer
 SEEN = {"baseline": ("support", "support"), "traj_drift": ("refute", "refute"),
@@ -60,10 +58,12 @@ def _check(cli, root, rd, ep):
     return res.doc["modules"][EEF]
 
 
-def test_the_original_passes_and_every_fault_is_rejected_or_goes_to_a_person(cli, tmp_path):
+def test_the_original_reads_consistent_and_every_fault_is_flagged(cli, tmp_path):
     from eef_eval import truth
     from parity import vlm_tape as T
     from parity.fakevlm import FakeVlm
+
+    from curation.extensions.eef_consistency import combine as M
 
     root = demo_data.require("dataset2")
     faults = truth.faults("dataset2")                          # the evaluator's side only
@@ -77,19 +77,22 @@ def test_the_original_passes_and_every_fault_is_rejected_or_goes_to_a_person(cli
     finally:
         hooks.uninstall()
     recs = results(rd, EEF)
-    outcome = {ep: r["details"]["decision"]["outcome"] for ep, r in sorted(recs.items())}
-    print(json.dumps({ep: [outcome[ep], recs[ep]["details"]["reason"]] for ep in outcome}, ensure_ascii=False, indent=1))
-    assert outcome[0] == "pass" and passed_of(recs[0]) is True
+    out = {ep: r["details"]["merged"] for ep, r in sorted(recs.items())}
+    print(json.dumps({ep: [m["episode"]["label"], m["episode"]["p"], m["episode"]["reason"],
+                           [(c["subitem"], c["camera"], c["p"], c["flags"]) for c in m["cells"] if c["p"] is not None]]
+                      for ep, m in out.items()}, ensure_ascii=False, indent=1))
+    for r in recs.values():                                    # an opinion: nothing is rejected (D81); a conflict asks
+        assert passed_of(r) is (None if r["details"]["merged"]["episode"]["conflicts"] else True), r["details"]["reason"]
+    assert out[0]["episode"]["label"] == M.CONSISTENT, out[0]["episode"]["reason"]
     for ep in range(1, 7):
-        d = recs[ep]["details"]
-        assert outcome[ep] in ("reject", "human"), (ep, d["reason"])
-        assert passed_of(recs[ep]) is {"reject": False, "human": None}[outcome[ep]]
-        for c in d["decision"]["confirmed"] + d["decision"]["human"]:
-            assert f"「{NAMES[c['subitem']]}」" in c["text"], c
-            if c["subitem"] != "state_motion":
-                assert f"相机 {c['camera_id']}" in c["text"], c
-            if c["code"] in ("confirmed", "conflict"):
-                assert re.search(r"(反对|支持) \d+", c["text"]), c          # the model's votes
+        head = out[ep]["episode"]
+        assert head["label"] in (M.INCONSISTENT, M.POSSIBLY), (ep, head["reason"])
+        assert M.SUB_ZH[head["subitem"]] in head["reason"], head
+        if head["camera"]:
+            assert f"相机 {head['camera']}" in head["reason"], head
+        for c in out[ep]["cells"]:
+            if M.CONFLICT in c["flags"]:                       # both channels, each with what it said
+                assert len(c["sources"]) == 2 and all(s["p"] is not None for s in c["sources"].values()), c
     # replayed offline into a fresh run directory: the same records
     _, entries = T.read_tape(tape)
     fresh = str(tmp_path / "replay")

@@ -123,16 +123,17 @@ def test_v1_facts():
 
 def test_the_default_policy_reproduces_todays_gates():
     """P18: today's hard gates block, today's suspects / abstentions / questions are review, everything
-    else - the retired soft scores, the advisory camera defects, the profile's statistics - is info."""
+    else - the retired soft scores, the advisory camera defects, the profile's statistics - is info. Since 5.0
+    the EEF module rejects nothing (D81): a person may, answering a conflict."""
     blocking = {m.id for m in M.MODULES if any(c.level == "blocking" for c in m.codes)}
     assert blocking == {"data_integrity", "timestamp_check", "kinematic_limits", "video_action_sync",
-                        "eef_video_consistency", "task_success", "dedup"}
+                        "task_success", "dedup"}
     for soft in ("motion_quality", "visual_quality", "camera_defects"):
         assert {c.level for c in M.get(soft).codes} == {"info"}, soft
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
     assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {
-        ("task_success", "failure"), ("eef_video_consistency", "inconsistent"), ("dedup", "duplicate")}
+        ("task_success", "failure"), ("dedup", "duplicate")}
 
 
 def test_p20_items_have_codes():
@@ -145,15 +146,22 @@ def test_p20_items_have_codes():
     assert "LABEL-1" not in covered
 
 
-def test_the_eef_module_takes_part_in_the_verdict():
-    """D49 / design doc 12 D-E11: one module, CPU then model; its rejects may be appealed and what it
-    cannot settle goes to a person on eef_check."""
+def test_the_eef_module_gives_opinions():
+    """D49: one module, CPU then model; 5.0 (design doc 25 §7.3, D81): opinions with a confidence - nothing it
+    reports rejects, a conflict between its channels is asked on eef_check; the codes it no longer reports stay
+    in the catalogue, retired, for older records."""
     assert M.native_ids() == ("data_integrity", "eef_video_consistency")
     spec = M.get("eef_video_consistency")
     assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video", "vlm"} <= spec.needs
     assert spec.depends_on == () and "eef_video_review" not in M.ids()
-    assert spec.code("inconsistent").level == "blocking" and spec.code("inconsistent").appealable
-    assert spec.code("unsettled").review_line == "eef_check"
+    assert (spec.code("inconsistent").level, spec.code("inconsistent").appealable) == ("info", False)
+    assert (spec.code("conflict").level, spec.code("conflict").review_line) == ("review", "eef_check")
+    assert not spec.appealable and spec.review_lines == ("eef_check",)
+    assert {c.code for c in spec.codes if c.retired} == {"unsettled", "opinion_mismatch"}
+    assert spec.code("unsettled").review_line == "eef_check"            # an older record's question still has its line
+    exported = {m["id"]: m for m in M.export()["modules"]}
+    exported_codes = {c["code"]: c for c in exported["eef_video_consistency"]["codes"]}
+    assert exported_codes["unsettled"]["retired"] is True and "retired" not in exported_codes["conflict"]
     props = spec.param_schema["properties"]
     # 4.3 (design doc 24): the trajectory is generated from the dataset; 4.4 (design doc 22 §5.4, D80): a handheld
     # gripper's raw mcap is derived with an uploaded gripper calibration or the built-in one
@@ -162,7 +170,7 @@ def test_the_eef_module_takes_part_in_the_verdict():
                                         "gripper_template": "eef_gripper_template", "record_mapping": "eef_record_mapping",
                                         "gripper_calibration": "eef_gripper_calibration"}
     assert [o["const"] for o in props["threshold_profile"]["oneOf"]] == ["demo"]   # no "no thresholds" any more
-    assert "eef_review_windows" in [t.id for t in spec.tables]
+    assert {"eef_review_windows", "eef_opinions"} <= {t.id for t in spec.tables}
     exported = {m["id"]: m for m in M.export()["modules"]}
     for gone in ("gate", "input_scope", "affects_dataset_verdict", "produces_adjudication", "review_lines",
                  "appealable"):
@@ -213,7 +221,7 @@ def test_review_lines():
     assert M.get("eef_video_consistency").review_lines == ("eef_check",)
     raised = {x for m in M.MODULES for x in m.review_lines}
     assert raised <= {line.id for line in M.REVIEW_LINES}
-    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup", "eef_video_consistency"}
+    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup"}     # EEF rejects nothing (D81)
     assert M.get("task_success").review_lines == ("task_verdict",)
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id

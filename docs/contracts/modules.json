@@ -1,5 +1,5 @@
 {
- "registry_version": "4.4",
+ "registry_version": "5.0",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1660,11 +1660,21 @@
     {
      "code": "inconsistent",
      "item": "MV-4",
-     "name_zh": "末端投影与画面不符",
-     "severity": "high",
-     "level": "blocking",
-     "scope_kind": "episode",
-     "appealable": true
+     "name_zh": "末端投影与画面不一致（意见）",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "conflict",
+     "item": "MV-4",
+     "name_zh": "两个渠道结论相反，请人看",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "camera",
+     "appealable": false,
+     "review_line": "eef_check"
     },
     {
      "code": "unsettled",
@@ -1674,7 +1684,8 @@
      "level": "review",
      "scope_kind": "episode",
      "appealable": false,
-     "review_line": "eef_check"
+     "review_line": "eef_check",
+     "retired": true
     },
     {
      "code": "opinion_mismatch",
@@ -1683,7 +1694,8 @@
      "severity": "low",
      "level": "info",
      "scope_kind": "episode",
-     "appealable": false
+     "appealable": false,
+     "retired": true
     },
     {
      "code": "record_mismatch",
@@ -1943,6 +1955,21 @@
       "rotation_p95_deg",
       "lag_s",
       "coverage"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_opinions",
+     "title_zh": "逐分项意见",
+     "sortable": [
+      "episode_index",
+      "subitem",
+      "camera",
+      "label",
+      "p",
+      "cpu_p",
+      "vlm_p",
+      "flags"
      ],
      "default_sort": "episode_index"
     }

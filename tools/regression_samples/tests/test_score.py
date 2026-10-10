@@ -332,7 +332,9 @@ def test_map_uses_codes_the_platform_writes():
     visual = _source("curation", "core", "checks", "visual_quality.py") + _source("curation", "pipeline", "funnel.py")
     sync = _source("curation", "core", "checks", "video_action_sync.py")
     task = _source("curation", "core", "checks", "task_success.py") + _source("curation", "pipeline", "run.py")
-    eef = _source("curation", "extensions", "eef_consistency", "decide.py")
+    # the EEF module's outcomes of records before registry 5.0 (design doc 12 C.9; 5.0 writes findings only, design
+    # doc 25 §7): the old run directories this map reads still carry them
+    eef = "PASS REJECT HUMAN pass reject human opinion"
     for r in FMAP["rules"]:
         m = r["match"]
         for c in m.get("finding_codes", []):
@@ -444,6 +446,23 @@ def test_a_run_of_findings_is_scored_from_the_findings_themselves(tmp_path):
     assert row["modules"] == ["data_integrity"] and row["mapped"] is True
     assert doc["formats"] == {SUBSET: "2.0"} and doc["schema_version"] == "2.0"
     assert row["by_module"]["data_integrity"]["precision"] == 0.5
+
+
+def test_the_eef_modules_opinions_count_by_their_confidence(tmp_path):
+    """Registry 5.0 (design doc 25 §7): the EEF module reports every cell at "possibly" or above; only its
+    "inconsistent" ones (p from the high band on, a conflict among them) count as found - unless asked otherwise."""
+    exp = expectation(episode(0, problems=["MV-4"]), episode(1, problems=["MV-4"]), episode(2, clean=["MV-4"]),
+                      episode(3, clean=["MV-4"]))
+    eef = "eef_video_consistency"
+    recs = [record2(0, eef, [finding("inconsistent", "MV-4", "ext", readings={"p": 0.8, "label": "inconsistent"})]),
+            record2(1, eef, [finding("conflict", "MV-4", "ext", readings={"p": 0.95, "label": "inconsistent"})]),
+            record2(2, eef, [finding("inconsistent", "MV-4", "ext", readings={"p": 0.55, "label": "possibly_inconsistent"})]),
+            record2(3, eef)]
+    row = score2(tmp_path, exp, recs)["items"]["MV-4"]
+    assert (row["tp"], row["fn"], row["fp"], row["tn"]) == (2, 0, 0, 2)
+    run = write_run2(str(tmp_path / "run_low"), recs)
+    low = S.score(exp, TAXONOMY, FMAP, {SUBSET: run}, registry=REGISTRY, eef_min_p=0.4)["items"]["MV-4"]
+    assert (low["tp"], low["fp"]) == (2, 1)                        # "possibly" counted: one more false alarm
 
 
 def test_not_assessed_comes_from_the_records_and_errors_from_their_status(tmp_path):

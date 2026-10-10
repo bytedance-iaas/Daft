@@ -87,7 +87,7 @@
 | 半段 | 做什么（今天的代码） | 产出 |
 |---|---|---|
 | CPU 半段（`vlm_prep`） | 读轨迹 `load_bundle`；UMI 补缺测 `umi.fill_gaps`；有夹爪参考时的 CPU 测量 `runner.run_episode`；相机运动 `_ego_motion`；与数据集记录比对 `_attach_record`；意见模式下逐帧投影、画标记、编码 MARKED 视频（`opinion._render` + `encode_rendered_video`）；判决模式下复核窗口的图 | 部分记录：不靠模型的发现（`ego_motion_suspect`、`record_mismatch`）与读数；请求包（§2.3）|
-| 模型半段（`vlm`） | 发请求、修复轮、解析答案；判决模式的 `decide.py` | `opinion_mismatch`、`inconsistent`、`unsettled` 等 |
+| 模型半段（`vlm`） | 发请求、修复轮、解析答案；两个渠道的合并（`combine.py`，设计 25 §7，取代判决模式的 `decide.py`） | `opinion_mismatch`、`inconsistent`、`unsettled` 等 |
 
 - EEF 仍是**一个模块**、一条最终记录（C2 不拆模块）。CPU 半段写一条 `phase: prep` 的部分记录；模型半段读它、补上模型的部分，写成最终记录。
   模型半段出错时，CPU 半段的发现（如 `ego_motion_suspect`）照样保留在最终记录里——它们不靠模型，没有理由丢。

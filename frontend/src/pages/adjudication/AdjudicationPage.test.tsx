@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { db, decisionsOf, findTask } from '../../mocks/db';
-import { eefRecord } from '../../mocks/eef';
+import { eefConflictRecord, eefRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests, type SeenRequest } from '../../test/record';
@@ -146,7 +146,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
       if (!o.length) throw new Error('no options');
       return o;
     });
-    expect(names).toEqual(['EEF–视频一致性', '任务成败判定', '精确去重']);
+    expect(names).toEqual(['任务成败判定', '精确去重']);                  // the EEF module rejects nothing since registry 5.0 (D81)
     expect(screen.queryByText(/这里列出可复议模块拒掉的条目/)).toBeNull();
   });
 
@@ -204,7 +204,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     // dedup is appealable now: not among the final ones.
     expect(final).not.toHaveTextContent('精确去重');
     expect(final).not.toHaveTextContent('任务成败判定');
-    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：EEF–视频一致性、任务成败判定、精确去重');
+    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定、精确去重');
     // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
     const q = within(card(6)).getByTestId('q-6-reject_appeal');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
@@ -285,6 +285,19 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await pick(user, '问题类型', '全部');
     expect(await screen.findByTestId('q-14-mystery_line')).toHaveTextContent('注册表里没有「mystery_line」这种复核，这一问没法作答');
     expect(within(screen.getByTestId('q-14-mystery_line')).queryByRole('radio')).toBeNull();
+  });
+
+  it('an EEF conflict (registry 5.0) shows both sides first, then the evidence (design doc 25 §7.3)', async () => {
+    db.extraQuestions = new Map([[MAIN_TASK, new Map([[12, [{ line: 'eef_check', source_module: EEF, reason: '不一致 · 0.95 · 冲突', latest_decision: null }]]])]]);
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { [EEF]: eefConflictRecord(12) }]])]]);
+    renderApp(PAGE);
+    const c = await screen.findByTestId('card-12');
+    const ev = await within(within(c).getByTestId('q-12-eef_check')).findByTestId('eef-evidence-12');
+    const out = within(ev).getByTestId('eef-output');
+    expect(within(out).getByTestId('eef-label')).toHaveTextContent('不一致');
+    expect(out).toHaveTextContent('CPU：不一致（0.95）');
+    expect(out).toHaveTextContent('模型复核：一致（0.10）');
+    expect(within(ev).getByTestId('eef-cpu')).toHaveTextContent('可疑');   // the evidence below, as before
   });
 
   it('an EEF question shows why, the CPU readings and every window with its marked crops; 一致 answers eef_check (C1 1.9, F5.11)', async () => {

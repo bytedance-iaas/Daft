@@ -1,13 +1,13 @@
-"""The EEF module's verdict branches under a fixed tape (design doc 12 C.9, D49; F5.9 / F5.10).
+"""The EEF module's channels and merge under a fixed tape (design doc 25 §6-§7, D81, D82; review F5.10).
 
 On the mini dataset with a seed on every frame the CPU finds episode 0 ok, episode 1 suspect with a
 candidate segment and episode 2 suspect without one. The module then runs one episode per call against
-the parity fake model, scripted per episode: a CPU ok the model refutes (a conflict: a person), a CPU
-candidate the model confirms after a malformed answer and its repair (reject), a suspect with no model
-opinion while its windows time out, cite frames not in the request or give a measured value (a
-person), an ok the model does not contradict (pass) and an episode the file does not declare (a
-person). The calls are recorded on a tape and replayed offline in a fresh run directory: the records
-come out the same; aggregate drops the reject and nothing else.
+the parity fake model, scripted per episode: a CPU ok the model refutes (a conflict: the only card), a CPU
+candidate the model confirms after a malformed answer and its repair (inconsistent, both channels), a
+suspect with no model opinion while its windows time out, cite frames not in the request or give a measured
+value (the CPU alone, capped), an ok the model does not contradict (consistent) and an episode the file does
+not declare (cannot tell). The calls are recorded on a tape and replayed offline in a fresh run directory:
+the records come out the same; aggregate rejects nothing and asks the conflict.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import re
 import pytest
 import requests
 
-from .pipeline import passed_of, read_jsonl, results, verdict_of
+from .pipeline import codes_of, passed_of, read_jsonl, results, verdict_of
 from .test_eef_check import CAM, EEF, URL, _files
 
 GOOD = {"review_status": "uncertain", "target_visible": True, "tracking_target_correct": "support",
@@ -62,17 +62,19 @@ def _refute(p):
 
 
 SCRIPTS = {
-    0: lambda: Script(*[_refute] * 6),                       # CPU ok, the model refutes: a person
-    1: lambda: Script("Sure! The red circle looks off.", _refute),   # candidate confirmed after a repair: reject
-    2: lambda: Script(requests.exceptions.ReadTimeout("fake: no answer in time"),   # no candidate: a person
+    0: lambda: Script(*[_refute] * 6),                       # CPU ok, the model refutes: a conflict
+    1: lambda: Script("Sure! The red circle looks off.", _refute),   # candidate confirmed after a repair
+    2: lambda: Script(requests.exceptions.ReadTimeout("fake: no answer in time"),   # no candidate: the CPU alone
                       lambda p: _answer(p, evidence_frame_ids=[99999]),
                       lambda p: _answer(p, evidence_frame_ids=[99998]),
                       lambda p: _answer(p, explanation="红圈偏左约 2 cm"),
                       lambda p: _answer(p, explanation="红圈偏左一指宽")),
-    3: lambda: Script(),                                      # CPU ok, the model does not object: pass
-    7: lambda: Script(),                                      # not in the file: a person
+    3: lambda: Script(),                                      # CPU ok, the model does not object: consistent
+    7: lambda: Script(),                                      # not in the file: cannot tell
 }
-OUTCOME = {0: "human", 1: "reject", 2: "human", 3: "pass", 7: "human"}
+#: the episode's label and its findings (design doc 25 §7): only episode 0 asks a person
+OUTCOME = {0: ("inconsistent", ["conflict"]), 1: ("inconsistent", ["inconsistent", "inconsistent"]),
+           2: ("inconsistent", ["inconsistent"]), 3: ("consistent", []), 7: ("cannot_tell", [])}
 
 
 def _check(cli, dataset, rd, traj, episodes, *extra):
@@ -134,28 +136,33 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
         hooks.uninstall()
     recs = results(rd, EEF)
     assert sorted(recs) == sorted(SCRIPTS)
-    for ep, want in OUTCOME.items():
+    for ep, (label, codes) in OUTCOME.items():
         d = recs[ep]["details"]
-        assert d["decision"]["outcome"] == want, (ep, d["decision"])
-        assert passed_of(recs[ep]) is {"pass": True, "reject": False, "human": None}[want]
+        assert d["merged"]["episode"]["label"] == label and codes_of(recs[ep]) == codes, (ep, d["merged"]["episode"])
+        assert passed_of(recs[ep]) is not False                           # nothing is rejected (D81)
     d0, d1, d2 = (recs[e]["details"] for e in (0, 1, 2))
-    assert [h["code"] for h in d0["decision"]["human"]] == ["conflict"] and d0["decision"]["human"][0]["cpu"] == "ok"
+    pos = {e: next(c for c in recs[e]["details"]["merged"]["cells"] if c["subitem"] == "position_2d") for e in (0, 1, 2, 3)}
+    assert pos[0]["flags"] == ["conflict"] and pos[0]["sources"]["cpu"]["verdict"] == "ok"
+    assert pos[0]["sources"]["vlm_review"]["verdict"] == "issue" and pos[0]["p"] == 1.0
     assert d0["review"]["conflicts"] and recs[0]["evidence"] and all(os.path.isfile(os.path.join(rd, p))
                                                                       for p in recs[0]["evidence"])
     cand = [w for w in d1["review"]["cameras"][CAM]["windows"] if w["kind"] == "candidate"]
     assert cand and cand[0]["attempts"] == 2 and cand[0]["point_id"] == "block_center"
-    assert d1["decision"]["confirmed"][0]["subitem"] == "position_2d" and "位置" in d1["reason"]
+    assert pos[1]["flags"] == [] and {s["verdict"] for s in pos[1]["sources"].values()} == {"issue"}
+    assert "位置" in d1["reason"] and "诊断支持：time_offset" in d1["reason"]
     w2 = d2["review"]["cameras"][CAM]["windows"]
     assert [w["status"] for w in w2] == ["failed", "failed", "answered"]
     assert [w.get("failure", {}).get("code") for w in w2[:2]] == ["timeout", "unknown_frame"]
     assert w2[2]["attempts"] == 2 and w2[2]["answer"]["explanation"] == "红圈偏左一指宽"
     assert d2["review"]["status"] == "incomplete"
-    assert [h["code"] for h in d2["decision"]["human"]] == ["no_model_opinion"]
-    # a person's card shows every window's marked crops, whatever the model said (F5.11)
-    assert all(w["evidence"] and all(os.path.isfile(os.path.join(rd, p)) for p in w["evidence"]) for w in w2)
-    assert set(recs[2]["evidence"]) >= {p for w in w2 for p in w["evidence"]}
+    assert pos[2]["flags"] == ["single_source"] and pos[2]["missing"] == "not_asked" and pos[2]["p"] == 0.8
+    assert pos[3]["label"] == "consistent" and pos[3]["missing"] == "model_unsure"      # every window said uncertain
+    # a card shows every window's marked crops (F5.11) - and a conflict is the only card now (design doc 25 §7.3)
+    assert not any(w.get("evidence") for w in w2)
+    assert all(w["evidence"] and all(os.path.isfile(os.path.join(rd, p)) for p in w["evidence"])
+               for w in d0["review"]["cameras"][CAM]["windows"])
     assert not any(w.get("evidence") for w in recs[3]["details"]["review"]["cameras"][CAM]["windows"])
-    assert recs[7]["details"]["decision"]["human"][0]["code"] == "not_in_file"
+    assert recs[7]["details"]["merged"]["episode"]["reason"] == "判断不了：trajectory.json 里没有这一条"
     for d in (d0, d1, d2):                                    # classes, booleans and frame ids only
         for w in d["review"]["cameras"][CAM]["windows"]:
             for v in (w.get("answer") or {}).values():
@@ -182,15 +189,16 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
     assert _details(fresh) == _details(rd)
 
 
-def test_aggregate_drops_the_reject_and_nothing_else(cli, taped, mini_dataset):
+def test_aggregate_rejects_nothing_and_asks_the_conflict(cli, taped, mini_dataset):
+    """D81: the module's opinions reject nothing; its conflict is asked on eef_check."""
     rd = taped["rd"]
     res = cli("aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "1", "--episodes", "0-3,7",
               "--modules", EEF)
     assert res.rc == 0, res.doc
     lines = {x["episode_index"]: x for x in read_jsonl(os.path.join(rd, "revisions", "r0001", "verdicts.jsonl"))}
-    assert lines[1]["verdict"] == "drop" and [b["module"] for b in lines[1]["blocking"]] == [EEF]
-    assert lines[1]["reason"].startswith("「位置」")                     # the finding's own sentence
-    assert all(lines[e]["verdict"] == "keep" for e in (0, 2, 3, 7))
+    assert all(lines[e]["verdict"] == "keep" for e in (0, 1, 2, 3, 7))
+    assert [(r["code"], r["line"]) for r in lines[0]["review"]] == [("conflict", "eef_check")]
+    assert all(not lines[e]["review"] for e in (1, 2, 3, 7))
 
 
 def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_dataset):
@@ -210,7 +218,7 @@ def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_data
         resumed = _check(cli, ds, rd, traj, "0-3", "--resume")
     finally:
         hooks.uninstall()
-    assert again["episodes"] == {"total": 1, "ok": 1, "error": 0} and again["findings"] == {"unsettled": 1}
+    assert again["episodes"] == {"total": 1, "ok": 1, "error": 0} and again["findings"] == {"conflict": 1}
     wins = results(rd, EEF)[0]["details"]["review"]["cameras"][CAM]["windows"]
     assert all(w["cache_hit"] and w["attempts"] == 0 for w in wins)
     assert resumed["skipped_existing"] == 4

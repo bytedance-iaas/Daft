@@ -63,6 +63,10 @@ from the dataset (a handheld gripper's state and camera calibration) or reads th
 4.4 (design doc 22 §5.4, D80): the EEF module's ``gripper_calibration`` upload - a handheld gripper's raw mcap
 (the built-in UMI layout) carries poses and cameras but no calibration to generate from (design doc 24 §2): each
 episode's trajectory is derived with this calibration or the built-in DAS DEMO one.
+5.0 (design doc 25 §7, D81, D82): the EEF module gives opinions with a confidence and never rejects -
+``inconsistent`` is info (its severity follows the confidence band), the new ``conflict`` (review, ``eef_check``) is
+the only card; ``unsettled`` and ``opinion_mismatch`` are retired (``retired: true``, still in the catalogue so
+older records get their level). Tasks started from 5.0 on freeze the default levels; older runs keep 4.x's.
 """
 from __future__ import annotations
 
@@ -70,7 +74,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "4.4"
+REGISTRY_VERSION = "5.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -186,6 +190,7 @@ class FindingCode:
     review_line: str | None = None       # review level: the REVIEW_LINES id a person answers on
     appealable: bool = False             # blocking level: a reject it caused may be appealed (D42)
     scope_kind: str = "episode"          # episode / camera / channel / dataset
+    retired: bool = False                # no longer reported (5.0): kept so older records still get a level
 
     def to_json(self) -> dict:
         out = {"code": self.code, "item": self.item, "name_zh": self.name_zh,
@@ -193,6 +198,8 @@ class FindingCode:
                "appealable": self.appealable}
         if self.review_line:
             out["review_line"] = self.review_line
+        if self.retired:
+            out["retired"] = True
         return out
 
 
@@ -569,9 +576,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", needs=frozenset({"video", "vlm", "eef_input"}), block="vlm", stage="vlm",
         depends_on=(),
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
-        codes=(_blocking("inconsistent", "MV-4", "末端投影与画面不符", appealable=True),
-               _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check"),
-               _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符"),
+        # 5.0 (design doc 25 §7.3, D81): opinions with a confidence, no machine reject - a person's "inconsistent" on
+        # a conflict still blocks (kind human); unsettled / opinion_mismatch are retired, kept for older records
+        codes=(_info("inconsistent", "MV-4", "末端投影与画面不一致（意见）", "medium", scope_kind="camera"),
+               _review("conflict", "MV-4", "两个渠道结论相反，请人看", "eef_check", scope_kind="camera"),
+               _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check", retired=True),
+               _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符", retired=True),
                _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符"),
                # 4.1 (design doc 22 §5.3): a wrist camera's own motion in its pictures against the recorded poses;
                # its time offsets are the episode's timing too (AV-1, also_covers)
@@ -589,7 +599,10 @@ MODULES: tuple[ModuleSpec, ...] = (
                 TableSpec("eef_record", "轨迹与数据集记录", ("episode_index", "source", "status", "position_p95_mm",
                                                           "rotation_p95_deg", "lag_frames")),
                 TableSpec("eef_ego_motion", "腕部相机的自运动", ("episode_index", "camera", "status", "rotation_median_deg",
-                                                              "rotation_p95_deg", "lag_s", "coverage"))),
+                                                              "rotation_p95_deg", "lag_s", "coverage")),
+                # 5.0 (design doc 25 §7): every sub-item and camera of every episode, both sides and the merge
+                TableSpec("eef_opinions", "逐分项意见", ("episode_index", "subitem", "camera", "label", "p", "cpu_p",
+                                                      "vlm_p", "flags"))),
         native=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",

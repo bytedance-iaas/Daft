@@ -3,7 +3,7 @@
 Since D49 the review is part of the EEF module: for every episode ``eef_check.run`` measures with the
 CPU first, then ``review_episode`` asks the model about the episode's windows (``review.py``: one point
 and at most one axis each) and returns the windows with their answers or why there is none, and
-``decide.py`` weighs them against the CPU. Requests go through the shared VLM client
+``combine`` merges them with the CPU (design doc 25 §7). Requests go through the shared VLM client
 (``vlm_client.hedged_request`` and ``requests.post`` looked up at call time), so the transport policy
 (retry, hedging, reasoning effort), usage booking under call kind ``eef_review`` and the parity tape
 work as for every other model call. Answers are cached under ``checks/eef_video_consistency/cache/``.

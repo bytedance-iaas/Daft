@@ -250,8 +250,16 @@ def test_without_a_gripper_reference_the_model_gives_an_advisory_opinion(cli, mi
     assert all(verdict_of(r) == "pass" for r in recs.values())          # an opinion rejects nothing
     for e, r in recs.items():
         d = r["details"]
-        assert d["assessment_mode"] == "vlm_opinion" and d["decision"]["outcome"] == "opinion"
+        assert d["assessment_mode"] == "vlm_opinion" and "decision" not in d
         assert "cameras" not in d or not d.get("summary")        # no CPU reading at all
+        # design doc 25 §7: the opinion is the model's single channel, capped; its cells give the findings
+        pos = next(c for c in d["merged"]["cells"] if c["subitem"] == "position_2d")
+        assert pos["missing"] == "no_gripper_reference" and "single_source" in pos["flags"]
+        if d["opinion"]["flagged"]:
+            assert pos["p"] == 0.76 and d["merged"]["episode"]["label"] == "inconsistent"     # the fake's 0.8 segment
+            assert codes_of(r) == ["inconsistent"] and r["findings"][0]["severity"] == "high"
+        else:
+            assert d["merged"]["episode"]["label"] == "consistent" and codes_of(r) == []
         cam = d["opinion"]["cameras"][CAM]
         assert cam["status"] == "answered" and cam["point_id"] == "block_center" and cam["axis_id"] is None
         assert cam["clips"] == [dict(cam["clips"][0], start_frame=0, end_frame=len(_truth(e)) - 1)]
@@ -378,7 +386,9 @@ def test_an_episode_without_a_trajectory_asks_nobody(cli, tmp_path):
     recs = results(rd, EEF)
     arm = recs[1]
     assert arm["status"] == "ok" and arm["details"]["assessment_mode"] == "vlm_opinion" and verdict_of(arm) == "abstain"
-    assert arm["details"]["opinion"]["status"] == "not_assessable" and arm["details"]["decision"]["human"] == []
+    assert arm["details"]["opinion"]["status"] == "not_assessable"
+    episode = arm["details"]["merged"]["episode"]                   # design doc 25 §7.5: "cannot tell", no card
+    assert episode["label"] == "cannot_tell" and episode["p"] is None and "这一条推不出轨迹" in episode["reason"]
     assert arm["details"]["trajectory_source"]["reason"] == "trajectory_not_derived"
     assert "这一条推不出轨迹" in arm["details"]["opinion"]["failure"]
     assert {u["item"] for u in arm["unassessable"]} == {"MV-4", "AV-1"} and arm["findings"] == []
@@ -467,36 +477,39 @@ def test_the_frame_survivors_are_judged(chain):
     for ep, r in recs.items():
         d = r["details"]
         assert r["status"] == "ok" and "score" not in r["readings"] and d["assessment_mode"] == "verdict"
-        want = {"pass": True, "reject": False, "human": None}[d["decision"]["outcome"]]
-        assert passed_of(r) is want and verdict_of(r) == {True: "pass", False: "fail", None: "abstain"}[want]
-        assert codes_of(r) == {True: [], False: ["inconsistent"], None: ["unsettled"]}[want]
-        if ep == 7:
-            assert d["decision"]["human"][0]["code"] == "not_in_file"
+        # registry 5.0 (D81): an opinion with a confidence - never a reject, a conflict the only question
+        assert passed_of(r) is not False and "decision" not in d
+        assert set(codes_of(r)) <= {"inconsistent", "conflict", "record_mismatch"}
+        episode = d["merged"]["episode"]
+        assert episode["label"] in ("inconsistent", "possibly_inconsistent", "consistent", "cannot_tell")
+        assert ("conflict" in codes_of(r)) == bool(episode["conflicts"])
+        if ep == 7:                                                # not in the file: cannot tell, nobody asked
+            assert episode["label"] == "cannot_tell" and codes_of(r) == [] and "MV-4" in [u["item"] for u in r["unassessable"]]
             continue
         assert d["schema_version"] == "eef-detail/0.1" and d["uncalibrated"] and d["input_file_sha256"]
         pos = d["cameras"][CAM]["subitems"]["position_2d"]
         cov = pos["points"]["block_center"]["coverage"]
         assert cov["requested"] == cov["media_mapped"] == len(_truth(ep))
-        if pos["status"] == "unknown":                            # honest abstention -> a person, never a fake ok
-            assert "coverage_insufficient" in pos["reasons"] and d["decision"]["outcome"] == "human"
+        cell = next(c for c in d["merged"]["cells"] if c["subitem"] == "position_2d")
+        if pos["status"] == "unknown":                            # honest abstention: the CPU says nothing here
+            assert "coverage_insufficient" in pos["reasons"] and cell["sources"]["cpu"]["verdict"] == "cannot_tell"
         assert d["review"]["status"] in ("completed", "incomplete", "not_reviewed")
     kept = open(os.path.join(rd, "stages", "eef.txt")).read().split()
-    assert kept == [str(e) for e in sorted(recs) if passed_of(recs[e]) is not False]
+    assert kept == [str(e) for e in sorted(recs)]                   # it rejects nothing
     for rec in recs.values():
         for path in rec["evidence"]:
             assert os.path.isfile(os.path.join(rd, path))
 
 
-def test_only_its_rejects_move_the_verdict(chain):
-    """F5.9 acceptance 3: an episode the module passes or leaves to a person keeps its funnel verdict."""
+def test_it_moves_no_verdict(chain):
+    """D81 (design doc 25 §7.3): whatever the module says, every episode keeps the verdict it had without it; a
+    conflict is asked on eef_check."""
     recs = results(chain["rd"], EEF)
     r1 = {x["episode_index"]: x for x in read_jsonl(os.path.join(chain["rd"], "revisions", "r0001", "verdicts.jsonl"))}
     r2 = {x["episode_index"]: x for x in read_jsonl(os.path.join(chain["rd"], "revisions", "r0002", "verdicts.jsonl"))}
     for ep in r1:
-        if ep in recs and passed_of(recs[ep]) is False:
-            assert r2[ep]["verdict"] == "drop" and [b["module"] for b in r2[ep]["blocking"]] == [EEF]
-        else:
-            assert r2[ep]["verdict"] == r1[ep]["verdict"], ep
+        assert r2[ep]["verdict"] == r1[ep]["verdict"], ep
+        assert EEF not in [b["module"] for b in r2[ep].get("blocking") or []]
 
 
 def test_the_report_shows_the_eef_section(chain):
@@ -504,14 +517,16 @@ def test_the_report_shows_the_eef_section(chain):
     (sec,) = [s for s in rep["modules"] if s["id"] == EEF]
     s = sec["summary"]
     n = len(chain["survivors"])
-    assert s["judged_pass"] + s["judged_reject"] + s["to_human"] == n and s["uncalibrated"]
+    assert sum(x["count"] for x in s["labels"]) == n and s["uncalibrated"] and s["confidence_uncalibrated"]
+    assert s["judged_pass"] == s["judged_reject"] == s["to_human"] == 0           # the 4.x keys, nothing behind them
+    assert sum(x["count"] for x in s["p_bins"]) == n - next(x["count"] for x in s["labels"] if x["name"] == "cannot_tell")
     assert s["threshold_profile"].startswith("demo ") and "gate" not in sec       # report 2.0
     assert s["assessed_episodes"] == n
-    assert all(set(x) == {"name", "count"} for x in s["human_reasons"])
+    assert all(set(x) == {"name", "count"} for x in s["single_source_missing"] + s["cannot_tell_reasons"])
     assert s["windows"] >= s["windows_answered"] and "model_cpu_agreement" in s
     tables = {t["id"]: t for t in sec["tables"]}
     assert set(tables) == {"eef_camera_metrics", "eef_segments", "eef_diagnosis", "eef_review_windows", "eef_record",
-                           "eef_ego_motion"}
+                           "eef_ego_motion", "eef_opinions"}
     # no record mapping given (design doc 12 §8.7): nothing to report, not a row per episode saying so
     assert tables["eef_record"]["rows"] == 0 and not any(k.startswith("record_") for k in s)
     # no wrist camera to read its own motion (design doc 22 §5.3): likewise
@@ -524,10 +539,12 @@ def test_the_report_shows_the_eef_section(chain):
     assert set(cams["episode_index"]) == set(chain["survivors"])
     wins = pd.read_parquet(os.path.join(tdir, "eef_review_windows.parquet"))
     assert {"episode_index", "camera", "kind", "point", "status", "review_status"} <= set(wins.columns)
+    ops = pd.read_parquet(os.path.join(tdir, "eef_opinions.parquet"))
+    assert {"episode_index", "subitem", "camera", "label", "p", "cpu_p", "vlm_p", "flags"} <= set(ops.columns)
     md = open(os.path.join(chain["rd"], "revisions", "r0002", "report.md"), encoding="utf-8").read()
-    assert "判过" in md and "转人工的原因" in md and "待人工看" not in md
-    # the cards the adjudication page asks (F5.12): the ones sent to a person that are still delivered
+    assert "结论(意见,不判废)" in md and "冲突(两个渠道结论相反,转人工裁决)" in md and "判过" not in md
+    # the cards the adjudication page asks (F5.12): since 5.0 only the conflicts (design doc 25 §7.3)
     review = json.load(open(os.path.join(chain["rd"], "revisions", "r0002", "review.json")))["episodes"]
     asked = sum(1 for e in review if any(i["kind"] == "eef_consistency" for i in e["review"]))
-    assert sec["adjudication"]["pending"] == asked <= s["to_human"]
+    assert sec["adjudication"]["pending"] == asked <= s["conflict_episodes"]
     assert f"- 人工裁决:待裁 {asked} 条" in md

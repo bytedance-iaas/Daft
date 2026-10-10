@@ -138,6 +138,34 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(await within(screen.getByTestId('chart-opinion-aspects')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中心 5'));
   });
 
+  it('EEF from registry 5.0: the labels, the conflicts asked, the confidence and what single sources missed (design doc 25 §7)', async () => {
+    render('eef_video_consistency', {
+      labels: [{ name: 'inconsistent', count: 3 }, { name: 'possibly_inconsistent', count: 2 }, { name: 'consistent', count: 9 }, { name: 'cannot_tell', count: 1 }],
+      p_bins: [{ name: '<0.2', count: 8 }, { name: '0.2–0.4', count: 1 }, { name: '0.4–0.7', count: 2 }, { name: '0.7–0.9', count: 2 }, { name: '≥0.9', count: 1 }],
+      conflict_episodes: 1, conflict_cells: 1, single_source_episodes: 4,
+      single_source_missing: [{ name: 'model_cannot_see', count: 5 }, { name: 'no_gripper_reference', count: 2 }],
+      cannot_tell_reasons: [{ name: '判断不了：trajectory.json 里没有这一条', count: 1 }],
+      inconsistent_by_subitem: [{ name: 'position_2d', count: 3 }, { name: 'temporal_alignment', count: 2 }],
+      tracking_invalid_cells: 0, confidence_uncalibrated: true,
+      judged_pass: 0, judged_reject: 0, to_human: 0, uncalibrated: true,
+    }, { adjudication: { pending: 1, appealable: 0 } });
+    const figures = screen.getByTestId('summary-eef_video_consistency');
+    expect(figures).toHaveTextContent('不一致3');
+    expect(figures).toHaveTextContent('可能不一致2');
+    expect(figures).toHaveTextContent('一致9');
+    expect(figures).toHaveTextContent('判断不了1');
+    expect(figures).toHaveTextContent('冲突1两个渠道结论相反，请人看；人工裁决里待裁 1 条');
+    expect(figures).not.toHaveTextContent('判过');
+    expect(figures).not.toHaveTextContent('转人工');
+    expect(await within(screen.getByTestId('chart-labels')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('不一致 3'));
+    expect(await within(screen.getByTestId('chart-p-bins')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.7–0.9 2'));
+    expect(await within(screen.getByTestId('chart-by-subitem')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('位置 3'));
+    expect(await within(screen.getByTestId('chart-single-source')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('模型看不了这一项 5'));
+    expect(screen.getByText(/只有两边结论相反（冲突）才请人看，模块不判废/)).toHaveTextContent('置信度未校准');
+    expect(sectionDigest({ counts: { total: 15, pass: 13, fail: 0, abstain: 2, scored: 0, error: 0 }, labels: [{ name: 'inconsistent', count: 3 }, { name: 'possibly_inconsistent', count: 2 }], conflict_episodes: 1, candidates: 0 }))
+      .toBe('不一致 3 条，可能不一致 2 条，冲突 1 条');
+  });
+
   it('EEF: the wrist cameras\' own motion - figures and the bad stretches by band and reason, reported only (design doc 22 §5.3)', async () => {
     render('eef_video_consistency', {
       judged_pass: 0, judged_reject: 0, to_human: 0, opinion_episodes: 2, opinion_flagged: 0, opinion_segments: 0,

@@ -30,7 +30,7 @@ def _bundle(*, corrupt: bool = False) -> dict:
             "media_uri_base": "lerobot_root", "samples": entries}
 
 
-def _seed_rows() -> list[dict]:
+def _seed_rows(every: int = 15) -> list[dict]:
     rows = []
     for ep in range(7):
         uv = _truth(ep)
@@ -39,7 +39,7 @@ def _seed_rows() -> list[dict]:
                   "model_version": "test", "input_image_sha256": "0" * 64, "projection_visible_to_localizer": False,
                   "points": {"block_center": {"uv_px": [float(uv[i, 0]), float(uv[i, 1])], "visibility": "visible",
                                               "confidence": 1.0, "uncertainty_px": None}}}
-                 for i in range(0, len(uv), 15)]
+                 for i in range(0, len(uv), every)]
     return rows
 
 
@@ -275,38 +275,50 @@ def test_an_eef_task_runs_end_to_end(daemon):
     assert row["state"] == "succeeded" and row["episodes_total"] == len(recs) and row["episodes_error"] == 0
     assert {r["details"]["input_file_sha256"] for r in recs.values() if r["details"].get("input_file_sha256")} \
         == {traj["sha256"]}
-    for r in recs.values():
-        assert passed_of(r) is {"pass": True, "reject": False, "human": None}[r["details"]["decision"]["outcome"]]
+    for r in recs.values():                                  # registry 5.0 (D81): opinions, never a reject
+        assert passed_of(r) is not False and r["details"]["merged"]["episode"]["label"]
     usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
     assert {u["call_kind"] for u in usage if u.get("module") == EEF} == {"eef_review"}
     rev = task["result_rev"]
     verdicts = {x["episode_index"]: x for x in (json.loads(y) for y in open(
         os.path.join(rd, "revisions", f"r{rev:04d}", "verdicts.jsonl")))}
-    for ep, r in recs.items():                               # only its rejects move a verdict
-        blocking = [b["module"] for b in verdicts[ep]["blocking"]]
-        if passed_of(r) is False:
-            assert verdicts[ep]["verdict"] == "drop" and EEF in blocking
-        else:
-            assert EEF not in blocking
+    for ep, r in recs.items():                               # it moves no verdict
+        assert EEF not in [b["module"] for b in verdicts[ep]["blocking"]]
     delivered = d.delivery(task["run_id"])
     assert os.path.isfile(os.path.join(delivered, "checks", EEF, "results.jsonl"))
     assert os.path.isdir(os.path.join(delivered, "inputs"))
     rep = json.load(open(os.path.join(rd, "revisions", f"r{rev:04d}", "report.json")))
     (sec,) = [s for s in rep["modules"] if s["id"] == EEF]
     s = sec["summary"]
-    assert s["judged_pass"] + s["judged_reject"] + s["to_human"] == len(recs)
+    assert sum(x["count"] for x in s["labels"]) == len(recs)
     r = d.api("GET", f"/tasks/{created['id']}/report/tables/eef_review_windows")
     assert r.status_code == 200, r.text
     r = d.api("GET", f"/tasks/{created['id']}/report")
     assert r.status_code == 200 and EEF in [s["id"] for s in r.json()["report"]["modules"]]
 
 
-def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(daemon):
-    """F5.11: an episode the module sent to a person is a pending card; "inconsistent" rejects it and
+def test_a_person_settles_a_conflict_and_the_delivery_follows(daemon, fake_vlm):
+    """F5.11, design doc 25 §7.3: with a seed on every frame the CPU measures and finds the positions fine, the
+    model (scripted) refutes every window - a conflict, the only card; "inconsistent" rejects it and
     "consistent" keeps it once the decisions are executed, and the re-export delivers accordingly."""
+    import re
+
+    plain = fake_vlm.fake.answer
+
+    def refute(payload):
+        text = json.dumps(payload)
+        if "You review ONE point P" not in text:
+            return plain(payload)
+        frames = [int(x) for x in re.findall(r"\d+", text.split("Frames ", 1)[1].split("(", 1)[0])][:1]
+        return json.dumps({"review_status": "refute", "target_visible": True, "tracking_target_correct": "support",
+                           "position_support": "refute", "orientation_support": "uncertain",
+                           "offset_direction": "left", "offset_magnitude_class": "within_finger_width",
+                           "evidence_frame_ids": frames, "reason_codes": [], "explanation": "红圈偏左"})
+
+    fake_vlm.fake.answer = refute
     d = daemon()
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
-    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows(every=1))
     params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
               "review_windows_per_camera": 1, "review_frames_per_window": 2}
     created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params}])
@@ -323,7 +335,7 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     for ep in asked:
         view = d.api("GET", f"/tasks/{task_id}/episodes/{ep}").json()
         rec = view["modules"][EEF]
-        assert view["list"] == "passed" and passed_of(rec) is None and rec["details"]["decision"]["human"]
+        assert view["list"] == "passed" and "conflict" in [f["code"] for f in rec["findings"]]
         # F5.12: the crops of every window, signed with scope=delivery, are in the delivery
         crops = [p for cam in rec["details"]["review"].get("cameras", {}).values()
                  for w in cam["windows"] for p in w.get("evidence") or []]
@@ -340,7 +352,7 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == first["result_rev"] + 1, json.dumps(done)[:2000]
     assert d.api("GET", f"/tasks/{task_id}/episodes/{drop}").json()["reasons"] == [
-        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-4", "appealable": False,
+        {"module": EEF, "kind": "human", "code": "conflict", "item": "MV-4", "appealable": False,
          "text": "人工裁决判为 EEF 与视频不一致"}]
     if keep != drop:
         assert d.api("GET", f"/tasks/{task_id}/episodes/{keep}").json()["list"] == "passed"

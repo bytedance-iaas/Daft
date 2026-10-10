@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
-import { eefHandheldRecord, eefOpinionRecord, eefRecord, eefUnderivedRecord } from '../../mocks/eef';
+import { eefConflictRecord, eefHandheldRecord, eefOpinionRecord, eefRecord, eefUnderivedRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -240,6 +240,27 @@ describe('质检报告 (07 §5)', () => {
     expect(screen.getByTestId('open-mini')).toBeInTheDocument();
   });
 
+  it('Episode 明细: registry 5.0 shows label · confidence · grounds and every sub-item with both sides (design doc 25 §7)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefConflictRecord(12) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-eef_video_consistency');
+    const out = within(block).getByTestId('eef-output');
+    expect(within(out).getByTestId('eef-label')).toHaveTextContent('不一致');
+    expect(within(out).getByTestId('eef-p')).toHaveTextContent('置信度 0.95');
+    expect(out).toHaveTextContent('冲突');
+    expect(within(out).getByTestId('eef-reason')).toHaveTextContent('CPU认为不一致（0.95），模型复核认为一致（0.10）');
+    expect(out).toHaveTextContent('置信度未校准：只用来排序，不是概率');
+    const rows = within(within(out).getByTestId('eef-cells')).getAllByRole('row').slice(1).map((r) => r.textContent);
+    expect(rows).toEqual([
+      '位置extCPU：不一致（0.95）模型复核：一致（0.10）不一致 · 0.95冲突',
+      '时间对齐extCPU：一致（0.05）模型看不了这一项一致 · 0.05只有一个渠道；模型看不了这一项',
+      '朝向extCPU：判断不了（没有可比的轴）模型复核：判断不了（模型没有表态）判断不了—',
+    ]);
+    expect(within(block).queryByTestId('eef-outcome')).toBeNull();          // no 判过 / 判废 / 转人工 any more
+    expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');  // the CPU's readings stay below
+    expect(block.textContent).not.toMatch(/[{}"]/);
+  });
+
   it('Episode 明细: the EEF block shows the conclusion, the CPU readings and every review window with its crops (F5.12)', async () => {
     // Test fixture only: the mock world's tasks do not select the EEF module.
     const why = '「位置」（相机 ext）CPU 判为可疑，模型多数认为一致（支持 2、反对 0）';
@@ -289,7 +310,10 @@ describe('质检报告 (07 §5)', () => {
     db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefOpinionRecord(12) }]])]]);
     renderApp(`${REPORT}?ep=12#episodes`);
     const block = await screen.findByTestId('episode-module-eef_video_consistency');
-    expect(within(block).getByTestId('eef-outcome')).toHaveTextContent('只给意见');
+    // registry 5.0 (design doc 25 §7): label · confidence · grounds, the opinion the model's single channel
+    expect(within(block).getByTestId('eef-label')).toHaveTextContent('不一致');
+    expect(within(block).getByTestId('eef-p')).toHaveTextContent('置信度 0.80');
+    expect(within(block).getByTestId('eef-reason')).toHaveTextContent('只有一个渠道：没给夹爪参考');
     const op = within(block).getByTestId('eef-opinion');
     expect(op).toHaveTextContent('只是意见，不参与判过 / 判废');
     expect(within(block).queryByTestId('eef-cpu')).toBeNull();                 // no CPU reading

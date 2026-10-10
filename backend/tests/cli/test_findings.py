@@ -127,6 +127,31 @@ EEF_OPINION = {"decision": {"outcome": "opinion", "confirmed": [], "human": [], 
                            "max_confidence": 0.85, "cameras": {"ext": {"status": "answered", "segments": [
                                {"start_s": 2.67, "end_s": 6.33, "aspect": "position", "confidence": 0.85}]}}},
                "record": {"status": "unsupported", "reasons": ["record_mapping_missing"]}}
+#: registry 5.0 (design doc 25 §7): the merged cells - a conflict between the CPU and the model's review ...
+_CPU_ISSUE = {"verdict": "issue", "p": 0.9, "confidence": 0.8}
+EEF_CONFLICT = {"assessment_mode": "verdict", "overall": "assessed", "merged": {
+    "cells": [{"subitem": "position_2d", "camera": "ext", "p": 0.9, "label": "inconsistent", "flags": ["conflict"],
+               "sources": {"cpu": _CPU_ISSUE, "vlm_review": {"verdict": "ok", "p": 0.1, "confidence": 0.8}},
+               "time_s": [2.0, 4.0]},
+              {"subitem": "temporal_alignment", "camera": "ext", "p": 0.05, "label": "consistent",
+               "flags": ["single_source"], "missing": "model_cannot_see",
+               "sources": {"cpu": {"verdict": "ok", "p": 0.05, "confidence": 0.9}}}],
+    "episode": {"label": "inconsistent", "p": 0.9, "subitem": "position_2d", "camera": "ext", "flags": ["conflict"],
+                "reason": "不一致 · 0.90 · 冲突", "conflicts": 1}}}
+#: ... the model's whole-clip opinion alone (no gripper reference): capped, one finding per cell at "possibly" or above ...
+EEF_OPINIONS = {"assessment_mode": "vlm_opinion", "overall": "opinion", "merged": {
+    "cells": [{"subitem": "position_2d", "camera": "ext", "p": 0.8, "label": "inconsistent",
+               "flags": ["single_source"], "missing": "no_gripper_reference",
+               "sources": {"vlm_opinion": {"verdict": "issue", "p": 0.85, "confidence": 0.7}}, "time_s": [2.67, 6.33]},
+              {"subitem": "orientation_2d", "camera": "ext", "p": 0.55, "label": "possibly_inconsistent",
+               "flags": ["single_source"], "missing": "no_gripper_reference",
+               "sources": {"vlm_opinion": {"verdict": "issue", "p": 0.55, "confidence": 0.1}}}],
+    "episode": {"label": "inconsistent", "p": 0.8, "subitem": "position_2d", "camera": "ext", "flags": ["single_source"],
+                "reason": "不一致 · 0.80", "conflicts": 0}}}
+#: ... and an episode nothing could be said about: no finding, MV-4 not assessed
+EEF_CANNOT = {"assessment_mode": "vlm_opinion", "overall": "opinion", "merged": {
+    "cells": [], "episode": {"label": "cannot_tell", "p": None, "flags": [], "why": [], "conflicts": 0,
+                             "reason": "判断不了：这一条推不出轨迹"}}}
 #: a handheld gripper's wrist camera whose poses come late (design doc 22 §5.3): the model saw nothing amiss
 _EGO_SEG = {"start_frame": 50, "end_frame": 250, "start_s": 1.683, "end_s": 8.35, "reason": "time_offset",
             "magnitude": 0.467, "unit": "s", "band": "moderate", "band_level": 2, "evidence_frames": [120, 135],
@@ -208,6 +233,9 @@ CASES = [
     ("eef_video_consistency", None, None, EEF_HUMAN, {"unsettled"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
+    ("eef_video_consistency", True, None, EEF_CONFLICT, {"conflict"}, {"AV-1"}),
+    ("eef_video_consistency", True, None, EEF_OPINIONS, {"inconsistent"}, {"AV-1"}),
+    ("eef_video_consistency", True, None, EEF_CANNOT, set(), {"MV-4", "AV-1"}),
     ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
     ("dedup", True, None, {}, set(), set()),
 
@@ -232,8 +260,9 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
     for f in rec["findings"]:
         spec = registry.finding_code(module, f["code"])
         assert f["item"] == spec.item and f["message_zh"]
-    # the default policy keeps today's gates: a failed episode stops the funnel, nothing else does
-    assert passes_funnel(rec) == (passed is not False)
+    # the default policy keeps today's gates: a failed episode stops the funnel, nothing else does - but the EEF
+    # module rejects nothing since 5.0 (D81; a run from before keeps its rejects through its frozen defaults)
+    assert passes_funnel(rec) == (passed is not False or module == "eef_video_consistency")
 
 
 #: codes no answer can raise yet; every module's codes have a fixture since the skill profile left
@@ -337,6 +366,8 @@ def test_the_compatibility_verdict_matches_1_0():
                "gate": "none", "details": details, "evidence": [], "elapsed_s": None, "error": None}
         new = upgrade_record(old)
         if module == "camera_defects" or details is SYNC_NONE:
+            continue
+        if module == "eef_video_consistency":      # 1.0's EEF verdicts used 4.x's levels (D81 changed them)
             continue
         assert legacy_verdict(new) == old["verdict"], (module, details)
 

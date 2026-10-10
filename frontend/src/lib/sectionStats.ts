@@ -115,6 +115,10 @@ export function sectionDigest(s: Summary): string | null {
     if (num(s.label_disagreements) !== null) parts.push(Z.disagreements(num(s.label_disagreements)!));
   } else if (num(s.removed) !== null) {
     parts.push(Z.removed(num(s.removed)!));
+  } else if (Array.isArray(s.labels)) {
+    // the EEF module from registry 5.0 on (design doc 25 §7): opinions with a confidence, a conflict the only question
+    const by = Object.fromEntries((s.labels as { name: string; count: number }[]).map((x) => [x.name, x.count]));
+    parts.push(Z.eefLabels(by.inconsistent ?? 0, by.possibly_inconsistent ?? 0, num(s.conflict_episodes) ?? 0));
   } else if (eefOpinionOnly(s)) {
     // no candidates, and it asks nobody: an episode it could not look at (no trajectory, design doc 22 §5.4) is no
     // 转人工 even though the 1.0 counts call it an abstention

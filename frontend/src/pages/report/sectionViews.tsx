@@ -418,10 +418,38 @@ function dedupModel(s: Summary): ViewModel {
   return { stats, charts, notes, fresh: hasAny(s, ['group_sizes']) };
 }
 
+/** Registry 5.0 (design doc 25 §7): the episodes by label and by confidence, the conflicts asked, what single
+ * sources missed and why some could not be told. */
+function eefV5(s: Summary, section: ReportModuleSection, stats: StatSpec[], charts: ChartSpec[]): void {
+  const V = S().eef.v5;
+  const O = zh.eefDetail.output;
+  const raw = (rowsOf<{ name: string; count: number }>(s.labels) ?? []).reduce<Record<string, number>>((acc, x) => ({ ...acc, [x.name]: x.count }), {});
+  const n = (k: string) => raw[k] ?? 0;
+  stats.push({ label: O.label.inconsistent, value: n('inconsistent'), tone: n('inconsistent') ? 'warn' : undefined });
+  stats.push({ label: O.label.possibly_inconsistent, value: n('possibly_inconsistent') });
+  stats.push({ label: O.label.consistent, value: n('consistent') });
+  stats.push({ label: O.label.cannot_tell, value: n('cannot_tell') });
+  const conflicts = num(s.conflict_episodes) ?? 0;
+  stats.push({ label: V.conflicts, value: conflicts, tone: conflicts ? 'warn' : undefined, foot: V.conflictsFoot(section.adjudication?.pending ?? 0) });
+  const labels = labelled(s.labels, O.label);
+  if (anyValue(labels)) charts.push({ key: 'labels', title: V.labelsChart, items: labels, colors: labels.map((x) => (x.name === O.label.inconsistent ? RED : x.name === O.label.possibly_inconsistent ? ORANGE : undefined)) });
+  const bins = seriesOf(s.p_bins);
+  if (anyValue(bins)) charts.push({ key: 'p-bins', title: V.pChart, desc: V.pChartDesc, items: bins!, colors: bins!.map((b) => (b.name.startsWith('<') || b.name.startsWith('0.2') ? undefined : ORANGE)) });
+  const bySub = labelled(s.inconsistent_by_subitem, O.subitem);
+  if (anyValue(bySub)) charts.push({ key: 'by-subitem', title: V.bySubitem, items: bySub, horizontal: true, colors: bySub.map(() => ORANGE) });
+  const missing = labelled(s.single_source_missing, O.missing);
+  if (anyValue(missing)) charts.push({ key: 'single-source', title: V.missingChart, desc: V.missingDesc, items: missing, horizontal: true });
+  const cannot = seriesOf(s.cannot_tell_reasons);
+  if (anyValue(cannot)) charts.push({ key: 'cannot-tell', title: V.cannotChart, items: cannot!, horizontal: true });
+}
+
 function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   const Z = S().eef;
   const R = Z.review;
   const stats: StatSpec[] = [];
+  const charts: ChartSpec[] = [];
+  const v5 = Array.isArray(s.labels);
+  if (v5) eefV5(s, section, stats, charts);
   // 转人工 counts the module's records; the adjudication page asks those still in passed and not
   // answered yet (C1 1.9) - the foot says how many, so the two numbers can be read together.
   const pending = section.adjudication?.pending ?? 0;
@@ -433,9 +461,9 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   ];
   // a task without a gripper reference has only the model's opinion (D-E15): no verdict counts to show
   const opinionOnly = eefOpinionOnly(s);
-  if (!opinionOnly) for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
+  if (!opinionOnly && !v5) for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
   const O = Z.opinion;
-  if (num(s.opinion_episodes) !== null) {
+  if (num(s.opinion_episodes) !== null && !v5) {
     stats.push({ label: O.episodes, value: num(s.opinion_episodes), foot: O.episodesFoot });
     stats.push({ label: O.flagged, value: num(s.opinion_flagged) ?? 0, tone: num(s.opinion_flagged) ? 'warn' : undefined, foot: O.flaggedFoot });
     stats.push({ label: O.segments, value: num(s.opinion_segments) ?? 0 });
@@ -465,17 +493,16 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     if (num(s.ego_motion_unknown)) stats.push({ label: EG.unknown, value: num(s.ego_motion_unknown) });
     if (num(s.ego_motion_lag_median_s) !== null) stats.push({ label: EG.lag, value: EG.lagValue(fmt(num(s.ego_motion_lag_median_s))) });
   }
-  const charts: ChartSpec[] = [];
   const egoBands = labelled(s.ego_motion_bands, EG.band);
   if (anyValue(egoBands)) charts.push({ key: 'ego-bands', title: EG.bandsChart, items: egoBands, colors: egoBands.map((b) => (b.name === EG.band.minor ? undefined : ORANGE)) });
   const egoReasons = labelled(s.ego_motion_reasons, EG.reason);
   if (anyValue(egoReasons)) charts.push({ key: 'ego-reasons', title: EG.reasonsChart, items: egoReasons, horizontal: true });
-  const confidence = seriesOf(s.opinion_confidence);
+  const confidence = v5 ? null : seriesOf(s.opinion_confidence);
   if (anyValue(confidence)) charts.push({ key: 'opinion-confidence', title: O.confidenceChart, items: confidence!, colors: confidence!.map((c) => (c.name.startsWith('<') || c.name.startsWith('0.3') ? undefined : ORANGE)) });
   const aspects = labelled(s.opinion_aspects, O.aspect);
   if (anyValue(aspects)) charts.push({ key: 'opinion-aspects', title: O.aspectChart, items: aspects!, horizontal: true });
-  const outcomes = labelled(s.outcomes, Z.outcome);
-  if (anyValue(outcomes)) charts.push({ key: 'outcomes', title: Z.outcomeChart, items: outcomes, horizontal: true });
+  const outcomes = v5 ? null : labelled(s.outcomes, Z.outcome);
+  if (anyValue(outcomes)) charts.push({ key: 'outcomes', title: Z.outcomeChart, items: outcomes!, horizontal: true });
   const human = labelled(s.human_reasons, Z.humanReason);
   if (anyValue(human)) charts.push({ key: 'human', title: Z.humanChart, desc: Z.humanChartDesc, items: human, horizontal: true, colors: human.map(() => ORANGE) });
   const suspect = labelled(s.suspect_by_subitem, Z.subitem);
@@ -538,10 +565,17 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     );
   }
   const notes: ReactNode[] = [
-    <span className="muted">
-      {Z.verdictNote}
-      {s.uncalibrated ? Z.uncalibrated : ''}
-    </span>,
+    v5 ? (
+      <span className="muted">
+        {Z.v5.note}
+        {s.confidence_uncalibrated ? Z.v5.uncalibrated : ''}
+      </span>
+    ) : (
+      <span className="muted">
+        {Z.verdictNote}
+        {s.uncalibrated ? Z.uncalibrated : ''}
+      </span>
+    ),
   ];
   return { stats, charts, blocks, notes, fresh: true };
 }

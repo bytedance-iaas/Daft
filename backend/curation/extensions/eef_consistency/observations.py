@@ -231,8 +231,13 @@ def media_frames(path: str, media: dict) -> Iterator[DecodedFrame]:
             local = MM.video(path, media["topic"])
         except (MM.TopicError, OSError) as exc:
             raise V.DecodeError(str(exc)) from exc
-        yield from V.iter_clip(local, clip_start_s=0.0, clip_end_s=None, fps=MM.RATE,
-                               frame_count=int(media["frame_count"]))
+        # the local video's synthetic rate numbers the frames; the view's own rate times them, so a clip
+        # rendered from them (the review's, the opinion's) plays at the episode's speed
+        rate = float(media.get("fps") or 0) or MM.RATE
+        for fr in V.iter_clip(local, clip_start_s=0.0, clip_end_s=None, fps=MM.RATE,
+                              frame_count=int(media["frame_count"])):
+            fr.pts_s = fr.index / rate
+            yield fr
         return
     yield from V.iter_clip(path, clip_start_s=float(media["clip_start_s"]), clip_end_s=media["clip_end_s"],
                            fps=media["fps"], frame_count=int(media["frame_count"]))
