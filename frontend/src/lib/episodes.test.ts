@@ -46,9 +46,13 @@ describe('preflight → availability and reasons', () => {
     expect(reasonText(preflightFor(umi, {}).modules.find((m) => m.id === 'kinematic_limits'))).toContain('umi_dual_handheld_gripper 不在规格库');
     expect(reasonText({ reason: 'something new happened', reason_code: 'brand_new_code' })).toBe('something new happened');
     expect(reasonText(preflightFor(rrd, {}).modules[0])).toBe('当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 rrd');
-    // D44 / F5.13: an mcap dataset is read, the EEF module too; its trajectory is generated (design doc 24)
+    // D44 / F5.13: an mcap dataset is read, the EEF module too; nothing to compute its trajectory from, so it asks
+    // for the file (optional only where the platform can compute it, design doc 24) ...
     const eef = preflightFor(mcap, {}).modules.find((m) => m.id === 'eef_video_consistency');
-    expect(eef?.availability).toBe('available');
+    expect(eef?.availability).toBe('needs_input');
+    expect(reasonText(eef)).toBe('需要上传约定格式的 trajectory.json（勾选后在第二屏上传）');
+    // ... while a handheld gripper's dataset has it computed
+    expect(preflightFor(umi, {}).modules.find((m) => m.id === 'eef_video_consistency')?.availability).toBe('available');
     expect(reasonText({ reason: 'x', reason_code: 'format_unsupported_by_module', reason_args: { format: 'lance' } })).toBe('该模块只能读 LeRobot 与 mcap 数据集，不支持 lance');
     expect(reasonText({ reason: 'x', reason_code: 'format_disabled', reason_args: { format: 'lance' } })).toBe(
       '本实例关闭了 lance 格式的质检（站点配置 ingest.lance_enabled），请联系管理员',
@@ -72,7 +76,8 @@ describe('preflight → availability and reasons', () => {
 
   it('the EEF module is opted into by hand, never by a preset (F5.5, still so after D49)', () => {
     const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
-    expect(availability(r, 'eef_video_consistency')).toBe('available');      // nothing to upload (design doc 24)
+    expect(availability(r, 'eef_video_consistency')).toBe('needs_input');    // nothing to compute the trajectory from
+    expect(reasonText(r.modules.find((m) => m.id === 'eef_video_consistency'))).toContain('trajectory.json');
     const eef = registry.modules.find((m) => m.id === 'eef_video_consistency')!;
     expect(optIn(eef)).toBe(true);
     expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency']);   // registry 2.0: no advisory flag; the rider is not offered

@@ -16,8 +16,8 @@ import type {
 } from '../../api/types';
 import { REGION_RE } from '../../lib/deeplink';
 import { parseForDisplay } from '../../lib/episodes';
-import { changedParams, groupFields, paramFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
-import { availability, embodimentHint, needsVlm } from '../../lib/preflight';
+import { changedParams, groupFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
+import { availability, embodimentHint, moduleParamFields, needsVlm } from '../../lib/preflight';
 import { presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
@@ -199,7 +199,7 @@ export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
   if (active.some((id) => embodimentHint(ctx.preflight, id)) && !v.embodiment) e.embodiment = zh.errors.requiredSelect(zh.taskForm.embodiment);
   for (const id of active) {
     const spec = ctx.registry?.modules.find((m) => m.id === id);
-    const fields = paramFields(spec?.param_schema);
+    const fields = moduleParamFields(spec, ctx.preflight);    // a file the preflight asks for is required here
     for (const f of fields) {
       const problem = validateParam(f, v.params[id]?.[f.key] ?? f.default);
       if (problem) e[`params.${id}.${f.key}`] = problem;

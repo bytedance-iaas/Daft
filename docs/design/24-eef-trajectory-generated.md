@@ -2,6 +2,9 @@
 
 > 状态：**已落地（2026-10-09）**。来源：需求方 2026-10-09——「我是用户，我不管 trajectory.json」「就是 EEF 任务的时候生成这个文件，
 > 并且前端也不能要求有这个文件」。注册表 4.3。
+>
+> **修订（2026-10-09 晚，Yichen Wang）**：轨迹**能算就可选、算不了就必选**。原先「都没有」时报 `unsupported`，模块在新建任务里根本勾选不了，
+> 改为 `needs_input`：模块照常可勾选，第二屏要求上传 trajectory.json（§1 末段、§3）。原始手持夹爪的 mcap 也能算（设计 22 §5.4，D80）。
 
 ## 1. 做法
 
@@ -16,9 +19,12 @@
    - `meta/umi_calibration.json` 里每路相机的 `K`、模型与畸变、标定图尺寸、`T_camera_tcp`；
    - 腕部相机位姿 = 手位姿 × `inverse(T_camera_tcp)`；视频尺寸与标定图尺寸之比写成 `H_media_from_calibration`；
      第 j 路相机属于第 j 只手；`horizon_s` 取 1 秒；
-3. 数据集根目录自带的 `trajectory.json`。
+3. 数据集根目录自带的 `trajectory.json`；
+4. 原始会话（§6）从会话算；原始手持夹爪的 mcap（内置 UMI 模版认出的布局）由设计 22 §5.4 逐条从录制推出（D80）。
 
-都没有：预检里 EEF 是 `unsupported`（`trajectory_missing`，写明缺末端位姿与相机标定），不再是 `needs_input`；运行时整个模块失败并写明原因。
+都没有（或生成出错）：trajectory.json 就是必选——预检里 EEF 是 `needs_input`（`trajectory_missing`，`input_hint.field = trajectory_json`，
+原因写明平台算不出轨迹、要上传），模块照常可勾选，控制台第二屏把 trajectory.json 标为必填，不传时 Daemon 也拒绝建任务；命令行直接跑时
+模块失败并写明要传 `--param …trajectory_json=PATH`。（修订前这里是 `unsupported`，模块勾选不了。）
 
 ## 2. 前提与限制
 
@@ -34,10 +40,10 @@
 | 位置 | 改动 |
 |---|---|
 | C1 注册表 4.3 | `eef_video_consistency.params.trajectory_json` 不再必填 |
-| CLI `preflight` | 不传轨迹时按 §1 判断：能生成或有自带文件 → 生成到临时文件校验，`notes` 写明来源；都没有 → `unsupported` |
+| CLI `preflight` | 不传轨迹时按 §1 判断：能生成或有自带文件 → 生成到临时文件校验，`notes` 写明来源；原始手持夹爪 mcap → 设计 22 §5.4；都没有或生成出错 → `needs_input`（要上传；修订前是 `unsupported`） |
 | CLI `check`（`eef_check`） | 不传轨迹时生成到运行目录再读 |
 | Daemon `eef-overlay` | 任务没有上传件时读运行目录里生成的那份（工作目录被清过就先从交付恢复） |
-| 前端 | 上传框随参数 Schema 变为可选；模拟数据的预检改为 `available` |
+| 前端 | 上传框随参数 Schema 变为可选；预检要求上传时（`needs_input` 指名 `trajectory_json`）第二屏把它标为必填（`lib/preflight.moduleParamFields`）；模拟数据里手持夹爪数据集 `available`，其余 `needs_input` |
 
 ## 4. 原始会话的标定从会话里取（2026-10-09）
 

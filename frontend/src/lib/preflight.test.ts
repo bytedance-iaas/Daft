@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { reasonText } from './preflight';
+import registry from '../../../docs/contracts/modules.json';
+import type { ModuleRegistry, PreflightResult } from '../api/types';
+import { moduleParamFields, reasonText } from './preflight';
 
 describe('reasonText', () => {
   it('says a Git LFS pointer upload in Chinese, with the files and the fix', () => {
@@ -25,5 +27,20 @@ describe('reasonText', () => {
     expect(reasonText({ reason: 'x', reason_code: 'metadata_invalid', reason_args: { problem: 'meta/info.json is not valid JSON' } })).toBe(
       '数据集的元数据有问题：meta/info.json is not valid JSON',
     );
+  });
+});
+
+describe('moduleParamFields', () => {
+  const eef = (registry as unknown as ModuleRegistry).modules.find((m) => m.id === 'eef_video_consistency')!;
+  const result = (entry: Record<string, unknown>) => ({ modules: [{ id: eef.id, ...entry }] }) as unknown as PreflightResult;
+  const required = (r: PreflightResult | null) => moduleParamFields(eef, r).filter((f) => f.required).map((f) => f.key);
+
+  it('makes trajectory.json required only where the platform cannot compute the trajectory (design doc 24)', () => {
+    expect(required(null)).toEqual([]);                                  // optional in the schema (registry 4.3)
+    expect(required(result({ availability: 'available' }))).toEqual([]);  // computed from the dataset
+    expect(required(result({ availability: 'needs_input', reason_code: 'trajectory_missing', input_hint: { field: 'trajectory_json' } }))).toEqual(['trajectory_json']);
+    // the robot type and the VLM backend have fields of their own; a choice group is asked for as a group
+    expect(required(result({ availability: 'needs_input', input_hint: { field: 'vlm' } }))).toEqual([]);
+    expect(required(result({ availability: 'needs_input', input_hint: { field: 'observation_seeds' } }))).toEqual([]);
   });
 });

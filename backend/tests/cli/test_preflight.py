@@ -117,10 +117,10 @@ def test_robot_type_outside_the_registry_skips_only_kinematics(cli, dataset):
     assert kin["reason_code"] == "embodiment_unsupported"
     assert kin["reason_args"]["given_by"] == "robot_type"
     assert "franka" in kin["reason"]                    # names what is supported
-    advisory = {"eef_video_consistency": ("unsupported", "trajectory_missing")}
+    advisory = {"eef_video_consistency": ("needs_input", "trajectory_missing")}
     others = [m for m in doc["modules"] if m["id"] != "kinematic_limits" and m["id"] not in advisory]
     assert all(m["availability"] == "available" for m in others)
-    for m in doc["modules"]:                             # no poses with calibration in the dataset (design doc 24)
+    for m in doc["modules"]:                             # nothing to compute the trajectory from: the file is asked for
         if m["id"] in advisory:
             assert (m["availability"], m["reason_code"]) == advisory[m["id"]]
 

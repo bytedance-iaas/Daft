@@ -612,8 +612,9 @@ API 返回的 `links` 数组（见 `03-rest-api.md` §1）指向的就是上面�
     没传 trajectory.json 的手持夹爪任务（F5.20，设计 22 §5.4）：Episode 明细的 EEF 区块第一行写「轨迹由平台从录制推出」、用的标定（内置 DEMO 或上传的）
     与按假设值的字段，每只手一行配对率与内参来源（或不支持的原因），导出检查的可疑项跟在后面；叠加接口的 404 `not_derived` 同 `no_episode` 一样不提示。
     推不出轨迹（或上传的文件里没有）的条目，「模型意见」块只写「没有问模型，也不转人工」（没有轨迹来源块时带上原因），不出用途说明。
-    新建任务第二屏的 trajectory.json 不再必填（设计 24：平台从数据集生成，没有来源的数据集 EEF 在预检里就是「不支持」）、多「夹爪标定」一项，
-    都由 `param_schema` 生成。
+    新建任务第二屏的 trajectory.json 在参数 Schema 里不必填、多「夹爪标定」一项，都由 `param_schema` 生成；能算就可选、算不了就必选（设计 24 修订）：
+    预检对算不出轨迹的数据集报 `needs_input`（`input_hint.field = trajectory_json`），第一屏卡片照常可勾选并提示「需要补充投影轨迹」，第二屏把
+    trajectory.json 标为必填（`lib/preflight.moduleParamFields`：预检指名的参数在这个数据集上必填，二选一组里的不算）。
 - 「各机位视频」与「同时播放」（`features/media/SyncedVideos.tsx`、`syncPlayback.ts`、`SignedVideo`）在 F13 验收后删除（2026-10-04）；
   `features/media/SignedMedia.tsx` 只留证据帧的签名与重签。
 **「性能剖析」页签**：模型服务与容器配额（「VLM 并行度」不带「N」，第五轮）、五类调用的延迟分布、有效并发度、各阶段耗时对比（原叫「各阶段墙钟占比」，

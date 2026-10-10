@@ -145,7 +145,8 @@ class EefJudge:
                     raise ModuleFailed(f"{MODULE}: the trajectory could not be generated from the dataset: {e}"[:300],
                                        {"reason": "trajectory_invalid"}) from None
             elif not (self.mcap and self._handheld()):  # a handheld gripper's raw mcap: derived below (design doc 22 §5.4)
-                raise ModuleFailed(f"{MODULE}: the dataset records no end-effector poses with the cameras' calibration",
+                raise ModuleFailed(f"{MODULE}: the dataset records no end-effector poses with the cameras' calibration, "
+                                   f"so the trajectory cannot be computed: pass --param {MODULE}.trajectory_json=PATH",
                                    {"reason": "trajectory_missing"})
         #: no trajectory to read: a handheld gripper's recording carries its own (design doc 22 §5.4, F5.20)
         self.derived = None

@@ -1,13 +1,13 @@
 """The two EEF modules' entries of ``curation preflight`` (C2 preflight.schema, design 12 §5.1, §11.1).
 
 The file is a module parameter (``trajectory_json``): a path on the command line, an upload handle in
-the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without one, ``cli/preflight``
-generates it from the dataset and passes that (design doc 24), or says unsupported when there is nothing to generate
-it from - except on a handheld gripper's raw mcap, which carries its own trajectory (``handheld``, design doc 22
-§5.4, D80: derived when the module runs, with ``gripper_calibration`` or the built-in DAS DEMO calibration); asked
-here without a file and not handheld, the module ``needs_input`` (``input_hint.field = trajectory_json``). The
-console never pre-selects an advisory module; with a valid file it then needs a VLM backend (D49: the module
-reviews with a model).
+the console (F5.5), which the Daemon turns into a path before it calls the CLI. The file is optional only where
+the platform can compute the trajectory: ``cli/preflight`` generates it from the dataset and passes that (design
+doc 24); a handheld gripper's raw mcap carries its own (``handheld``, design doc 22 §5.4, D80: derived when the
+module runs, with ``gripper_calibration`` or the built-in DAS DEMO calibration); on any other dataset the module
+``needs_input`` (``input_hint.field = trajectory_json``) and the console asks for the upload. The console never
+pre-selects an advisory module; with a valid file it then needs a VLM backend (D49: the module reviews with a
+model).
 """
 from __future__ import annotations
 
@@ -149,8 +149,9 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
         return derived_entry(params, episodes=episodes, lerobot_root=lerobot_root)
     if not traj:
         return {"availability": C.NEEDS_INPUT, "reason_code": C.TRAJECTORY_MISSING,
-                "reason": "no trajectory.json given: upload one (console) or pass "
-                          "--param eef_video_consistency.trajectory_json=PATH (a handheld gripper's mcap needs none)",
+                "reason": "the platform cannot compute the trajectory from this dataset (it records no end-effector "
+                          "poses with the cameras' calibration): upload a trajectory.json (console) or pass "
+                          "--param eef_video_consistency.trajectory_json=PATH",
                 "input_hint": {"field": "trajectory_json"}}
     path = pathlib.Path(os.path.expanduser(traj))
     if not path.is_file():

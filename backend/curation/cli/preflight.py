@@ -541,8 +541,9 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
                handheld: bool = False) -> dict:
     """The EEF module's entry (design doc 24): the trajectory a caller gave, else the one generated from the
     dataset (or its own ``trajectory.json``), else - a handheld gripper's raw mcap (``handheld``, the reader's
-    ``umi_das`` layout) - the one derived episode by episode from the recording (design doc 22 §5.4); a dataset
-    with none of these is unsupported - nothing for the user to give."""
+    ``umi_das`` layout) - the one derived episode by episode from the recording (design doc 22 §5.4). The file is
+    optional only where the platform can compute the trajectory: a dataset with none of these needs it
+    (``needs_input``, the console asks for the upload), it is never a reason not to offer the module."""
     import os
 
     from ..extensions.eef_consistency import contracts as EC
@@ -552,20 +553,17 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
     temp = None
     if not (params.get("trajectory_json") or "").strip():
         how = derive.source_of(listing)
-        if how is None and handheld:
+        if how is None:                         # derived from the recording, or asked for (needs_input)
             return eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
-                                                   lerobot_root=None if "://" in uri else uri, handheld=True)
-        if how is None:
-            return {"availability": EC.UNSUPPORTED, "reason_code": EC.TRAJECTORY_MISSING,
-                    "reason": "the dataset records no end-effector poses with the cameras' calibration "
-                              "(a handheld-gripper dataset's meta/umi_calibration.json, a handheld gripper's mcap, or a "
-                              "trajectory.json), "
-                              "so there is nothing to project onto its videos"}
+                                                   lerobot_root=None if "://" in uri else uri, handheld=handheld)
         try:
             temp = derive.to_temp(storage, listing)
-        except Exception as e:  # noqa: BLE001 - the dataset's own data does not make a trajectory
-            return {"availability": EC.UNSUPPORTED, "reason_code": EC.TRAJECTORY_INVALID,
-                    "reason": f"the trajectory could not be generated from the dataset: {e}"[:300]}
+        except Exception as e:  # noqa: BLE001 - the dataset's own data does not make a trajectory: asked for instead
+            return {"availability": EC.NEEDS_INPUT, "reason_code": EC.TRAJECTORY_MISSING,
+                    "reason": f"the trajectory could not be generated from the dataset ({e}"[:240]
+                              + "): upload a trajectory.json (console) or pass "
+                                "--param eef_video_consistency.trajectory_json=PATH",
+                    "input_hint": {"field": "trajectory_json"}}
         params = {**params, "trajectory_json": temp}
     try:
         entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,

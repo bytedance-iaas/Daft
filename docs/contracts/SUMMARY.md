@@ -428,3 +428,6 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **F5.20，C4 4.6.0**（4.5.0 是 UMI 原始会话，设计 24 §6）：`UploadKind` 加 `eef_gripper_calibration`（Daemon 到货即按 Schema 与刚性检查校验，摘要是夹爪、位姿定义、按假设值的字段、
   有内参回退的手）；`eef-overlay` 对没传轨迹的任务读平台生成的那份（设计 24）或逐条推出的轨迹，这一条还没有或推不出时 404 `not_derived`。上传校验的 `warnings` 统一成 `UploadIssue`
   对象（此前夹爪模板、记录映射的警告是字符串，与契约不符）。前端类型已重新生成。
+- **轨迹能算就可选、算不了就必选（设计 24 修订，C1 4.4 / C2 兼容 / C4 4.6.0）**：EEF 预检在平台算不出轨迹（或生成出错）时报
+  `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`），不再是设计 24 起的 `unsupported`——模块照常可勾选，
+  控制台第二屏把 trajectory.json 标为必填，Daemon 不传就拒绝建任务；`trajectory_json` 的说明改成「能算时不用给、算不出必须上传」。

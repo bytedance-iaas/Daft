@@ -2,6 +2,7 @@
 // Chinese reasons from reason_code (unknown codes fall back to `reason`), and preset selections.
 import type { Availability, ModuleAvailability, ModuleRegistry, ModuleSpec, PreflightResult, VlmBackend } from '../api/types';
 import { zh } from '../locales/zh';
+import { paramFields, type ParamField } from './paramSchema';
 
 export function reasonText(m: Pick<ModuleAvailability, 'reason' | 'reason_code' | 'reason_args'> | undefined): string {
   if (!m) return '';
@@ -70,6 +71,18 @@ export function presetSelection(preset: 'full' | 'quick', reg: ModuleRegistry, r
     .filter((m) => availability(result, m.id) !== 'unsupported' && availability(result, m.id) !== null)
     .filter((m) => preset === 'full' || !needsVlm(m))
     .map((m) => m.id);
+}
+
+/**
+ * A module's parameter fields for this dataset (C1 param_schema): a parameter its preflight asks for - needs_input
+ * naming it in `input_hint.field`, outside a choice group - is required here though optional in the schema. That is
+ * EEF's trajectory.json where the platform cannot compute the trajectory: optional only where it can (design doc 24).
+ */
+export function moduleParamFields(spec: ModuleSpec | undefined, result: PreflightResult | null | undefined): ParamField[] {
+  const fields = paramFields(spec?.param_schema);
+  const a = spec ? availabilityOf(result, spec.id) : undefined;
+  const asked = a?.availability === 'needs_input' ? a.input_hint?.field : undefined;
+  return asked ? fields.map((f) => (f.key === asked && !f.choiceGroup ? { ...f, required: true } : f)) : fields;
 }
 
 /** The input a needs_input module asks for on screen 2, if it is one screen 2 handles. */

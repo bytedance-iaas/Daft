@@ -4,8 +4,8 @@ import { ApiError } from '../../api/errors';
 import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
 import { uploadFile, uploadText, type UploadPhase } from '../../api/uploads';
 import { paramDraft, type ParamDraftView } from '../../lib/paramDraft';
-import { groupFields, paramFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
-import { availabilityOf, embodimentHint, reasonText } from '../../lib/preflight';
+import { groupFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
+import { availabilityOf, embodimentHint, moduleParamFields, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormPatch, FormValues } from './formModel';
@@ -362,7 +362,7 @@ export function ModuleSettings({
   const specs = (registry?.modules ?? []).filter((m) => v.modules.includes(m.id));
   const active = activeModules(v);
   const needing = specs.filter((m) => active.includes(m.id) && embodimentHint(preflight, m.id));
-  const withParams = specs.filter((m) => active.includes(m.id) && paramFields(m.param_schema).length);
+  const withParams = specs.filter((m) => active.includes(m.id) && moduleParamFields(m, preflight).length);
   const skipped = specs.filter((m) => v.skipped.includes(m.id));
   // Against the form as it is then: an upload can finish after another field (or upload) changed.
   const setParam = (mod: string, key: string, value: unknown) =>
@@ -448,12 +448,12 @@ export function ModuleSettings({
             </Typography.Title>
           }
         >
-          {groupFields(paramFields(m.param_schema).filter((f) => !f.advanced)).map((entry) => renderEntry(m.id, entry))}
+          {groupFields(moduleParamFields(m, preflight).filter((f) => !f.advanced)).map((entry) => renderEntry(m.id, entry))}
           {/* the judgement lines its findings are drawn with (registry 2.1 x-advanced, design doc 17 §1.3): folded away */}
-          {paramFields(m.param_schema).some((f) => f.advanced) ? (
+          {moduleParamFields(m, preflight).some((f) => f.advanced) ? (
             <Collapse bordered={false} className="advanced-lines" data-testid={`advanced-${m.id}`}>
               <Collapse.Item name="lines" header={zh.taskForm.advancedLines} extra={<span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.advancedLinesHint}</span>}>
-                {groupFields(paramFields(m.param_schema).filter((f) => f.advanced)).map((entry) => renderEntry(m.id, entry))}
+                {groupFields(moduleParamFields(m, preflight).filter((f) => f.advanced)).map((entry) => renderEntry(m.id, entry))}
               </Collapse.Item>
             </Collapse>
           ) : null}

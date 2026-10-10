@@ -153,12 +153,14 @@ info:
     `umi_session`. Only the end-effector check runs on it (its trajectory is computed from the session); the
     visualizer plays the demos' own videos cut to each episode and draws each hand's position and opening.
 
-    **4.6.0** (2026-10-09): the EEF module needs no trajectory file. The platform generates it from the
-    dataset (an exported handheld-gripper dataset's state and camera calibration, or the dataset's own
-    `trajectory.json`); a handheld gripper's raw mcap has each episode's trajectory derived from the
-    recording, with a gripper calibration uploaded as the new kind `eef_gripper_calibration` or a built-in
-    default. The overlay of such a task reads that trajectory, and answers 404 `not_derived` for an
-    episode that has none yet or cannot have one.
+    **4.6.0** (2026-10-09): the EEF module asks for a trajectory file only where the platform cannot
+    compute the trajectory. It generates it from the dataset (an exported handheld-gripper dataset's state
+    and camera calibration, a raw UMI session, or the dataset's own `trajectory.json`); a handheld gripper's
+    raw mcap has each episode's trajectory derived from the recording, with a gripper calibration uploaded
+    as the new kind `eef_gripper_calibration` or a built-in default. On any other dataset the preflight says
+    `needs_input` (`trajectory_missing`) and the file must be uploaded. The overlay of a task without an
+    upload reads the trajectory the platform computed, and answers 404 `not_derived` for an episode that
+    has none yet or cannot have one.
 
   x-description-zh: |
     ## 概览
@@ -255,9 +257,10 @@ info:
     `format.kind` / `format.reader` 加 `umi_session`。这种数据集只能做末端执行器检查（轨迹由平台从会话算出）；可视化播放各 demo 的原视频（按 episode 截取），
     画出每只手的位置与开口。
 
-    **4.6.0**（2026-10-09）：EEF 模块不用再传轨迹文件。平台从数据集生成（导出过的手持夹爪数据集的状态与相机标定，或数据集自带的 `trajectory.json`）；
-    原始手持夹爪的 mcap 逐条从录制推出轨迹，夹爪标定可以用新的上传种类 `eef_gripper_calibration` 传，不传用内置的缺省值。
-    这种任务的叠加读平台得到的轨迹，某条还没有或得不到时回 404 `not_derived`。
+    **4.6.0**（2026-10-09）：EEF 模块只在平台算不出轨迹时才要轨迹文件。平台从数据集生成（导出过的手持夹爪数据集的状态与相机标定、UMI 原始会话，
+    或数据集自带的 `trajectory.json`）；原始手持夹爪的 mcap 逐条从录制推出轨迹，夹爪标定可以用新的上传种类 `eef_gripper_calibration` 传，
+    不传用内置的缺省值。别的数据集预检报 `needs_input`（`trajectory_missing`），必须上传。没上传的任务，叠加读平台算出的轨迹，
+    某条还没有或得不到时回 404 `not_derived`。
 
 servers:
   - url: "{base}/api/v1"

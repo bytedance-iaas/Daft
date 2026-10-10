@@ -123,12 +123,26 @@ def fake_vlm(tmp_path, answer=None):
         hooks.uninstall()
 
 
+def test_a_trajectory_that_cannot_be_generated_is_asked_for(mini_dataset, tmp_path):
+    """A dataset that looks computable (meta/umi_calibration.json, design doc 24) but whose trajectory cannot be
+    generated: the file is asked for, the module is still offered."""
+    import shutil
+
+    data = tmp_path / "ds"
+    shutil.copytree(mini_dataset, data)
+    (data / "meta" / "umi_calibration.json").write_text("{}")
+    (entry,) = run("preflight", "--input", str(data), "--modules", EEF).doc["modules"]
+    assert (entry["availability"], entry["reason_code"]) == ("needs_input", "trajectory_missing")
+    assert entry["input_hint"] == {"field": "trajectory_json"} and "could not be generated" in entry["reason"]
+
+
 def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
     traj = _files(tmp_path)
     doc = run("preflight", "--input", mini_dataset, "--modules", EEF).doc
     (entry,) = doc["modules"]
-    # design doc 24: nothing to upload - a dataset without poses and calibration is unsupported
-    assert entry["availability"] == "unsupported" and entry["reason_code"] == "trajectory_missing"
+    # the file is optional only where the platform can compute the trajectory (design doc 24); not here
+    assert entry["availability"] == "needs_input" and entry["reason_code"] == "trajectory_missing"
+    assert entry["input_hint"] == {"field": "trajectory_json"}
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF,
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
     assert entry["availability"] == "needs_input" and entry["input_hint"] == {"field": "vlm"}    # D49
@@ -380,6 +394,7 @@ def test_without_a_trajectory_an_arm_mcap_fails_the_module(cli, tmp_path):
     res = cli("check", "--modules", EEF, "--input", str(tmp_path / "arm"), "--run-dir", str(tmp_path / "run"),
               "--episodes", "0", *VLM)
     assert res.rc != 0 and "no end-effector poses" in json.dumps(res.doc, ensure_ascii=False)
+    assert "trajectory_json=PATH" in json.dumps(res.doc, ensure_ascii=False)
 
 
 def test_opinion_answers_are_checked_against_the_clip():

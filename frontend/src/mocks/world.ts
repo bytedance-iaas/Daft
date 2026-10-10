@@ -490,11 +490,22 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
       };
     }
     if (needs.includes('eef_input')) {
-      // like the CLI (design doc 24): the trajectory is generated from the dataset, nothing to upload
+      // like the CLI: the file is optional only where the platform can compute the trajectory - a handheld gripper's
+      // data (design doc 24, design doc 22 §5.4); any other dataset is offered and asks for the upload on screen 2
+      if (/umi|das_gripper/i.test(p.robotType ?? '')) {
+        return {
+          id: m.id,
+          availability: 'available',
+          notes: ["trajectory generated from the dataset's state and camera calibration"],
+          drafts: { record_mapping: recordDraft(p) },
+        };
+      }
       return {
         id: m.id,
-        availability: 'available',
-        notes: ["trajectory generated from the dataset's state and camera calibration"],
+        availability: 'needs_input',
+        reason: "the platform cannot compute the trajectory from this dataset (it records no end-effector poses with the cameras' calibration): upload a trajectory.json",
+        reason_code: 'trajectory_missing',
+        input_hint: { field: 'trajectory_json' },
         drafts: { record_mapping: recordDraft(p) },
       };
     }

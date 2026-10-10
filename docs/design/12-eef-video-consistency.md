@@ -62,7 +62,7 @@
 - 文件与数据集的绑定靠 `episode_index`；文件里没有的 episode 该模块报 `unsupported: projection_missing`，不影响其它模块。
 - 设计 24（2026-10-09）起不再要求上传：平台从数据集生成轨迹（导出过的手持夹爪数据集的状态与相机标定，或数据集自带的 trajectory.json）；
   原始手持夹爪的 mcap 由设计 22 §5.4（D80）逐条从录制推出，夹爪标定用上传的「夹爪标定」（`umi-calibration/2`）或内置的 DAS DEMO 假设值；
-  都没有的数据集 EEF 不支持。上传 trajectory.json 仍可，用来换一份轨迹。
+  能算就可选，算不了就必选：都没有的数据集预检报 `needs_input`，第二屏要求上传 trajectory.json。能算时上传只是换一份轨迹。
 
 ### 0.6 开工前六点（需求方 2026-09-22 晚确认）
 

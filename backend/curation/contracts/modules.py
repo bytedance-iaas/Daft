@@ -396,9 +396,9 @@ def _eef_params() -> dict:
         "properties": {
             "trajectory_json": _upload(
                 "eef_trajectory", [".json"], 64, title="trajectory.json",
-                description="一般不用给：平台从数据集生成（导出过的手持夹爪数据集的状态与相机标定；原始手持夹爪 mcap 用下面的"
-                            "夹爪标定逐条推出），或读数据集自带的 trajectory.json。只有要换一份轨迹时才上传：约定格式"
-                            " eef-video 1.0 / 1.1 的单文件包，上传即校验", default=""),
+                description="平台能算出轨迹时不用给：从数据集生成（导出过的手持夹爪数据集的状态与相机标定、UMI 原始会话；"
+                            "原始手持夹爪 mcap 用下面的夹爪标定逐条推出），或读数据集自带的 trajectory.json，这时上传只是换一份。"
+                            "算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，上传即校验", default=""),
             "gripper_calibration": _upload(
                 "eef_gripper_calibration", [".json"], 1, title="夹爪标定",
                 description="手持夹爪的标定 umi-calibration/2：位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、"

@@ -126,19 +126,19 @@ def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daem
     assert row["selected"] and row["availability"] == "available"
 
 
-def test_the_dataset_preflight_says_there_is_nothing_to_project(daemon):
-    """Design doc 24: a dataset without poses and camera calibration has no trajectory to generate - unsupported,
-    nothing for the user to upload."""
+def test_the_dataset_preflight_asks_for_the_file(daemon):
+    """The file is optional only where the platform can compute the trajectory (design doc 24); this dataset has
+    no poses with calibration to compute one from, so the module is offered and asks for the upload."""
     d = daemon()
     pf = d.preflight()["result"]
     (entry,) = [m for m in pf["modules"] if m["id"] == EEF]
-    # design doc 24: nothing to upload; this dataset has no poses with calibration to compute one from
-    assert (entry["availability"], entry["reason_code"]) == ("unsupported", "trajectory_missing")
+    assert (entry["availability"], entry["reason_code"]) == ("needs_input", "trajectory_missing")
+    assert entry["input_hint"] == {"field": "trajectory_json"}
 
 
 def test_a_task_needs_an_upload_handle_not_a_path(daemon):
     d = daemon()
-    for params, words in (({}, "no end-effector poses"),          # design doc 24: nothing to compute it from
+    for params, words in (({}, "需要上传 trajectory.json"),     # nothing to compute it from: the upload is required
                           ({"trajectory_json": "/etc/hosts"}, "upload"),
                           ({"trajectory_json": "upload:upl_0000000000"}, "不存在")):
         body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": params}], start_now=False)

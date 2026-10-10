@@ -329,7 +329,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
 
 同日落地的设计 24（注册表 4.3）让平台从数据集生成轨迹：导出过的手持夹爪 LeRobot 数据集（`observation.state` 与 `meta/umi_calibration.json`），
 或数据集自带的 trajectory.json；它 §2 留下的「原始手持夹爪数据缺相机标定」就是本节。合起来，没上传 trajectory.json 时依次是：设计 24 的生成或自带文件
-→ 本节的逐条推导（原始手持夹爪 mcap）→ 都没有，按设计 24 报不支持。
+→ 本节的逐条推导（原始手持夹爪 mcap）→ 都没有，trajectory.json 就是必选（`needs_input`，第二屏要求上传；能算就可选、算不了就必选，设计 24 修订）。
 
 - 参数：`trajectory_json` 不再必填（注册表 4.3，设计 24）；新增可选上传「夹爪标定」`gripper_calibration`（注册表 4.4，`umi-calibration/2`，上传种类
   `eef_gripper_calibration`，到货即按 Schema 与刚性检查校验）。两者都给时用 trajectory.json，标定不用。
@@ -337,7 +337,7 @@ F5.19 C1 加细码 `ego_motion_suspect` 与参数、C2 的 EEF 记录加 `ego_mo
   - 设计 24 能生成或数据集自带文件：按设计 24；
   - 否则 mcap 读取器认出手持夹爪的布局（内置 UMI 模版，`umi_das` 档案）：可用，注明「轨迹由平台从录制推出」和用哪份标定；腕部相机的位置 / 朝向报
     `own_hand_camera`，自运动可用；给了观测种子或夹爪模板：不支持（手持夹爪只走意见模式）；
-  - 都不是：不支持（`trajectory_missing`，设计 24）。
+  - 都不是：`needs_input: trajectory_missing`（模块照常可勾选，第二屏要求上传；设计 24 修订前是不支持）。
 - 标定：没给就用内置的 DAS DEMO 标定（`eef_consistency/calibrations/das_gripper_demo.json`）：`pose_frame: vio_body_flu`、§5.2 的机体→光学旋转、
   `T_camera_tcp` (0, 0.086, 0.17) m、开口按米、内参按比例拉伸到视频、配对容差 20 ms，全部 `model_assumed`。它**不带内参回退**（客户相机的内参不进
   公开仓库）：没有 `camera_info` 的文件（如 `umi_sample.mcap`）两路相机报「不支持」，上传一份带 `intrinsics_fallback` 的标定才能看。
@@ -436,7 +436,7 @@ DEMO 的验收因此只能验「链路通、画得对、意见合理」，不能
    `umi_sample` 两路因为没有 `camera_info`、内置标定又不带内参回退，报不支持并说明原因。
 2. 上传一份带 `intrinsics_fallback` 的标定后，`umi_sample` 两路可看。
 3. 迷你播放器的叠加照常（读推出的轨迹）；Episode 明细显示「轨迹由平台从录制推出」、用的标定与可疑项。
-4. LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json 仍要求上传（设计 24 落地后改为：没有可生成的来源，EEF 不支持）；契约测试与锁、前端类型生成通过；测试覆盖预检三种情况、推导与续跑摘要、
+4. LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json 仍要求上传（平台算不出它的轨迹：`needs_input`，第二屏必填）；契约测试与锁、前端类型生成通过；测试覆盖预检三种情况、推导与续跑摘要、
    上传校验、叠加读推出的轨迹。
 
 ## 9. 实施记录
@@ -568,7 +568,9 @@ C4 4.6.0（上传种类 `eef_gripper_calibration`、叠加的 `not_derived`；4.
   改为 D80，注册表让给 4.2（完整性 `full_read`）、4.3（设计 24）改为 4.4。来源顺序是上传件 → 设计 24 的生成或数据集自带文件 → 本节的逐条推导
   （CLI 判定器先看首条录制是不是手持夹爪的布局，不是就按设计 24 整个模块失败 `trajectory_missing`）；预检在设计 24 的 `_eef_entry` 里多一支
   `handheld`。叠加先读设计 24 生成的那份、再读推出的单条，都没有统一回 `not_derived`（设计 24 原来回的 `no_trajectory` 不在 C4 里，播放器会当出错提示）。
-  新建任务表单照设计 24：没有轨迹来源的数据集 EEF 在预检里是「不支持」，表单不要求上传。
+  随后（同日，Yichen Wang 指出）修订设计 24 的口径：轨迹能算就可选、算不了就必选——算不出（或生成出错）时预检报 `needs_input`
+  （`trajectory_missing`，`input_hint.field = trajectory_json`）而不是 `unsupported`，模块照常可勾选，控制台第二屏把 trajectory.json 标为
+  必填（`lib/preflight.moduleParamFields`），不传时 Daemon 照旧拒绝建任务（`taskspec.check_modules`），CLI 直接跑时模块失败并写明要传。
 - 测试：`tests/eef/test_derive_mcap.py`（内置标定、逐条推导与缓存、标定决定能画的相机与摘要、非手持夹爪的录制、预检三种情况）、
   `tests/cli/test_eef_check.py`（不传轨迹跑通、推不出的条目不问人、别的数据集仍被拒）、`tests/cli/test_preflight.py`、
   `tests/orchestr/test_eef_tasks.py`（标定到货校验）、`tests/viz/test_eef_overlay.py`（读推出的轨迹）、`tests/contracts`，前端读数解析、

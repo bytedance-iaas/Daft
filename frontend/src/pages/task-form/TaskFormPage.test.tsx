@@ -242,8 +242,11 @@ describe('新建任务 · 两屏与提交', () => {
     await waitFor(() => expect(s2()).toBeVisible());
     // an so101 dataset: nothing to draft the record mapping from (design doc 12 §8.7, D-E17)
     expect(within(s2()).getByTestId('draft-record_mapping')).toHaveTextContent('没能从数据集元数据起草：位姿：没有带 x / y / z');
-    // nothing is required: the trajectory is generated from the dataset (design doc 24), the upload replaces it
-    expect(fieldErrors(s2())).toEqual([]);
+    // the gripper reference is optional (registry 1.12, D-E15); trajectory.json is optional only where the platform
+    // can compute the trajectory (design doc 24) - not on this so101 dataset, so it is asked for and required
+    expect(requiredFieldLabels(s2())).toContain('trajectory.json');
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json']));
     const input = within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' });
     const bad = { samples: [{ episode_index: 0, sample: { sample_id: 'new_set_000000' }, frames: [{ truth: [1, 2] }] }] };
     await user.upload(input, new File([JSON.stringify(bad)], 'trajectory.json', { type: 'application/json' }));
@@ -274,9 +277,11 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/eef-template');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByText('快速质检'));
-    // screen 1 asks for no file: the trajectory is generated from the dataset (design doc 24)
+    // screen 1 names the files screen 2 asks for, like the robot type (fifth round): nothing to compute the
+    // trajectory from on this dataset (design doc 24)
     const eefCard = screen.getByTestId('module-eef_video_consistency');
-    expect(eefCard).not.toHaveTextContent('需要补充投影轨迹');
+    expect(eefCard).toHaveTextContent('⚠ 需要补充投影轨迹');
+    expect(eefCard.className).toContain('warn');
     expect(eefCard).not.toHaveTextContent('夹爪参考');                  // optional since D-E15
     expect(eefCard).toHaveTextContent('比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配');
     expect(eefCard).not.toHaveTextContent('trajectory.json');
