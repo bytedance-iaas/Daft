@@ -1,5 +1,5 @@
 {
- "registry_version": "5.3",
+ "registry_version": "5.4",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1720,6 +1720,15 @@
      "severity": "medium",
      "level": "info",
      "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "calibration_suspect",
+     "item": "MV-4",
+     "name_zh": "同一路相机多条有同向的恒定偏差（标定可疑）",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "dataset",
      "appealable": false
     }
    ],

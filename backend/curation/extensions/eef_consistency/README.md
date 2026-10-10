@@ -37,6 +37,7 @@
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail`；`attach_record` 加上 `details.record`（没有夹爪参考的意见路径也调它） |
 | `channels.py` | 四个渠道（设计 25 §6）：CPU 测量（第三视角，读数超过开阈值的幅度 0 → 3 倍开阈值为 1，× 覆盖率）、自运动（腕部）、模型复核（CPU 可疑的分项看它的候选窗口，其余看别的窗口；按票差定结论，置信度 = \|票差\| / 有答复 × 有答复占比）、模型意见（片段里模型自己的不匹配置信度，按答复占比向 0.5 收）；结论 `issue` / `ok` / `cannot_tell` 换成不一致置信度 p = 0.5 ± 0.5 × 置信度 |
 | `combine.py` | 合并（设计 25 §7，D82）：按分项 × 相机取两边的最大 p；一边 ≥ 高档、另一边 < 低档即「冲突」；只有一边时封顶并写明缺的是哪边、为什么；模型多数认为跟错目标时作废 CPU；episode 取最差的格（不跨相机平均），给标签、p 与一句依据；档位与封顶在 profile 的 `merge` 一节（demo 未校准） |
+| `calibration.py` | 数据集级的标定可疑（设计 25 §7.4，D86，注册表 5.4）：在一个任务的全部记录上，同一路相机的位置分项被 CPU 判为可疑、恒定偏差（各点残差中位向量的中位，声明的投影减画面里的夹爪）方向在这些条目的平均方向 30° 以内、大小的变异系数 < 0.5，且这样的条目 ≥ 5 条、占这路相机测过的条目 ≥ 60% → 一条 `calibration_suspect`（`findings.dataset_level` 出、报告 EEF 小节的「数据集级发现」列出）：读数是相机、条目、方向与大小、这些条目上诊断拟合的 PnP 修正中位、标定里按假设值的项；不改逐条记录 |
 | `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件时由 `cli/preflight` 先按设计 24 生成（或按设计 22 §5.4 走手持夹爪 mcap 的推导）；算不出来时报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，控制台第二屏必填）——能算就可选、算不了就必选；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
 | `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；标记视频与证据帧都不落盘（设计 20），记录只留视频元数据与证据帧号；送模型的视频长边上限 448；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
@@ -211,6 +212,39 @@ ls $R/scratch/vlm 2>/dev/null || echo "packages gone"
 同样的命令加 `--param eef_video_consistency.use_vlm=false`（或把 `$V` 换成 `--no-vlm`）只跑 `--prep`：直接写结果行，`halves` 只有 `vlm_prep`。
 `../.venv/bin/python -m curation.cli plan --preflight <预检 JSON> --modules eef_video_consistency,task_success` 的阶段里有
 `vlm_prep`（CPU 块）和 `after: vlm_prep` 的 `vlm`；加 `--param eef_video_consistency.use_vlm=false` 后 EEF 只在 `vlm_prep` 里。
+
+### 数据集级的标定可疑（设计 25 §7.4，D86，F5.26）
+
+接上两节（`decl.json`、`$P` 已有），把声明里 `exterior_1_left` 的外参换成静态、在干净值（ep0 那一行的 `camera_extrinsics.exterior_1_left`）上
+x 加 3 cm，7 条都跑，再用报告出数据集级发现的同一个函数看结果（在 `backend/` 下）：
+
+```bash
+../.venv/bin/python - "$D" <<'PY'
+import json, sys
+import numpy as np, pyarrow.parquet as pq
+t = pq.read_table(f"{sys.argv[1]}/eef_ds2_lr3/data/chunk-000/file-000.parquet", columns=["episode_index", "camera_extrinsics.exterior_1_left"])
+x = np.asarray(t.column("camera_extrinsics.exterior_1_left").to_pylist(), float)[np.asarray(t.column("episode_index").to_pylist()) == 0][0]
+x[0] += 0.03
+d = json.load(open("decl.json"))
+d["calibration"]["cameras"]["observation.images.exterior_1_left"]["extrinsics"] = {"mode": "static", "xyz_rpy": x.tolist(), "assurance": "declared"}
+json.dump(d, open("decl_shift.json", "w"))
+PY
+R=$(mktemp -d)
+../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $D/eef_ds2_lr3 --run-dir $R --episodes 0-6 \
+  --declaration decl_shift.json $P --no-vlm --json | jq -c '.modules.eef_video_consistency.episodes'
+../.venv/bin/python -c 'import json, sys; from curation.pipeline import findings as F
+recs = {r["episode_index"]: r for r in map(json.loads, open(sys.argv[1]))}
+[print(f["message_zh"], json.dumps(f["readings"], ensure_ascii=False)) for f in F.dataset_level("eef_video_consistency", recs)[0]]' \
+  $R/checks/eef_video_consistency/results.jsonl
+```
+
+7 条都写出记录，每条在 `27432424_left` 上有位置的 `inconsistent`；数据集级发现只有一条：「相机 27432424_left：7 / 7 条的位置有同向的恒定偏差
+（声明的投影比画面里的夹爪偏左，中位约 15 px），PnP 修正中位约 30 mm、0.3°：多半是外参、TCP 偏移或假设值，不是逐条的数据问题」，`readings.episodes`
+是 0–6；声明里这路相机的标定按假设值时末尾列出它（`readings.assumed`，只列这路相机与工具的项）。用原来的 `decl.json` 跑：ep1、2、3、5、6 在这路相机上也有位置的
+`inconsistent`（轨迹漂移、恒定转角、抖动、时间差和 ep6 自己的外参偏差，各不相同），条数够了但方向与大小对不到一起，没有数据集级发现。
+控制台上（`curator-daemon-eef`）：在数据集声明里同样改外参、建一个只勾 EEF、给观测种子、关掉「使用 VLM 辅助」的任务，报告 EEF 小节的「数据集级发现」列出这一条，
+Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可疑（数据集级）」，逐格表里 `27432424_left` 的「位置」一格标记列多同样的字样；验完把声明改回去。
+手持夹爪（DAS）只有腕部相机、不测位置，不会出这条。
 
 ### 原有 EEF 数据
 

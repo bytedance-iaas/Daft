@@ -271,7 +271,8 @@ class Generated:
         self.lr = LM.LeRobot(self.root)
         self.calibration = {"declaration_sha256": self.sha256, "version": version,
                             "cameras": sorted(c["camera_id"] for c in self.mapping["cameras"].values()),
-                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl)}
+                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl),
+                            "camera_sources": camera_sources(self.mapping)}
         self._guard = threading.Lock()
         self._locks: dict[int, threading.Lock] = {}
         self._done: dict[int, tuple] = {}
@@ -312,7 +313,8 @@ class Generated:
     def _source(self, **why) -> dict:
         fixed = self.calibration["declared_fixed"]
         return {"kind": "generated", "declaration": {"sha256": self.sha256, "version": self.version},
-                "assumed": self.calibration["assumed"], **({"declared_fixed": fixed} if fixed else {}), **why}
+                "assumed": self.calibration["assumed"], "camera_sources": self.calibration["camera_sources"],
+                **({"declared_fixed": fixed} if fixed else {}), **why}
 
     def _data_key(self, ep: int) -> str:
         info = self.lr.info
@@ -357,6 +359,16 @@ def declared_fixed(decl: Mapping | None) -> list[str]:
     return sorted(str(c.get("camera_id") or short_name(src)) for src, c in cams.items()
                   if isinstance(c, dict) and c.get("mount") == FIXED_EXTERNAL
                   and any(isinstance(a, dict) and a.get("code") == MOUNT_DECLARED_FIXED for a in c.get("assumptions") or []))
+
+
+def camera_sources(mapping: Mapping) -> dict[str, str]:
+    """``camera_id -> the declaration's source`` (a LeRobot video key, an mcap topic) of the drawable cameras: what
+    ``calibration.cameras.<source>`` in the assumed fields is about (design doc 25 §7.4)."""
+    out = {}
+    for key, cam in (mapping.get("cameras") or {}).items():
+        if isinstance(cam, Mapping) and cam.get("camera_id"):
+            out[str(cam["camera_id"])] = str(cam.get("video_key") or cam.get("topic") or key)
+    return out
 
 
 def _assumed_fields(decl: Mapping) -> list[str]:
@@ -447,7 +459,8 @@ class GeneratedMcap(Generated):
         self.staged = None
         self.calibration = {"declaration_sha256": self.sha256, "version": version,
                             "cameras": sorted(c["camera_id"] for c in self.mapping["cameras"].values()),
-                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl)}
+                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl),
+                            "camera_sources": camera_sources(self.mapping)}
         self._guard = threading.Lock()
         self._locks: dict[int, threading.Lock] = {}
         self._done: dict[int, tuple] = {}

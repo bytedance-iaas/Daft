@@ -319,6 +319,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   哪些是曲线（`role` state / action / other，`pair_with` 叠画，`fields` 点路径，`labels` 每维的名字，`transforms` 只用于显示）、任务描述与分段在哪、
   帧号以哪个 topic 为准。它是可视化 mcap 读取器的配置，也是质检读取器 `ingest.mcap_mapping` 的来源（action 组 → action，没有 action 组时 state 组顶上；
   cameras → video_topics；`builtin:umi` 带 `profile: umi_das`）；内置 UMI 模版派生的结果与 `_umi_mapping` 相同，判决不变。episode 的编号不进映射。
+- **C1 5.4、C4 5.3.1（设计 25 §7.4，F5.26）**：EEF 多数据集级细码 `calibration_suspect`（MV-4，info）：同一路相机多数条目的位置偏差同向、大小相近时，报告 EEF 小节的 `dataset_findings` 多一条，`readings` 带相机、条目、方向与大小、PnP 修正与按假设值的标定项；C2 不变，C4 只补变更记录。
 - **C4 5.3.0（设计 25 §5，F5.25）**：新接口 `GET /datasets/{id}/episodes/{index}/eef-overlay`——登记的数据集按自己的记录与声明画 EEF 标记，
   返回与任务级同一个 `EefOverlay`（`task_id` 为空，多 `dataset_id`、`unavailable_cameras` 与 `trajectory`）；轨迹包在做时 202 `VizMediaPending`，
   这一条生成不出时 404 `not_generated`。`EefOverlayCamera` 多 `mount`；`EefOverlayLayer` 多 `dash` 与组 `record`（上传件覆盖平台生成的轨迹时，

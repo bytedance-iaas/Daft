@@ -1072,7 +1072,8 @@
     "eef_video_consistency.unsettled",
     "eef_video_consistency.opinion_mismatch",
     "eef_video_consistency.record_mismatch",
-    "eef_video_consistency.ego_motion_suspect"
+    "eef_video_consistency.ego_motion_suspect",
+    "eef_video_consistency.calibration_suspect"
    ],
    "platform_conditions": [
     "要上传 trajectory.json"

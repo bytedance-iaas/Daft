@@ -766,8 +766,8 @@ def dataset_level(module: str, records: dict[int, dict], params: dict | None = N
                   integrity: dict | None = None) -> tuple[list[dict], dict]:
     """(dataset-level findings, dataset-level readings) of ``module`` over a task's records (design doc 17
     §1.2: counted once per dataset): the integrity module's own (``integrity``: its ``dataset.json``), the
-    timestamps' duration outliers, the action semantics nobody could settle. Every finding carries
-    ``unit: dataset``."""
+    timestamps' duration outliers, the action semantics nobody could settle, the EEF cameras whose calibration
+    is more likely wrong than their episodes (design doc 25 §7.4). Every finding carries ``unit: dataset``."""
     p = params_of(module, params)
     ok = {e: r for e, r in records.items() if isinstance(r, dict) and r.get("status") == "ok"}
     found: list[dict] = []
@@ -807,4 +807,10 @@ def dataset_level(module: str, records: dict[int, dict], params: dict | None = N
                 found.append(finding(module, "action_semantics_undetermined",
                                      f"判断不了动作数据的含义（{len(unsure)} / {len(sem)} 条）：运动学极限与依赖动作语义的子项没有评估",
                                      unit="dataset", readings={"episodes": len(unsure)}))
+    elif module == "eef_video_consistency":
+        from ..extensions.eef_consistency import calibration
+
+        for s in calibration.suspects(ok):
+            found.append(finding(module, "calibration_suspect", s["message"], scope={"camera": s["camera"]},
+                                 unit="dataset", readings=s["readings"]))
     return found, readings

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.3.0
+  version: 5.3.1
   description: |
     ## Overview
 
@@ -207,6 +207,12 @@ info:
     trajectory overrides the one its declaration generates also gets the record's own marks, dashed: the layer
     group `record` and the new layer field `dash`.
 
+    **5.3.1** (2026-10-10): the EEF section of a report may carry a dataset-level finding `calibration_suspect`
+    in `dataset_findings`: one camera whose position is off the same way and by a similar amount on most episodes -
+    more likely the camera's calibration, the tool's offset or an assumed value than the episodes themselves. Its
+    `readings` name the episodes it covers, the direction and size of the offset, the extrinsic correction fitted on
+    them and the calibration values that were assumptions. Nothing else changes.
+
   x-description-zh: |
     ## 概览
 
@@ -333,6 +339,10 @@ info:
     与它的声明（从不用任务上传的文件）：这一条的轨迹还在生成时返回 202，之后返回 `EefOverlay`，带 `dataset_id`、画不了的相机与原因
     （`unavailable_cameras`）和轨迹从哪来（`trajectory`）。这里的 `EefOverlay.task_id` 是 null，所有叠加都带上 `dataset_id`；叠加的相机带
     `mount`。上传的轨迹覆盖了声明能生成的轨迹时，任务的叠加多一组数据集记录自己的标记，画虚线：图层组 `record` 与图层的新字段 `dash`。
+
+    **5.3.1**（2026-10-10）：报告的 EEF 小节可能在 `dataset_findings` 里多一条数据集级发现 `calibration_suspect`：同一路相机在多数条目上
+    位置偏差的方向一致、大小相近——多半是这路相机的标定、工具的偏移或按假设值的项，不是各条自己的问题。它的 `readings` 写明涉及哪些条目、
+    偏差的方向与大小、在这些条目上拟合出的外参修正，以及标定里按假设值的项。其他不变。
 
 servers:
   - url: "{base}/api/v1"

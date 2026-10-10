@@ -17,6 +17,7 @@ import {
   eefStateMotion,
   eefTrajectorySource,
   eefWindowRows,
+  type EefCalibrationSuspect as EefCalibrationSuspectRow,
   type EefCell,
   type EefEgoCamera,
   type EefOpinionCamera,
@@ -57,10 +58,14 @@ function SideCell({ cell, side }: { cell: EefCell; side: 'cpu' | 'vlm' }) {
  * The opinion of registry 5.0 (design doc 25 §7): label · confidence · grounds for the episode, then every
  * sub-item and camera with what each side said and the merge - the largest p, a conflict, a single source capped.
  */
-export function EefOutput({ record }: { record: ResultRecord }) {
+export function EefOutput({ record, suspects = [] }: { record: ResultRecord; suspects?: readonly EefCalibrationSuspectRow[] }) {
   const m = eefMerged(details(record));
   if (!m) return null;
   const O = Z().output;
+  // a camera of a dataset-level calibration suspect (design doc 25 §7.4): said under the conclusion, and its
+  // position cell says so
+  const suspect = suspects.map((x) => x.camera);
+  const flagsOf = (c: EefCell) => [...c.flags, ...(c.subitem === 'position_2d' && c.camera && suspect.includes(c.camera) ? ['calibration_suspect'] : [])];
   return (
     <div data-testid="eef-output">
       <div className="episode-line">
@@ -82,6 +87,7 @@ export function EefOutput({ record }: { record: ResultRecord }) {
         </div>
       ) : null}
       {m.uncalibrated && m.p !== null ? <div className="episode-line muted">{O.uncalibrated}</div> : null}
+      <EefCalibrationSuspect suspects={suspects} />
       {m.cells.length ? (
         <Table
           size="mini"
@@ -110,7 +116,7 @@ export function EefOutput({ record }: { record: ResultRecord }) {
             {
               title: O.cols.flags,
               render: (_: unknown, c: EefCell) =>
-                [...c.flags.map((f) => O.flag[f] ?? f), ...(c.missing && c.flags.includes('single_source') ? [O.missing[c.missing] ?? c.missing] : [])].join('；') || '—',
+                [...flagsOf(c).map((f) => O.flag[f] ?? f), ...(c.missing && c.flags.includes('single_source') ? [O.missing[c.missing] ?? c.missing] : [])].join('；') || '—',
             },
           ]}
         />
@@ -118,6 +124,24 @@ export function EefOutput({ record }: { record: ResultRecord }) {
         <div className="episode-line muted">{O.noCells}</div>
       )}
     </div>
+  );
+}
+
+/** The dataset-level calibration suspects this episode is one of (design doc 25 §7.4, D86): the report's sentence -
+ *  more likely the extrinsics, the TCP offset or an assumed value than this episode's own data. */
+export function EefCalibrationSuspect({ suspects }: { suspects: readonly EefCalibrationSuspectRow[] }) {
+  if (!suspects.length) return null;
+  return (
+    <>
+      {suspects.map((x) => (
+        <div key={x.camera} className="episode-line warn" data-testid="eef-calibration-suspect">
+          <Tag size="small" color="orange">
+            {Z().output.flag.calibration_suspect}
+          </Tag>{' '}
+          {x.message}
+        </div>
+      ))}
+    </>
   );
 }
 

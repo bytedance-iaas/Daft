@@ -76,6 +76,8 @@ task still runs.
 5.3 (design doc 25 F5.24b, design doc 23 §1-§2.1, D76): the EEF module runs in two halves - its CPU half
 (``prep_stage``: the CPU block's ``vlm_prep``, a second root of that block) measures, renders and keeps the requests;
 its model half in ``vlm`` only asks and merges. Without a model the CPU half writes the module's records itself.
+5.4 (design doc 25 §7.4, D86): the EEF module's dataset-level ``calibration_suspect`` - one camera whose position is off
+the same way on most episodes, more likely its calibration than the episodes (info).
 """
 from __future__ import annotations
 
@@ -83,7 +85,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "5.3"
+REGISTRY_VERSION = "5.4"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -626,7 +628,10 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符"),
                # 4.1 (design doc 22 §5.3): a wrist camera's own motion in its pictures against the recorded poses;
                # its time offsets are the episode's timing too (AV-1, also_covers)
-               _info("ego_motion_suspect", "MV-4", "腕部相机的运动与记录的位姿不一致", "medium", scope_kind="camera")),
+               _info("ego_motion_suspect", "MV-4", "腕部相机的运动与记录的位姿不一致", "medium", scope_kind="camera"),
+               # 5.4 (design doc 25 §7.4, D86): many episodes off the same way on one camera - its calibration
+               _info("calibration_suspect", "MV-4", "同一路相机多条有同向的恒定偏差（标定可疑）", "medium",
+                     scope_kind="dataset")),
         param_schema=_eef_params(),
         also_covers=("AV-1",),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",

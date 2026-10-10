@@ -1658,7 +1658,7 @@ export const zh = {
       title: '结论',
       label: { inconsistent: '不一致', possibly_inconsistent: '可能不一致', consistent: '一致', cannot_tell: '判断不了' } as Record<string, string>,
       p: (v: string) => `置信度 ${v}`,
-      flag: { conflict: '冲突', single_source: '只有一个渠道', tracking_invalid: '跟错目标' } as Record<string, string>,
+      flag: { conflict: '冲突', single_source: '只有一个渠道', tracking_invalid: '跟错目标', calibration_suspect: '标定可疑（数据集级）' } as Record<string, string>,
       uncalibrated: '置信度未校准：只用来排序，不是概率',
       cols: { subitem: '分项', camera: '相机', cpu: 'CPU / 自运动', vlm: '模型', merged: '合并', flags: '标记' },
       channel: { cpu: 'CPU', ego: '自运动', vlm_review: '模型复核', vlm_opinion: '模型意见' } as Record<string, string>,

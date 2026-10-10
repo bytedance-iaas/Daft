@@ -13,6 +13,7 @@ import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
 import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
+import { eefCalibrationSuspects } from '../../lib/eefReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
 import { zh } from '../../locales/zh';
@@ -23,6 +24,8 @@ export interface BlockProps {
   ep: number;
   record: ResultRecord;
   onEpisode: (ep: number) => void;
+  /** the module's dataset-level findings in this revision's report (a report 2.0) */
+  dataset?: readonly unknown[] | null;
 }
 
 type Details = Record<string, unknown>;
@@ -382,12 +385,14 @@ function DedupBlock({ record, onEpisode }: BlockProps) {
  * (the same block as the adjudication card); last, the trajectory against the dataset's own record
  * (design doc 12 §8.7), reported only.
  */
-function EefBlock({ taskId, record }: BlockProps) {
+function EefBlock({ taskId, ep, record, dataset }: BlockProps) {
   const d = details(record);
   const overall = str(d.overall);
+  // a dataset-level calibration suspect this episode is one of (design doc 25 §7.4)
+  const suspects = eefCalibrationSuspects(dataset, ep);
   // registry 5.0 (design doc 25 §7): label · confidence · grounds and every sub-item; before it the module's verdict
   const head = d.merged ? (
-    <EefOutput record={record} />
+    <EefOutput record={record} suspects={suspects} />
   ) : (
     <Space wrap>
       <EefConclusion record={record} />

@@ -405,9 +405,11 @@ def test_dataset_level_findings():
     assert [f["code"] for f in found] == ["orphan_files", "dark_camera", "table_overlap"]
     assert found[0]["item"] is None
     every = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind == "dataset"}
+    # the EEF cameras' calibration suspects (5.4): tests/eef/test_calibration_suspect.py
     assert every == {("data_integrity", "orphan_files"), ("data_integrity", "dark_camera"),
                      ("data_integrity", "table_overlap"), ("timestamp_check", "duration_outlier"),
-                     ("motion_quality", "action_semantics_undetermined")}
+                     ("motion_quality", "action_semantics_undetermined"),
+                     ("eef_video_consistency", "calibration_suspect")}
     for f in found:
         assert schemas.errors("cli/common.schema.json#/$defs/finding", f) == []
 

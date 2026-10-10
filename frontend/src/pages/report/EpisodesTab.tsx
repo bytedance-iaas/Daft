@@ -388,7 +388,14 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
                     ))}
                   </ul>
                 ) : null}
-                <Block taskId={taskId} rev={rev} ep={view.episode_index} record={record} onEpisode={onSelect} />
+                <Block
+                  taskId={taskId}
+                  rev={rev}
+                  ep={view.episode_index}
+                  record={record}
+                  onEpisode={onSelect}
+                  dataset={v2?.modules.find((m) => m.id === id)?.summary?.dataset_findings}
+                />
               </>
             )}
           </Card>

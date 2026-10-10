@@ -700,3 +700,27 @@ export function eefDatasetRecord(details: D): EefDatasetRecord | null {
     evidenceError: s(r.evidence_error),
   };
 }
+
+/** A dataset-level calibration suspect this episode is one of (design doc 25 §7.4, D86): the camera, the report's
+ *  sentence and the calibration values that were assumptions. */
+export interface EefCalibrationSuspect {
+  camera: string;
+  message: string;
+  assumed: string[];
+}
+
+/** The ``calibration_suspect`` findings among the module's dataset-level ones (the report's) that name episode
+ *  ``ep``: the record is left as the checks wrote it, the report says which episodes the suspect covers. */
+export function eefCalibrationSuspects(dataset: readonly unknown[] | null | undefined, ep: number): EefCalibrationSuspect[] {
+  const out: EefCalibrationSuspect[] = [];
+  for (const raw of dataset ?? []) {
+    const f = obj(raw);
+    if (f.code !== 'calibration_suspect') continue;
+    const r = obj(f.readings);
+    if (!arr(r.episodes).some((e) => n(e) === ep)) continue;
+    const camera = s(obj(f.scope).camera) ?? s(r.camera);
+    if (!camera) continue;
+    out.push({ camera, message: s(f.message_zh) ?? '', assumed: arr(r.assumed).map(s).filter((x): x is string => !!x) });
+  }
+  return out;
+}

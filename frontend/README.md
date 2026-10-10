@@ -277,6 +277,10 @@ EEF 轨迹叠加（F5.17，设计 22 §3）。模拟数据下（`npm run dev`）
     接真 Daemon（`curator-daemon-eef`）按 `backend/daemon/viz/README.md` 第 27 步：dataset2 两路相机都有标记；上传覆盖的那个任务在 Episode 明细打开迷你播放器，
     「叠加」菜单多一组「数据集记录（虚线）」，ep2 上虚线的三轴和实线的错开一个角度（记录被绕接近轴转了 30°），P 与过去轨迹重合；原始 DAS 录制的 ep1 播放器上方
     写「episode 1 生成不出轨迹：robot0：这一路没有 camera_info…」，没有「叠加」。
+    **数据集级的标定可疑（设计 25 §7.4，F5.26）**：模拟世界的任务不勾 EEF，界面由 `src/pages/report/episodeBlocks.test.tsx` 覆盖；接真 Daemon 时按
+    `backend/curation/extensions/eef_consistency/README.md`「数据集级的标定可疑」一节把 dataset2 的外参整体写错 3 cm 跑一个任务：报告 EEF 小节「数据集级发现」
+    一条「相机 27432424_left：7 / 7 条的位置有同向的恒定偏差…」，Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可疑（数据集级）」，
+    逐格表里这路相机的「位置」一格标记列多同样的字样；别的相机、别的条目没有。
 
 19. **深度图（设计 21 §5，F15.4）**：模拟世界里 droid_100 的 wrist 相机带一路深度（64 × 36）。可视化页选 droid_100，任一格子「更换」→「深度图」组里
     `observation.images.wrist_image_left.depth`：格子先写「深度图生成中 50%」，一秒多后出伪彩画面（近蓝远红，左上角一小块空洞透明），右下角色标写

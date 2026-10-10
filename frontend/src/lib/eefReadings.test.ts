@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { zh } from '../locales/zh';
-import { eefConclusion, eefCpuEvidence, eefCpuRows, eefMerged, eefStateMotion, eefWindowRows } from './eefReadings';
+import { eefCalibrationSuspects, eefConclusion, eefCpuEvidence, eefCpuRows, eefMerged, eefStateMotion, eefWindowRows } from './eefReadings';
 
 const details = {
   reason: '「位置」（相机 wrist）CPU 与模型都认为不一致（模型反对 2、支持 0）',
@@ -225,5 +225,24 @@ describe('the opinion with its confidence (registry 5.0, design doc 25 §7)', ()
     expect(eefMerged(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
     const none = eefMerged(eefUnderivedRecord(3).details as Record<string, unknown>)!;
     expect([none.label, none.p, none.cells]).toEqual(['cannot_tell', null, []]);
+  });
+});
+
+describe('a dataset-level calibration suspect (design doc 25 §7.4, D86)', () => {
+  const suspect = {
+    code: 'calibration_suspect',
+    item: 'MV-4',
+    severity: 'medium',
+    unit: 'dataset',
+    scope: { camera: 'ext' },
+    message_zh: '相机 ext：7 条里 7 条的位置有同向的恒定偏差',
+    readings: { episodes: [0, 3, 12], assumed: ['T_camera_tcp'] },
+  };
+
+  it('names the episodes it covers, with the camera and the assumed values', () => {
+    expect(eefCalibrationSuspects([suspect], 12)).toEqual([{ camera: 'ext', message: suspect.message_zh, assumed: ['T_camera_tcp'] }]);
+    expect(eefCalibrationSuspects([suspect], 5)).toEqual([]);
+    expect(eefCalibrationSuspects([{ ...suspect, code: 'duration_outlier' }], 12)).toEqual([]);
+    expect(eefCalibrationSuspects(undefined, 12)).toEqual([]);
   });
 });
