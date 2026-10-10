@@ -450,8 +450,13 @@ def test_an_eef_task_pauses_between_its_halves_and_asks_what_it_kept(daemon, fak
                     out[int(name)] = json.load(open(prep)).get("prep_s")
             return out
 
-        d.wait_for(lambda: len(kept()) == 8 and fake_vlm.count(needle) > 0,
-                   what="every episode's CPU half kept while the model is asked")
+        def prep_done() -> bool:
+            return {s["id"]: s["state"] for s in d.get(tid)["progress"]["stages"]}.get("vlm_prep") == "succeeded"
+
+        # the CPU half's stage reported done (not only its packages on disk) while the model is held: the pause
+        # lands between the halves however slow the machine is
+        d.wait_for(lambda: len(kept()) == 8 and fake_vlm.count(needle) > 0 and prep_done(),
+                   what="every episode's CPU half kept and its stage done while the model is asked")
         r = d.action(tid, "pause")
         assert r.status_code == 200, r.text
     finally:
