@@ -40,7 +40,7 @@ MAPPING_VERSIONS = ("eef-mapping/1.0", "eef-mapping/1.1")
 #: ``reference_frame`` value: the record is in the upload's own base frame (design 12 §8.7, D-E17)
 UPLOAD_FRAME = "@upload"
 SOURCES = ("pose", "joints")
-LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat")
+LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat", "xyz_rot6d")
 #: demo thresholds, used when a profile has no ``record`` section (profiles/demo.yaml has them)
 DEFAULTS: dict[str, float] = {
     "min_frames": 30, "min_fraction": 0.3, "rolling_median_frames": 5,
@@ -255,7 +255,7 @@ def _poses(spec: SourceSpec, vec: np.ndarray, quat: np.ndarray | None = None) ->
             raise RecordDataError(str(exc)) from exc
     from scipy.spatial.transform import Rotation
 
-    need = {"xyz_rpy_xyz_extrinsic": 6, "xyz_quat_xyzw": 7, "xyz_quat_wxyz": 7, "xyz_rotmat": 12}[spec.layout]
+    need = {"xyz_rpy_xyz_extrinsic": 6, "xyz_quat_xyzw": 7, "xyz_quat_wxyz": 7, "xyz_rotmat": 12, "xyz_rot6d": 9}[spec.layout]
     if quat is None and vec.shape[1] != need:
         raise RecordDataError(f"{spec.key or spec.topic}: {vec.shape[1]} values per frame, {spec.layout} takes {need}")
     rot = quat if quat is not None else vec[:, 3:]
@@ -265,6 +265,10 @@ def _poses(spec: SourceSpec, vec: np.ndarray, quat: np.ndarray | None = None) ->
         R = Rotation.from_quat(rot).as_matrix()
     elif spec.layout == "xyz_quat_wxyz":
         R = Rotation.from_quat(rot[:, [1, 2, 3, 0]]).as_matrix()
+    elif spec.layout == "xyz_rot6d":
+        from .adapters.lerobot_mapping import _rotation
+
+        R = _rotation("xyz_rot6d", rot, "rad").as_matrix()
     else:
         R = rot.reshape(-1, 3, 3)
     T = np.tile(np.eye(4), (len(vec), 1, 1))
@@ -604,9 +608,34 @@ def compare_internal(sample, mapping: RecordMapping, got: dict[str, Series], pro
             "position_mm": _stats(pos), "rotation_deg": _stats(rot)}
 
 
+def compare_internal_only(sample, mapping: RecordMapping | None, reader, profile) -> dict:
+    """``details.record`` when the trajectory is generated from the dataset's record (design doc 25 §6.1): comparing it
+    with that record is circular, so only the dataset's two records are compared with each other - the pose
+    column against the joints' kinematics - when it has both (``source: internal``)."""
+    if mapping is None or not ({"pose", "joints"} <= set(mapping.sources)):
+        return {"status": C.UNSUPPORTED, "reasons": [C.RECORD_SINGLE_SOURCE], "sources": {}, "source": "internal",
+                "note": "轨迹来自数据集记录，无需比对"}
+    try:
+        got = reader.read(sample, mapping.sources.values())
+    except RecordDataError as exc:
+        return {"status": C.UNSUPPORTED, "reasons": [C.RECORD_COLUMNS_MISSING], "sources": {}, "source": "internal",
+                "message": str(exc)[:300]}
+    except Exception as exc:  # noqa: BLE001 - the record is a report: a failure is recorded, never raised
+        return {"status": C.ERROR, "reasons": [C.EXECUTION_FAILED], "sources": {}, "source": "internal",
+                "message": f"{type(exc).__name__}: {exc}"[:300]}
+    internal = compare_internal(sample, mapping, got, profile)
+    if not internal or not internal.get("compared"):
+        return {"status": C.UNSUPPORTED, "reasons": [str((internal or {}).get("reason") or C.RECORD_SINGLE_SOURCE)],
+                "sources": {}, "mapping_sha256": mapping.sha256, "internal": internal, "source": "internal"}
+    status = C.OK if internal["consistent"] else C.SUSPECT
+    return {"status": status, "reasons": [] if internal["consistent"] else [C.RECORD_INTERNAL_MISMATCH], "sources": {},
+            "mapping_sha256": mapping.sha256, "internal": internal, "source": "internal"}
+
+
 def compare_episode(sample, mapping: RecordMapping | None, reader, profile, *,
                     lag_search_s: tuple[float, float] = (-1.0, 1.0)) -> dict:
-    """``details.record`` of one episode (design 12 §8.7)."""
+    """``details.record`` of one episode (design 12 §8.7): the trajectory a person gave against the dataset's records
+    (``source: upload``)."""
     if mapping is None:
         return {"status": C.UNSUPPORTED, "reasons": [C.RECORD_MAPPING_MISSING], "sources": {}}
     if _upload(sample) is None:
@@ -624,7 +653,7 @@ def compare_episode(sample, mapping: RecordMapping | None, reader, profile, *,
     status = max((s["status"] for s in sources.values()), key=lambda st: _RANK[st], default=C.UNSUPPORTED)
     reasons = sorted({r for s in sources.values() for r in s.get("reasons", [])})
     return {"status": status, "reasons": reasons, "sources": sources, "mapping_sha256": mapping.sha256,
-            "internal": compare_internal(sample, mapping, got, profile)}
+            "internal": compare_internal(sample, mapping, got, profile), "source": "upload"}
 
 
 #: overlay colours (BGR): the upload red, the record by source

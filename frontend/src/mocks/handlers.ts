@@ -61,6 +61,7 @@ import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, nextId
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
 import { vizHandlers } from './viz';
+import { declarationInfoOf } from './declarationWorld';
 import { annotationsInfo, mappingInfoOf, vizFormatOf, vizStatusOf } from './vizWorld';
 
 // ------------------------------------------------------------------ plumbing (mocks/plumbing.ts)
@@ -411,6 +412,7 @@ const datasets = [
         links: [],
         viz: vizStatusOf(vizFormatOf({ format: formatOf(result), preflight: result }), false),
         viz_mapping: mappingInfoOf(vizFormatOf({ format: formatOf(result), preflight: result })),
+        declaration: declarationInfoOf(''),
         annotations: null,
       };
       if (b.viz_mapping && result.format.kind === 'mcap') {
@@ -552,6 +554,7 @@ function toDatasetItem(d: DatasetDetail) {
     last_task: d.last_task,
     viz: d.viz,
     viz_mapping: d.viz_mapping,
+    declaration: declarationInfoOf(d.id),
   };
 }
 

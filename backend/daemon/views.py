@@ -263,6 +263,13 @@ def etag(task: P.Task) -> str:
 # datasets (D36, D37)
 # ---------------------------------------------------------------------------
 
+def declaration_info(ds: P.Dataset) -> dict:
+    """C4 ``DatasetDeclarationInfo`` (design doc 25 §3): the declaration's state, version and what it only assumes."""
+    from .viz.declaration import info_of
+
+    return info_of(ds)
+
+
 def task_ref(task: P.Task) -> dict:
     return {"id": task.id, "name": task.name, "state": task.state, "created_at": task.created_at}
 
@@ -278,7 +285,7 @@ def dataset_item(ds: P.Dataset, last_task: P.Task | None) -> dict:
             "check_state": ds.check_state, "checked_at": ds.checked_at,
             "preflighted_at": ds.preflighted_at, "created_at": ds.created_at,
             "last_task": task_ref(last_task) if last_task is not None else None,
-            "viz": viz_status(ds), "viz_mapping": mapping_info(ds)}
+            "viz": viz_status(ds), "viz_mapping": mapping_info(ds), "declaration": declaration_info(ds)}
 
 
 def dataset_check(check: P.DatasetCheck) -> dict:

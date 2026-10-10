@@ -194,10 +194,10 @@ def test_the_record_mapping_is_validated_on_arrival_and_preflighted(daemon, tmp_
     up = _upload(d, "eef_record_mapping", "record.json", MAPPING)
     assert up["validation"] == {"valid": True, "warnings": [], "summary": {
         "sources": ["joints"], "robot": "franka_panda", "columns": ["action"], "topics": [], "declared_frames": []}}
-    # F5.16 (D-E17): the dataset preflight drafts one; confirmed as it is, it is an upload like any other
+    # retired in registry 5.1 (the dataset declaration says the records, design doc 25 §3): no longer drafted by the
+    # preflight, still checked on arrival for an older task
     (entry,) = [m for m in d.preflight()["result"]["modules"] if m["id"] == EEF]
-    drafted = _upload(d, "eef_record_mapping", "record-mapping-draft.json", entry["drafts"]["record_mapping"]["document"])
-    assert drafted["validation"]["summary"]["columns"] == ["observation.state"]
+    assert "drafts" not in entry
     wrong = json.loads(json.dumps(MAPPING))
     wrong["record"]["joints"]["robot"] = "ur5"
     bad = _upload(d, "eef_record_mapping", "record.json", wrong, status=400)["error"]

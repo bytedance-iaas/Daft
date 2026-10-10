@@ -151,6 +151,22 @@ fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的�
 验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py tests/eef/test_egomotion.py tests/eef/test_derive_mcap.py`
 （合成的仿 DAS 录制在 `tests/eef/das_mcap.py`，不依赖客户数据；`test_egomotion.py` 的真数据用例在本机有 DAS 录制与导出时才跑）。
 
+### 按数据集声明生成机械臂的轨迹（设计 25 §3–§4.1，F5.23）
+
+在 `backend/` 下执行。dataset2 的声明草稿缺两路相机的内参，补上（数据集外的 `calibration.json`）、工具改成 dataset2 的值后，平台从位姿列生成轨迹：
+
+```bash
+D=~/ws/ws_general/galbot/dataset2
+../.venv/bin/python -m curation.cli preflight --input $D/eef_ds2_lr3 --modules eef_video_consistency --vlm-backend ark --json \
+  | jq '.modules[0] | {availability, reason_code, src: .trajectory_source.kind, missing: [.trajectory_source.missing[]?.code]}'
+```
+
+没有声明时是 `needs_input` / `declaration_incomplete`、`missing_declaration`，缺 `intrinsics_missing`（两路）与 `no_drawable_camera`。用 `tests/eef/test_declaration.py`
+里 `test_dataset2_generated_from_its_declaration_is_the_reference` 的做法写一份声明（`curation.declaration.draft.draft_lerobot` 起草，补 `fx_cx_fy_cy` 与工具；种子文件按相机序列号编号，两路相机的 `camera_id` 改成 `27432424_left`、`28221883_left` 才对得上），
+存成 `decl.json`，再带 `--declaration decl.json` 预检：`available`、`generate`。`check` 带同一个 `--declaration` 与 `--param eef_video_consistency.observation_seeds=$D/observations_seed`
+跑 ep 0 与 6：`checks/eef_video_consistency/trajectory/episode_000000.json` 等逐条生成；ep0「一致」，ep6 位置「不一致」且诊断支持 `extrinsics_error`
+（与上传 `trajectory.json` 的结果相同）；`details.trajectory_source.kind` 是 `generated`，记录比对 `source: internal`（位姿列对关节角正解）。
+
 ### 原有 EEF 数据
 
 在 `backend/` 下执行（DEMO 数据在仓库外 `~/ws/ws_general/galbot/`，可用 `CURATOR_EEF_DEMO_DATA` 改位置；

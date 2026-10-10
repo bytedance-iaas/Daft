@@ -2,8 +2,7 @@ import { Button, Card, Collapse, Divider, Input, InputNumber, Radio, Select, Spa
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api/errors';
 import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
-import { uploadFile, uploadText, type UploadPhase } from '../../api/uploads';
-import { paramDraft, type ParamDraftView } from '../../lib/paramDraft';
+import { uploadFile, type UploadPhase } from '../../api/uploads';
 import { groupFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
 import { availabilityOf, embodimentHint, moduleParamFields, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
@@ -21,7 +20,7 @@ import { activeModules } from './formModel';
 function useUpload(f: ParamField, value: unknown, onChange: (v: unknown) => void, onBusy?: (busy: boolean) => void) {
   const input = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<UploadPhase | null>(null);
-  const [done, setDone] = useState<(Upload & { from: 'file' | 'draft' }) | null>(null);
+  const [done, setDone] = useState<Upload | null>(null);
   const [problem, setProblem] = useState<{ message: string; errors: UploadIssue[] } | null>(null);
   const busyRef = useRef(onBusy);
   busyRef.current = onBusy;
@@ -33,13 +32,13 @@ function useUpload(f: ParamField, value: unknown, onChange: (v: unknown) => void
   const busy = phase !== null;
   const has = typeof value === 'string' && value.startsWith(UPLOAD_PREFIX);
   const kind = (f.uploadKind ?? 'eef_trajectory') as UploadKind;
-  // a picked file and a confirmed draft go the same way: POST /uploads validates, the handle is the value
-  const send = async (upload: () => Promise<Upload>, from: 'file' | 'draft') => {
+  // POST /uploads validates, the handle is the value
+  const send = async (upload: () => Promise<Upload>) => {
     setProblem(null);
     setPhase('uploading');
     try {
       const up = await upload();
-      setDone({ ...up, from });
+      setDone(up);
       onChange(up.handle);
     } catch (e) {
       const details = e instanceof ApiError ? (e.details as { errors?: UploadIssue[] } | undefined) : undefined;
@@ -55,9 +54,8 @@ function useUpload(f: ParamField, value: unknown, onChange: (v: unknown) => void
       setProblem({ message: zh.taskForm.uploadTooBig(f.maxMb), errors: [] });
       return;
     }
-    await send(() => uploadFile(file, kind, setPhase), 'file');
+    await send(() => uploadFile(file, kind, setPhase));
   };
-  const submitText = (text: string, name: string) => send(() => uploadText(text, kind, name, setPhase), 'draft');
   const picker = (
     <input ref={input} type="file" accept={(f.accept ?? []).join(',')} style={{ display: 'none' }} aria-label={f.title} onChange={(e) => void pick(e.target.files?.[0])} />
   );
@@ -103,98 +101,7 @@ function useUpload(f: ParamField, value: unknown, onChange: (v: unknown) => void
       ) : null}
     </>
   );
-  const draftConfirmed = Boolean(done && value === done.handle && done.from === 'draft');
-  return { picker, button, result, submitText, busy, draftConfirmed };
-}
-
-/**
- * A file the preflight drafted from the dataset's metadata (design doc 12 §8.7, D-E17): what it reads,
- * what it assumed, what it left out. 「确认使用」 uploads it like a picked file; 「修改」 opens it as JSON
- * first; 「撤销」 drops a confirmed draft. Nothing drafted: one line why, the file button below as ever.
- */
-function DraftBox({
-  draft,
-  f,
-  u,
-  onChange,
-}: {
-  draft: ParamDraftView;
-  f: ParamField;
-  u: ReturnType<typeof useUpload>;
-  onChange: (v: unknown) => void;
-}) {
-  const Z = zh.taskForm.draft;
-  const drafted = JSON.stringify(draft.document, null, 2);
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(drafted);
-  if (!draft.document) {
-    return (
-      <div className="field-note" data-testid={`draft-${f.key}`}>
-        {Z.noneDrafted(draft.notDrafted.join('；'))}
-      </div>
-    );
-  }
-  return (
-    <div className="param-draft" data-testid={`draft-${f.key}`}>
-      <div className="param-draft-title">{Z.title}</div>
-      {draft.parts.map((x) => (
-        <div key={x} className="mono param-draft-part">
-          {x}
-        </div>
-      ))}
-      <div className="muted param-draft-sub">{Z.assumed}</div>
-      <ul className="param-draft-list">
-        {draft.assumptions.map((x, i) => (
-          <li key={i}>{x}</li>
-        ))}
-      </ul>
-      {draft.notDrafted.length ? (
-        <>
-          <div className="muted param-draft-sub">{Z.notDrafted}</div>
-          <ul className="param-draft-list">
-            {draft.notDrafted.map((x, i) => (
-              <li key={i}>{x}</li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-      {editing && !u.draftConfirmed ? (
-        <>
-          <Input.TextArea value={text} onChange={setText} autoSize={{ minRows: 6, maxRows: 18 }} className="mono" aria-label={Z.editLabel} style={{ marginTop: 6 }} />
-          <div className="muted" style={{ fontSize: 12 }}>
-            {Z.editHint}
-          </div>
-        </>
-      ) : null}
-      <Space style={{ marginTop: 6 }}>
-        {u.draftConfirmed ? (
-          <>
-            <span data-testid={`draft-confirmed-${f.key}`}>{Z.confirmed}</span>
-            <Button size="small" onClick={() => onChange(undefined)}>
-              {Z.undo}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button size="small" type="primary" loading={u.busy} onClick={() => void u.submitText(editing ? text : drafted, `${f.key.replace(/_/g, '-')}-draft.json`)}>
-              {Z.confirm}
-            </Button>
-            {/* 取消修改 drops the edits: the box opens on the draft again */}
-            <Button
-              size="small"
-              disabled={u.busy}
-              onClick={() => {
-                if (editing) setText(drafted);
-                setEditing(!editing);
-              }}
-            >
-              {editing ? Z.cancelEdit : Z.edit}
-            </Button>
-          </>
-        )}
-      </Space>
-    </div>
-  );
+  return { picker, button, result, busy };
 }
 
 export function UploadInput({
@@ -202,19 +109,15 @@ export function UploadInput({
   value,
   onChange,
   onBusy,
-  draft,
 }: {
   f: ParamField;
   value: unknown;
   onChange: (v: unknown) => void;
   onBusy?: (busy: boolean) => void;
-  /** A file the preflight drafted for this parameter (D-E17), shown above the file button. */
-  draft?: ParamDraftView | null;
 }) {
   const u = useUpload(f, value, onChange, onBusy);
   return (
     <div data-testid={`upload-${f.key}`}>
-      {draft ? <DraftBox key={JSON.stringify(draft.document)} draft={draft} f={f} u={u} onChange={onChange} /> : null}
       {u.picker}
       {u.button}
       {u.result}
@@ -243,19 +146,17 @@ function ParamInput({
   onChange,
   error,
   onBusy,
-  draft,
 }: {
   f: ParamField;
   value: unknown;
   onChange: (v: unknown) => void;
   error?: string;
   onBusy?: (busy: boolean) => void;
-  draft?: ParamDraftView | null;
 }) {
   const v = value ?? f.default;
   switch (f.kind) {
     case 'upload':
-      return <UploadInput f={f} value={value} onChange={onChange} onBusy={onBusy} draft={draft} />;
+      return <UploadInput f={f} value={value} onChange={onChange} onBusy={onBusy} />;
     case 'choice':
       return f.options && f.options.length <= 4 ? (
         <Radio.Group value={v} onChange={onChange} aria-label={f.title}>
@@ -388,7 +289,6 @@ export function ModuleSettings({
           error={errors[`params.${mod}.${entry.field.key}`]}
           onChange={(x) => setParam(mod, entry.field.key, x)}
           onBusy={(b) => onUploadBusy?.(`${mod}.${entry.field.key}`, b)}
-          draft={entry.field.kind === 'upload' ? paramDraft(preflight, mod, entry.field.key) : null}
         />
       </Field>
     );

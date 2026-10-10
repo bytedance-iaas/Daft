@@ -12,7 +12,7 @@
 | C4 | REST API | `openapi.yaml`（报告、计划、预检等直接引用 C2 的 Schema） | 前端、Agent、`curation task …` |
 | C5 | Repository 接口与状态机 | `backend/daemon/repo/protocol.py` | Daemon 内部 |
 | C6 | 检测项分类表（设计 17 §1.3，D56）：注册表的细码与覆盖都指向它的编号 | `taxonomy.json`（Schema `taxonomy.schema.json`） | 注册表、报告、前端（经 `GET /api/v1/modules` 的 `taxonomy`）、评估工具 |
-| C7 | mcap 字段映射（设计 18 §6，D62）：哪些 topic 是相机、曲线、任务描述与分段，可视化与质检共用 | `viz-mapping.schema.json` | Daemon（数据集的映射、模版库、可视化的 mcap 读取器、任务开始时冻结）、前端（「mcap 配置」）、质检（派生 `ingest.mcap_mapping`） |
+| C7 | 数据集声明（设计 25 §3，D83；第一层就是设计 18 §6 的 mcap 字段映射，D62）：哪些 topic / 列是相机、曲线、任务描述与分段，位姿、关节、夹爪记录的含义，每路相机的安装方式与内外参、工具、手持夹爪的标定；可视化与质检共用 | `dataset-declaration.schema.json`（`viz-mapping.schema.json` 留一版，`viz-mapping/1.x` 文件读成只有第一层的声明） | Daemon（数据集的声明与版本、模版库、可视化的 mcap 读取器、任务开始时冻结）、前端（「数据集声明」「mcap 配置」）、质检（派生 `ingest.mcap_mapping`；EEF 按声明生成机械臂的轨迹） |
 | EEF | EEF–视频一致性的输入格式（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器），规范正文 `eef/format.md`、迁移规则 `eef/migration.md` | `eef/*.schema.json` | `check` 的 EEF runner、预检、（F5.5 起）Daemon 上传校验 |
 
 C2 各文件对应的命令与产物：

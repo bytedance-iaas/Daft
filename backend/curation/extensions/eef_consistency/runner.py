@@ -45,6 +45,8 @@ class RunConfig:
     template: TP.GripperTemplate | None = None       # automatic anchors (F5.8); a camera with seeds keeps the seeds
     #: the dataset's own record (design 12 §8.7, D-E16): (record.RecordMapping, reader) or None - no mapping
     record: tuple | None = None
+    #: the trajectory is generated from that record (design doc 25 §6.1): only its two records are compared
+    record_internal_only: bool = False
     #: a wrist camera's own motion (design doc 22 §5.3): pictures and poses compared this far apart
     ego_motion_window_s: float = 0.5
 
@@ -383,7 +385,10 @@ def record_of(sample: EefSample, cfg: RunConfig) -> dict:
 
     t0 = time.perf_counter()
     mapping, reader = cfg.record if cfg.record else (None, None)
-    rec = RC.compare_episode(sample, mapping, reader, cfg.profile, lag_search_s=cfg.lag_search_s)
+    if cfg.record_internal_only:
+        rec = RC.compare_internal_only(sample, mapping, reader, cfg.profile)
+    else:
+        rec = RC.compare_episode(sample, mapping, reader, cfg.profile, lag_search_s=cfg.lag_search_s)
     rec["elapsed_s"] = round(time.perf_counter() - t0, 3)
     return rec
 

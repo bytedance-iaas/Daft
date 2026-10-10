@@ -173,6 +173,20 @@ export type McapTopic = S['McapTopic'];
 export type McapProbe = S['McapProbe'];
 export type VizTemplate = S['VizTemplate'];
 export type VizTemplateCreate = S['VizTemplateCreate'];
+/** C7 dataset-declaration/1.0 (design doc 25 §3): what a dataset's records are and mean. */
+export type Declaration = S['dataset-declaration.schema'];
+export type DeclarationPose = S['pose'];
+export type DeclarationJoints = S['joints'];
+export type DeclarationGripper = S['gripper'];
+export type CameraCalibration = S['camera_calibration'];
+export type Intrinsics = S['intrinsics'];
+export type Extrinsics = S['extrinsics'];
+export type ToolModel = S['tool'];
+export type Assurance = S['assurance'];
+export type DatasetDeclaration = S['DatasetDeclaration'];
+export type DatasetDeclarationInfo = S['DatasetDeclarationInfo'];
+export type DeclarationTrajectory = S['DeclarationTrajectory'];
+export type DeclarationNote = S['DeclarationNote'];
 
 export type SseState = S['SseState'];
 export type SseProgress = S['SseProgress'];

@@ -83,6 +83,8 @@ def test_dataset_list_pages_filters_and_last_task(client_for, clock):
     item = body["items"][1]
     assert item.pop("viz") == {"state": "ready", "reason": None}           # C4 2.4.0
     assert item.pop("viz_mapping") is None                                 # not mcap
+    assert item.pop("declaration") == {"state": "none", "version": 0, "updated_at": None, "name": None,  # C4 5.0.0
+                                       "layers": [], "assumed": 0, "suspects": 0}
     # a LeRobot dataset the check reader refuses is still LeRobot to the visualizer (design doc 18 §9.6)
     assert (body["items"][0]["format"], body["items"][0]["viz"]["state"]) == ("unsupported", "ready")
     assert item == {"id": umi.id, "name": "UMI 640", "source": "tos",

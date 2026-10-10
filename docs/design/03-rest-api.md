@@ -80,7 +80,8 @@
 | GET | `/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json`、`/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json` | 帧包索引：每帧的时刻、偏移、长度；样本包另有每帧是否关键帧、按码流参数集算的 `codec_string` |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.frames`、`/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.frames` | 深度帧包（2.7.0，设计 21 §5）：每帧一张 16 位灰度 PNG（毫米，0 为空洞），Range 读；LeRobot / Lance 第一次请求时生成、回 202 带进度，mcap 随 episode 扫描生成 |
 | GET | `/api/v1/datasets/{id}/episodes/{index}/streams/{stream}.json`、`/api/v1/tasks/{id}/episodes/{index}/streams/{stream}.json` | 深度帧包索引：每帧的时刻、偏移、长度，深度的单位与本条 2% / 98% 范围；生成中同样 202 |
-| GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2） |
+| GET / PUT | `/api/v1/datasets/{id}/mapping` | mcap 字段映射（C7 的第一层）与派生的质检映射 / 确认新版本（D62：任务开始时冻结进 run.json）；质检按站点缺省读不了的 mcap 数据集（格式 `unsupported`）确认映射后按新映射重新预检；应答的 `warnings` 列出质检读取器读不了的部分（`checks_gap`、`checks_unreadable`，设计 18 §9.2）。5.0.0 起是声明第一层的别名，只换第一层、不动其余两层 |
+| GET / PUT | `/api/v1/datasets/{id}/declaration` | 数据集声明（C7 `dataset-declaration/1.0`，设计 25 §3，D83）：已确认的版本、按数据集起草的草稿（叠在已确认版本下面，任务从不用）、还要人来定的项、每路相机、EEF 模块据此能否生成轨迹（`trajectory`）、按假设值的项与可疑项 / 确认新版本：按数据集校验（错误逐条定位、可疑项记在声明上不挡），确认后重新预检；任务开跑时冻结当时的版本 |
 | PUT | `/api/v1/datasets/{id}/annotations` | 挂上、换掉或摘掉外部标注文件 |
 | GET / PUT / DELETE | `/api/v1/datasets/{id}/viz/display` | 展示配置（2.7.0，设计 21 §6）：读（连同不带配置时的相机次序、自动分组与它们的维度、能作字幕轨的标注来源）/ 整份替换（按数据集当前的模型逐项校验，`details.errors`）/ 恢复默认；一个登记一份，所有人共用，每次保存与恢复版本加一 |
 | POST | `/api/v1/viz/mcap-probe` | 探测 mcap 数据集并按模版起草映射，登记前后都能用 |

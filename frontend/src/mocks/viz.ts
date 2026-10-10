@@ -2,9 +2,10 @@
 // page), the task scope (the mini player), mcap mappings, templates, and the cameras the Daemon
 // serves (mp4 / JPEG frame pack, Range, 202 while a transcode runs).
 import { HttpResponse, http } from 'msw';
-import type { DatasetDetail, McapProbeRequest, Task, VizDisplayConfig, VizMapping, VizTemplate } from '../api/types';
+import type { DatasetDetail, Declaration, McapProbeRequest, Task, VizDisplayConfig, VizMapping, VizTemplate } from '../api/types';
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
+import { checkDeclaration, declarationDoc, declarationInfoOf } from './declarationWorld';
 import { eefOverlay } from './eef';
 import { API, body, cursorPage, err, idempotent } from './plumbing';
 import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
@@ -306,6 +307,24 @@ export const vizHandlers = [
       d.viz = vizStatusOf('mcap', true);
       d.viz_mapping = mappingInfoOf('mcap', next);
       return HttpResponse.json({ dataset_id: d.id, state: 'confirmed', mapping: next.mapping, version: next.version, updated_at: now, check_mapping: checkMappingOf(next.mapping), warnings: [] });
+    }),
+  ),
+  http.get(`${API}/datasets/:id/declaration`, ({ params }) => {
+    const d = db.datasets.find((x) => x.id === params.id);
+    if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    return HttpResponse.json(declarationDoc(d));
+  }),
+  http.put(`${API}/datasets/:id/declaration`, async ({ request, params }) =>
+    idempotent(request, async () => {
+      const d = db.datasets.find((x) => x.id === params.id);
+      if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+      const b = await body<{ declaration: Declaration }>(request, 'putDatasetDeclaration');
+      const checked = checkDeclaration(d, b.declaration);
+      if (checked.errors.length) return err(400, 'validation_failed', `声明不合格：${checked.errors[0].field} ${checked.errors[0].problem}`, { errors: checked.errors });
+      const prev = db.declarations.get(d.id);
+      db.declarations.set(d.id, { doc: checked.doc, version: (prev?.version ?? 0) + 1, updatedAt: clock() });
+      d.declaration = declarationInfoOf(d.id);
+      return HttpResponse.json(declarationDoc(d));
     }),
   ),
   http.get(`${API}/datasets/:id/viz/display`, ({ params }) => {

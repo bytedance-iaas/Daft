@@ -112,6 +112,10 @@ def write_run_json(run, plan: dict) -> None:
     viz = frozen_viz_mapping(run)
     if viz is not None:
         doc["viz_mapping"] = viz
+    decl = frozen_declaration(run)
+    if decl is not None:
+        doc["declaration"] = decl
+        write_json_atomic(run.wd.declaration, decl["document"])
     write_json_atomic(run.wd.run_json, doc)
 
 
@@ -127,12 +131,35 @@ def frozen_viz_mapping(run) -> dict | None:
         ds = run.repo.get_dataset(task.dataset_id, owner=task.owner_id)
     except P.NotFound:
         return None
-    if not isinstance(ds.viz_mapping, dict):
+    from curation.declaration import mapping_of
+
+    mapping = mapping_of(ds.viz_mapping)              # the declaration's first layer (design doc 25 §3.1)
+    if mapping is None:
         return None
     from curation.viz.mcap_mapping import check_mapping
 
-    return {"version": int(ds.viz_mapping_version or 0), "mapping": ds.viz_mapping,
-            "check_mapping": check_mapping(ds.viz_mapping)}
+    return {"version": int(ds.viz_mapping_version or 0), "mapping": mapping, "check_mapping": check_mapping(mapping)}
+
+
+def frozen_declaration(run) -> dict | None:
+    """The registration's confirmed dataset declaration at start, when it says more than a mapping (design doc 25
+    §3.5): the EEF module generates a robot arm's trajectory from it; changing it later never touches this run."""
+    task = run.task
+    if not task.dataset_id:
+        return None
+    from ..repo import protocol as P
+    from ..viz.declaration import for_cli
+
+    try:
+        ds = run.repo.get_dataset(task.dataset_id, owner=task.owner_id)
+    except P.NotFound:
+        return None
+    decl = for_cli(ds.viz_mapping)
+    if decl is None:
+        return None
+    from curation.declaration import sha256
+
+    return {"version": int(ds.viz_mapping_version or 0), "sha256": sha256(decl), "document": decl}
 
 
 def mark_skipped_modules(run, plan: dict) -> None:

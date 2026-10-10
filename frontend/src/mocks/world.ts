@@ -7,6 +7,8 @@
 // report sections and logs still carry skill_profile and the profile_vlm stage: the pages must keep
 // rendering such a task, and here they are exercised on it. Its adjudication cards, by contrast, are
 // read live and follow the current contract - one card, one question per line.
+import { canGenerate } from '../lib/declaration';
+import { db } from './db';
 import modulesJson from '../../../docs/contracts/modules.json';
 import type {
   AdjudicationCard,
@@ -413,48 +415,6 @@ export function profileFor(uri: string): DatasetProfile {
 
 const DIGEST = 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
 
-type ParamDraft = NonNullable<PreflightResult['modules'][number]['drafts']>[string];
-
-/**
- * The record mapping the CLI drafts from a dataset's info.json (design doc 12 §8.7, D-E17): a Franka
- * LeRobot dataset gets the DROID-like draft (dataset2's), mcap none; the rest say why not.
- */
-export function recordDraft(p: DatasetProfile): ParamDraft {
-  if (p.format.kind !== 'lerobot') return { document: null, assumptions: [], not_drafted: [{ code: 'format_not_drafted', args: { format: p.format.kind } }] };
-  const franka = /franka|panda/i.test(p.robotType ?? '');
-  if (!franka) {
-    return {
-      document: null,
-      assumptions: [],
-      not_drafted: [
-        { code: 'no_named_pose_column', source: 'pose' },
-        p.robotType ? { code: 'robot_not_built_in', source: 'joints', args: { robot_type: p.robotType, known: ['franka_panda', 'franka_fr3'] } } : { code: 'no_robot_type', source: 'joints' },
-      ],
-    };
-  }
-  return {
-    document: {
-      schema_version: 'eef-mapping/1.1',
-      record: {
-        pose: { key: 'observation.state.cartesian_position', layout: 'xyz_rpy_xyz_extrinsic', units: { position: 'm', angle: 'rad' }, frame_id: null, reference_frame: '@upload' },
-        joints: { key: 'observation.state.joint_position', units: 'rad', robot: 'franka_panda', reference_frame: '@upload' },
-      },
-    },
-    assumptions: [
-      { code: 'observation_not_action', source: 'pose', args: { used: 'observation.state.cartesian_position', skipped: ['action.cartesian_position', 'action.original'] } },
-      { code: 'euler_extrinsic_xyz', source: 'pose' },
-      { code: 'units_by_convention', source: 'pose', args: { position: 'm', angle: 'rad' } },
-      { code: 'pose_frame_undeclared', source: 'pose' },
-      { code: 'same_base_as_upload', source: 'pose' },
-      { code: 'robot_from_robot_type', source: 'joints', args: { robot_type: p.robotType, robot: 'franka_panda' } },
-      { code: 'picked_dedicated', source: 'joints', args: { used: 'observation.state.joint_position', others: ['observation.state'] } },
-      { code: 'units_by_convention', source: 'joints', args: { angle: 'rad' } },
-      { code: 'joints_tip_frame', source: 'joints', args: { frame: 'panda_link8', named: ['panda_link8', 'panda_hand', 'panda_hand_tcp'] } },
-      { code: 'same_base_as_upload', source: 'joints' },
-    ],
-    not_drafted: [],
-  };
-}
 const DIGEST2 = 'sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6a5b4c3d2';
 
 /** The preflight result for a dataset, given the VLM backend and robot type chosen so far. */
@@ -497,7 +457,27 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
           id: m.id,
           availability: 'available',
           notes: ["trajectory generated from the dataset's state and camera calibration"],
-          drafts: { record_mapping: recordDraft(p) },
+          trajectory_source: { kind: 'generate' },
+        };
+      }
+      // design doc 25 §4.1: a confirmed declaration that is enough generates the trajectory; a DROID-like dataset
+      // records the pose and lacks the cameras' intrinsics (declaration_incomplete); the rest need the upload
+      const ds = db.datasets.find((x: { uri: string }) => x.uri === p.uri);
+      const stored = ds ? db.declarations.get(ds.id) : undefined;
+      const sources = p.cameras.map((c) => `observation.images.${c}`);
+      if (stored && canGenerate(stored.doc, sources)) {
+        return { id: m.id, availability: 'available', trajectory_source: { kind: 'generate', declaration: { drafted: false } } };
+      }
+      if (p.name.startsWith('eef_ds2') || p.name.startsWith('droid')) {
+        const missing = sources.map((src) => ({ field: `calibration.cameras.${src}.intrinsics`, code: 'intrinsics_missing' }));
+        return {
+          id: m.id,
+          availability: 'needs_input',
+          reason: 'the dataset records the pose, but its declaration lacks the cameras\' intrinsics: complete the declaration (the dataset page) or upload a trajectory.json',
+          reason_code: 'declaration_incomplete',
+          reason_args: { missing },
+          input_hint: { field: 'trajectory_json' },
+          trajectory_source: { kind: 'missing_declaration', declaration: { drafted: !stored }, missing },
         };
       }
       return {
@@ -506,7 +486,7 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
         reason: "the platform cannot compute the trajectory from this dataset (it records no end-effector poses with the cameras' calibration): upload a trajectory.json",
         reason_code: 'trajectory_missing',
         input_hint: { field: 'trajectory_json' },
-        drafts: { record_mapping: recordDraft(p) },
+        trajectory_source: { kind: 'missing_pose' },
       };
     }
     if (needs.includes('state') && p.missing.includes('state')) {
@@ -612,6 +592,7 @@ export function datasetDetail(
     links: [],
     viz: vizStatusOf(datasetFormatOf(p.format), id === 'ds_mcap'),
     viz_mapping: mappingInfoOf(datasetFormatOf(p.format), id === 'ds_mcap' ? { mapping: WAREHOUSE_MAPPING, version: 1, updatedAt: now - 4 * DAY } : undefined),
+    declaration: { state: 'none', version: 0, updated_at: null, name: null, layers: [], assumed: 0, suspects: 0 },
     annotations: null,
     ...extra,
   };

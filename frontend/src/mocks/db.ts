@@ -1,22 +1,5 @@
 // The mutable in-memory state behind the mock handlers. resetDb() re-seeds it (every test does).
-import type {
-  AdjudicationCard,
-  Credential,
-  DatasetDetail,
-  Decision,
-  LogLine,
-  PreflightResult,
-  ResultRecord,
-  ReviewLine,
-  Subtask,
-  Task,
-  TaskListItem,
-  TimelineEntry,
-  VizDisplayConfig,
-  VizMapping,
-  VizTemplate,
-  VlmBackend,
-} from '../api/types';
+import type { AdjudicationCard, Credential, DatasetDetail, Decision, Declaration, LogLine, PreflightResult, ResultRecord, ReviewLine, Subtask, Task, TaskListItem, TimelineEntry, VizDisplayConfig, VizMapping, VizTemplate, VlmBackend } from '../api/types';
 import {
   MAIN_TASK,
   SO101_TASK,
@@ -70,6 +53,8 @@ export interface MockDb {
   vizMappings: Map<string, { mapping: VizMapping; version: number; updatedAt: number }>;
   /** design doc 18 §6: the site's own mapping templates (the built-ins are code). */
   vizTemplates: VizTemplate[];
+  /** design doc 25 §3: the confirmed dataset declarations, by dataset id (C7, versioned). */
+  declarations: Map<string, { doc: Declaration; version: number; updatedAt: number }>;
   /** design doc 18 §4.2: transcodes that were asked for once (the next ask finds them ready). */
   vizTranscodes: Set<string>;
   /** depth packs asked for once (the first ask answers 202, design doc 21 §5.3) */
@@ -98,6 +83,7 @@ export const db: MockDb = {
   extraRecords: new Map(),
   vizMappings: new Map(),
   vizTemplates: [],
+  declarations: new Map(),
   vizTranscodes: new Set(),
   vizDepthPacks: new Set(),
   vizDisplays: new Map(),
@@ -127,6 +113,7 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.extraRecords = new Map();
   db.vizMappings = seedVizMappings(now);
   db.vizTemplates = [];
+  db.declarations = new Map();
   db.vizTranscodes = new Set();
   db.vizDepthPacks = new Set();
   db.vizDisplays = new Map();

@@ -232,6 +232,38 @@ async def put_dataset_mapping(request: Request, dataset_id: str):
                            owner=who.owner_id, method="PUT", path=request.url.path, body=body, handler=handler)
 
 
+@router.get("/datasets/{dataset_id:ds_id}/declaration")
+async def get_dataset_declaration(request: Request, dataset_id: str):
+    from ..viz import declaration as DECL
+
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = viz_of(rt)
+    return await in_thread(lambda: DECL.declaration_doc(svc, rt.repo.get_dataset(dataset_id, owner=owner)))
+
+
+@router.put("/datasets/{dataset_id:ds_id}/declaration")
+async def put_dataset_declaration(request: Request, dataset_id: str):
+    from ..viz import declaration as DECL
+
+    body = await read_json_body(request, required=True)
+    validate("DatasetDeclarationPut", body)
+    rt, who = runtime(request), principal(request)
+    svc = viz_of(rt)
+
+    def handler() -> Response:
+        ds = DECL.put_declaration(svc, dataset_id, who.owner_id, body["declaration"])
+        rt.repo.append_event(actor=who.display_name, action="dataset.update", resource=dataset_id, at=rt.clock(),
+                             owner=who.owner_id, detail={"fields": ["declaration"], "version": ds.viz_mapping_version})
+        # what the EEF module can do follows the declaration (design doc 25 §3.5): the preflight is taken again
+        ds = orchestrator_of(rt).datasets.refresh_preflight(ds, who.owner_id)
+        rt.repo.append_event(actor=who.display_name, action="dataset.repreflight", resource=ds.id,
+                             at=rt.clock(), owner=who.owner_id, detail={"after": "declaration"})
+        return JSONResponse(DECL.declaration_doc(svc, ds))
+
+    return await in_thread(rt.idempotency.run, key=idempotency_key(request), operation="putDatasetDeclaration",
+                           owner=who.owner_id, method="PUT", path=request.url.path, body=body, handler=handler)
+
+
 @router.post("/viz/mcap-probe")
 async def probe_mcap(request: Request):
     body = await read_json_body(request, required=True)

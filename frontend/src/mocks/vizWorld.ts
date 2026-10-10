@@ -734,7 +734,8 @@ function abcProbe(file: string, files: number, template: string | null): McapPro
 /** A site template applied to a probe (the Daemon's ``from_template``): entries the file lacks go. */
 export function fromTemplate(t: VizTemplate, probe: McapProbe): McapProbe {
   const have = new Set(probe.topics.map((x) => x.topic));
-  const m = t.mapping!;
+  // a template holding a whole declaration drafts with its first layer (design doc 25 §3.1)
+  const m = { ...t.mapping!, schema_version: 'viz-mapping/1.1', cameras: t.mapping!.cameras ?? [], series: t.mapping!.series ?? [] } as VizMapping;
   const series = m.series.filter((s) => have.has(s.topic));
   const kept = new Set(series.map((s) => s.topic));
   const named = [...m.cameras.map((c) => c.topic), ...m.series.map((s) => s.topic)];

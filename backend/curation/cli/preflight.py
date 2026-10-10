@@ -66,6 +66,9 @@ def add_parser(sub, parents) -> None:
                         "asked about the others")
     p.add_argument("--source-manifest", metavar="FILE",
                    help="source_manifest.json from snapshot; exit 6 if the metadata changed")
+    p.add_argument("--declaration", metavar="FILE",
+                   help="the dataset declaration (C7 dataset-declaration/1.0, design doc 25 §3): what the records "
+                        "mean and how they become pixels; without it one is drafted to say what is missing")
     modparams.add_argument(p)
     p.set_defaults(func=run)
 
@@ -108,9 +111,23 @@ def _describe_kind(fmt: Format) -> str:
 SUPPORTED = "LeRobot v2/v3, mcap and lance (lerobot-lance-convert >= 0.3.0)"
 
 
+def load_declaration(args) -> dict | None:
+    """``--declaration``: the dataset declaration, normalized; a file that is not one is a usage error."""
+    path = getattr(args, "declaration", None)
+    if not path:
+        return None
+    from .. import declaration as DCL
+
+    try:
+        return DCL.load(os.path.expanduser(path))
+    except (OSError, ValueError) as e:
+        raise UsageError(f"--declaration: {e}") from None
+
+
 def run(ctx: Context, args: argparse.Namespace) -> Result:
     specs = parse_modules(args.modules)
     args.module_params = modparams.parse(getattr(args, "param", None))
+    args.declaration_doc = load_declaration(args)
     storage = inputs.open_input(ctx, args)
     ctx.progress(STAGE, 0, 3)
     listing = storage.list()
@@ -413,13 +430,10 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
             if eef_base is None:
                 eef_base = _eef_entry(eef_preflight, storage, listing, uri, getattr(args, "module_params", {}),
                                       [ep.index for ep in episodes],
-                                      handheld=container is not None and container.get("profile") == "umi_das")
+                                      handheld=container is not None and container.get("profile") == "umi_das",
+                                      decl=getattr(args, "declaration_doc", None), info=info,
+                                      kind=container["kind"] if container is not None else "lerobot")
             entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
-            # design doc 12 §8.7 (D-E17): the record mapping drafted from the metadata, for a person to confirm
-            from ..extensions.eef_consistency import record_draft
-
-            entry["drafts"] = {"record_mapping": record_draft.draft(info) if container is None
-                               else record_draft.not_drafted(container["kind"])}
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"
@@ -538,24 +552,58 @@ def render(doc: dict) -> str:
 
 
 def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, episodes: list[int], *,
-               handheld: bool = False) -> dict:
-    """The EEF module's entry (design doc 24): the trajectory a caller gave, else the one generated from the
-    dataset (or its own ``trajectory.json``), else - a handheld gripper's raw mcap (``handheld``, the reader's
-    ``umi_das`` layout) - the one derived episode by episode from the recording (design doc 22 §5.4). The file is
-    optional only where the platform can compute the trajectory: a dataset with none of these needs it
-    (``needs_input``, the console asks for the upload), it is never a reason not to offer the module."""
+               handheld: bool = False, decl: dict | None = None, info: dict | None = None,
+               kind: str = "lerobot") -> dict:
+    """The EEF module's entry: how its trajectory is had, in the order of design doc 25 §4.1 (``trajectory_source``) -
+    the file a caller gave; generated (a raw UMI session, a handheld gripper's LeRobot export or raw mcap, a robot
+    arm's pose record by the dataset declaration ``decl``); the dataset's own ``trajectory.json``. A dataset with
+    none says what is missing: the declaration's parts (``needs_input`` declaration_incomplete - complete it on the
+    dataset page, or upload a trajectory.json) or any pose record (trajectory_missing). Without ``decl`` one is
+    drafted from the metadata, to say what is missing - never to generate from."""
     import os
 
     from ..extensions.eef_consistency import contracts as EC
     from ..extensions.eef_consistency import derive
 
     params = modparams.with_defaults(eef_preflight.MODULE_ID, module_params.get(eef_preflight.MODULE_ID))
-    temp = None
-    if not (params.get("trajectory_json") or "").strip():
-        how = derive.source_of(listing)
-        if how is None:                         # derived from the recording, or asked for (needs_input)
-            return eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
-                                                   lerobot_root=None if "://" in uri else uri, handheld=handheld)
+    upload = bool((params.get("trajectory_json") or "").strip())
+    drafted = False
+    cameras = _cameras_of(info, decl, kind)
+    if decl is None and not upload and kind == "lerobot" and isinstance(info, dict):
+        from ..declaration import draft as DD
+
+        decl = DD.draft_lerobot(info, listing=listing, read=lambda key: derive._read(storage, key))["declaration"]
+        drafted = True
+    plan = derive.plan_source(listing=listing, upload=upload, handheld=handheld, decl=decl, drafted=drafted,
+                              cameras=cameras, kind=kind)
+    source: dict = {"kind": plan["kind"]}
+    if decl is not None and ("readiness" in plan or plan["kind"] == derive.MCAP_DERIVE):
+        from .. import declaration as DCL
+
+        source["declaration"] = {"drafted": drafted, "sha256": DCL.sha256(decl)}
+    if plan.get("missing"):
+        source["missing"] = plan["missing"]
+    how = plan["kind"]
+    if how == derive.MISSING_POSE:
+        entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
+                                                lerobot_root=None if "://" in uri else uri)
+    elif how == derive.MISSING_DECLARATION:
+        names = ", ".join(f"{m['field']} ({m['code']})" for m in plan["missing"][:6])
+        entry = {"availability": EC.NEEDS_INPUT, "reason_code": "declaration_incomplete",
+                 "reason": f"the dataset records the pose, but its declaration lacks {names}: complete the declaration "
+                           f"(the dataset page) or upload a trajectory.json",
+                 "reason_args": {"missing": plan["missing"]}, "input_hint": {"field": "trajectory_json"}}
+    elif how == derive.MCAP_DERIVE:
+        hh = (((decl or {}).get("calibration") or {}).get("handheld") or {}).get("calibration") if not drafted else None
+        entry = eef_preflight.derived_entry(params, episodes=episodes, lerobot_root=None if "://" in uri else uri,
+                                            calibration=hh)
+    elif how == derive.GENERATE and "readiness" in plan:
+        joints = isinstance(((decl or {}).get("semantics") or {}).get("joints"), dict)
+        entry = eef_preflight.declared_entry(params, plan["readiness"], episodes=episodes, joints=joints)
+    elif how == derive.UPLOAD:
+        entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
+                                                lerobot_root=None if "://" in uri else uri)
+    else:                                          # session, a handheld LeRobot export, the dataset's own file
         try:
             temp = derive.to_temp(storage, listing)
         except Exception as e:  # noqa: BLE001 - the dataset's own data does not make a trajectory: asked for instead
@@ -563,20 +611,28 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
                     "reason": f"the trajectory could not be generated from the dataset ({e}"[:240]
                               + "): upload a trajectory.json (console) or pass "
                                 "--param eef_video_consistency.trajectory_json=PATH",
-                    "input_hint": {"field": "trajectory_json"}}
-        params = {**params, "trajectory_json": temp}
-    try:
-        entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
-                                                lerobot_root=None if "://" in uri else uri)
-    finally:
-        if temp is not None:
+                    "input_hint": {"field": "trajectory_json"}, "trajectory_source": {"kind": derive.MISSING_POSE}}
+        try:
+            entry = eef_preflight.consistency_entry({**params, "trajectory_json": temp}, episodes=episodes,
+                                                    media_exists=lambda key: key in listing,
+                                                    lerobot_root=None if "://" in uri else uri)
+        finally:
             os.unlink(temp)
-    if temp is not None:
         entry["notes"] = entry.get("notes", []) + [
             {"generate": "trajectory generated from the dataset's state and camera calibration",
              "session": "trajectory computed from the raw UMI session (plan, SLAM camera poses, session calibration)"}
             .get(how, "trajectory from the dataset's own trajectory.json")]
+    entry["trajectory_source"] = source
     return entry
+
+
+def _cameras_of(info: dict | None, decl: dict | None, kind: str) -> list[str]:
+    """The dataset's camera sources: LeRobot video / image keys, an mcap declaration's camera topics."""
+    if kind == "mcap":
+        return [c["topic"] for c in (decl or {}).get("cameras") or []]
+    feats = (info or {}).get("features") or {}
+    return [k for k, f in feats.items() if isinstance(f, dict) and f.get("dtype") in ("video", "image")
+            and "depth" not in k.lower()]
 
 
 def _umi_session(ctx: Context, args, storage, listing, specs, doc: dict) -> None:
@@ -620,7 +676,7 @@ def _umi_session(ctx: Context, args, storage, listing, specs, doc: dict) -> None
     for spec in specs:
         if "eef_input" in spec.needs:
             base = _eef_entry(eef_preflight, storage, listing, str(storage.uri), getattr(args, "module_params", {}),
-                              list(range(len(plans))))
+                              list(range(len(plans))), decl=getattr(args, "declaration_doc", None), kind="umi_session")
             modules.append({"id": spec.id, **eef_preflight.module_entry(base, vlm_backend=bool(vlm_backend))})
         else:
             modules.append({"id": spec.id, "availability": "unsupported", "reason": reason,

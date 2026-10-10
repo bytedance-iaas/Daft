@@ -585,8 +585,12 @@ def probe(svc: VizService, spec: dict, owner: str, *, file: str | None = None, t
     src = _input_source(svc, spec, owner)
     if svc.reader_of(src) not in ("mcap", None) and "dataset_id" in spec:
         raise ApiError("validation_failed", "这不是 mcap 数据集：没有 episode_N.mcap", details={"reason": "not_mcap"})
+    from curation.declaration import mapping_of
+
     pr, count, warnings = svc.mcap.probe_source(src, file)
-    site = [{"id": t.id, "name": t.name, "mapping": t.mapping} for t in svc.rt.repo.list_viz_templates(owner=owner)]
+    # a template holding a whole declaration (design doc 25 §3.1) drafts with its first layer
+    site = [{"id": t.id, "name": t.name, "mapping": mapping_of(t.mapping)}
+            for t in svc.rt.repo.list_viz_templates(owner=owner) if mapping_of(t.mapping) is not None]
     if template and not template.startswith("builtin:") and template not in {t["id"] for t in site}:
         raise ApiError("not_found", f"没有模版 {template}", details={"reason": "unknown_template"})
     mapping, matched = MMAP.draft(pr, template=template, site_templates=site)
@@ -637,7 +641,9 @@ def mapping_doc(svc: VizService, ds, *, gaps: bool = True) -> dict:
     preflight = ds.preflight if isinstance(ds.preflight, dict) else {}
     if not is_mcap(preflight):
         raise ApiError("validation_failed", "只有 mcap 数据集有字段映射", details={"reason": "not_mcap"})
-    m = ds.viz_mapping if isinstance(ds.viz_mapping, dict) else None
+    from curation.declaration import mapping_of
+
+    m = mapping_of(ds.viz_mapping)
     warnings = []
     if dataset_format(preflight) == "unsupported":
         detail = str((preflight.get("format") or {}).get("detail") or "")
@@ -674,7 +680,10 @@ def put_mapping(svc: VizService, dataset_id: str, owner: str, mapping: dict):
     ds = svc.rt.repo.get_dataset(dataset_id, owner=owner)
     mapping_doc(svc, ds, gaps=False)                         # mcap only
     validate_for(svc, dataset_source(svc.rt, ds, owner), mapping)
-    return svc.rt.repo.set_dataset_viz_mapping(dataset_id, mapping, owner=owner)
+    from curation.declaration import with_mapping
+
+    # the declaration's first layer: its semantics and calibration stay (design doc 25 §3.1)
+    return svc.rt.repo.set_dataset_viz_mapping(dataset_id, with_mapping(ds.viz_mapping, mapping), owner=owner)
 
 
 def template_doc(t) -> dict:
@@ -695,7 +704,10 @@ def create_template(svc: VizService, owner: str, name: str, description: str, ma
 
     from ..repo import protocol as P
 
-    problems = MMAP.validate(mapping)
+    from curation import declaration as DCL
+
+    # a mapping, or a whole declaration (one robot, one gripper: its calibration reused, design doc 25 §3.1)
+    problems = DCL.schema_errors(mapping) if DCL.version_of(mapping) == DCL.SCHEMA_VERSION else MMAP.validate(mapping)
     if problems:
         raise ApiError("validation_failed", f"模版不合格：{problems[0]['field']} {problems[0]['problem']}",
                        details={"errors": [{"field": f"mapping.{p['field']}", "problem": p["problem"]} for p in problems[:50]]})

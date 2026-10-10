@@ -1204,32 +1204,10 @@ body {
 }
 
 /* a parameter file the preflight drafted (design doc 12 §8.7, D-E17), above its file button */
-.param-draft {
-  border: 1px solid var(--c-border);
-  border-radius: 4px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
 
-.param-draft-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
 
-.param-draft-part {
-  word-break: break-all;
-}
 
-.param-draft-sub {
-  margin-top: 6px;
-  font-size: 12px;
-}
 
-.param-draft-list {
-  margin: 2px 0 0;
-  padding-left: 18px;
-}
 
 /* 间隔号 between header facts (task id · 创建于 … · 备注): a dot centred on the text, whatever the font.
    A block, so the Space (a flex row) centres it on the row rather than on a Latin x-height. The Space

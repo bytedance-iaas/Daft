@@ -40,17 +40,30 @@ export function FormatTag({ format }: { format: DatasetFormat }) {
 }
 
 /** Under an mcap dataset's format: the confirmed mapping's name, or 待确认 (design doc 18 §6.4 step 7). */
-export function MappingLine({ d }: { d: Pick<DatasetItem, 'viz_mapping'> }) {
+export function MappingLine({ d }: { d: Pick<DatasetItem, 'viz_mapping' | 'declaration'> }) {
   const m = d.viz_mapping;
-  if (!m) return null;
-  return m.state === 'confirmed' ? (
-    <div className="muted" style={{ fontSize: 12 }} data-testid="mapping-line">
-      <OneLine text={zh.mcap.listConfirmed(m.name, m.version)} />
-    </div>
-  ) : (
-    <div style={{ fontSize: 12, color: 'var(--c-warning)' }} data-testid="mapping-line">
-      {zh.mcap.listPending}
-    </div>
+  const decl = d.declaration;
+  // the declaration's semantics and calibration (design doc 25 §3): said once confirmed
+  const declared =
+    decl?.state === 'confirmed' && decl.layers.includes('calibration') ? (
+      <div className="muted" style={{ fontSize: 12 }} data-testid="declaration-line">
+        {zh.declaration.listLine(decl.version)}
+      </div>
+    ) : null;
+  if (!m) return declared;
+  return (
+    <>
+      {m.state === 'confirmed' ? (
+        <div className="muted" style={{ fontSize: 12 }} data-testid="mapping-line">
+          <OneLine text={zh.mcap.listConfirmed(m.name, m.version)} />
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--c-warning)' }} data-testid="mapping-line">
+          {zh.mcap.listPending}
+        </div>
+      )}
+      {declared}
+    </>
   );
 }
 

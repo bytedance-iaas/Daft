@@ -47,6 +47,9 @@ class TopicProbe:
     #: message, and from the whole message (``_extract_source`` / ``_as_vector``); design doc 18 §6.2
     check_fields: dict[str, bool] | None = None
     check_whole: bool | None = None
+    #: a camera calibration topic's first message (CameraCalibration / CameraInfo): K, the model and coefficients,
+    #: the picture size - what a dataset declaration drafts a camera's intrinsics from (design doc 25 §3.3)
+    calibration: dict | None = None
 
     def rate_hz(self, end_ns: int | None) -> float | None:
         if not self.count or self.count < 2 or self.first_ns is None or end_ns is None or end_ns <= self.first_ns:
@@ -167,6 +170,9 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
                     tp.width, tp.height = size
                 return bool(size) or st.fed >= VIDEO_PROBE_MESSAGES
             return True
+        if "camerainfo" in str(tp.schema or "").lower().replace("_", "") or \
+                "cameracalibration" in str(tp.schema or "").lower():
+            tp.calibration = calibration_of(decoded)
         text = M.text_of(decoded)
         fields = M.field_sizes(decoded)
         tp.strings = M.string_paths(decoded) or None
@@ -185,6 +191,44 @@ def _feed(dec: M.Decoder, tp: TopicProbe, st: _State, schema, channel, message) 
     except Exception:  # noqa: BLE001 - an unreadable topic stays unknown; the probe goes on
         tp.decodable = False
         return True
+
+
+#: a camera_info distortion model -> the declaration's model (design doc 25 §3.2)
+_MODELS = {"plumb_bob": "opencv_brown", "rational_polynomial": "opencv_brown", "equidistant": "opencv_fisheye",
+           "kannala_brandt": "opencv_fisheye", "fisheye": "opencv_fisheye", "": "pinhole", "pinhole": "pinhole"}
+
+
+def calibration_of(decoded) -> dict | None:
+    """The intrinsics a CameraCalibration (foxglove: ``K``, ``D``) or sensor_msgs CameraInfo (``k`` / ``K``, ``d`` /
+    ``D``) message gives, in the declaration's terms; None when it does not say them."""
+    def get(*names):
+        for n in names:
+            v = decoded.get(n) if isinstance(decoded, dict) else getattr(decoded, n, None)
+            if v is not None:
+                return v
+        return None
+
+    try:
+        K = [float(x) for x in list(get("K", "k") or [])]
+        if len(K) != 9 or K[0] <= 0 or K[4] <= 0:
+            return None
+        model = _MODELS.get(str(get("distortion_model") or "").lower())
+        if model is None:
+            return None
+        D = [float(x) for x in list(get("D", "d") or [])]
+        if model == "pinhole" or not any(D):
+            model, D = ("pinhole", []) if not any(D) else (model, D)
+        if model == "opencv_brown":
+            D = (D + [0.0] * 5)[:5] if len(D) <= 5 else D[:8]
+        elif model == "opencv_fisheye":
+            D = (D + [0.0] * 4)[:4]
+        out = {"K": [K[0:3], K[3:6], K[6:9]], "model": model, "coefficients": D}
+        w, h = int(get("width") or 0), int(get("height") or 0)
+        if w > 0 and h > 0:
+            out["image_size_wh"] = [w, h]
+        return out
+    except (TypeError, ValueError):
+        return None
 
 
 def _check_reads(decoded, fields: list[dict]) -> tuple[dict[str, bool], bool]:

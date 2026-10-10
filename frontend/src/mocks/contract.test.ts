@@ -340,6 +340,15 @@ const vizCalls = async (): Promise<Call[]> => {
     { op: 'getDatasetMapping', method: 'GET', path: '/datasets/ds_droid100/mapping' },
     { op: 'putDatasetMapping', method: 'PUT', path: '/datasets/ds_mcap/mapping', body: { mapping: MCAP_MAPPING } },
     { op: 'putDatasetMapping', method: 'PUT', path: '/datasets/ds_mcap/mapping', body: { mapping: { ...MCAP_MAPPING, cameras: [{ topic: '/nope', name: 'x' }] } } },
+    { op: 'getDatasetDeclaration', method: 'GET', path: '/datasets/ds_droid100/declaration' },
+    { op: 'getDatasetDeclaration', method: 'GET', path: '/datasets/ds_mcap/declaration' },
+    {
+      op: 'putDatasetDeclaration',
+      method: 'PUT',
+      path: '/datasets/ds_droid100/declaration',
+      body: { declaration: { schema_version: 'dataset-declaration/1.0', calibration: { cameras: { 'observation.images.nope': { mount: 'fixed_external' } } } } },
+    },
+    { op: 'putDatasetDeclaration', method: 'PUT', path: '/datasets/ds_droid100/declaration', body: { declaration: { schema_version: 'dataset-declaration/1.0', name: 'x' } } },
     { op: 'getDatasetVizDisplay', method: 'GET', path: '/datasets/ds_droid100/viz/display' },
     {
       op: 'putDatasetVizDisplay',

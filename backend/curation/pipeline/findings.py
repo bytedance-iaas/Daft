@@ -568,11 +568,18 @@ def _eef_record(out: Derived, d: dict) -> None:
     """The upload against the dataset's own record (design doc 12 §8.7): reported only."""
     record = d.get("record") if isinstance(d.get("record"), dict) else {}
     if record.get("status") == "suspect":
+        if record.get("source") == "internal":       # the trajectory is the record's own (design doc 25 §6.1)
+            internal = record.get("internal") or {}
+            p95 = ((internal.get("position_mm") or {}).get("p95"))
+            out.add("eef_video_consistency", "record_mismatch",
+                    "数据集的末端位姿列与关节角正解不一致" + (f"（位置差 p95 {p95:.1f} mm）" if isinstance(p95, (int, float)) else ""),
+                    readings={"status": "suspect", "source": "internal", "reasons": list(record.get("reasons") or [])})
+            return
         why = sorted({str(r) for src in (record.get("sources") or {}).values() if isinstance(src, dict)
                       for r in src.get("reasons") or []})
         out.add("eef_video_consistency", "record_mismatch",
                 "上传的轨迹与数据集自己记录的末端位姿不一致" + (f"：{'、'.join(why)}" if why else ""),
-                readings={"status": "suspect", "reasons": why})
+                readings={"status": "suspect", "source": "upload", "reasons": why})
 
 
 #: a merged cell's label -> its finding's severity (design doc 25 §7.3)

@@ -55,6 +55,40 @@ def source_of(listing) -> str | None:
     return "dataset_file" if DATASET_KEY in listing else None
 
 
+#: how a task's trajectory is had (C2 preflight ``trajectory_source.kind``, design doc 25 §4.2)
+UPLOAD, SESSION, GENERATE, MCAP_DERIVE, DATASET_FILE = "upload", "session", "generate", "mcap_derive", "dataset_file"
+MISSING_DECLARATION, MISSING_POSE = "missing_declaration", "missing_pose"
+#: the declaration was drafted here, never confirmed: what it would generate is not used (design doc 25 §3)
+DECLARATION_UNCONFIRMED = "declaration_unconfirmed"
+
+
+def plan_source(*, listing, upload: bool, handheld: bool, decl: dict | None, drafted: bool, cameras, kind: str) -> dict:
+    """How the task's trajectory is had, in the order of design doc 25 §4.1: an upload; generated - a raw UMI session,
+    a handheld gripper's LeRobot export (``meta/umi_calibration.json``) or raw mcap (``handheld``), a robot arm by its
+    declaration (``decl``; ``drafted``: only a draft made here, which is never used); the dataset's own
+    ``trajectory.json``; else what is missing. ``{"kind", "readiness"?, "missing"?}``."""
+    from . import declared
+
+    if upload:
+        return {"kind": UPLOAD}
+    how = source_of(listing)
+    if how in ("session", "generate"):
+        return {"kind": SESSION if how == "session" else GENERATE}
+    if handheld:
+        return {"kind": MCAP_DERIVE}
+    ready = declared.readiness(decl, cameras, kind=kind) if decl is not None else None
+    if ready is not None and ready["ready"] and not drafted:
+        return {"kind": GENERATE, "readiness": ready}
+    if how == "dataset_file":
+        return {"kind": DATASET_FILE}
+    if ready is not None and ready["pose"]:
+        missing = list(ready["missing"])
+        if ready["ready"] and drafted:
+            missing = [{"field": "<declaration>", "code": DECLARATION_UNCONFIRMED}]
+        return {"kind": MISSING_DECLARATION, "readiness": ready, "missing": missing}
+    return {"kind": MISSING_POSE, **({"readiness": ready} if ready is not None else {})}
+
+
 def _rot6d(v: np.ndarray) -> np.ndarray:
     """Rotation matrices from the first two columns (rot6d as ``export-umi`` writes it: column 0, then column 1)."""
     a, b = v[:, 0:3], v[:, 3:6]

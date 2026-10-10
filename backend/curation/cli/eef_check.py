@@ -130,28 +130,46 @@ class EefJudge:
         storage = getattr(source, "storage", source)
         self.src = source if source is not storage else None
         self.mcap = self.src is not None and self.src.kind == "mcap"
+        self.decl = self._declaration(args)
         given = (params.get("trajectory_json") or "").strip()
         traj = None
+        #: the trajectory had episode by episode: a handheld gripper's recording (design doc 22 §5.4, F5.20), a robot
+        #: arm's pose record by the dataset declaration (design doc 25 §4.1)
+        self.derived = None
+        self.source_kind = None
         if given:
             traj = os.path.expanduser(given)
             if not os.path.isfile(traj):
                 raise UsageError(f"{MODULE}: trajectory.json not found: {traj}")
-        else:                                          # design doc 24: generated from the dataset, kept in the run
+            self.source_kind = "upload"
+        else:                                          # design docs 24, 25: had from the dataset, kept in the run
             from ..extensions.eef_consistency import derive
 
             listing = getattr(source, "listing", None) or storage.list()
-            if derive.source_of(listing) is not None:
+            kind = self.src.kind if self.src is not None else "lerobot"
+            cameras = self._cameras(storage, kind)
+            plan = derive.plan_source(listing=listing, upload=False, handheld=self.mcap and self._handheld(),
+                                      decl=self.decl, drafted=False, cameras=cameras, kind=kind)
+            self.source_kind = plan["kind"]
+            if plan["kind"] in (derive.SESSION, derive.GENERATE, derive.DATASET_FILE) and "readiness" not in plan:
                 try:
                     traj = derive.to_run(storage, listing, run_dir)
                 except Exception as e:  # noqa: BLE001
                     raise ModuleFailed(f"{MODULE}: the trajectory could not be generated from the dataset: {e}"[:300],
                                        {"reason": "trajectory_invalid"}) from None
-            elif not (self.mcap and self._handheld()):  # a handheld gripper's raw mcap: derived below (design doc 22 §5.4)
+            elif plan["kind"] == derive.MCAP_DERIVE:
+                self.derived = self._derived(params, run_dir)
+            elif plan["kind"] == derive.GENERATE:
+                self.derived = self._generated(storage, listing, run_dir, cameras)
+            elif plan["kind"] == derive.MISSING_DECLARATION:
+                names = ", ".join(f"{m['field']} ({m['code']})" for m in plan["missing"][:6])
+                raise ModuleFailed(f"{MODULE}: the dataset records the pose, but its declaration lacks {names}: complete "
+                                   f"it (--declaration FILE) or pass --param {MODULE}.trajectory_json=PATH",
+                                   {"reason": "declaration_incomplete", "missing": plan["missing"]})
+            else:
                 raise ModuleFailed(f"{MODULE}: the dataset records no end-effector poses with the cameras' calibration, "
                                    f"so the trajectory cannot be computed: pass --param {MODULE}.trajectory_json=PATH",
                                    {"reason": "trajectory_missing"})
-        #: no trajectory to read: a handheld gripper's recording carries its own (design doc 22 §5.4, F5.20)
-        self.derived = None
         if traj:
             if self.mcap:                              # the episode files, from the one listing
                 listing = self.src.listing
@@ -168,8 +186,8 @@ class EefJudge:
                                     "sha256": self.result.sha256})
             self.umi = any(s.hand_poses for s in self.result.samples.values())
         else:
-            self.derived = self.result = self._derived(params, run_dir)
-            self.umi = True
+            self.result = self.derived
+            self.umi = self.source_kind == derive.MCAP_DERIVE
         tpath = template_path(params)
         if self.umi and (seed_dir(params) or tpath):
             raise UsageError("UMI action overlays use advisory video opinion; omit gripper seeds/templates")
@@ -181,14 +199,24 @@ class EefJudge:
                 raise ModuleFailed(f"{MODULE}: gripper template is invalid: {e}", {"path": tpath}) from None
         self.template_sha = template.sha256 if template is not None else None
         self.record_mapping = None
+        self.record_note = None
         rpath = (params.get("record_mapping") or "").strip()
-        if rpath:                                  # design doc 12 §8.7: the dataset's own record
-            from ..extensions.eef_consistency import record as RC
+        from ..extensions.eef_consistency import record as RC
 
+        if rpath:                                  # an old task's record mapping (design doc 12 §8.7)
             try:
                 self.record_mapping = RC.load_mapping(os.path.expanduser(rpath))
             except (RC.RecordMappingError, OSError, ValueError) as e:
                 raise UsageError(f"{MODULE}: the record mapping is invalid: {e}") from None
+        elif self.decl is not None:                # the declaration's records (design doc 25 §6.1)
+            from ..extensions.eef_consistency import declared
+
+            block = declared.record_block(self.decl)
+            if block is not None:
+                try:
+                    self.record_mapping = RC.parse_mapping(block, sha256=declared.sha256(self.decl))
+                except RC.RecordMappingError as e:
+                    self.record_note = f"the declaration's records cannot be compared: {e}"
         self.ctx, self.run_dir, self.storage, self.params = ctx, run_dir, storage, params
         self.out_dir = module_dir(run_dir, MODULE)
         # a remote LeRobot dataset's videos are read where they are, only the episode's window, through the
@@ -196,11 +224,19 @@ class EefJudge:
         self.scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote and not self.mcap else None
         self.media_root = self.src.input_dir if self.mcap else storage.uri if storage.remote else storage.root
         lag = float(params["lag_search_s"])
+        seeds = seed_dir(params)
+        if seeds and self.source_kind == "generate" and self.derived is not None:
+            from ..extensions.eef_consistency import declared
+
+            # the platform names a generated trajectory's samples: the seeds follow them by episode (design doc 25)
+            seeds = declared.remap_seeds(seeds, self.derived, os.path.join(run_dir, "inputs", "eef", "seeds"))
         self.cfg = runner.RunConfig(
-            lerobot_root=self.media_root, seed_root=seed_dir(params), profile=profile.load(params["threshold_profile"]),
+            lerobot_root=self.media_root, seed_root=seeds, profile=profile.load(params["threshold_profile"]),
             out_dir=self.out_dir, evidence_mode=params["evidence_mode"], allowed_mounts=MOUNTS[params["camera_mounts"]],
             lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]),
-            template=template, record=self._record(), ego_motion_window_s=float(params["ego_motion_window_s"]))
+            template=template, record=self._record(), ego_motion_window_s=float(params["ego_motion_window_s"]),
+            # a trajectory had from the dataset's records is not compared with them (design doc 25 §6.1)
+            record_internal_only=self.source_kind not in ("upload", "dataset_file"))
         self.config = runner.config_digest(self.cfg)
         # no gripper reference (design doc 12 §10.5, D-E15): no CPU measurement, the model's advisory opinion
         self.opinion = self.cfg.seed_root is None and template is None
@@ -211,6 +247,54 @@ class EefJudge:
         self.per_window = int(params["review_frames_per_window"])
         self._fetch_lock = threading.Lock()
         self.model = self.review_config = self.ask = self.cache = None
+
+    @staticmethod
+    def _declaration(args) -> dict | None:
+        """``--declaration``: the dataset declaration the task froze (design doc 25 §3), normalized."""
+        path = getattr(args, "declaration", None)
+        if not path:
+            return None
+        from .. import declaration as DCL
+
+        try:
+            return DCL.load(os.path.expanduser(path))
+        except (OSError, ValueError) as e:
+            raise UsageError(f"--declaration: {e}") from None
+
+    def _cameras(self, storage, kind: str) -> list[str]:
+        """The dataset's camera sources (LeRobot video keys; an mcap declaration's camera topics)."""
+        if kind == "mcap":
+            return [c["topic"] for c in (self.decl or {}).get("cameras") or []]
+        if kind != "lerobot" or self.decl is None:
+            return []
+        from ..extensions.eef_consistency import derive
+
+        try:
+            info = json.loads(derive._read(storage, "meta/info.json"))
+        except (OSError, ValueError, KeyError):
+            return []
+        self._info = info
+        return [k for k, f in (info.get("features") or {}).items() if isinstance(f, dict)
+                and f.get("dtype") in ("video", "image") and "depth" not in k.lower()]
+
+    def _generated(self, storage, listing, run_dir: str, cameras: list[str]):
+        """A robot arm's trajectory generated episode by episode from the declaration (design doc 25 §4.1)."""
+        from ..declaration.checks import Facts
+        from ..extensions.eef_consistency import declared
+        from ..extensions.eef_consistency.adapters.lerobot_mapping import MappingError
+        from ..pipeline.records import module_dir
+
+        name = os.path.basename(str(storage.uri).rstrip("/")) or "dataset"
+        try:
+            if self.mcap:                           # the pose and camera topics of each episode file
+                return declared.GeneratedMcap(self.decl, root=self.src.input_dir, numbering=self.src.numbering(),
+                                              out_dir=module_dir(run_dir, MODULE), dataset_id=name, cameras=cameras)
+            sizes = Facts.lerobot(getattr(self, "_info", {}) or {}).cameras
+            return declared.Generated(self.decl, storage=storage, listing=listing, out_dir=module_dir(run_dir, MODULE),
+                                      dataset_id=name, cameras=cameras, sizes=sizes)
+        except (MappingError, OSError, ValueError, KeyError) as e:
+            raise ModuleFailed(f"{MODULE}: the trajectory cannot be generated from the declaration: {e}"[:300],
+                               {"reason": "trajectory_invalid"}) from None
 
     def _handheld(self) -> bool:
         """Whether the mcap dataset is a handheld gripper's: its first episode in the built-in UMI layout."""
@@ -229,10 +313,11 @@ class EefJudge:
         cal = os.path.expanduser((params.get("gripper_calibration") or "").strip()) or None
         if cal and not os.path.isfile(cal):
             raise UsageError(f"{MODULE}: gripper calibration not found: {cal}")
+        hh = (((self.decl or {}).get("calibration") or {}).get("handheld") or {}).get("calibration")
         name = os.path.basename(str(getattr(self.src, "uri", "") or self.src.input_dir).rstrip("/")) or "dataset"
         try:
             return derive_mcap.Derived(root=self.src.input_dir, numbering=self.src.numbering(), calibration=cal,
-                                       out_dir=module_dir(run_dir, MODULE), dataset_id=name)
+                                       out_dir=module_dir(run_dir, MODULE), dataset_id=name, calibration_doc=hh)
         except (ExportError, OSError) as e:
             raise ModuleFailed(f"{MODULE}: the gripper calibration is invalid: {e}", {"path": cal}) from None
 
@@ -264,6 +349,8 @@ class EefJudge:
             self.src, self.media_root = source, source.input_dir
             self.cfg.lerobot_root = self.media_root
             self.cfg.record = self._record()
+            if self.derived is not None and hasattr(self.derived, "root"):   # what is derived or generated reads it too
+                self.derived.root = str(source.input_dir)
 
     def open(self) -> None:
         """Inside the VLM session: the model is known (probed or resolved)."""
@@ -283,10 +370,10 @@ class EefJudge:
             sort_keys=True).encode()).hexdigest()
         self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
-        where = (f"trajectory derived from the recordings ({len(self.derived.episodes)} episode(s), "
-                 f"{'built-in' if self.derived.calibration['builtin'] else 'uploaded'} calibration "
-                 f"{self.derived.calibration['gripper']})" if self.derived is not None
+        where = (self.derived.describe() if self.derived is not None
                  else f"trajectory.json sha256 {self.result.sha256[:12]}, {len(self.result.samples)} episode(s) declared")
+        if self.record_note:
+            self.ctx.log("warning", f"{MODULE}: {self.record_note}")
         self.ctx.log("info", f"{MODULE}: {where}, profile {self.params['threshold_profile']}, "
                              f"seeds {self.cfg.seed_root or 'none'}, gripper template "
                              f"{self.template_sha[:12] if self.template_sha else 'none'}, model {self.model}"
@@ -338,10 +425,17 @@ class EefJudge:
         if sample is None:                          # nothing to compare: "cannot tell", nobody asked (§7.5)
             if self.opinion:
                 return self._unassessed(int(ep), source), []
-            return self._judged(self._merged(why="trajectory.json 里没有这一条"),
-                                _unsupported_detail(int(ep), "projection_missing"), None, [])
+            why = "trajectory.json 里没有这一条" if source is None else \
+                f"这一条生成不出轨迹：{source.get('message') or source.get('reason')}"
+            got = self._judged(self._merged(why=why), _unsupported_detail(int(ep), "projection_missing"), None, [])
+            if source is not None:
+                got[0]["detail"]["trajectory_source"] = source
+            return got
         try:
-            return self._judge(ep, sample, log)
+            got, evidence = self._judge(ep, sample, log)
+            if got is not None and source is not None:   # generated or derived: how (design doc 25 §4.1)
+                got["detail"].setdefault("trajectory_source", source)
+            return got, evidence
         finally:
             if self.mcap:                                 # the episode's topic videos are done with
                 from ..extensions.eef_consistency import mcap_media as MM

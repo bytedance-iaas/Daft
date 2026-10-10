@@ -13,6 +13,8 @@ not the columns the checks want (F13.8, design doc 18 §9.6).
 """
 from __future__ import annotations
 
+from curation.declaration import mapping_of
+
 from ..repo import protocol as P
 from ..repo.extras import dataset_format
 
@@ -56,7 +58,7 @@ def viz_status(ds: P.Dataset) -> dict:
     if fmt not in READERS:
         reason = "这个数据集的格式不支持可视化"
         return {"state": "unsupported", "reason": reason}
-    if fmt == "mcap" and not ds.viz_mapping:
+    if fmt == "mcap" and not mapping_of(ds.viz_mapping):
         return {"state": "mapping_pending",
                 "reason": "mcap 数据集要先确认字段映射：到数据集详情的「mcap 配置」确认"}
     return {"state": "ready", "reason": None}
@@ -66,7 +68,7 @@ def mapping_info(ds: P.Dataset) -> dict | None:
     """C4 ``DatasetMappingInfo``; None for a dataset that is not mcap."""
     if not is_mcap(ds.preflight if isinstance(ds.preflight, dict) else None):
         return None
-    mapping = ds.viz_mapping if isinstance(ds.viz_mapping, dict) else None
+    mapping = mapping_of(ds.viz_mapping)
     if mapping is None:
         return {"state": "none", "version": int(ds.viz_mapping_version or 0), "updated_at": None,
                 "name": None}

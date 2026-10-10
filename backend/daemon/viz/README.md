@@ -253,6 +253,14 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `$B/datasets/$D/episodes/1/series?stream=arm` 两条线的数值与 parquet 的 `observation.state[0]`、`action[0]` 一样。把相机写成 `top` 再 PUT 回 400
     `validation_failed`，`details.errors` 是 `cameras.0.key：数据集里没有相机 top`。`curl -s -X DELETE $B/datasets/$D/viz/display -H 'Idempotency-Key: display-try-2' | jq '{config, version}'`
     是 `null`、2，模型回到自动分组。控制台上：可视化页「布局 → 保存为缺省布局」后刷新、换一个浏览器打开都是这个布局。
+26. **数据集声明（设计 25 §3，F5.23）**：用 `curator-daemon-eef`（数据根是 dataset2）登记 `eef_ds2_lr3` 后
+    `curl -s $B/datasets/$D/declaration | jq '{state, trajectory: .trajectory.kind, missing: [.trajectory.missing[].code], cams: [.draft.calibration.cameras[] | .mount]}'`：
+    `none`、`missing_declaration`、两个 `intrinsics_missing` 与 `no_drawable_camera`、两个 `fixed_external`。把草稿的两路相机补上内参
+    （`~/ws/ws_general/galbot/dataset2/calibration.json` 的 `intrinsics_fx_cx_fy_cy`，写成 `{"fx_cx_fy_cy": [...], "model": "pinhole"}`）、工具改成
+    `tcp_offset_m: [0, 0, 0.16]`、`max_opening_m: 0.085` 后 `PUT $B/datasets/$D/declaration`（`{"declaration": …}`，带 `Idempotency-Key`）：回 200，`version` 1、
+    `trajectory.kind` 是 `generate`；`$B/datasets/$D` 的 `declaration` 是 `{state: confirmed, version: 1, layers: [semantics, calibration], …}`，预检里 EEF 条目
+    `trajectory_source.kind` 是 `generate`。把位姿列写成 `observation.state.nope` 再 PUT 回 400，`details.errors` 是 `declaration.semantics.pose.key`。
+    建一个只勾 EEF、不传 trajectory.json 的任务：运行目录 `inputs/declaration.json` 是第 1 版，`checks/eef_video_consistency/trajectory/episode_*.json` 逐条生成。
 
 ## 自动化测试
 

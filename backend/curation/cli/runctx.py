@@ -45,6 +45,9 @@ def add_source(p: argparse.ArgumentParser, *, required: bool = True) -> None:
                    help="source_manifest.json from snapshot; a changed object exits 6")
     p.add_argument("--embodiment-id", metavar="ID",
                    help="robot model, overrides robot_type of info.json")
+    p.add_argument("--declaration", metavar="FILE",
+                   help="the dataset declaration (C7 dataset-declaration/1.0, design doc 25 §3) the task froze: the "
+                        "EEF module generates a robot arm's trajectory from it")
     p.add_argument("--max-episodes", type=int, metavar="N",
                    help="v1's head-N selection: the first N episodes (also the sample the "
                         "dataset semantics are resolved on)")

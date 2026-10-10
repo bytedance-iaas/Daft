@@ -140,7 +140,7 @@
         "reason_code": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on lance; it reads mcap image topics since F5.13), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, observation_seed_missing (as the module's reason: neither observation seeds nor a gripper template, nothing finds the gripper in the video), eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason."
+          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on lance; it reads mcap image topics since F5.13), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, declaration_incomplete {missing} (the pose is recorded, the dataset declaration lacks what generating the trajectory needs: trajectory_source.missing), observation_seed_missing (as the module's reason: neither observation seeds nor a gripper template, nothing finds the gripper in the video), eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason."
         },
         "reason_args": {"type": "object", "description": "parameters of reason_code, listed with each code"},
         "input_hint": {
@@ -174,8 +174,38 @@
         },
         "drafts": {
           "type": "object",
-          "description": "Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafts record_mapping from a LeRobot info.json)",
+          "description": "Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafted record_mapping from a LeRobot info.json; no longer drafted since the dataset declaration)",
           "additionalProperties": {"$ref": "#/$defs/param_draft"}
+        },
+        "trajectory_source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "description": "EEF-video consistency: how the task's trajectory is had - upload (the trajectory_json parameter), session (a raw UMI session), generate (a handheld gripper's LeRobot export, or a robot arm's pose record by the dataset declaration), mcap_derive (a handheld gripper's raw mcap), dataset_file (the dataset's own trajectory.json); missing_declaration (the pose is recorded, the declaration lacks what missing names: complete it on the dataset page, or upload a trajectory.json), missing_pose (no pose record: upload a trajectory.json)",
+          "properties": {
+            "kind": {"enum": ["upload", "session", "generate", "mcap_derive", "dataset_file", "missing_declaration", "missing_pose"]},
+            "declaration": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "drafted": {"type": "boolean", "description": "true: no declaration was given, the one judged was drafted here (never generated from)"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            },
+            "missing": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["field", "code"],
+                "properties": {
+                  "field": {"type": "string", "maxLength": 600, "description": "the declaration's path (calibration.cameras.<source>.intrinsics), <declaration> for the whole of it"},
+                  "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "pose_missing, pose_frame_unknown, tool_missing, mount_unknown, intrinsics_missing, extrinsics_missing, camera_tcp_missing, no_drawable_camera, format_not_generated {format}, declaration_unconfirmed"},
+                  "args": {"type": "object"}
+                }
+              }
+            }
+          }
         }
       },
       "allOf": [

@@ -46,6 +46,8 @@ def add_parser(sub, parents) -> None:
                    help="the dataset, to list the delivered task text of annotated episodes")
     p.add_argument("--source", choices=("tos", "public", "local"), default=None)
     p.add_argument("--embodiment-id", metavar="ID")
+    p.add_argument("--declaration", metavar="FILE",
+                   help="accepted like the other reading commands; the verdicts do not depend on it")
     p.add_argument("--max-episodes", type=int, metavar="N")
     p.add_argument("--selection", metavar="EXPR",
                    help="accepted like the other reading commands (mcap / lance); the task "

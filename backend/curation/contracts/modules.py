@@ -67,6 +67,9 @@ episode's trajectory is derived with this calibration or the built-in DAS DEMO o
 ``inconsistent`` is info (its severity follows the confidence band), the new ``conflict`` (review, ``eef_check``) is
 the only card; ``unsettled`` and ``opinion_mismatch`` are retired (``retired: true``, still in the catalogue so
 older records get their level). Tasks started from 5.0 on freeze the default levels; older runs keep 4.x's.
+5.1 (design doc 25 §3, D83): the dataset declaration says what the EEF module's ``gripper_calibration`` and
+``record_mapping`` gave - both parameters are ``deprecated`` (the console does not offer them; an older task's
+still run), and a robot arm's trajectory is generated from the declaration.
 """
 from __future__ import annotations
 
@@ -74,7 +77,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "5.0"
+REGISTRY_VERSION = "5.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -403,14 +406,14 @@ def _eef_params() -> dict:
         "properties": {
             "trajectory_json": _upload(
                 "eef_trajectory", [".json"], 64, title="trajectory.json",
-                description="平台能算出轨迹时不用给：从数据集生成（导出过的手持夹爪数据集的状态与相机标定、UMI 原始会话；"
-                            "原始手持夹爪 mcap 用下面的夹爪标定逐条推出），或读数据集自带的 trajectory.json，这时上传只是换一份。"
-                            "算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，上传即校验", default=""),
+                description="平台能算出轨迹时不用给：按数据集声明从位姿记录生成（机械臂），或从手持夹爪的数据生成"
+                            "（导出过的数据集、UMI 原始会话、原始 mcap），或读数据集自带的 trajectory.json，这时上传只是换一份，"
+                            "并额外比对上传件与数据集记录。算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，"
+                            "上传即校验", default=""),
             "gripper_calibration": _upload(
                 "eef_gripper_calibration", [".json"], 1, title="夹爪标定",
-                description="手持夹爪的标定 umi-calibration/2：位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、"
-                            "缺 camera_info 时的内参回退。只在没传 trajectory.json、平台从手持夹爪的 mcap 推出轨迹时用；"
-                            "不给就用内置的 DAS DEMO 假设值（不带内参回退，结果注明「按假设值」）", default=""),
+                description="已停用（5.1）：手持夹爪的标定写在数据集声明里。旧任务给过的仍然照用", default="",
+                deprecated=True),
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
@@ -424,9 +427,8 @@ def _eef_params() -> dict:
                 default="", **{"x-choice-group": GRIPPER_REFERENCE}),
             "record_mapping": _upload(
                 "eef_record_mapping", [".json"], 8, title="数据集记录映射",
-                description="eef-mapping/1.1 的 record 块：数据集自己的末端位姿列（或 mcap topic）、关节角列与机器人型号"
-                            "（DEMO 内置 Franka）、单位与坐标系。给了就把上传轨迹和数据集的记录逐帧比对，只报告、不参与判决",
-                default=""),
+                description="已停用（5.1）：数据集的位姿与关节记录写在数据集声明里。旧任务给过的仍然照用", default="",
+                deprecated=True),
             "threshold_profile": {
                 "title": "阈值", "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，"
                                                 "所以不再提供「不判定」",

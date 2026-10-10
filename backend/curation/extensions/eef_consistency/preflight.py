@@ -102,10 +102,13 @@ def _record_check(params: dict, root: str | None):
     return ({"missing": missing}, note + f"; not in the dataset: {', '.join(missing)}") if missing else (mapping, note)
 
 
-def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | None = None) -> dict:
+def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | None = None,
+                  calibration: dict | None = None) -> dict:
     """No trajectory.json on a handheld gripper's mcap (design doc 22 §5.4): the trajectory comes from each recording
     when the module runs. Available unless the calibration is unusable or a gripper reference is given (a handheld
-    gripper only gets the model's opinion); what each sub-item can be is what a wrist camera on its own hand gives."""
+    gripper only gets the model's opinion); what each sub-item can be is what a wrist camera on its own hand gives.
+    The calibration: an old task's ``gripper_calibration`` file, else the dataset declaration's (``calibration``,
+    design doc 25 §3.2), else the built-in DAS DEMO one."""
     from .adapters import umi_mcap as X
 
     if seed_dir(params) or template_path(params):
@@ -113,7 +116,8 @@ def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | 
                             C.TRAJECTORY_INVALID)
     cal = os.path.expanduser((params.get("gripper_calibration") or "").strip())
     try:
-        cfg = X.read_calibration(cal or X.BUILTIN_CALIBRATION)
+        cfg = X.read_calibration(cal) if cal else X.check_calibration(calibration, "the declaration's handheld calibration") \
+            if calibration is not None else X.read_calibration(X.BUILTIN_CALIBRATION)
     except (X.ExportError, OSError) as exc:
         return _unsupported(f"the gripper calibration is unusable: {exc}", C.CALIBRATION_INVALID, {"path": cal or None})
     episodes = sorted(set(int(e) for e in episodes))
@@ -127,6 +131,8 @@ def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | 
         else {"availability": C.UNSUPPORTED,
               "reason_code": C.RECORD_MAPPING_MISSING if record is None else record.get("code") or C.RECORD_COLUMNS_MISSING}
     which = (f"the uploaded calibration ({cfg['gripper']})" if cal
+             else f"the dataset declaration's calibration ({cfg['gripper']}; {', '.join(X.assumed(cfg)) or 'nothing'} "
+                  f"assumed)" if calibration is not None
              else f"the built-in DAS DEMO calibration ({', '.join(X.assumed(cfg))} assumed; no intrinsics fallback: "
                   f"a recording without camera_info needs an uploaded calibration with one)")
     notes = [f"no trajectory.json: the platform derives each episode's trajectory from the handheld gripper's recording "
@@ -136,6 +142,44 @@ def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | 
              "asked on its account"]
     if record_note:
         notes.append(record_note)
+    return {"availability": C.AVAILABLE, "subitems": subitems, "episode_counts": {C.AVAILABLE: len(episodes)},
+            "notes": notes}
+
+
+def declared_entry(params: dict, ready: dict, *, episodes: Iterable[int], joints: bool) -> dict:
+    """A robot arm's trajectory generated from the dataset's declaration (design doc 25 §4.1): nothing to read here -
+    what each sub-item can be follows from the cameras the declaration lets the platform draw (``ready``:
+    ``declared.readiness``); the generation itself, episode by episode, is the module's."""
+    seeds, tpath = seed_dir(params), template_path(params)
+    mounts = set(MOUNTS[params.get("camera_mounts") or "fixed_external_and_wrist"])
+    drawable = [c for c in ready["cameras"] if c["drawable"] and c["mount"] in mounts]
+    external = any(c["mount"] == "fixed_external" for c in drawable)
+    wrist = any(c["mount"] == "wrist" for c in drawable)
+    on = {"availability": C.AVAILABLE, "reason_code": None}
+    subitems = {}
+    for k in (C.POSITION, C.ORIENTATION, C.TEMPORAL, C.CAMERA_MOTION):
+        subitems[k] = on if external else {"availability": C.UNSUPPORTED,
+                                           "reason_code": C.WRIST_CAMERA_SPATIAL_ONLY if wrist else C.PROJECTION_MISSING}
+    subitems[C.STATE_MOTION] = on
+    subitems[C.EGO_MOTION] = on if wrist else {"availability": C.UNSUPPORTED, "reason_code": C.PROJECTION_MISSING}
+    subitems[C.INPUT_CONSISTENCY] = {"availability": C.UNSUPPORTED, "reason_code": C.PROJECTION_MISSING}
+    subitems[C.RECORD] = on if joints else {"availability": C.UNSUPPORTED, "reason_code": C.RECORD_MAPPING_MISSING}
+    episodes = sorted(set(int(e) for e in episodes))
+    names = ", ".join(f"{c['camera_id']} ({c['mount']})" for c in drawable) or "none"
+    notes = [f"no trajectory.json: the platform generates each episode's trajectory from the dataset's pose record and "
+             f"its declaration (design doc 25 §4.1); cameras drawn: {names}"]
+    skipped = [c for c in ready["cameras"] if not c["drawable"]]
+    if skipped:
+        notes.append("cameras left out: " + ", ".join(f"{c['camera_id']} ({c['reason']})" for c in skipped))
+    if seeds is None and tpath is None:
+        notes.append("no observation seeds and no gripper template: the CPU measures nothing; the model gives an "
+                     "advisory opinion on each camera's whole clip (vlm_opinion, design doc 12 §10.5)")
+    if joints:
+        notes.append("the pose record and the joints' kinematics are compared with each other (record_consistency, "
+                     "source internal; design doc 25 §6.1)")
+    if not drawable:
+        return {**_unsupported("no camera the task takes part with can be drawn from the declaration",
+                               C.PROJECTION_MISSING), "subitems": subitems, "notes": notes}
     return {"availability": C.AVAILABLE, "subitems": subitems, "episode_counts": {C.AVAILABLE: len(episodes)},
             "notes": notes}
 

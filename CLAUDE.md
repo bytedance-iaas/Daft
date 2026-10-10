@@ -96,7 +96,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 22 | 轨迹叠加进迷你播放器；手持夹爪（DAS mcap）的意见路线（`22-eef-overlay-and-umi-mcap.md`：叠加图层与对时、`export-umi-mcap` 与夹爪标定 `umi-calibration/2`、EEF 1.1 的 `per_hand`、插值间隔、自运动一致性、不传 trajectory.json 时平台从录制推出轨迹（内置 DAS DEMO 标定）；决策 D74–D75、D80；首节是开工指引，§7 是 DEMO 的假设与生产输入） |
 | 23 | EEF 与任务成败的 CPU 半段挪进 CPU 块、源数据按块读只下载一次、完整性缺省只做 L1（`23-model-prep-and-source-cache.md`，D76–D79 提议；S1 已落地：L2 缺省关，`vlm` 段内 EEF 与任务成败共用按块读的缓存） |
 | 24 | EEF 的轨迹由平台生成，用户不上传 trajectory.json（`24-eef-trajectory-generated.md`；注册表 4.3；原始手持夹爪 mcap 由设计 22 §5.4 逐条推出） |
-| 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22 输出口径已落地：注册表 5.0，§9.1 是落地记录） |
+| 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22 输出口径、F5.23 数据集声明已落地：注册表 5.1、C4 5.0.0，§9.1、§9.2 是落地记录） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：
@@ -109,7 +109,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | C4 | REST API | `openapi.yaml` |
 | C5 | 仓储接口与状态机 | `backend/daemon/repo/protocol.py` |
 | C6 | 检测项分类表（细码与覆盖都指向它的编号） | `taxonomy.json`（Schema `taxonomy.schema.json`） |
-| C7 | mcap 字段映射（可视化与质检共用，设计 18 §6） | `viz-mapping.schema.json` |
+| C7 | 数据集声明（第一层是 mcap 字段映射；可视化与质检共用，设计 18 §6、设计 25 §3） | `dataset-declaration.schema.json`（`viz-mapping.schema.json` 留一版） |
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 
 改契约：改文件，不兼容的改动升版本号（`registry_version` / `schema_version` / `info.version`）；在 `examples/` 补合法与不合法示例；
@@ -144,7 +144,8 @@ C4 的文案（`info.description`、tag 说明、示例标题）是 API 文档�
 - 分层是「读取器 → 统一展示模型 → 视图」（D61）：每种格式一个读取器（`daemon/viz/` 的 `lerobot.py`、`mcap.py`、`lance.py`，格式解析在
   `curation/viz/`），都产出 C4 的 `VizDataset` / `VizEpisode`（相机、曲线组、标注、字段树），前端只认展示模型、不认格式。加一种格式就是
   加一个读取器、在 `service.py` 与 `status.py`（`READERS`）里登记，测试放 `tests/viz`（夹具造 LeRobot / mcap / Lance 数据集与最小本地 S3）。
-- 只读、不改判决：mcap 的字段映射（C7）确认后派生质检读取用的映射，开跑时冻结进 `run.json`（D62）；迷你版走任务级接口，读任务冻结的输入。
+- 只读、不改判决：mcap 的字段映射（C7 声明的第一层）确认后派生质检读取用的映射，开跑时冻结进 `run.json`（D62；整份声明冻结进
+  `run.json["declaration"]`，EEF 据此生成轨迹）；迷你版走任务级接口，读任务冻结的输入。
 - 视频能直连就直连（预签名地址、本地字节），浏览器放不了的由 Daemon 转封装或转码（D60，缓存只放本地盘）；mcap 的 H.264 / H.265
   缺省由浏览器 WebCodecs 解，失败退回转封装（D66）。开关与缓存都是 `CURATOR_VIZ_*`（Daemon README「配置」）。
 - 前端：时钟只有一份（`features/visualizer/clock.ts`），格子都跟它走；开发构建是 StrictMode，解码器这类要释放的资源在同一个 effect 里建和放。

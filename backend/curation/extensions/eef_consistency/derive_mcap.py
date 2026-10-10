@@ -63,24 +63,31 @@ class Derived:
     """The task's trajectory, derived episode by episode (each once, cached; thread-safe).
 
     ``root``: the dataset (a local directory or the ``tos://`` URI of a streamed one); ``numbering``: episode ->
-    file name; ``calibration``: the uploaded ``umi-calibration/2`` file, None for the built-in one; ``out_dir``: the
-    module's output directory. ``sha256`` names what the derivation depends on besides the recording (the
-    calibration's bytes and this code's version), for ``--resume``."""
+    file name; ``calibration``: an old task's uploaded ``umi-calibration/2`` file, else ``calibration_doc`` (the
+    dataset declaration's, design doc 25 §3.2), else the built-in one; ``out_dir``: the module's output directory.
+    ``sha256`` names what the derivation depends on besides the recording (the calibration's bytes and this code's
+    version), for ``--resume``."""
 
     def __init__(self, *, root: str, numbering: Mapping[int, str], calibration: str | None, out_dir: str,
-                 dataset_id: str, horizon_s: float = 1.0):
+                 dataset_id: str, horizon_s: float = 1.0, calibration_doc: dict | None = None):
         from .adapters import umi_mcap as X
 
-        path = pathlib.Path(calibration) if calibration else X.BUILTIN_CALIBRATION
-        raw = path.read_bytes()
-        try:
-            doc = json.loads(raw)
-        except ValueError as exc:
-            raise X.ExportError(f"the gripper calibration is not JSON: {exc}") from None
-        self.cfg = X.check_calibration(doc, "the gripper calibration" if calibration else "the built-in calibration")
+        if calibration or calibration_doc is None:
+            path = pathlib.Path(calibration) if calibration else X.BUILTIN_CALIBRATION
+            raw = path.read_bytes()
+            try:
+                doc = json.loads(raw)
+            except ValueError as exc:
+                raise X.ExportError(f"the gripper calibration is not JSON: {exc}") from None
+            where, source = ("the gripper calibration", "upload") if calibration else ("the built-in calibration", "builtin")
+        else:
+            doc = calibration_doc
+            raw = json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()
+            where, source = "the declaration's handheld calibration", "declaration"
+        self.cfg = X.check_calibration(doc, where)
         sha = hashlib.sha256(raw).hexdigest()
-        self.calibration = {"gripper": self.cfg["gripper"], "builtin": calibration is None, "sha256": sha,
-                            "assumed": X.assumed(self.cfg),
+        self.calibration = {"gripper": self.cfg["gripper"], "builtin": source == "builtin", "source": source,
+                            "sha256": sha, "assumed": X.assumed(self.cfg),
                             "intrinsics_fallback": sorted((self.cfg.get("intrinsics_fallback") or {}))}
         self.sha256 = hashlib.sha256(json.dumps({"calibration": sha, "version": DERIVE_VERSION, "generator": X.GENERATOR},
                                                 sort_keys=True).encode()).hexdigest()
@@ -93,6 +100,14 @@ class Derived:
     @property
     def episodes(self) -> list[int]:
         return sorted(self.numbering)
+
+    def describe(self) -> str:
+        how = {"builtin": "built-in", "upload": "uploaded", "declaration": "the declaration's"}[self.calibration["source"]]
+        return (f"trajectory derived from the recordings ({len(self.episodes)} episode(s), {how} calibration "
+                f"{self.calibration['gripper']})")
+
+    def close(self) -> None:
+        pass
 
     def sample(self, ep: int):
         """(the episode's ``EefSample`` or None, its ``trajectory_source``): None when the episode cannot be derived,

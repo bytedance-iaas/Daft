@@ -100,6 +100,8 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getTaskCameraFrameIndex": ("GET", "/api/v1/tasks/{id}/episodes/{index}/cameras/{camera}.json"),
     "getDatasetMapping": ("GET", "/api/v1/datasets/{id}/mapping"),
     "putDatasetMapping": ("PUT", "/api/v1/datasets/{id}/mapping"),
+    "getDatasetDeclaration": ("GET", "/api/v1/datasets/{id}/declaration"),
+    "putDatasetDeclaration": ("PUT", "/api/v1/datasets/{id}/declaration"),
     "probeMcap": ("POST", "/api/v1/viz/mcap-probe"),
     "listVizTemplates": ("GET", "/api/v1/viz/templates"),
     "createVizTemplate": ("POST", "/api/v1/viz/templates"),

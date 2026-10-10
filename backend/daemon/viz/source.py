@@ -15,6 +15,8 @@ itself), and names the fingerprint the caches belong to.
 """
 from __future__ import annotations
 
+from curation.declaration import mapping_of
+
 import contextlib
 import json
 import pathlib
@@ -104,7 +106,7 @@ def dataset_source(rt, ds: P.Dataset, owner: str) -> VizSource:
                      region=ds.region, cred_id=ds.credential_id,
                      preflight=ds.preflight if isinstance(ds.preflight, dict) else {},
                      fingerprint=ds.meta_fingerprint or "", dataset_id=ds.id,
-                     mapping=ds.viz_mapping if isinstance(ds.viz_mapping, dict) else None,
+                     mapping=mapping_of(ds.viz_mapping),
                      mapping_version=ds.viz_mapping_version or None,
                      annotations_upload=ds.annotations_upload,
                      display_config=ds.display_config if isinstance(ds.display_config, dict) else None,

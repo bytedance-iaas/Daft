@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 4.7.0
+  version: 5.0.0
   description: |
     ## Overview
 
@@ -169,6 +169,22 @@ info:
     carries `retired: true` in the module catalogue (`unsettled` and `opinion_mismatch` of the EEF module),
     kept so older results still read. A task keeps the default finding levels it started with.
 
+    **5.0.0** (2026-10-10): a dataset has a declaration - one versioned document saying what its records are
+    and what they mean, read by the data visualizer and the checks alike: the mcap field mapping as it was
+    (sources to roles), what the pose, joint and gripper records mean, and each camera's mount, intrinsics
+    and extrinsics with the tool on the arm or a handheld gripper's calibration; every item says whether it is
+    declared or only assumed. `GET` / `PUT /datasets/{id}/declaration` read it (with a draft made from the
+    dataset and what the EEF module would make of it) and confirm a new version, checked against the
+    dataset: errors stop it, doubtful values are kept on it as `suspects`; the registration's preflight is
+    taken again. A task freezes the version it starts with. Dataset items carry its summary
+    (`declaration`). `/datasets/{id}/mapping` stays one more version as the declaration's first layer; a
+    mapping confirmed there keeps the declaration's other parts. With a declaration, the EEF module generates
+    a robot arm's trajectory from the dataset's pose record - nobody uploads one - and the preflight's EEF
+    entry says how the trajectory is had (`trajectory_source`); a dataset whose declaration lacks camera
+    intrinsics, extrinsics or the tool is `needs_input` `declaration_incomplete` and says what is missing.
+    Site templates may hold a declaration. The module parameters `gripper_calibration` and `record_mapping`
+    and their upload kinds are retired (older tasks still read them): the declaration says both.
+
   x-description-zh: |
     ## 概览
 
@@ -272,6 +288,15 @@ info:
     **4.7.0**（2026-10-09）：EEF 模块只给带置信度的意见，不再判废条目。它的发现 `inconsistent` 只报告（严重度随置信度），新发现 `conflict`
     （两种检查方式结论相反）是唯一要人看的（裁决线 `eef_check`；人答「不一致」照样判废）。模块不再报告的发现码在模块目录里带
     `retired: true`（EEF 模块的 `unsettled`、`opinion_mismatch`），留着让旧结果照常读。任务按开始时的缺省级别判决。
+
+    **5.0.0**（2026-10-10）：数据集有了声明——一份带版本的文档，说清数据集里的记录是什么、什么含义，可视化与质检共用：原样保留 mcap 的字段映射
+    （来源→用途），加上位姿、关节、夹爪记录的含义，以及每路相机的安装方式、内参、外参和臂上的工具（或手持夹爪的标定）；每一项都标明是声明的
+    还是假设的。`GET` / `PUT /datasets/{id}/declaration` 读取（附带按数据集起草的草稿，以及 EEF 模块据此能做什么）与确认新版本：按数据集校验，
+    错误挡住确认，可疑的值记在声明的 `suspects` 里不挡；确认后重新预检。任务开始时冻结当时的版本。数据集条目带声明摘要（`declaration`）。
+    `/datasets/{id}/mapping` 再保留一版，作为声明的第一层；在那里确认映射不动声明的其他部分。有了声明，EEF 模块从数据集的位姿记录生成机械臂的
+    轨迹，不用再上传；预检的 EEF 条目说明轨迹从哪来（`trajectory_source`），声明缺相机内参、外参或工具的数据集报 `needs_input`
+    `declaration_incomplete` 并列出缺的项。站点模版可以保存声明。模块参数 `gripper_calibration`、`record_mapping` 及其上传种类停用（旧任务照常读），
+    这两样都由声明给出。
 
 servers:
   - url: "{base}/api/v1"
@@ -1313,6 +1338,50 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DatasetMapping"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/declaration:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [viz]
+      operationId: getDatasetDeclaration
+      summary: The dataset's declaration, a draft made from the dataset, and what the EEF module would make of it
+      description: |
+        `declaration` is the confirmed version (null before the first); `draft` is drafted from the dataset now
+        (its metadata and, for mcap, a probe of its first file) and laid under the confirmed one - the starting
+        point of an edit, never used by a task. `unresolved` lists what still needs a person (a camera whose mount
+        or owner nobody knows; missing intrinsics or extrinsics). `trajectory` says how the EEF module would have
+        its trajectory with the confirmed declaration (`generate`, or `missing_declaration` with what is missing).
+      responses:
+        "200":
+          description: the declaration
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDeclaration"}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      tags: [viz]
+      operationId: putDatasetDeclaration
+      summary: Confirm a new version of the declaration (checked against the dataset)
+      description: |
+        Checked against the declaration Schema and the dataset: a column or topic the dataset does not have, a
+        width that does not fit the layout, a transform that is not rigid fail with `validation_failed` and
+        `details.errors` per item; doubtful values (intrinsics that stretch the picture unevenly, an opening
+        outside 0-0.2 m) are kept on the declaration as `suspects` and do not stop it. The registration's
+        preflight is taken again. Tasks started before keep the version they froze.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetDeclarationPut"}
+      responses:
+        "200":
+          description: confirmed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDeclaration"}
         default: {$ref: "#/components/responses/Error"}
   /datasets/{id}/annotations:
     parameters:
@@ -3940,7 +4009,7 @@ components:
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
-                 preflighted_at, created_at, last_task, viz, viz_mapping]
+                 preflighted_at, created_at, last_task, viz, viz_mapping, declaration]
       properties:
         id:
           type: string
@@ -3963,10 +4032,11 @@ components:
             - $ref: "#/components/schemas/TaskRef"
         viz: {$ref: "#/components/schemas/VizStatus"}
         viz_mapping:
-          description: the mcap field mapping (C7) - its state, version and name, shown under the format in the list; null for other formats
+          description: the mcap field mapping (the declaration's first layer) - its state, version and name, shown under the format in the list; null for other formats
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/DatasetMappingInfo"
+        declaration: {$ref: "#/components/schemas/DatasetDeclarationInfo"}
     DatasetItem:
       allOf:
         - $ref: "#/components/schemas/DatasetItemFields"
@@ -4212,7 +4282,8 @@ components:
       description: >-
         the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external
         annotation file (design doc 18 §4.5), not a module parameter; eef_gripper_calibration (4.6.0) is a
-        handheld gripper's calibration (umi-calibration/2)
+        handheld gripper's calibration (umi-calibration/2). eef_record_mapping and eef_gripper_calibration are
+        retired in 5.0.0 (the dataset declaration says both) and still accepted for older tasks
     UploadId:
       type: string
       pattern: "^(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$"
@@ -5840,6 +5911,114 @@ components:
         text: {type: string}
     VizMapping:
       $ref: "./viz-mapping.schema.json"
+    Declaration:
+      $ref: "./dataset-declaration.schema.json"
+    DeclarationNote:
+      type: object
+      additionalProperties: false
+      required: [field, code]
+      properties:
+        field: {type: string, description: "the declaration's path (calibration.cameras.<source>.intrinsics)"}
+        code: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
+        args: {type: object}
+    DeclarationCamera:
+      type: object
+      additionalProperties: false
+      required: [source, name, width, height]
+      properties:
+        source: {type: string, description: "the video key (LeRobot, Lance) or the topic (mcap)"}
+        name: {type: string}
+        width: {type: [integer, "null"]}
+        height: {type: [integer, "null"]}
+    DeclarationTrajectory:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      description: how the EEF module would have its trajectory with the confirmed declaration
+      properties:
+        kind: {enum: [upload, session, generate, mcap_derive, dataset_file, missing_declaration, missing_pose]}
+        missing: {type: array, items: {$ref: "#/components/schemas/DeclarationNote"}}
+        cameras:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, camera_id, mount, owner, drawable, reason]
+            properties:
+              source: {type: string}
+              camera_id: {type: string}
+              mount: {type: [string, "null"], enum: [fixed_external, wrist, moving, null]}
+              owner: {type: [string, "null"]}
+              drawable: {type: boolean, description: "the declaration lets the platform project onto it"}
+              reason: {type: [string, "null"], description: "why not: mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing"}
+    DeclarationAssumed:
+      type: object
+      additionalProperties: false
+      required: [field, assurance, codes]
+      properties:
+        field: {type: string}
+        assurance: {enum: [model_assumed, unknown]}
+        codes: {type: array, items: {type: [string, "null"]}}
+    DeclarationSuspect:
+      type: object
+      additionalProperties: false
+      required: [code, field, message]
+      properties:
+        code: {type: string}
+        field: {type: string}
+        message: {type: string}
+        args: {type: object}
+    DatasetDeclaration:
+      type: object
+      additionalProperties: false
+      required: [dataset_id, format, state, declaration, version, updated_at, draft, unresolved, cameras, trajectory,
+                 assumed, suspects, warnings]
+      properties:
+        dataset_id: {type: string}
+        format: {enum: [lerobot, mcap, lance, umi_session]}
+        state: {enum: [none, confirmed]}
+        declaration:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Declaration"
+        version: {type: integer, minimum: 0, description: "0 = never confirmed"}
+        updated_at: {type: [integer, "null"]}
+        draft:
+          description: drafted from the dataset now and laid under the confirmed declaration; the starting point of an edit, never used by a task
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Declaration"
+        unresolved: {type: array, items: {$ref: "#/components/schemas/DeclarationNote"}}
+        cameras: {type: array, items: {$ref: "#/components/schemas/DeclarationCamera"}}
+        trajectory: {$ref: "#/components/schemas/DeclarationTrajectory"}
+        assumed: {type: array, items: {$ref: "#/components/schemas/DeclarationAssumed"}}
+        suspects: {type: array, items: {$ref: "#/components/schemas/DeclarationSuspect"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    DatasetDeclarationPut:
+      type: object
+      additionalProperties: false
+      required: [declaration]
+      properties:
+        declaration:
+          description: a dataset-declaration/1.0 document (a viz-mapping/1.x one is taken as its first layer)
+          oneOf:
+            - $ref: "#/components/schemas/Declaration"
+            - $ref: "#/components/schemas/VizMapping"
+    DatasetDeclarationInfo:
+      type: object
+      additionalProperties: false
+      required: [state, version, updated_at, name, layers, assumed, suspects]
+      properties:
+        state: {enum: [none, confirmed]}
+        version: {type: integer, minimum: 0}
+        updated_at: {type: [integer, "null"]}
+        name: {type: [string, "null"]}
+        layers:
+          type: array
+          items: {enum: [sources, semantics, calibration]}
+          description: what the confirmed declaration says - sources to roles (an mcap mapping), semantics and calibration
+        assumed: {type: integer, minimum: 0, description: "items it only assumes"}
+        suspects: {type: integer, minimum: 0, description: "doubtful values found when it was confirmed"}
     DatasetMapping:
       type: object
       additionalProperties: false
@@ -5986,10 +6165,11 @@ components:
         description: {type: string}
         builtin: {type: boolean}
         mapping:
-          description: null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping
+          description: null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping; a site template holds a mapping or a whole declaration (5.0.0)
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/VizMapping"
+            - $ref: "#/components/schemas/Declaration"
         created_at: {type: [integer, "null"]}
         updated_at: {type: [integer, "null"]}
     VizTemplateCreate:
@@ -5999,4 +6179,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         description: {type: string, maxLength: 2000}
-        mapping: {$ref: "#/components/schemas/VizMapping"}
+        mapping:
+          oneOf:
+            - $ref: "#/components/schemas/VizMapping"
+            - $ref: "#/components/schemas/Declaration"

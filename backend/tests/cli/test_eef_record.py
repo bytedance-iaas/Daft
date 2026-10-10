@@ -384,29 +384,30 @@ def test_dataset2_check_lists_its_overlays_in_the_record(tmp_path):
 # ------------------------------------------------------------------------------------ drafted by the preflight (F5.16)
 
 
-def test_the_preflight_drafts_the_mapping_for_a_person_to_confirm(mini_dataset, tmp_path):
-    """Design doc 12 §8.7 (D-E17): the dataset preflight - no file given yet - carries a draft of the record
-    mapping with what it assumed; the draft, confirmed as it is, makes the sub-item available. mcap is
-    not drafted."""
+def test_the_preflight_drafts_a_declaration_and_an_old_record_mapping_still_counts(mini_dataset, tmp_path):
+    """Design doc 25 §3 (F5.23): the dataset preflight - no declaration given - drafts one to say what is missing (the
+    mini dataset records joints and no end-effector pose: missing_pose); the record mapping is no longer drafted - the
+    declaration says the records - while an old task's record_mapping still makes the sub-item available."""
+    import json
+
     from parity.fixtures import make_mini_mcap
 
+    from curation.extensions.eef_consistency import record_draft as D
+
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF).doc["modules"]
-    assert entry["reason_code"] == "trajectory_missing"                           # drafted all the same
-    draft = entry["drafts"]["record_mapping"]
-    assert draft["document"]["record"] == {"joints": {"key": "observation.state", "units": "rad",
-                                                      "robot": "franka_panda", "reference_frame": "@upload"}}
-    assert {a["code"] for a in draft["assumptions"]} >= {"observation_not_action", "robot_from_robot_type",
-                                                         "units_by_convention", "joints_tip_frame"}
-    assert draft["not_drafted"] == [{"code": "no_named_pose_column", "source": "pose"}]
-    confirmed = _mapping(tmp_path, draft["document"], "draft.json")
+    assert entry["reason_code"] == "trajectory_missing" and "drafts" not in entry
+    assert entry["trajectory_source"]["kind"] == "missing_pose"
+    assert entry["trajectory_source"]["declaration"]["drafted"] is True
+    info = json.loads(open(f"{mini_dataset}/meta/info.json", encoding="utf-8").read())
+    confirmed = _mapping(tmp_path, D.draft(info)["document"], "draft.json")
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                    "--param", f"{EEF}.trajectory_json={_bundle(tmp_path)}",
                    "--param", f"{EEF}.record_mapping={confirmed}").doc["modules"]
     assert entry["subitems"]["record_consistency"]["availability"] == "available"
+    assert entry["trajectory_source"] == {"kind": "upload"}
     mcap = make_mini_mcap(str(tmp_path / "mini_mcap"))
     (entry,) = run("preflight", "--input", mcap, "--modules", EEF).doc["modules"]
-    assert entry["drafts"]["record_mapping"]["not_drafted"] == [{"code": "format_not_drafted",
-                                                                 "args": {"format": "mcap"}}]
+    assert "drafts" not in entry and entry["trajectory_source"]["kind"] == "missing_pose"
 
 
 def test_the_drafted_mapping_compares_like_a_written_one(mini_dataset, tmp_path):

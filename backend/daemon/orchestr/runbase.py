@@ -459,9 +459,21 @@ class Run:
 
         return ["--set", "ingest.mcap_mapping=" + json.dumps(chk, ensure_ascii=False)]
 
+    def declaration_args(self) -> list[str]:
+        """``--declaration``: the dataset declaration frozen into run.json at start (design doc 25 §3.5), its file
+        written again from run.json when a restored run directory lacks it; nothing without one."""
+        doc = read_json(self.wd.run_json, None)
+        decl = doc.get("declaration") if isinstance(doc, dict) else None
+        if not isinstance(decl, dict) or not isinstance(decl.get("document"), dict):
+            return []
+        path = self.wd.declaration
+        if not path.is_file():
+            write_json_atomic(path, decl["document"])
+        return ["--declaration", str(path)]
+
     def source_args(self, *, manifest: bool = True, semantics: bool = True) -> list[str]:
         t = self.task
-        out = ["--input", t.input_uri, "--source", t.input_source, *self.mapping_args()]
+        out = ["--input", t.input_uri, "--source", t.input_source, *self.mapping_args(), *self.declaration_args()]
         if manifest:
             out += ["--source-manifest", str(self.wd.manifest)]
         if semantics:

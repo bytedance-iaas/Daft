@@ -62,7 +62,7 @@ VERSION = "eef-video/1.0.0"
 MAPPING_VERSION = "eef-mapping/1.0"
 #: 1.1 adds the ``record`` block the platform compares the upload with (design 12 §8.7); the export ignores it
 MAPPING_VERSIONS = (MAPPING_VERSION, "eef-mapping/1.1")
-LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat")
+LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat", "xyz_rot6d")
 IDENTITY3 = np.eye(3).tolist()
 
 
@@ -115,9 +115,9 @@ def check_mapping(doc: dict) -> None:
         if not (cal.get("intrinsics_fx_cx_fy_cy") or cal.get("K")):
             raise MappingError(f"mapping: cameras.{key}.calibration needs intrinsics_fx_cx_fy_cy or K")
         ext = cal.get("extrinsics") or {}
-        if not any(ext.get(k) for k in ("cam2base_xyz_rpy_key", "cam2base_xyz_rpy", "T_reference_camera")):
+        if not any(ext.get(k) for k in ("cam2base_xyz_rpy_key", "cam2base_xyz_rpy", "T_reference_camera", "T_camera_tcp")):
             raise MappingError(f"mapping: cameras.{key}.calibration.extrinsics needs cam2base_xyz_rpy_key, "
-                               "cam2base_xyz_rpy or T_reference_camera")
+                               "cam2base_xyz_rpy, T_reference_camera or (a wrist camera) T_camera_tcp")
 
 
 # ----------------------------------------------------------------------------------- LeRobot
@@ -205,6 +205,12 @@ def _rotation(layout: str, rot: np.ndarray, angle_unit: str):
         return Rotation.from_quat(rot)
     if layout == "xyz_quat_wxyz":
         return Rotation.from_quat(rot[:, [1, 2, 3, 0]])
+    if layout == "xyz_rot6d":                       # the rotation's first two columns (export-umi's rot6d)
+        a, b = rot[:, 0:3], rot[:, 3:6]
+        x = a / np.linalg.norm(a, axis=1, keepdims=True)
+        b = b - (x * b).sum(1, keepdims=True) * x
+        y = b / np.linalg.norm(b, axis=1, keepdims=True)
+        return Rotation.from_matrix(np.stack([x, y, np.cross(x, y)], axis=2))
     return Rotation.from_matrix(rot.reshape(-1, 3, 3))
 
 
@@ -274,10 +280,12 @@ def _closed_fraction(v: np.ndarray, how) -> np.ndarray:
     raise MappingError(f"mapping: gripper.closed_fraction {how!r} (identity | one_minus | {{min, max}})")
 
 
-def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int] | None = None) -> dict:
-    """The ``trajectory-bundle/1.0`` of the dataset's episodes (form B: pose + calibration)."""
+def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int] | None = None,
+           lr: LeRobot | None = None) -> dict:
+    """The ``trajectory-bundle/1.0`` of the dataset's episodes (form B: pose + calibration); ``lr``: the dataset
+    already opened (a caller exporting episode by episode)."""
     check_mapping(mapping)
-    lr = LeRobot(lerobot_root)
+    lr = lr if lr is not None else LeRobot(lerobot_root)
     eef, cams = mapping["eef"], mapping["cameras"]
     grip = mapping.get("gripper") or {}
     timing = mapping.get("timing") or {}
@@ -303,6 +311,13 @@ def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int
         R = _rotation(eef["layout"], rot, units.get("angle", "rad"))
         quat = R.as_quat()
         quat /= np.linalg.norm(quat, axis=1, keepdims=True)
+        T_ref_eef = np.tile(np.eye(4), (n, 1, 1))
+        T_ref_eef[:, :3, :3] = R.as_matrix()
+        T_ref_eef[:, :3, 3] = pos
+        tcp = (mapping.get("tool") or {}).get("tcp_offset_m")
+        T_eef_tcp = np.eye(4)
+        if tcp is not None:
+            T_eef_tcp[:3, 3] = np.asarray(tcp, float)
         closed = None
         if grip.get("key"):
             closed = _closed_fraction(_column(df, grip["key"], index=grip.get("index", 0)), grip.get("closed_fraction"))
@@ -319,7 +334,11 @@ def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int
             cal = c["calibration"]
             K = cal.get("K") or (lambda f: [[f[0], 0, f[1]], [0, f[2], f[3]], [0, 0, 1]])(cal["intrinsics_fx_cx_fy_cy"])
             ext = cal["extrinsics"]
-            if ext.get("cam2base_xyz_rpy_key"):
+            per_frame = None
+            if ext.get("T_camera_tcp") is not None:      # a wrist camera rides the tool: its pose per frame
+                T = None
+                per_frame = T_ref_eef @ T_eef_tcp @ np.linalg.inv(np.asarray(ext["T_camera_tcp"], float))
+            elif ext.get("cam2base_xyz_rpy_key"):
                 col = _column(df, ext["cam2base_xyz_rpy_key"])
                 if not np.allclose(col, col[0], atol=1e-6):
                     raise MappingError(f"cameras.{key}: {ext['cam2base_xyz_rpy_key']} changes within episode {ep}; "
@@ -331,18 +350,19 @@ def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int
                 T = np.asarray(ext["T_reference_camera"], float).tolist()
             dist = cal.get("distortion") or {}
             cal_id = f"{cid}_declared"
-            calibs[cal_id] = {"camera_id": cid, "reference_frame": eef["reference_frame"], "image_size_wh": list(wh),
+            calibs[cal_id] = {"camera_id": cid, "reference_frame": eef["reference_frame"],
+                              "image_size_wh": list(cal.get("image_size_wh") or wh),
                               "image_space": dist.get("image_space", "rectified"), "model": dist.get("model", "pinhole"),
                               "K": np.asarray(K, float).tolist(),
                               "distortion_coefficients": list(dist.get("coefficients") or []),
-                              "extrinsics_mode": "static", "T_reference_camera": T,
+                              "extrinsics_mode": "static" if per_frame is None else "per_frame", "T_reference_camera": T,
                               "provenance": {"source": f"mapping.yaml cameras.{key}", "method": "copy",
                                              "assurance": "declared"}}
             H = IDENTITY3 if c.get("media_transform", "identity") == "identity" else c["media_transform"]
             views.append({"view_id": cid, "kind": "camera", "camera_id": cid, "mount": c["mount"],
                           "media": {"kind": "video", "uri": vid["uri"], "image_size_wh": list(wh), "frame_count": n,
                                     "fps": lr.fps, "clip_start_s": vid["clip_start_s"], "clip_end_s": vid["clip_end_s"]}})
-            cam_rows[key] = (cid, cal_id, list(wh), H)
+            cam_rows[key] = (cid, cal_id, list(wh), H, per_frame)
         sample = {"schema_version": VERSION, "sample_id": sid,
                   "source": {"dataset": mapping.get("dataset_id") or str(lerobot_root), "episode_id": str(ep),
                              "instruction": task or None},
@@ -371,10 +391,14 @@ def export(mapping: dict, lerobot_root: str | os.PathLike, *, episodes: list[int
                     "closed_fraction": float(closed[i]), "opening_m": None,
                     "provenance": {"source": grip["key"], "method": str(grip.get("closed_fraction") or "identity"),
                                    "assurance": "declared"}},
-                "cameras": {cid: {"video_frame_index": int(df["frame_index"].iloc[i]), "video_timestamp_s": float(t[i]),
-                                  "image_size_wh": wh, "calibration_id": cal_id, "T_reference_camera": None,
+                # the frame is decoded by its index: its video time is the index's, whatever the row's timestamp says
+                # (a dataset that dropped rows keeps numbering its frames)
+                "cameras": {cid: {"video_frame_index": int(df["frame_index"].iloc[i]),
+                                  "video_timestamp_s": float(df["frame_index"].iloc[i]) / lr.fps,
+                                  "image_size_wh": wh, "calibration_id": cal_id,
+                                  "T_reference_camera": None if pf is None else pf[i].tolist(),
                                   "H_media_from_calibration": H, "projection": None}
-                            for cid, cal_id, wh, H in cam_rows.values()}})
+                            for cid, cal_id, wh, H, pf in cam_rows.values()}})
         samples.append({"episode_index": ep, "sample": sample,
                         "calibration": {"schema_version": VERSION, "calibrations": calibs}, "frames": frames})
     return {"schema_version": VERSION, "container": "trajectory-bundle/1.0",

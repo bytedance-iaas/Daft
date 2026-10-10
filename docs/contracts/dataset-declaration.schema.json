@@ -1,0 +1,363 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "dataset-declaration/1.0 - what a dataset's records are and what they mean (C7, design doc 25 §3)",
+ "description": "One document per dataset, versioned on the dataset and frozen into run.json when a task starts; the data visualizer and the checks read the same one. Three layers: sources -> roles (which topics or columns are cameras, depth pictures, curves, the task text, the segments: the field mapping of viz-mapping/1.x, unchanged - an mcap dataset needs it, LeRobot and Lance take theirs from meta/info.json and may leave it out), semantics (what the pose, joint and gripper records are: column or topic, layout, units, frames) and calibration (each camera's mount, owner, intrinsics and extrinsics; the tool model; a handheld gripper's calibration). Every semantic and calibration item says how sure it is (assurance: declared / model_assumed / unknown) and which drafting assumptions it rests on; 'model_assumed' items are noted in reports and overlays as 按假设值. suspects are what the platform found doubtful when the declaration was confirmed (design doc 25 §3.4); they never block it. A viz-mapping/1.x document is a declaration with only its first layer.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": ["schema_version"],
+ "properties": {
+  "schema_version": {"const": "dataset-declaration/1.0"},
+  "name": {"type": "string", "minLength": 1, "maxLength": 128, "description": "shown in the template picker and on the dataset page"},
+  "base": {
+   "enum": ["builtin:foxglove", "builtin:ros2", "builtin:umi", "builtin:lerobot", null],
+   "description": "the built-in template it was drafted from; null = written by hand or imported. builtin:umi also sets the check reader's embodiment profile (umi_das)"
+  },
+  "timeline": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "source": {"enum": ["log_time", "publish_time", "message_timestamp"], "default": "log_time"},
+    "timestamp_field": {"$ref": "#/$defs/path"},
+    "frame_reference": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}]}
+   },
+   "if": {"properties": {"source": {"const": "message_timestamp"}}, "required": ["source"]},
+   "then": {"required": ["timestamp_field"]},
+   "description": "layer 1, mcap: which time of a message places it on the episode clock and which topic numbers the frames (viz-mapping/1.x)"
+  },
+  "cameras": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/camera"}, "description": "layer 1, mcap: the camera topics in display order"},
+  "depths": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/depth"}, "description": "layer 1, mcap: the depth picture topics"},
+  "series": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/series"}, "description": "layer 1, mcap: the curve groups"},
+  "task": {
+   "oneOf": [
+    {"type": "null"},
+    {"type": "object", "additionalProperties": false, "required": ["metadata_key"],
+     "properties": {"metadata_key": {"type": "string", "minLength": 1, "maxLength": 128}}},
+    {"type": "object", "additionalProperties": false, "required": ["topic"],
+     "properties": {"topic": {"$ref": "#/$defs/topic"}, "field": {"$ref": "#/$defs/path"}}}
+   ],
+   "description": "layer 1, mcap: where the episode's task text is"
+  },
+  "segments": {
+   "oneOf": [
+    {"type": "null"},
+    {"type": "object", "additionalProperties": false, "required": ["topic", "start_field", "end_field", "label_field"],
+     "properties": {"topic": {"$ref": "#/$defs/topic"}, "start_field": {"$ref": "#/$defs/path"},
+                    "end_field": {"$ref": "#/$defs/path"}, "label_field": {"$ref": "#/$defs/path"}}},
+    {"type": "object", "additionalProperties": false, "required": ["attachment"],
+     "properties": {"attachment": {"type": "string", "minLength": 1, "maxLength": 256}}}
+   ],
+   "description": "layer 1, mcap: where the segment annotations are"
+  },
+  "ignore": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/topic"}, "uniqueItems": true,
+             "description": "layer 1, mcap: topics left out on purpose"},
+  "semantics": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "pose": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/pose"}],
+             "description": "the end-effector (or handheld body) pose record; null = the dataset records none"},
+    "joints": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/joints"}],
+               "description": "the joint angles of a robot the platform knows (its forward kinematics give a second pose)"},
+    "gripper": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/gripper"}], "description": "the gripper opening record"},
+    "frames": {
+     "type": "object",
+     "maxProperties": 32,
+     "propertyNames": {"$ref": "#/$defs/name"},
+     "additionalProperties": {"$ref": "#/$defs/frame"},
+     "description": "extra frames by name (a hand mounted on the flange, a camera bracket), each a fixed transform from its parent"
+    }
+   },
+   "description": "layer 2: what the records mean"
+  },
+  "calibration": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "cameras": {
+     "type": "object",
+     "maxProperties": 32,
+     "propertyNames": {"$ref": "#/$defs/topic"},
+     "additionalProperties": {"$ref": "#/$defs/camera_calibration"},
+     "description": "per camera, by its source: the LeRobot / Lance video key (observation.images.<name>) or the mcap topic"
+    },
+    "tool": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/tool"}],
+             "description": "the tool on the arm, for the points and axes drawn and compared (a robot arm's; a handheld gripper's is in handheld)"},
+    "handheld": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/handheld"}],
+                 "description": "a handheld gripper's calibration (umi-calibration/2), one per gripper model"}
+   },
+   "description": "layer 3: how the records become pixels"
+  },
+  "timing": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/timing"}], "description": "the source clocks recorded per row (LeRobot columns), for the trajectory's source timing"},
+  "suspects": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/suspect"},
+               "description": "what the platform found doubtful when it was confirmed (design doc 25 §3.4); never blocks it"}
+ },
+ "$defs": {
+  "topic": {"type": "string", "minLength": 1, "maxLength": 512},
+  "name": {"type": "string", "minLength": 1, "maxLength": 128},
+  "column": {"type": "string", "minLength": 1, "maxLength": 256, "description": "a column (LeRobot / Lance feature key)"},
+  "path": {
+   "type": "string",
+   "maxLength": 256,
+   "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.([A-Za-z_][A-Za-z0-9_]*|[0-9]+|\\*))*$",
+   "description": "a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element"
+  },
+  "camera": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name"],
+   "properties": {"topic": {"$ref": "#/$defs/topic"}, "name": {"type": "string", "minLength": 1, "maxLength": 64},
+                  "schema": {"type": "string", "maxLength": 256}}
+  },
+  "depth": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name"],
+   "properties": {
+    "topic": {"$ref": "#/$defs/topic"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema": {"type": "string", "maxLength": 256},
+    "pair_with": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}]},
+    "unit": {"enum": ["mm", "m"]}
+   }
+  },
+  "series": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["topic", "name", "role"],
+   "properties": {
+    "topic": {"$ref": "#/$defs/topic"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+    "schema": {"type": "string", "maxLength": 256},
+    "fields": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/path"}},
+    "labels": {"type": "array", "maxItems": 512, "items": {"type": "string", "minLength": 1, "maxLength": 64}},
+    "names_field": {"$ref": "#/$defs/path"},
+    "transforms": {
+     "type": "object",
+     "maxProperties": 64,
+     "propertyNames": {"$ref": "#/$defs/path"},
+     "additionalProperties": {"enum": ["quat_xyzw_to_rpy", "quat_wxyz_to_rpy", "deg_to_rad", "rad_to_deg"]}
+    },
+    "unit": {"type": ["string", "null"], "maxLength": 32},
+    "role": {"enum": ["state", "action", "other"]},
+    "pair_with": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/topic"}]},
+    "smart": {"type": "boolean", "default": true}
+   }
+  },
+  "assurance": {
+   "enum": ["declared", "model_assumed", "unknown"],
+   "description": "declared: the dataset's owner says so (or it is read from the data); model_assumed: a default the draft filled in (reports say 按假设值); unknown: nobody knows yet"
+  },
+  "assumption": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["code"],
+   "properties": {
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64,
+             "description": "what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...)"},
+    "args": {"type": "object", "maxProperties": 16}
+   }
+  },
+  "assumptions": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/assumption"}},
+  "slice": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0},
+            "description": "[start, end) of a wider column or message vector"},
+  "pose": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["layout", "units", "reference_frame"],
+   "properties": {
+    "key": {"$ref": "#/$defs/column"},
+    "topic": {"$ref": "#/$defs/topic"},
+    "fields": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/path"}},
+    "slice": {"$ref": "#/$defs/slice"},
+    "layout": {"enum": ["xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat", "xyz_rot6d"],
+               "description": "how the numbers are laid out; never guessed from a width"},
+    "quaternion_key": {"$ref": "#/$defs/column", "description": "a quaternion in another column (xyz_quat_* with key only)"},
+    "units": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": ["position"],
+     "properties": {"position": {"enum": ["m", "mm"]}, "angle": {"enum": ["rad", "deg"]}}
+    },
+    "frame_id": {"type": ["string", "null"], "maxLength": 128,
+                 "description": "the point the pose places (panda_link8, a TCP, a VIO body); null = not known yet"},
+    "reference_frame": {"type": "string", "minLength": 1, "maxLength": 128, "description": "the frame the pose is in (robot_base)"},
+    "pose_type": {"const": "absolute"},
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   },
+   "oneOf": [{"required": ["key"], "not": {"required": ["topic"]}}, {"required": ["topic"], "not": {"required": ["key"]}}]
+  },
+  "joints": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["units", "robot"],
+   "properties": {
+    "key": {"$ref": "#/$defs/column"},
+    "topic": {"$ref": "#/$defs/topic"},
+    "fields": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/path"}},
+    "slice": {"$ref": "#/$defs/slice"},
+    "units": {"enum": ["rad", "deg"]},
+    "robot": {"enum": ["franka_panda", "franka_fr3"], "description": "a robot whose forward kinematics the platform has"},
+    "reference_frame": {"type": "string", "minLength": 1, "maxLength": 128},
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   },
+   "oneOf": [{"required": ["key"], "not": {"required": ["topic"]}}, {"required": ["topic"], "not": {"required": ["key"]}}]
+  },
+  "gripper": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "key": {"$ref": "#/$defs/column"},
+    "topic": {"$ref": "#/$defs/topic"},
+    "fields": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/path"}},
+    "index": {"type": "integer", "minimum": 0, "description": "the element of a wider column or message vector"},
+    "closed_fraction": {
+     "oneOf": [
+      {"enum": ["identity", "one_minus"]},
+      {"type": "object", "additionalProperties": false, "required": ["min", "max"],
+       "properties": {"min": {"type": "number"}, "max": {"type": "number"}}}
+     ],
+     "description": "how the recorded number becomes 0 = open .. 1 = closed"
+    },
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   },
+   "oneOf": [{"required": ["key"], "not": {"required": ["topic"]}}, {"required": ["topic"], "not": {"required": ["key"]}}]
+  },
+  "frame": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["parent", "xyz_m", "rpy_deg"],
+   "properties": {
+    "parent": {"$ref": "#/$defs/name"},
+    "xyz_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "rpy_deg": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}
+   }
+  },
+  "mat3": {"type": "array", "minItems": 3, "maxItems": 3,
+           "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}},
+  "mat4": {"type": "array", "minItems": 4, "maxItems": 4,
+           "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}},
+  "size": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}},
+  "intrinsics": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["model"],
+   "properties": {
+    "K": {"$ref": "#/$defs/mat3"},
+    "fx_cx_fy_cy": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+    "model": {"enum": ["pinhole", "opencv_brown", "opencv_fisheye"]},
+    "coefficients": {"type": "array", "maxItems": 8, "items": {"type": "number"},
+                     "description": "0 for pinhole, 5 for opencv_brown (in OpenCV's order: two radial, two tangential, the third radial), 4 for opencv_fisheye"},
+    "image_space": {"enum": ["rectified", "distorted"], "default": "rectified"},
+    "image_size_wh": {"$ref": "#/$defs/size", "description": "the picture the intrinsics are of; absent = the video's own size"},
+    "source": {"enum": ["declared", "camera_info", "meta_file", "upload"], "description": "where the numbers came from"},
+    "assurance": {"$ref": "#/$defs/assurance"}
+   },
+   "oneOf": [{"required": ["K"], "not": {"required": ["fx_cx_fy_cy"]}}, {"required": ["fx_cx_fy_cy"], "not": {"required": ["K"]}}]
+  },
+  "extrinsics": {
+   "oneOf": [
+    {"type": "object", "additionalProperties": false, "required": ["mode"],
+     "properties": {"mode": {"const": "static"}, "T_reference_camera": {"$ref": "#/$defs/mat4"},
+                    "xyz_rpy": {"type": "array", "minItems": 6, "maxItems": 6, "items": {"type": "number"}},
+                    "assurance": {"$ref": "#/$defs/assurance"}},
+     "oneOf": [{"required": ["T_reference_camera"], "not": {"required": ["xyz_rpy"]}},
+               {"required": ["xyz_rpy"], "not": {"required": ["T_reference_camera"]}}],
+     "description": "a fixed camera pose in the pose's reference frame (xyz_rpy: metres, then roll pitch yaw in radians, extrinsic xyz)"},
+    {"type": "object", "additionalProperties": false, "required": ["mode", "key"],
+     "properties": {"mode": {"const": "column"}, "key": {"$ref": "#/$defs/column"}, "layout": {"const": "xyz_rpy"},
+                    "assurance": {"$ref": "#/$defs/assurance"}},
+     "description": "the camera pose recorded per row in a column (DROID's camera_extrinsics.<camera>), constant within an episode"},
+    {"type": "object", "additionalProperties": false, "required": ["mode", "T_camera_tcp"],
+     "properties": {"mode": {"const": "camera_tcp"}, "T_camera_tcp": {"$ref": "#/$defs/mat4"},
+                    "assurance": {"$ref": "#/$defs/assurance"}},
+     "description": "a wrist camera: the tool centre in the camera's optical frame; the camera moves with the pose"}
+   ]
+  },
+  "camera_calibration": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["mount"],
+   "properties": {
+    "camera_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,64}$", "description": "the camera's id in the trajectory; absent = the source's short name"},
+    "mount": {"enum": ["fixed_external", "wrist", "moving"],
+              "description": "fixed_external: a third-person camera that does not move; wrist: on a hand or an arm; moving: it moves with no pose of its own (a head camera) - not supported"},
+    "owner": {"type": ["string", "null"], "maxLength": 64, "description": "a wrist camera's hand or arm (robot0, left, arm)"},
+    "intrinsics": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/intrinsics"}], "description": "null = not known (要上传)"},
+    "extrinsics": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/extrinsics"}], "description": "null = not known"},
+    "media_transform": {"oneOf": [{"const": "identity"}, {"$ref": "#/$defs/mat3"}],
+                        "description": "calibration picture -> video pixels (a crop, a resize); identity by default"},
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   }
+  },
+  "tool": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "model": {"type": ["string", "null"], "maxLength": 64, "description": "the gripper model (franka_hand, robotiq_2f85)"},
+    "tcp_offset_m": {"oneOf": [{"type": "null"}, {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}],
+                     "description": "the tool centre (between the fingertips) in the pose's frame; [0, 0, 0] when the pose already is the TCP; null = no TCP point"},
+    "finger_axis": {"enum": ["local_x", "local_y", "local_z", null], "description": "the axis of the pose's frame the fingers open along"},
+    "max_opening_m": {"type": ["number", "null"], "minimum": 0, "maximum": 0.5},
+    "axes": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {"from": {"enum": ["tcp", "eef_origin"]}, "length_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}
+    },
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   }
+  },
+  "handheld": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["calibration"],
+   "properties": {
+    "calibration": {"type": "object", "required": ["schema_version"],
+                    "properties": {"schema_version": {"const": "umi-calibration/2"}},
+                    "description": "a umi-calibration/2 document (docs/contracts/eef/umi_calibration.schema.json); its provenance says which items are assumed"},
+    "builtin": {"type": ["string", "null"], "maxLength": 64, "description": "the built-in calibration it came from (das_gripper_demo); null = uploaded or edited"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   }
+  },
+  "timing": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "source_state_index_key": {"$ref": "#/$defs/column"},
+    "source_clocks": {
+     "type": "array",
+     "maxItems": 16,
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "key"],
+      "properties": {
+       "channel": {"type": "string", "minLength": 1, "maxLength": 128, "description": "robot_state, or a camera's source"},
+       "key": {"$ref": "#/$defs/column"},
+       "unit": {"enum": ["s", "ms", "us", "ns"]},
+       "clock_id": {"type": "string", "maxLength": 64},
+       "semantics": {"type": "string", "maxLength": 128}
+      }
+     }
+    },
+    "assurance": {"$ref": "#/$defs/assurance"},
+    "assumptions": {"$ref": "#/$defs/assumptions"}
+   }
+  },
+  "suspect": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": ["code", "field", "message"],
+   "properties": {
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64},
+    "field": {"type": "string", "maxLength": 256, "description": "the declaration's path (calibration.cameras.<source>.intrinsics)"},
+    "message": {"type": "string", "maxLength": 512},
+    "args": {"type": "object", "maxProperties": 16}
+   }
+  }
+ }
+}

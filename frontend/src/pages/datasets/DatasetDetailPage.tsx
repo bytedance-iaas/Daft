@@ -12,6 +12,7 @@ import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { StateTag } from '../../components/StateTag';
 import { DatasetAnnotations } from '../../features/datasets/Annotations';
+import { DeclarationDrawer } from '../../features/datasets/DeclarationDrawer';
 import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer';
 import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useVizDisplay } from '../../features/visualizer/data';
@@ -32,6 +33,7 @@ export function DatasetDetailPage() {
   const [params, setParams] = useSearchParams();
   const [mapping, setMapping] = useState(params.get('mcap') === '1');
   const [display, setDisplay] = useState(false);
+  const [declaring, setDeclaring] = useState(params.get('declaration') === '1');
   const closeMapping = () => {
     setMapping(false);
     if (params.has('mcap')) {
@@ -163,6 +165,24 @@ export function DatasetDetailPage() {
             ]}
           />
         </Card>
+        {d.format !== 'unsupported' ? (
+          <Card title={zh.declaration.card} data-testid="dataset-declaration">
+            <Space>
+              <span className={d.declaration.state === 'confirmed' ? undefined : 'muted'} data-testid="dataset-declaration-state">
+                {d.declaration.state === 'confirmed' ? zh.declaration.confirmedOn(d.declaration.version, d.declaration.name) : zh.declaration.none}
+              </span>
+              {d.declaration.layers.length ? (
+                <span className="muted">{d.declaration.layers.map((l) => zh.declaration.layers[l] ?? l).join(' · ')}</span>
+              ) : null}
+              {d.declaration.assumed || d.declaration.suspects ? (
+                <span style={{ color: 'var(--c-warning)' }}>{zh.declaration.counts(d.declaration.assumed, d.declaration.suspects)}</span>
+              ) : null}
+              <Button size="mini" data-testid="dataset-declaration-open" onClick={() => setDeclaring(true)}>
+                {zh.declaration.entry}
+              </Button>
+            </Space>
+          </Card>
+        ) : null}
         <Card title={zh.datasets.detailPreflight}>
           {failure ? <Alert type="error" content={failure} data-testid="dataset-preflight-error" style={ds ? { marginBottom: 16 } : undefined} /> : null}
           {preflight.length ? <Descriptions column={2} data={preflight} /> : null}
@@ -239,6 +259,18 @@ export function DatasetDetailPage() {
       {actions.dialogs}
       <McapConfigDrawer dataset={mapping && d.viz_mapping ? d : null} onClose={closeMapping} />
       <DisplayConfigDrawer dataset={display ? d : null} onClose={() => setDisplay(false)} />
+      <DeclarationDrawer
+        dataset={declaring ? d : null}
+        onClose={() => setDeclaring(false)}
+        onMapping={
+          d.viz_mapping
+            ? () => {
+                setDeclaring(false);
+                setMapping(true);
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }

@@ -115,7 +115,11 @@ class DatasetOps:
                   embodiment_id: str | None = None, modules: list[str] | None = None,
                   params: list[str] | None = None, mapping: dict | None = None) -> dict:
         """``modules`` narrows the report; ``params`` are ``--param MODULE.KEY=VALUE`` (registry 1.4);
-        ``mapping`` an mcap mapping not yet stored (the registration's own is used otherwise)."""
+        ``mapping`` an mcap mapping not yet stored (the registration's own is used otherwise). The registration's
+        confirmed declaration goes along (``--declaration``, design doc 25 §3.5)."""
+        import os
+        import tempfile
+
         argv = ["preflight", *self._input_args(src), *self.mapping_args(src, owner, mapping)]
         if vlm_backend:
             argv += ["--vlm-backend", vlm_backend]
@@ -125,19 +129,53 @@ class DatasetOps:
             argv += ["--modules", ",".join(modules)]
         for item in params or []:
             argv += ["--param", item]
-        outcome = self._run(src, owner, argv, stage="preflight",
-                            timeout_s=self.orch.cfg.preflight_timeout_s)
+        decl = self.declaration_of(src, owner)
+        temp = None
+        if decl is not None:
+            fd, temp = tempfile.mkstemp(prefix="declaration-", suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(decl, fh, ensure_ascii=False)
+            argv += ["--declaration", temp]
+        try:
+            outcome = self._run(src, owner, argv, stage="preflight",
+                                timeout_s=self.orch.cfg.preflight_timeout_s)
+        finally:
+            if temp is not None:
+                os.unlink(temp)
         if not outcome.ok:
             self._raise(outcome, "预检", src)
         return outcome.doc
+
+    def declaration_of(self, src: Source, owner: str) -> dict | None:
+        """The registration's confirmed declaration when it says more than an mcap mapping (C7, design doc 25 §3)."""
+        from ..viz.declaration import for_cli
+
+        ds = self.orch.repo.find_dataset(source=src.source, uri=src.uri, region=src.region, owner=owner)
+        return for_cli(ds.viz_mapping) if ds is not None else None
+
+    def refresh_preflight(self, ds: P.Dataset, owner: str) -> P.Dataset:
+        """The registration's preflight taken again after its declaration changed: the listing stays unless the
+        checks can now read the format or no longer can (then the whole ``repreflight``)."""
+        src = Source.of_dataset(ds)
+        preflight = self.preflight(src, owner)
+        before = ds.preflight if isinstance(ds.preflight, dict) else {}
+        if format_supported(preflight) != format_supported(before):
+            return self.repreflight(ds, owner)[0]
+        # the files did not change (the listing and its fingerprint stay); the metadata fingerprint is the preflight's
+        return self.orch.repo.update_dataset(ds.id, owner=owner, preflight=preflight, preflighted_at=self.orch.clock(),
+                                             meta_fingerprint=str(preflight.get("meta_fingerprint") or ds.meta_fingerprint),
+                                             source_fingerprint=ds.source_fingerprint)
 
     def mapping_args(self, src: Source, owner: str, mapping: dict | None = None) -> list[str]:
         """``--set ingest.mcap_mapping=...``: the check reader's mapping derived from ``mapping`` (one
         being registered) or the registration's confirmed mcap mapping (C7, D62); nothing for a
         dataset without one (the site default)."""
+        from curation.declaration import mapping_of
+
         if mapping is None:
             ds = self.orch.repo.find_dataset(source=src.source, uri=src.uri, region=src.region, owner=owner)
             mapping = ds.viz_mapping if ds is not None else None
+        mapping = mapping_of(mapping)                  # the declaration's first layer (design doc 25 §3.1)
         if not isinstance(mapping, dict):
             return []
         from curation.viz.mcap_mapping import check_mapping

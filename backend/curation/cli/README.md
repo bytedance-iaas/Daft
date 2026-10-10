@@ -132,7 +132,10 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 ## 各命令要点
 
-**preflight**：`curation preflight --input <tos://… | 本地目录 | 公共数据集名> [--source tos|public|local] [--vlm-backend 名] [--embodiment-id 型号] [--modules a,b] [--source-manifest 文件] --json`
+**preflight**：`curation preflight --input <tos://… | 本地目录 | 公共数据集名> [--source tos|public|local] [--vlm-backend 名] [--embodiment-id 型号] [--modules a,b] [--source-manifest 文件] [--declaration 文件] --json`
+
+- `--declaration`：数据集声明（C7 `dataset-declaration/1.0`，设计 25 §3）。EEF 条目的 `trajectory_source` 说轨迹从哪来：声明够了就是 `generate`；不给声明时预检按元数据
+  起草一份，只用来说缺什么（`missing_declaration` 的 `missing`），从不拿它生成。`check` 同样收 `--declaration`（Daemon 传任务开跑时冻结的那份），EEF 据此逐条生成轨迹。
 
 - 只列目录、只读 `meta/` 下的文件，不读 parquet 和视频（mcap 只读每个文件的摘要区，见下文「mcap 与 Lance 数据集」）。
 - 认得 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起的三表布局，D44）。其余（`.rrd`、别的 Lance 表、其他 LeRobot 版本、认不出的目录）所有模块都是 `unsupported`，原因写明检测到的格式（`format_unsupported`）。

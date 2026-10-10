@@ -292,6 +292,8 @@ flowchart LR
 
 ### 6.1 定位
 
+> 2026-10-10（设计 25 §3，F5.23）：C7 扩成数据集声明 `dataset-declaration/1.0`，本节的字段映射是它的第一层（`viz-mapping/1.x` 读成只有第一层的声明），`PUT /datasets/{id}/mapping` 只换第一层；语义与标定两层见设计 25。
+
 数据集级配置，可视化与质检共用；**内置模版自动起草，用户在表格里确认**，可另存为模版给同一套采集系统的其他数据集复用，也可以直接导入自带的 JSON。契约 C7：`docs/contracts/viz-mapping.schema.json`（`schema_version: viz-mapping/1.0`；`1.1` 只加了深度图 `depths`，见设计 21 §5.4）。它就是 mcap 读取器的配置。
 
 ### 6.2 数据模型

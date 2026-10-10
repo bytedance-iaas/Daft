@@ -105,6 +105,11 @@ class WorkDir:
     def run_json(self) -> pathlib.Path:
         return self.root / "run.json"
 
+    @property
+    def declaration(self) -> pathlib.Path:
+        """The dataset declaration frozen at start (design doc 25 §3.5), the file ``--declaration`` names."""
+        return self.root / "inputs" / "declaration.json"
+
     def revision_dir(self, revision: int) -> pathlib.Path:
         return self.root / "revisions" / f"r{int(revision):04d}"
 

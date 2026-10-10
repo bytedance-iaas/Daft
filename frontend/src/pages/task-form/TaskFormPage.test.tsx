@@ -1,8 +1,7 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
-import { DATASET_PROFILES, recordDraft } from '../../mocks/world';
 import { server } from '../../mocks/server';
 import { fill, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
@@ -240,8 +239,8 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(eef);
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
-    // an so101 dataset: nothing to draft the record mapping from (design doc 12 §8.7, D-E17)
-    expect(within(s2()).getByTestId('draft-record_mapping')).toHaveTextContent('没能从数据集元数据起草：位姿：没有带 x / y / z');
+    // the record mapping is no longer a parameter: the dataset declaration says the records (design doc 25 §3)
+    expect(within(s2()).queryByTestId('draft-record_mapping')).toBeNull();
     // the gripper reference is optional (registry 1.12, D-E15); trajectory.json is optional only where the platform
     // can compute the trajectory (design doc 24) - not on this so101 dataset, so it is asked for and required
     expect(requiredFieldLabels(s2())).toContain('trajectory.json');
@@ -317,87 +316,17 @@ describe('新建任务 · 两屏与提交', () => {
     expect(done).toHaveTextContent('template.json');
     expect(done).toHaveTextContent('3 个模板条目');
     expect(done).toHaveTextContent('相机 front、wrist');
-    // optional (registry 1.13, design doc 12 §8.7): where the dataset keeps its own end-effector record
-    expect(requiredFieldLabels(s2())).not.toContain('数据集记录映射');
-    const mapping = { schema_version: 'eef-mapping/1.1', record: { joints: { key: 'observation.state.joint_position', units: 'rad', robot: 'franka_panda', reference_frame: 'robot_base' } } };
-    await user.upload(within(s2()).getByLabelText('数据集记录映射', { selector: 'input[type=file]' }), new File([JSON.stringify(mapping)], 'record.json', { type: 'application/json' }));
-    expect(await within(s2()).findByTestId('upload-done-record_mapping')).toHaveTextContent('比对来源 关节角 · 机器人 franka_panda · 列 observation.state.joint_position');
+    // retired (registry 5.1): the declaration says the records and a handheld gripper's calibration
+    expect(within(s2()).queryByLabelText('数据集记录映射', { selector: 'input[type=file]' })).toBeNull();
+    expect(within(s2()).queryByLabelText('夹爪标定', { selector: 'input[type=file]' })).toBeNull();
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: { id: string; params?: Record<string, unknown> }[] };
     const eef = body.modules.find((m) => m.id === 'eef_video_consistency');
-    expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['gripper_template', 'record_mapping', 'trajectory_json']);
+    expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['gripper_template', 'trajectory_json']);
     expect(((body as unknown as { params: Record<string, unknown> }).params).vlm_hedge).toBe(false);
   });
 
-  /** Screen 2 of a new task on the DROID-like Franka dataset with the EEF module on. */
-  async function eefOnDataset2(user: Awaited<ReturnType<typeof renderApp>>['user'], name: string) {
-    await screen.findByText('基本信息');
-    await fill(user, '任务名称', name);
-    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/eef_ds2_lr3');
-    await pick(user, '访问密钥', 'prod-tos');
-    await fill(user, '交付目录', `tos://pai-kit-deliveries/${name}`);
-    await screen.findByText(/LeRobot v3 · 7 条 episode/);
-    await user.click(screen.getByText('快速质检'));
-    await user.click(screen.getByRole('checkbox', { name: 'EEF–视频一致性' }));
-    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
-    await waitFor(() => expect(s2()).toBeVisible());
-    return within(s2()).getByTestId('draft-record_mapping');
-  }
-
-  it('数据集记录映射 comes drafted: 确认使用 uploads the draft, 撤销 drops it, 修改 sends the edited JSON (design doc 12 §8.7, D-E17)', async () => {
-    const seen = record();
-    const { user } = renderApp('/tasks/new');
-    const box = await eefOnDataset2(user, 'eef-draft');
-    const draft = recordDraft(DATASET_PROFILES.find((p) => p.name === 'eef_ds2_lr3')!).document!;
-    expect(box).toHaveTextContent('从数据集元数据起草');
-    expect(box).toHaveTextContent('位姿：observation.state.cartesian_position · xyz_rpy_xyz_extrinsic · m / rad · 参考点未声明');
-    expect(box).toHaveTextContent('关节角：observation.state.joint_position · franka_panda · rad');
-    expect(box).toHaveTextContent('推断的地方');
-    expect(box).toHaveTextContent('位姿：用的是实测列 observation.state.cartesian_position，没用指令列');
-    const uploads = () => seen.filter((x) => x.method === 'POST' && x.path === '/uploads').map((x) => x.body);
-    await user.click(within(box).getByRole('button', { name: '确认使用' }));
-    expect(await within(box).findByTestId('draft-confirmed-record_mapping')).toHaveTextContent('已确认草稿');
-    expect(within(s2()).getByTestId('upload-done-record_mapping')).toHaveTextContent('record-mapping-draft.json');
-    expect(within(s2()).getByTestId('upload-done-record_mapping')).toHaveTextContent('比对来源 关节角、位姿列 · 机器人 franka_panda');
-    expect(uploads()).toEqual([draft]);
-    await user.click(within(box).getByRole('button', { name: '撤销' }));
-    expect(within(s2()).queryByTestId('upload-done-record_mapping')).toBeNull();
-    expect(within(box).queryByTestId('draft-confirmed-record_mapping')).toBeNull();
-    // 取消修改 drops what was typed: the box opens on the draft again
-    await user.click(within(box).getByRole('button', { name: '修改' }));
-    fireEvent.change(within(box).getByLabelText('映射草稿（JSON）'), { target: { value: '{}' } });
-    await user.click(within(box).getByRole('button', { name: '取消修改' }));
-    await user.click(within(box).getByRole('button', { name: '修改' }));
-    expect(JSON.parse((within(box).getByLabelText('映射草稿（JSON）') as HTMLTextAreaElement).value)).toEqual(draft);
-    await user.click(within(box).getByRole('button', { name: '取消修改' }));
-    // the person knows the pose column is the flange: say so, then confirm what is in the box
-    await user.click(within(box).getByRole('button', { name: '修改' }));
-    const edited = JSON.parse(JSON.stringify(draft)) as { record: { pose: { frame_id: string | null } } };
-    edited.record.pose.frame_id = 'panda_link8';
-    fireEvent.change(within(box).getByLabelText('映射草稿（JSON）'), { target: { value: JSON.stringify(edited, null, 2) } });
-    await user.click(within(box).getByRole('button', { name: '确认使用' }));
-    await within(box).findByTestId('draft-confirmed-record_mapping');
-    expect(uploads()).toEqual([draft, edited]);
-    const traj = { schema_version: 'eef-video/1.0.0', samples: [0, 1].map((i) => ({ episode_index: i, sample: { sample_id: `ds2_00000${i}` }, frames: [{}, {}] })) };
-    await user.upload(within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' }), new File([JSON.stringify(traj)], 'trajectory.json', { type: 'application/json' }));
-    await within(s2()).findByTestId('upload-done-trajectory_json');
-    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
-    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: { id: string; params?: Record<string, unknown> }[] };
-    const eef = body.modules.find((m) => m.id === 'eef_video_consistency');
-    expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['record_mapping', 'trajectory_json']);
-  });
-
-  it('数据集记录映射: an edit that is not a mapping is refused where it was made (D-E17)', async () => {
-    const { user } = renderApp('/tasks/new');
-    const box = await eefOnDataset2(user, 'eef-draft-bad');
-    await user.click(within(box).getByRole('button', { name: '修改' }));
-    fireEvent.change(within(box).getByLabelText('映射草稿（JSON）'), { target: { value: '{"schema_version": "eef-mapping/1.1", "record": {' } });
-    await user.click(within(box).getByRole('button', { name: '确认使用' }));
-    expect(await within(s2()).findByTestId('upload-error-record_mapping')).toHaveTextContent('文件不是合法的 JSON');
-    expect(within(box).queryByTestId('draft-confirmed-record_mapping')).toBeNull();
-  });
 
   it('two uploads at once: the one finishing last does not drop the other (galbot 2026-09-24: seeds lost behind a slow trajectory.json)', async () => {
     const seen = record();

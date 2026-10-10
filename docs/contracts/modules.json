@@ -1,5 +1,5 @@
 {
- "registry_version": "5.0",
+ "registry_version": "5.1",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1733,7 +1733,7 @@
       ],
       "x-max-mb": 64,
       "title": "trajectory.json",
-      "description": "平台能算出轨迹时不用给：从数据集生成（导出过的手持夹爪数据集的状态与相机标定、UMI 原始会话；原始手持夹爪 mcap 用下面的夹爪标定逐条推出），或读数据集自带的 trajectory.json，这时上传只是换一份。算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，上传即校验",
+      "description": "平台能算出轨迹时不用给：按数据集声明从位姿记录生成（机械臂），或从手持夹爪的数据生成（导出过的数据集、UMI 原始会话、原始 mcap），或读数据集自带的 trajectory.json，这时上传只是换一份，并额外比对上传件与数据集记录。算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，上传即校验",
       "default": ""
      },
      "gripper_calibration": {
@@ -1745,8 +1745,9 @@
       ],
       "x-max-mb": 1,
       "title": "夹爪标定",
-      "description": "手持夹爪的标定 umi-calibration/2：位姿是什么、机体→光学的旋转、相机→指尖中心、开口单位、缺 camera_info 时的内参回退。只在没传 trajectory.json、平台从手持夹爪的 mcap 推出轨迹时用；不给就用内置的 DAS DEMO 假设值（不带内参回退，结果注明「按假设值」）",
-      "default": ""
+      "description": "已停用（5.1）：手持夹爪的标定写在数据集声明里。旧任务给过的仍然照用",
+      "default": "",
+      "deprecated": true
      },
      "observation_seeds": {
       "type": "string",
@@ -1792,8 +1793,9 @@
       ],
       "x-max-mb": 8,
       "title": "数据集记录映射",
-      "description": "eef-mapping/1.1 的 record 块：数据集自己的末端位姿列（或 mcap topic）、关节角列与机器人型号（DEMO 内置 Franka）、单位与坐标系。给了就把上传轨迹和数据集的记录逐帧比对，只报告、不参与判决",
-      "default": ""
+      "description": "已停用（5.1）：数据集的位姿与关节记录写在数据集声明里。旧任务给过的仍然照用",
+      "default": "",
+      "deprecated": true
      },
      "threshold_profile": {
       "title": "阈值",

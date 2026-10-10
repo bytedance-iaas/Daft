@@ -81,13 +81,14 @@ function kindOf(prop: Schema, options: ParamOption[] | undefined): ParamKind {
   return 'string';
 }
 
-/** The form fields for one module's param_schema, in schema order. */
+/** The form fields for one module's param_schema, in schema order; a ``deprecated`` parameter is not offered
+ * (registry 5.1: the dataset declaration says what EEF's gripper_calibration and record_mapping gave). */
 export function paramFields(schema: unknown): ParamField[] {
   const s = asObject(schema);
   const props = asObject(s?.properties);
   if (!props) return [];
   const required = new Set(Array.isArray(s?.required) ? (s!.required as string[]) : []);
-  return Object.entries(props).map(([key, raw]) => {
+  return Object.entries(props).filter(([, raw]) => asObject(raw)?.deprecated !== true).map(([key, raw]) => {
     const prop = asObject(raw) ?? {};
     const options = optionsOf(prop);
     const kind = kindOf(prop, options);

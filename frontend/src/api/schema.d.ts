@@ -672,6 +672,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/declaration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The dataset's declaration, a draft made from the dataset, and what the EEF module would make of it
+         * @description `declaration` is the confirmed version (null before the first); `draft` is drafted from the dataset now
+         *     (its metadata and, for mcap, a probe of its first file) and laid under the confirmed one - the starting
+         *     point of an edit, never used by a task. `unresolved` lists what still needs a person (a camera whose mount
+         *     or owner nobody knows; missing intrinsics or extrinsics). `trajectory` says how the EEF module would have
+         *     its trajectory with the confirmed declaration (`generate`, or `missing_declaration` with what is missing).
+         */
+        get: operations["getDatasetDeclaration"];
+        /**
+         * Confirm a new version of the declaration (checked against the dataset)
+         * @description Checked against the declaration Schema and the dataset: a column or topic the dataset does not have, a
+         *     width that does not fit the layout, a transform that is not rigid fail with `validation_failed` and
+         *     `details.errors` per item; doubtful values (intrinsics that stretch the picture unevenly, an opening
+         *     outside 0-0.2 m) are kept on the declaration as `suspects` and do not stop it. The registration's
+         *     preflight is taken again. Tasks started before keep the version they froze.
+         */
+        put: operations["putDatasetDeclaration"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/datasets/{id}/annotations": {
         parameters: {
             query?: never;
@@ -2003,8 +2037,9 @@ export interface components {
             created_at: number;
             last_task: null | components["schemas"]["TaskRef"];
             viz: components["schemas"]["VizStatus"];
-            /** @description the mcap field mapping (C7) - its state, version and name, shown under the format in the list; null for other formats */
+            /** @description the mcap field mapping (the declaration's first layer) - its state, version and name, shown under the format in the list; null for other formats */
             viz_mapping: null | components["schemas"]["DatasetMappingInfo"];
+            declaration: components["schemas"]["DatasetDeclarationInfo"];
         };
         DatasetItem: components["schemas"]["DatasetItemFields"];
         DatasetDetail: components["schemas"]["DatasetItemFields"] & {
@@ -2168,7 +2203,7 @@ export interface components {
             credential: string | null;
         };
         /**
-         * @description the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external annotation file (design doc 18 §4.5), not a module parameter; eef_gripper_calibration (4.6.0) is a handheld gripper's calibration (umi-calibration/2)
+         * @description the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external annotation file (design doc 18 §4.5), not a module parameter; eef_gripper_calibration (4.6.0) is a handheld gripper's calibration (umi-calibration/2). eef_record_mapping and eef_gripper_calibration are retired in 5.0.0 (the dataset declaration says both) and still accepted for older tasks
          * @enum {unknown}
          */
         UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template" | "eef_record_mapping" | "eef_gripper_calibration" | "viz_annotations";
@@ -3481,6 +3516,85 @@ export interface components {
             text: string;
         };
         VizMapping: components["schemas"]["viz-mapping.schema"];
+        Declaration: components["schemas"]["dataset-declaration.schema"];
+        DeclarationNote: {
+            /** @description the declaration's path (calibration.cameras.<source>.intrinsics) */
+            field: string;
+            code: string;
+            args?: Record<string, unknown>;
+        };
+        DeclarationCamera: {
+            /** @description the video key (LeRobot, Lance) or the topic (mcap) */
+            source: string;
+            name: string;
+            width: number | null;
+            height: number | null;
+        };
+        /** @description how the EEF module would have its trajectory with the confirmed declaration */
+        DeclarationTrajectory: {
+            /** @enum {unknown} */
+            kind: "upload" | "session" | "generate" | "mcap_derive" | "dataset_file" | "missing_declaration" | "missing_pose";
+            missing?: components["schemas"]["DeclarationNote"][];
+            cameras?: {
+                source: string;
+                camera_id: string;
+                /** @enum {string|null} */
+                mount: "fixed_external" | "wrist" | "moving" | null;
+                owner: string | null;
+                /** @description the declaration lets the platform project onto it */
+                drawable: boolean;
+                /** @description why not: mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing */
+                reason: string | null;
+            }[];
+        };
+        DeclarationAssumed: {
+            field: string;
+            /** @enum {unknown} */
+            assurance: "model_assumed" | "unknown";
+            codes: (string | null)[];
+        };
+        DeclarationSuspect: {
+            code: string;
+            field: string;
+            message: string;
+            args?: Record<string, unknown>;
+        };
+        DatasetDeclaration: {
+            dataset_id: string;
+            /** @enum {unknown} */
+            format: "lerobot" | "mcap" | "lance" | "umi_session";
+            /** @enum {unknown} */
+            state: "none" | "confirmed";
+            declaration: null | components["schemas"]["dataset-declaration.schema"];
+            /** @description 0 = never confirmed */
+            version: number;
+            updated_at: number | null;
+            /** @description drafted from the dataset now and laid under the confirmed declaration; the starting point of an edit, never used by a task */
+            draft: null | components["schemas"]["dataset-declaration.schema"];
+            unresolved: components["schemas"]["DeclarationNote"][];
+            cameras: components["schemas"]["DeclarationCamera"][];
+            trajectory: components["schemas"]["DeclarationTrajectory"];
+            assumed: components["schemas"]["DeclarationAssumed"][];
+            suspects: components["schemas"]["DeclarationSuspect"][];
+            warnings: components["schemas"]["VizWarning"][];
+        };
+        DatasetDeclarationPut: {
+            /** @description a dataset-declaration/1.0 document (a viz-mapping/1.x one is taken as its first layer) */
+            declaration: components["schemas"]["dataset-declaration.schema"] | components["schemas"]["viz-mapping.schema"];
+        };
+        DatasetDeclarationInfo: {
+            /** @enum {unknown} */
+            state: "none" | "confirmed";
+            version: number;
+            updated_at: number | null;
+            name: string | null;
+            /** @description what the confirmed declaration says - sources to roles (an mcap mapping), semantics and calibration */
+            layers: ("sources" | "semantics" | "calibration")[];
+            /** @description items it only assumes */
+            assumed: number;
+            /** @description doubtful values found when it was confirmed */
+            suspects: number;
+        };
         DatasetMapping: {
             dataset_id: string;
             /** @enum {unknown} */
@@ -3583,15 +3697,15 @@ export interface components {
             name: string;
             description: string;
             builtin: boolean;
-            /** @description null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping */
-            mapping: null | components["schemas"]["viz-mapping.schema"];
+            /** @description null for the built-ins, which are rules applied to a probe (design doc 18 §6.3), not a fixed mapping; a site template holds a mapping or a whole declaration (5.0.0) */
+            mapping: null | components["schemas"]["viz-mapping.schema"] | components["schemas"]["dataset-declaration.schema"];
             created_at: number | null;
             updated_at: number | null;
         };
         VizTemplateCreate: {
             name: string;
             description?: string;
-            mapping: components["schemas"]["viz-mapping.schema"];
+            mapping: components["schemas"]["viz-mapping.schema"] | components["schemas"]["dataset-declaration.schema"];
         };
         topic: string;
         /** @description a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element of a list or every field of a message */
@@ -3723,7 +3837,7 @@ export interface components {
             availability: "available" | "needs_input" | "unsupported";
             /** @description English, for the terminal and logs; UIs render reason_code instead */
             reason?: string;
-            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on lance; it reads mcap image topics since F5.13), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, observation_seed_missing (as the module's reason: neither observation seeds nor a gripper template, nothing finds the gripper in the video), eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason. */
+            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on lance; it reads mcap image topics since F5.13), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, declaration_incomplete {missing} (the pose is recorded, the dataset declaration lacks what generating the trajectory needs: trajectory_source.missing), observation_seed_missing (as the module's reason: neither observation seeds nor a gripper template, nothing finds the gripper in the video), eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason. */
             reason_code?: string;
             /** @description parameters of reason_code, listed with each code */
             reason_args?: Record<string, unknown>;
@@ -3748,9 +3862,26 @@ export interface components {
             episode_counts?: {
                 [key: string]: number;
             };
-            /** @description Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafts record_mapping from a LeRobot info.json) */
+            /** @description Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafted record_mapping from a LeRobot info.json; no longer drafted since the dataset declaration) */
             drafts?: {
                 [key: string]: components["schemas"]["param_draft"];
+            };
+            /** @description EEF-video consistency: how the task's trajectory is had - upload (the trajectory_json parameter), session (a raw UMI session), generate (a handheld gripper's LeRobot export, or a robot arm's pose record by the dataset declaration), mcap_derive (a handheld gripper's raw mcap), dataset_file (the dataset's own trajectory.json); missing_declaration (the pose is recorded, the declaration lacks what missing names: complete it on the dataset page, or upload a trajectory.json), missing_pose (no pose record: upload a trajectory.json) */
+            trajectory_source?: {
+                /** @enum {unknown} */
+                kind: "upload" | "session" | "generate" | "mcap_derive" | "dataset_file" | "missing_declaration" | "missing_pose";
+                declaration?: {
+                    /** @description true: no declaration was given, the one judged was drafted here (never generated from) */
+                    drafted?: boolean;
+                    sha256?: string;
+                };
+                missing?: {
+                    /** @description the declaration's path (calibration.cameras.<source>.intrinsics), <declaration> for the whole of it */
+                    field: string;
+                    /** @description pose_missing, pose_frame_unknown, tool_missing, mount_unknown, intrinsics_missing, extrinsics_missing, camera_tcp_missing, no_drawable_camera, format_not_generated {format}, declaration_unconfirmed */
+                    code: string;
+                    args?: Record<string, unknown>;
+                }[];
             };
         } & (unknown & unknown);
         digest: string;
@@ -3839,6 +3970,305 @@ export interface components {
             /** @description the listing fingerprint (source-manifest summary.digest) computed over the metadata objects only */
             meta_fingerprint: components["schemas"]["digest"];
             warnings: string[];
+        };
+        /** @description a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element */
+        "$defs-path": string;
+        assumption: {
+            /** @description what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...) */
+            code: string;
+            args?: Record<string, unknown>;
+        };
+        /** @description a column (LeRobot / Lance feature key) */
+        column: string;
+        /** @description [start, end) of a wider column or message vector */
+        slice: number[];
+        /**
+         * @description declared: the dataset's owner says so (or it is read from the data); model_assumed: a default the draft filled in (reports say 按假设值); unknown: nobody knows yet
+         * @enum {unknown}
+         */
+        assurance: "declared" | "model_assumed" | "unknown";
+        assumptions: components["schemas"]["assumption"][];
+        name: string;
+        mat3: number[][];
+        size: number[];
+        mat4: number[][];
+        intrinsics: {
+            K?: components["schemas"]["mat3"];
+            fx_cx_fy_cy?: number[];
+            /** @enum {unknown} */
+            model: "pinhole" | "opencv_brown" | "opencv_fisheye";
+            /** @description 0 for pinhole, 5 for opencv_brown (in OpenCV's order: two radial, two tangential, the third radial), 4 for opencv_fisheye */
+            coefficients?: number[];
+            /**
+             * @default rectified
+             * @enum {unknown}
+             */
+            image_space?: "rectified" | "distorted";
+            /** @description the picture the intrinsics are of; absent = the video's own size */
+            image_size_wh?: components["schemas"]["size"];
+            /**
+             * @description where the numbers came from
+             * @enum {unknown}
+             */
+            source?: "declared" | "camera_info" | "meta_file" | "upload";
+            assurance?: components["schemas"]["assurance"];
+        } & (unknown | unknown);
+        extrinsics: ({
+            /** @constant */
+            mode: "static";
+            T_reference_camera?: components["schemas"]["mat4"];
+            xyz_rpy?: number[];
+            assurance?: components["schemas"]["assurance"];
+        } & (unknown | unknown)) | {
+            /** @constant */
+            mode: "column";
+            key: components["schemas"]["column"];
+            /** @constant */
+            layout?: "xyz_rpy";
+            assurance?: components["schemas"]["assurance"];
+        } | {
+            /** @constant */
+            mode: "camera_tcp";
+            T_camera_tcp: components["schemas"]["mat4"];
+            assurance?: components["schemas"]["assurance"];
+        };
+        "$defs-camera": {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+        };
+        "$defs-depth": {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+            pair_with?: null | components["schemas"]["topic"];
+            /** @enum {unknown} */
+            unit?: "mm" | "m";
+        };
+        "$defs-series": {
+            topic: components["schemas"]["topic"];
+            name: string;
+            schema?: string;
+            fields?: components["schemas"]["$defs-path"][];
+            labels?: string[];
+            names_field?: components["schemas"]["$defs-path"];
+            transforms?: {
+                [key: string]: "quat_xyzw_to_rpy" | "quat_wxyz_to_rpy" | "deg_to_rad" | "rad_to_deg";
+            };
+            unit?: string | null;
+            /** @enum {unknown} */
+            role: "state" | "action" | "other";
+            pair_with?: null | components["schemas"]["topic"];
+            /** @default true */
+            smart?: boolean;
+        };
+        pose: {
+            key?: components["schemas"]["column"];
+            topic?: components["schemas"]["topic"];
+            fields?: components["schemas"]["$defs-path"][];
+            slice?: components["schemas"]["slice"];
+            /**
+             * @description how the numbers are laid out; never guessed from a width
+             * @enum {unknown}
+             */
+            layout: "xyz_rpy_xyz_extrinsic" | "xyz_quat_xyzw" | "xyz_quat_wxyz" | "xyz_rotmat" | "xyz_rot6d";
+            /** @description a quaternion in another column (xyz_quat_* with key only) */
+            quaternion_key?: components["schemas"]["column"];
+            units: {
+                /** @enum {unknown} */
+                position: "m" | "mm";
+                /** @enum {unknown} */
+                angle?: "rad" | "deg";
+            };
+            /** @description the point the pose places (panda_link8, a TCP, a VIO body); null = not known yet */
+            frame_id?: string | null;
+            /** @description the frame the pose is in (robot_base) */
+            reference_frame: string;
+            /** @constant */
+            pose_type?: "absolute";
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        } & (unknown | unknown);
+        joints: {
+            key?: components["schemas"]["column"];
+            topic?: components["schemas"]["topic"];
+            fields?: components["schemas"]["$defs-path"][];
+            slice?: components["schemas"]["slice"];
+            /** @enum {unknown} */
+            units: "rad" | "deg";
+            /**
+             * @description a robot whose forward kinematics the platform has
+             * @enum {unknown}
+             */
+            robot: "franka_panda" | "franka_fr3";
+            reference_frame?: string;
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        } & (unknown | unknown);
+        gripper: {
+            key?: components["schemas"]["column"];
+            topic?: components["schemas"]["topic"];
+            fields?: components["schemas"]["$defs-path"][];
+            /** @description the element of a wider column or message vector */
+            index?: number;
+            /** @description how the recorded number becomes 0 = open .. 1 = closed */
+            closed_fraction?: ("identity" | "one_minus") | {
+                min: number;
+                max: number;
+            };
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        } & (unknown | unknown);
+        frame: {
+            parent: components["schemas"]["name"];
+            xyz_m: number[];
+            rpy_deg: number[];
+        };
+        camera_calibration: {
+            /** @description the camera's id in the trajectory; absent = the source's short name */
+            camera_id?: string;
+            /**
+             * @description fixed_external: a third-person camera that does not move; wrist: on a hand or an arm; moving: it moves with no pose of its own (a head camera) - not supported
+             * @enum {unknown}
+             */
+            mount: "fixed_external" | "wrist" | "moving";
+            /** @description a wrist camera's hand or arm (robot0, left, arm) */
+            owner?: string | null;
+            /** @description null = not known (要上传) */
+            intrinsics?: null | components["schemas"]["intrinsics"];
+            /** @description null = not known */
+            extrinsics?: null | components["schemas"]["extrinsics"];
+            /** @description calibration picture -> video pixels (a crop, a resize); identity by default */
+            media_transform?: "identity" | components["schemas"]["mat3"];
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        };
+        tool: {
+            /** @description the gripper model (franka_hand, robotiq_2f85) */
+            model?: string | null;
+            /** @description the tool centre (between the fingertips) in the pose's frame; [0, 0, 0] when the pose already is the TCP; null = no TCP point */
+            tcp_offset_m?: null | number[];
+            /**
+             * @description the axis of the pose's frame the fingers open along
+             * @enum {unknown}
+             */
+            finger_axis?: "local_x" | "local_y" | "local_z" | null;
+            max_opening_m?: number | null;
+            axes?: {
+                /** @enum {unknown} */
+                from?: "tcp" | "eef_origin";
+                length_m?: number;
+            };
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        };
+        handheld: {
+            /** @description a umi-calibration/2 document (docs/contracts/eef/umi_calibration.schema.json); its provenance says which items are assumed */
+            calibration: {
+                /** @constant */
+                schema_version: "umi-calibration/2";
+            };
+            /** @description the built-in calibration it came from (das_gripper_demo); null = uploaded or edited */
+            builtin?: string | null;
+            assumptions?: components["schemas"]["assumptions"];
+        };
+        timing: {
+            source_state_index_key?: components["schemas"]["column"];
+            source_clocks?: {
+                /** @description robot_state, or a camera's source */
+                channel: string;
+                key: components["schemas"]["column"];
+                /** @enum {unknown} */
+                unit?: "s" | "ms" | "us" | "ns";
+                clock_id?: string;
+                semantics?: string;
+            }[];
+            assurance?: components["schemas"]["assurance"];
+            assumptions?: components["schemas"]["assumptions"];
+        };
+        suspect: {
+            code: string;
+            /** @description the declaration's path (calibration.cameras.<source>.intrinsics) */
+            field: string;
+            message: string;
+            args?: Record<string, unknown>;
+        };
+        /**
+         * dataset-declaration/1.0 - what a dataset's records are and what they mean (C7, design doc 25 §3)
+         * @description One document per dataset, versioned on the dataset and frozen into run.json when a task starts; the data visualizer and the checks read the same one. Three layers: sources -> roles (which topics or columns are cameras, depth pictures, curves, the task text, the segments: the field mapping of viz-mapping/1.x, unchanged - an mcap dataset needs it, LeRobot and Lance take theirs from meta/info.json and may leave it out), semantics (what the pose, joint and gripper records are: column or topic, layout, units, frames) and calibration (each camera's mount, owner, intrinsics and extrinsics; the tool model; a handheld gripper's calibration). Every semantic and calibration item says how sure it is (assurance: declared / model_assumed / unknown) and which drafting assumptions it rests on; 'model_assumed' items are noted in reports and overlays as 按假设值. suspects are what the platform found doubtful when the declaration was confirmed (design doc 25 §3.4); they never block it. A viz-mapping/1.x document is a declaration with only its first layer.
+         */
+        "dataset-declaration.schema": {
+            /** @constant */
+            schema_version: "dataset-declaration/1.0";
+            /** @description shown in the template picker and on the dataset page */
+            name?: string;
+            /**
+             * @description the built-in template it was drafted from; null = written by hand or imported. builtin:umi also sets the check reader's embodiment profile (umi_das)
+             * @enum {unknown}
+             */
+            base?: "builtin:foxglove" | "builtin:ros2" | "builtin:umi" | "builtin:lerobot" | null;
+            /** @description layer 1, mcap: which time of a message places it on the episode clock and which topic numbers the frames (viz-mapping/1.x) */
+            timeline?: {
+                /**
+                 * @default log_time
+                 * @enum {unknown}
+                 */
+                source?: "log_time" | "publish_time" | "message_timestamp";
+                timestamp_field?: components["schemas"]["$defs-path"];
+                frame_reference?: null | components["schemas"]["topic"];
+            };
+            /** @description layer 1, mcap: the camera topics in display order */
+            cameras?: components["schemas"]["$defs-camera"][];
+            /** @description layer 1, mcap: the depth picture topics */
+            depths?: components["schemas"]["$defs-depth"][];
+            /** @description layer 1, mcap: the curve groups */
+            series?: components["schemas"]["$defs-series"][];
+            /** @description layer 1, mcap: where the episode's task text is */
+            task?: null | {
+                metadata_key: string;
+            } | {
+                topic: components["schemas"]["topic"];
+                field?: components["schemas"]["$defs-path"];
+            };
+            /** @description layer 1, mcap: where the segment annotations are */
+            segments?: null | {
+                topic: components["schemas"]["topic"];
+                start_field: components["schemas"]["$defs-path"];
+                end_field: components["schemas"]["$defs-path"];
+                label_field: components["schemas"]["$defs-path"];
+            } | {
+                attachment: string;
+            };
+            /** @description layer 1, mcap: topics left out on purpose */
+            ignore?: components["schemas"]["topic"][];
+            /** @description layer 2: what the records mean */
+            semantics?: {
+                /** @description the end-effector (or handheld body) pose record; null = the dataset records none */
+                pose?: null | components["schemas"]["pose"];
+                /** @description the joint angles of a robot the platform knows (its forward kinematics give a second pose) */
+                joints?: null | components["schemas"]["joints"];
+                /** @description the gripper opening record */
+                gripper?: null | components["schemas"]["gripper"];
+                /** @description extra frames by name (a hand mounted on the flange, a camera bracket), each a fixed transform from its parent */
+                frames?: {
+                    [key: string]: components["schemas"]["frame"];
+                };
+            };
+            /** @description layer 3: how the records become pixels */
+            calibration?: {
+                /** @description per camera, by its source: the LeRobot / Lance video key (observation.images.<name>) or the mcap topic */
+                cameras?: {
+                    [key: string]: components["schemas"]["camera_calibration"];
+                };
+                /** @description the tool on the arm, for the points and axes drawn and compared (a robot arm's; a handheld gripper's is in handheld) */
+                tool?: null | components["schemas"]["tool"];
+                /** @description a handheld gripper's calibration (umi-calibration/2), one per gripper model */
+                handheld?: null | components["schemas"]["handheld"];
+            };
+            /** @description the source clocks recorded per row (LeRobot columns), for the trajectory's source timing */
+            timing?: null | components["schemas"]["timing"];
+            /** @description what the platform found doubtful when it was confirmed (design doc 25 §3.4); never blocks it */
+            suspects?: components["schemas"]["suspect"][];
         };
         /**
          * @description a document C2 2.0 changed, as tasks made since write it; its 1.0 form stays readable for tasks made before (D59)
@@ -5517,6 +5947,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetMapping"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetDeclaration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the declaration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDeclaration"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putDatasetDeclaration: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetDeclarationPut"];
+            };
+        };
+        responses: {
+            /** @description confirmed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDeclaration"];
                 };
             };
             default: components["responses"]["Error"];

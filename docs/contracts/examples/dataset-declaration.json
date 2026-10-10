@@ -1,0 +1,3116 @@
+{
+ "schema": "dataset-declaration.schema.json",
+ "valid": [
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "base": "builtin:lerobot",
+   "semantics": {
+    "pose": {
+     "key": "observation.state.cartesian_position",
+     "layout": "xyz_rpy_xyz_extrinsic",
+     "units": {
+      "position": "m",
+      "angle": "rad"
+     },
+     "frame_id": "panda_link8",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "observation_not_action",
+       "args": {
+        "used": "observation.state.cartesian_position",
+        "skipped": [
+         "action.cartesian_position",
+         "action.original"
+        ]
+       }
+      },
+      {
+       "code": "euler_extrinsic_xyz"
+      },
+      {
+       "code": "units_by_convention",
+       "args": {
+        "position": "m",
+        "angle": "rad"
+       }
+      },
+      {
+       "code": "pose_frame_by_robot",
+       "args": {
+        "robot": "franka_panda",
+        "frame": "panda_link8"
+       }
+      },
+      {
+       "code": "reference_frame_robot_base"
+      }
+     ]
+    },
+    "joints": {
+     "key": "observation.state.joint_position",
+     "units": "rad",
+     "robot": "franka_panda",
+     "reference_frame": "robot_base",
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "robot_from_robot_type",
+       "args": {
+        "robot_type": "Franka",
+        "robot": "franka_panda"
+       }
+      },
+      {
+       "code": "picked_dedicated",
+       "args": {
+        "used": "observation.state.joint_position",
+        "others": [
+         "observation.state"
+        ]
+       }
+      },
+      {
+       "code": "observation_not_action",
+       "args": {
+        "used": "observation.state.joint_position",
+        "skipped": [
+         "action.joint_position",
+         "action"
+        ]
+       }
+      },
+      {
+       "code": "units_by_convention",
+       "args": {
+        "angle": "rad"
+       }
+      },
+      {
+       "code": "joints_tip_frame",
+       "args": {
+        "frame": "panda_link8",
+        "named": [
+         "panda_link8",
+         "panda_hand",
+         "panda_hand_tcp"
+        ]
+       }
+      }
+     ]
+    },
+    "gripper": {
+     "key": "observation.state.gripper_position",
+     "closed_fraction": "identity",
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "gripper_from_name",
+       "args": {
+        "key": "observation.state.gripper_position"
+       }
+      },
+      {
+       "code": "closed_fraction_identity"
+      }
+     ]
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.exterior_1_left": {
+      "camera_id": "27432424_left",
+      "mount": "fixed_external",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        524.2842407226562,
+        645.3157958984375,
+        524.2842407226562,
+        365.47967529296875
+       ],
+       "model": "pinhole",
+       "coefficients": [],
+       "image_space": "rectified",
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "column",
+       "key": "camera_extrinsics.exterior_1_left",
+       "layout": "xyz_rpy",
+       "assurance": "declared"
+      },
+      "media_transform": "identity",
+      "assurance": "model_assumed",
+      "assumptions": [
+       {
+        "code": "mount_from_keyword",
+        "args": {
+         "word": "exterior"
+        }
+       },
+       {
+        "code": "extrinsics_column_by_name",
+        "args": {
+         "key": "camera_extrinsics.exterior_1_left"
+        }
+       }
+      ]
+     },
+     "observation.images.exterior_2_left": {
+      "camera_id": "28221883_left",
+      "mount": "fixed_external",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        522.4346923828125,
+        646.51904296875,
+        522.4346923828125,
+        365.7990417480469
+       ],
+       "model": "pinhole",
+       "coefficients": [],
+       "image_space": "rectified",
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "column",
+       "key": "camera_extrinsics.exterior_2_left",
+       "layout": "xyz_rpy",
+       "assurance": "declared"
+      },
+      "media_transform": "identity",
+      "assurance": "model_assumed",
+      "assumptions": [
+       {
+        "code": "mount_from_keyword",
+        "args": {
+         "word": "exterior"
+        }
+       },
+       {
+        "code": "extrinsics_column_by_name",
+        "args": {
+         "key": "camera_extrinsics.exterior_2_left"
+        }
+       }
+      ]
+     }
+    },
+    "tool": {
+     "model": "robotiq_2f85",
+     "tcp_offset_m": [
+      0,
+      0,
+      0.16
+     ],
+     "finger_axis": "local_y",
+     "max_opening_m": 0.085,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.06
+     },
+     "assurance": "declared",
+     "assumptions": [
+      {
+       "code": "tool_from_robot_type",
+       "args": {
+        "robot_type": "Franka",
+        "robot": "franka_panda"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": {
+    "source_clocks": [
+     {
+      "channel": "observation.images.exterior_1_left",
+      "key": "timestamp_cam_exterior_1_left_ms",
+      "unit": "ms",
+      "clock_id": "recorded",
+      "semantics": "camera capture"
+     },
+     {
+      "channel": "observation.images.exterior_2_left",
+      "key": "timestamp_cam_exterior_2_left_ms",
+      "unit": "ms",
+      "clock_id": "recorded",
+      "semantics": "camera capture"
+     },
+     {
+      "channel": "robot_state",
+      "key": "timestamp_robot_ms",
+      "unit": "ms",
+      "clock_id": "recorded",
+      "semantics": "robot state"
+     }
+    ],
+    "assurance": "model_assumed",
+    "assumptions": [
+     {
+      "code": "clocks_from_column_names"
+     }
+    ]
+   },
+   "name": "DROID dataset (two exterior cameras)"
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "GenRobot UMI (robot0 / robot1)",
+   "base": "builtin:umi",
+   "timeline": {
+    "source": "log_time",
+    "frame_reference": null
+   },
+   "cameras": [
+    {
+     "topic": "/robot0/sensor/camera0/compressed",
+     "name": "robot0 相机",
+     "schema": "foxglove.CompressedImage"
+    },
+    {
+     "topic": "/robot1/sensor/camera0/compressed",
+     "name": "robot1 相机",
+     "schema": "foxglove.CompressedImage"
+    }
+   ],
+   "series": [
+    {
+     "topic": "/robot0/vio/eef_pose",
+     "name": "robot0 末端位姿",
+     "schema": "foxglove.PoseInFrame",
+     "fields": [
+      "pose"
+     ],
+     "labels": [
+      "robot0_x",
+      "robot0_y",
+      "robot0_z",
+      "robot0_qx",
+      "robot0_qy",
+      "robot0_qz",
+      "robot0_qw"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot0/sensor/magnetic_encoder",
+     "name": "robot0 夹爪开度",
+     "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": [
+      "value"
+     ],
+     "labels": [
+      "robot0_gripper"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot1/vio/eef_pose",
+     "name": "robot1 末端位姿",
+     "schema": "foxglove.PoseInFrame",
+     "fields": [
+      "pose"
+     ],
+     "labels": [
+      "robot1_x",
+      "robot1_y",
+      "robot1_z",
+      "robot1_qx",
+      "robot1_qy",
+      "robot1_qz",
+      "robot1_qw"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot1/sensor/magnetic_encoder",
+     "name": "robot1 夹爪开度",
+     "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": [
+      "value"
+     ],
+     "labels": [
+      "robot1_gripper"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot0/sensor/imu",
+     "name": "robot0 IMU",
+     "schema": "foxglove.IMUMeasurement",
+     "fields": [
+      "linear_acceleration",
+      "angular_velocity"
+     ],
+     "role": "other",
+     "smart": false
+    }
+   ],
+   "task": null,
+   "segments": null,
+   "ignore": [
+    "/robot0/sensor/camera0/camera_info",
+    "/robot0/sim/robot_info",
+    "/robot0/system_info",
+    "/robot1/sensor/camera0/camera_info",
+    "/robot1/sensor/imu",
+    "/robot1/sim/robot_info",
+    "/robot1/system_info"
+   ],
+   "semantics": {
+    "pose": null,
+    "joints": null,
+    "gripper": null
+   },
+   "calibration": {
+    "cameras": {
+     "/robot0/sensor/camera0/compressed": {
+      "camera_id": "robot0_camera0",
+      "mount": "wrist",
+      "owner": "robot0",
+      "intrinsics": null,
+      "extrinsics": null,
+      "media_transform": "identity",
+      "assurance": "model_assumed",
+      "assumptions": [
+       {
+        "code": "mount_from_umi_template",
+        "args": {
+         "hand": "robot0"
+        }
+       },
+       {
+        "code": "owner_from_name",
+        "args": {
+         "owner": "robot0"
+        }
+       }
+      ]
+     },
+     "/robot1/sensor/camera0/compressed": {
+      "camera_id": "robot1_camera0",
+      "mount": "wrist",
+      "owner": "robot1",
+      "intrinsics": null,
+      "extrinsics": null,
+      "media_transform": "identity",
+      "assurance": "model_assumed",
+      "assumptions": [
+       {
+        "code": "mount_from_umi_template",
+        "args": {
+         "hand": "robot1"
+        }
+       },
+       {
+        "code": "owner_from_name",
+        "args": {
+         "owner": "robot1"
+        }
+       }
+      ]
+     }
+    },
+    "tool": null,
+    "handheld": {
+     "calibration": {
+      "schema_version": "umi-calibration/2",
+      "gripper": "das_gripper",
+      "pose_frame": "vio_body_flu",
+      "body_to_optical": [
+       [
+        0,
+        0,
+        1
+       ],
+       [
+        -1,
+        0,
+        0
+       ],
+       [
+        0,
+        -1,
+        0
+       ]
+      ],
+      "T_camera_tcp": [
+       [
+        1,
+        0,
+        0,
+        0
+       ],
+       [
+        0,
+        1,
+        0,
+        0.086
+       ],
+       [
+        0,
+        0,
+        1,
+        0.17
+       ],
+       [
+        0,
+        0,
+        0,
+        1
+       ]
+      ],
+      "finger_axis": "camera_x",
+      "opening": {
+       "unit": "m",
+       "scale": 1.0
+      },
+      "intrinsics_scaling": "stretch_to_video",
+      "pairing_tolerance_s": 0.02,
+      "provenance": {
+       "source": "built-in DAS DEMO calibration (design doc 22 §5.4, §7)",
+       "method": "assumed from the DAS recordings; no camera's intrinsics: a recording without camera_info needs an uploaded calibration with intrinsics_fallback",
+       "assurance": "model_assumed",
+       "items": {
+        "pose_frame": {
+         "assurance": "model_assumed",
+         "method": "the VIO body (x forward, y left, z up) at the IMU"
+        },
+        "body_to_optical": {
+         "assurance": "model_assumed",
+         "method": "the pictures' own motion against the VIO poses, 24 axis-aligned rotations (1.1 deg)"
+        },
+        "T_camera_tcp": {
+         "assurance": "model_assumed",
+         "method": "the fingertips in one frame and the widest opening"
+        },
+        "opening": {
+         "assurance": "model_assumed",
+         "method": "the magnetic encoder reads metres (0-0.103 m on the recordings)"
+        }
+       }
+      }
+     },
+     "builtin": "das_gripper_demo",
+     "assumptions": [
+      {
+       "code": "handheld_builtin_calibration",
+       "args": {
+        "gripper": "das_gripper"
+       }
+      }
+     ]
+    }
+   },
+   "timing": null
+  },
+  {
+   "schema_version": "dataset-declaration/1.0"
+  },
+  {
+   "name": "GenRobot UMI（robot0 / robot1）",
+   "base": "builtin:umi",
+   "timeline": {
+    "source": "log_time",
+    "frame_reference": null
+   },
+   "cameras": [
+    {
+     "topic": "/robot0/sensor/camera0/compressed",
+     "name": "robot0 相机",
+     "schema": "foxglove.CompressedImage"
+    },
+    {
+     "topic": "/robot1/sensor/camera0/compressed",
+     "name": "robot1 相机",
+     "schema": "foxglove.CompressedImage"
+    }
+   ],
+   "series": [
+    {
+     "topic": "/robot0/vio/eef_pose",
+     "name": "robot0 末端位姿",
+     "schema": "foxglove.PoseInFrame",
+     "fields": [
+      "pose"
+     ],
+     "labels": [
+      "robot0_x",
+      "robot0_y",
+      "robot0_z",
+      "robot0_qx",
+      "robot0_qy",
+      "robot0_qz",
+      "robot0_qw"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot0/sensor/magnetic_encoder",
+     "name": "robot0 夹爪开度",
+     "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": [
+      "value"
+     ],
+     "labels": [
+      "robot0_gripper"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot1/vio/eef_pose",
+     "name": "robot1 末端位姿",
+     "schema": "foxglove.PoseInFrame",
+     "fields": [
+      "pose"
+     ],
+     "labels": [
+      "robot1_x",
+      "robot1_y",
+      "robot1_z",
+      "robot1_qx",
+      "robot1_qy",
+      "robot1_qz",
+      "robot1_qw"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot1/sensor/magnetic_encoder",
+     "name": "robot1 夹爪开度",
+     "schema": "foxglove.MagneticEncoderMeasurement",
+     "fields": [
+      "value"
+     ],
+     "labels": [
+      "robot1_gripper"
+     ],
+     "unit": null,
+     "role": "action"
+    },
+    {
+     "topic": "/robot0/sensor/imu",
+     "name": "robot0 IMU",
+     "schema": "foxglove.IMUMeasurement",
+     "fields": [
+      "linear_acceleration",
+      "angular_velocity"
+     ],
+     "role": "other",
+     "smart": false
+    }
+   ],
+   "task": null,
+   "segments": null,
+   "ignore": [
+    "/robot0/sensor/camera0/camera_info",
+    "/robot0/sim/robot_info",
+    "/robot0/system_info",
+    "/robot1/sensor/camera0/camera_info",
+    "/robot1/sensor/imu",
+    "/robot1/sim/robot_info",
+    "/robot1/system_info"
+   ],
+   "schema_version": "dataset-declaration/1.0"
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "dataset-declaration/2.0"
+  },
+  {
+   "schema_version": "viz-mapping/1.1",
+   "cameras": [],
+   "series": []
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared",
+     "topic": "/pose"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_euler",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "cm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "ceiling",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared",
+       "fx_cx_fy_cy": [
+        1,
+        2,
+        3,
+        4
+       ]
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "column",
+       "layout": "xyz_rpy"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+       ],
+       "T_reference_camera": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0
+        ],
+        [
+         0,
+         0,
+         1,
+         0
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      },
+      "assurance": "probably"
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "y",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": {
+     "calibration": {
+      "schema_version": "umi-calibration/1"
+     }
+    }
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "x"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      },
+      "camera_id": "front camera"
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": null,
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  },
+  {
+   "schema_version": "dataset-declaration/1.0",
+   "name": "one arm, one wrist camera",
+   "semantics": {
+    "pose": {
+     "key": "observation.state",
+     "slice": [
+      0,
+      7
+     ],
+     "layout": "xyz_quat_wxyz",
+     "units": {
+      "position": "mm",
+      "angle": "rad"
+     },
+     "frame_id": "tcp",
+     "reference_frame": "robot_base",
+     "pose_type": "absolute",
+     "assurance": "declared"
+    },
+    "joints": {
+     "key": "observation.state",
+     "units": "rad",
+     "robot": "ur5e"
+    },
+    "gripper": {
+     "key": "observation.state",
+     "index": 7,
+     "closed_fraction": {
+      "min": 0.0,
+      "max": 0.08
+     },
+     "assurance": "declared"
+    }
+   },
+   "calibration": {
+    "cameras": {
+     "observation.images.front": {
+      "mount": "fixed_external",
+      "intrinsics": {
+       "K": [
+        [
+         600,
+         0,
+         320
+        ],
+        [
+         0,
+         600,
+         240
+        ],
+        [
+         0,
+         0,
+         1
+        ]
+       ],
+       "model": "opencv_brown",
+       "coefficients": [
+        0.1,
+        -0.05,
+        0,
+        0,
+        0
+       ],
+       "image_size_wh": [
+        640,
+        480
+       ],
+       "source": "declared",
+       "assurance": "declared"
+      },
+      "extrinsics": {
+       "mode": "static",
+       "xyz_rpy": [
+        1.0,
+        0.0,
+        0.8,
+        -2.2,
+        0.0,
+        1.57
+       ],
+       "assurance": "declared"
+      }
+     },
+     "observation.images.wrist": {
+      "mount": "wrist",
+      "owner": "arm",
+      "intrinsics": {
+       "fx_cx_fy_cy": [
+        400,
+        320,
+        400,
+        240
+       ],
+       "model": "pinhole"
+      },
+      "extrinsics": {
+       "mode": "camera_tcp",
+       "T_camera_tcp": [
+        [
+         1,
+         0,
+         0,
+         0
+        ],
+        [
+         0,
+         1,
+         0,
+         0.05
+        ],
+        [
+         0,
+         0,
+         1,
+         0.12
+        ],
+        [
+         0,
+         0,
+         0,
+         1
+        ]
+       ]
+      },
+      "media_transform": "identity"
+     },
+     "observation.images.head": {
+      "mount": "moving",
+      "intrinsics": null,
+      "extrinsics": null
+     }
+    },
+    "tool": {
+     "tcp_offset_m": [
+      0,
+      0,
+      0
+     ],
+     "finger_axis": "local_x",
+     "max_opening_m": 0.08,
+     "axes": {
+      "from": "tcp",
+      "length_m": 0.05
+     },
+     "assurance": "model_assumed",
+     "assumptions": [
+      {
+       "code": "pose_is_tcp",
+       "args": {
+        "key": "observation.state"
+       }
+      }
+     ]
+    },
+    "handheld": null
+   },
+   "timing": null,
+   "suspects": [
+    {
+     "code": "intrinsics_aspect",
+     "field": "calibration.cameras.observation.images.wrist.intrinsics",
+     "message": "fx 与 fy 差 3%"
+    }
+   ]
+  }
+ ]
+}

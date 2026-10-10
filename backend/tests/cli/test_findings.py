@@ -297,6 +297,21 @@ def test_a_wrist_camera_off_its_poses_is_one_finding_at_its_worst_stretch():
     assert _record("eef_video_consistency", True, None, calm)["findings"] == []
 
 
+def test_a_record_mismatch_says_which_records_disagree():
+    """design doc 25 §6.1: a generated trajectory is its record's own - the dataset's two records disagree (pose column
+    against the joints' kinematics, source internal); an upload is compared with the records (source upload)."""
+    internal = {**EEF_OPINIONS, "record": {"status": "suspect", "source": "internal", "reasons": ["record_internal_mismatch"],
+                                           "sources": {}, "internal": {"compared": True, "consistent": False,
+                                                                       "position_mm": {"median": 9.0, "p95": 31.25}}}}
+    (f,) = [x for x in _record("eef_video_consistency", True, None, internal)["findings"] if x["code"] == "record_mismatch"]
+    assert f["message_zh"] == "数据集的末端位姿列与关节角正解不一致（位置差 p95 31.2 mm）"
+    assert f["readings"] == {"status": "suspect", "source": "internal", "reasons": ["record_internal_mismatch"]}
+    upload = {**EEF_OPINIONS, "record": {"status": "suspect", "source": "upload", "reasons": [],
+                                         "sources": {"pose": {"status": "suspect", "reasons": ["record_deviation"]}}}}
+    (f,) = [x for x in _record("eef_video_consistency", True, None, upload)["findings"] if x["code"] == "record_mismatch"]
+    assert f["message_zh"].startswith("上传的轨迹与数据集自己记录的末端位姿不一致") and f["readings"]["source"] == "upload"
+
+
 def test_intervals_scopes_and_readings():
     gap = _record("timestamp_check", False, None, TS_GAP)["findings"][0]
     assert gap["frames"] == [89, 90] and gap["readings"]["gaps"] == [{"frame": 89, "dt_s": 1.1}]

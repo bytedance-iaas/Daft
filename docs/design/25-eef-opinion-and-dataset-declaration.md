@@ -2,7 +2,7 @@
 
 > 状态：**开工稿 v1.1（2026-10-09 晚，三轮评审后）**。评审答复见 §11（第三轮是对照代码的核实，改了 D84 的提醒方式、§7 的发现粒度与边界、
 > 旧任务的缺省级别冻结，F5.24 拆成 a / b）；§10 是开工时的缺省选择，实测后可改。D81–D86 已登记到 00 §7、账本已加 F5.22–F5.26；
-> **F5.22 输出口径已落地**（注册表 5.0、C4 4.7.0，§9.1 是落地记录），下一步 F5.23。
+> **F5.22 输出口径、F5.23 数据集声明已落地**（注册表 5.1、C4 5.0.0，§9.1、§9.2 是落地记录），下一步 F5.24a。
 > 来源：2026-10-09 晚的讨论——「能不能画、能不能比，都不取决于 mcap 还是 LeRobot」「记录能还原就不该要用户上传轨迹」「模块都设计成只输出意见，
 > 不再有判废」「两个渠道不平均、取大、冲突请人看」「完整版可视化展示原始数据里直接看得到的东西，迷你版服务任务」「数据集配置复用 mcap 的配置、做得更通用」。
 > 工程基线：`feat/curator-v2` @ 8c4d89f8b（F5.21，trajectory.json 能算就可选、算不了就必选；注册表 4.4、C4 4.6.0、C7 `viz-mapping/1.1`）。
@@ -344,6 +344,38 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   robot1 晚 0.5 s：自运动 0.96、封顶 0.8「不一致」，出 `ego_motion_suspect`。④ 对账黄金基线回放全过；注册表 4.0 / 4.2 / 4.4 的旧任务照常读出，
   旧的 `unsettled` 卡照旧待裁决。⑤ `score.py` 按「标签 + p」计 MV-4，对照表与注册表的一致性检查过。
   理想观察者假模型下的 d2 七条（`tests/cli/test_eef_dataset2.py`，需本机 DEMO 数据）：原样「一致」，六种故障都至少「可能不一致」，依据点名分项与相机。
+
+### 9.2 F5.23 落地记录（2026-10-10）
+
+- **契约**：C7 改为 `docs/contracts/dataset-declaration.schema.json`（`dataset-declaration/1.0`，示例 5 个合法、16 个不合法）；Schema 自包含，第一层的
+  `$defs` 抄自 `viz-mapping.schema.json`（后者留一版，下次改契约时删）。语义层是 `semantics.{pose, joints, gripper, frames}`（位姿列或 topic、布局、单位、
+  `frame_id`、参考系，与 `eef-mapping/1.1` 的 `eef` / `record` 块同名同义）；标定层是 `calibration.cameras.<来源>`（键是 LeRobot 的视频键或 mcap 的 topic）、
+  `calibration.tool`、`calibration.handheld`（一份 `umi-calibration/2`）；外参三种：`static`（`xyz_rpy` 或 4×4）、`column`（逐行的位姿列）、`camera_tcp`（腕部）。
+  C4 升 5.0.0：`GET` / `PUT /datasets/{id}/declaration`、`DatasetItem.declaration`；模版可以存整份声明。C2 预检的 EEF 条目加 `trajectory_source`（可选字段，仍是 1.0）。
+  C1 升 5.1：`gripper_calibration`、`record_mapping` 标 `deprecated`（界面不再给，旧任务照用）。
+- **存取**：声明就存在映射原来的列里（`Dataset.viz_mapping`，一份文档、一个版本号）；旧的 `viz-mapping/1.x` 读出来就是只有第一层的声明，
+  mcap 读取器拿的是第一层的视图（`curation.declaration.mapping_of`）。`PUT /mapping` 只换第一层，其余两层不动。改声明后 Daemon 只重做预检
+  （`refresh_preflight`，格式可读性变了才整套 `repreflight`），不重新列举文件。任务开跑时冻结进 `run.json["declaration"]` 与 `inputs/declaration.json`，
+  各阶段命令带 `--declaration`。
+- **起草**（`curation/declaration/draft.py`）：LeRobot / Lance 用登记时预检里的 `dataset.features`（不再读 info.json）；mcap 用探测，探测新增标定 topic 首条消息的内参
+  （`TopicProbe.calibration`）。`GET` 的 `draft` 是草稿叠在已确认版本下面，任务从不用草稿；没有确认过的声明时，CLI 预检自己起草一份，只用来说缺什么
+  （`declaration_unconfirmed` / `intrinsics_missing` …），从不拿它生成轨迹。
+- **校验**（`curation/declaration/checks.py`）：硬错误定位到字段；可疑项记在声明的 `suspects`。三帧落点预览没有单做：由数据集级叠加（§5.1，F5.25）承担；
+  位姿流与视频的配对率要读数据，确认时不算。
+- **生成**（`extensions/eef_consistency/declared.py`）：LeRobot 走 `eef-mapping` 的导出（`Generated`，TOS 上把 `meta/` 与该条的数据文件拷到暂存目录，视频不读），
+  mcap 机械臂读位姿 topic 与相机 topic（`GeneratedMcap`，以第一路能画的相机为帧，位姿与其他相机按日志时间就近配对）；都是逐条生成，落在
+  `checks/eef_video_consistency/trajectory/episode_N.json`，叠加照读。Lance 不生成（EEF 读不了 Lance 的画面），数据集级叠加另说（F5.25）。
+  导出的视频时间改按帧号算（`frame_index / fps`）：掉帧的数据集时间戳会跳，画面仍按帧号解码。生成的样本由平台命名，人给的种子按 sample_id 末尾的
+  episode 号重排到运行目录（`declared.remap_seeds`），相机编号以声明里的 `camera_id` 为准。
+- **记录比对**（§6.1）：轨迹由平台从记录生成时只比数据集自己的两份记录（位姿列对关节角正解，`source: internal`）；只有一份记录时写
+  `record_single_source`「轨迹来自数据集记录，无需比对」；上传或数据集自带的轨迹照旧比上传件对记录（`source: upload`）。
+- **界面**：数据集详情加「数据集声明」卡片与抽屉（来源与用途 / 记录的含义 / 相机标定 / 工具 / 手持夹爪 / 时间六页，每项「声明 / 按假设值」与起草时的假设，
+  按表格内容即时说「平台按声明生成轨迹」或还缺什么），从 JSON 导入、导出、套用 / 另存模版；列表在格式下写「声明：第 N 版」。上传种类
+  `dataset_declaration` 没有加：导入在浏览器里读 JSON，`PUT` 直接收文档；`eef_gripper_calibration`、`eef_record_mapping` 两个上传种类停用但仍收一版。
+- **验收**：① dataset2 起草出两路 `fixed_external`、位姿 / 关节 / 外参列，内参留空、工具按 Franka 预填并标假设；补内参、把工具改成 0.16 m / 0.085 m 后
+  `trajectory_source=generate`，生成的轨迹与 `dataset2/trajectory.json` 逐帧投影最大差 0.005 px（28126 个点，`tests/eef/test_declaration.py` 的 DEMO 用例）；
+  按声明跑 `check`：ep0「一致」0.32，ep6 位置 0.8、诊断支持 `extrinsics_error`，与上传轨迹的结果相同。② das 起草出两路 `wrist`、归 `robot0` / `robot1`，
+  手持夹爪用内置 DEMO 标定、各项 `model_assumed`。③ 改声明后旧任务读冻结的版本（`tests/viz/test_declaration.py`）。④ `viz-mapping/1.1` 文件照读、照存。
 
 ## 10. 开工时的缺省选择（实测后可改）
 
