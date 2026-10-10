@@ -473,7 +473,11 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   Daemon 起来后第一次 1.8 秒，之后 0.04 秒。② 上传覆盖：上传件 = ep2 生成的轨迹包换上 ep0 的干净位姿（数据集各条是同一段录制的副本），`use_vlm = false`、
   只跑 ep2（task-dmflaofgp）：迷你版多 `record_*` 虚线组，记录组逐帧等于完整版 ep2 的图层、实线等于完整版 ep0 的；三维上记录比上传件绕工具 z 轴
   （接近轴）转了 30.00°（每帧都是）。③ DAS（本机）：ep0 真正首次 5.7 秒（从录制推 1491 帧 + 算图层），包已在、Daemon 重启后首次 2.3 秒，之后 0.2 秒；
-  登记后预生成过的条目首次打开就命中。TOS 上的 DAS 这轮没有需求方的密钥，没有实测，留到集群上验。④ DAS 两路腕部相机 `mount = wrist`，
+  登记后预生成过的条目首次打开就命中。TOS（从本机测，2026-10-10）：`tos://curation-robo-anchor/anchor/v1/mcap/genrobot_desktop_object_sorting`
+  （同款 DAS，录制里没有 camera_info，用声明里的 DAS DEMO 标定）没预生成过的条目首开 21–36 秒，第二次 47–102 毫秒。时间几乎都在网络上：
+  DAS 把各 topic 交错写在同一批块里，推一条轨迹要把整条录制读一遍（49 MB 分 16 次区间读），本机到北京约 1.4 MB/s。CPU 那部分压掉一半多
+  （1500 帧：生成器读回自己的包不再逐帧校验 Schema，推轨迹 3.6 → 1.8 秒；手持夹爪的图层每帧一次投影，1.7 → 0.6 秒，输出逐字相同）。
+  按同区 TOS 的带宽估，集群上 3–5 秒，待部署后在集群上实测。④ DAS 两路腕部相机 `mount = wrist`，
   右侧「叠加」一节写「腕部相机的标记检验不了本手的位姿（本手在画面里不动），看自运动一致性」；ep1（这条录制没有 camera_info，内置标定不带内参兜底）
   在播放器上方写明原因。测试：`tests/viz/test_declaration.py`（按声明画、缓存、覆盖时的记录组、手持夹爪的识别）、`tests/viz/test_eef_overlay.py`
   （原始 DAS 录制、缓存命中不重读）、`tests/orchestr/test_episode_stream.py`（worker 释放判定器），前端 `VisualizePage`、`eefOverlay`、`sectionViews` 的用例。

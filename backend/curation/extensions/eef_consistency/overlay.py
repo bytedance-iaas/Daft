@@ -125,26 +125,33 @@ def _umi_layers(sample, camera_id: str) -> tuple[list[dict], list[dict]]:
     trail, future, centre, axis, fingers = ([None] * n for _ in range(5))
     axes = {k: [None] * n for k in "xyz"}
     for f in range(n):
-        uv, _ = umi.project(sample, camera_id, f, owner, indices=umi.history_indices(sample, f))
-        trail[f] = _trail(uv)
-        c = uv[-1] if len(uv) else None
+        # one projection a frame (each point is projected on its own): the past, the future, the approach tip,
+        # the three axis ends and the two fingertips, all through the current frame's camera
+        past = np.asarray(umi.history_indices(sample, f), dtype=int)
+        ahead = np.asarray(history.future_indices(sample.t, f, horizon), dtype=int)
+        ahead = ahead if len(ahead) > 1 else ahead[:0]
+        opening = sample.hand_openings[owner][f]
+        tips = 2 if np.isfinite(opening) else 0
+        k = len(past) + len(ahead)
+        offsets = np.zeros((k + 4 + tips, 3))
+        offsets[k] = [0, 0, umi.AXIS_M]
+        offsets[k + 1:k + 4] = unit
+        if tips:
+            offsets[k + 4:] = [[-opening / 2, 0, 0], [opening / 2, 0, 0]]
+        uv, _ = umi.project(sample, camera_id, f, owner, offsets=offsets,
+                            indices=np.concatenate([past, ahead, np.full(4 + tips, f)]))
+        trail[f] = _trail(uv[:len(past)])
+        c = uv[len(past) - 1] if len(past) else None
         centre[f] = _point(c)
         if centre[f] is None:
             continue
-        ahead = history.future_indices(sample.t, f, horizon)
-        if len(ahead) > 1:
-            fu, _ = umi.project(sample, camera_id, f, owner, indices=ahead)
-            future[f] = _trail(fu)
-        tip, _ = umi.project(sample, camera_id, f, owner, offsets=[0, 0, umi.AXIS_M])
-        axis[f] = _segment(c, tip[0])
-        ends, _ = umi.project(sample, camera_id, f, owner, offsets=unit, indices=[f, f, f])
-        for k, e in zip("xyz", ends):
-            axes[k][f] = _segment(c, e)
-        opening = sample.hand_openings[owner][f]
-        if np.isfinite(opening):
-            ends, _ = umi.project(sample, camera_id, f, owner,
-                                  offsets=[[-opening / 2, 0, 0], [opening / 2, 0, 0]], indices=[f, f])
-            fingers[f] = _segment(ends[0], ends[1])
+        if len(ahead):
+            future[f] = _trail(uv[len(past):k])
+        axis[f] = _segment(c, uv[k])
+        for name, e in zip("xyz", uv[k + 1:k + 4]):
+            axes[name][f] = _segment(c, e)
+        if tips:
+            fingers[f] = _segment(uv[k + 4], uv[k + 5])
     layers = [
         _layer("trail_past", "trail_past", "polyline", "过去轨迹", color, 2, trail, hand=owner, in_model=True),
         _layer("trail_future", "trail_future", "polyline", "未来轨迹", _lighter(color), 2, future, hand=owner,

@@ -10,6 +10,7 @@ import pytest
 
 from curation.extensions.eef_consistency import contracts as C
 from curation.extensions.eef_consistency import derive_mcap
+from curation.extensions.eef_consistency import load
 from curation.extensions.eef_consistency import preflight as PF
 from curation.extensions.eef_consistency.adapters import umi_mcap as X
 
@@ -46,6 +47,8 @@ def test_an_episode_is_derived_once_and_kept_for_the_overlay(das, tmp_path):
     assert src["cameras"]["robot0"]["intrinsics"] == "camera_info" and src["cameras"]["robot0"]["pairing_rate"] > 0.9
     bundle = json.loads(derive_mcap.bundle_path(d.out_dir, 0).read_text())
     assert bundle["schema_version"] == "eef-video/1.1.0" and [e["episode_index"] for e in bundle["samples"]] == [0]
+    # read back without the frame schema (it is the platform's own); the file passes it whole
+    assert load.load_bundle(derive_mcap.bundle_path(d.out_dir, 0), check_media=False).ok
     assert json.loads(derive_mcap.report_path(d.out_dir, 0).read_text())["status"] == "ok"
     assert d.sample(0)[0] is s                                         # cached
     missing = d.sample(7)

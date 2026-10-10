@@ -208,6 +208,9 @@ def test_the_generated_trajectory_is_the_mapping_export(tmp_path):
     sample, source = g.sample(1)
     assert source["kind"] == "generated" and source["status"] == "generated"
     assert (tmp_path / "out" / "trajectory" / "episode_000001.json").is_file()
+    # the generator reads its own frames back without the frame schema: the file it wrote passes it whole
+    assert load.load_bundle(tmp_path / "out" / "trajectory" / "episode_000001.json", check_media=False).ok
+    assert source["camera_sources"]["exterior_front"] == FRONT                      # which declared source a camera is
     assert sorted(sample.cameras) == ["exterior_front"] and sample.sample_id == g.sample_id(1) == "arm_000001"
     track = load.recompute_projection(sample, "exterior_front", "tcp")
     assert np.isfinite(track.uv).all() and (track.uv[:, 0] > 0).all() and (track.uv[:, 0] < W).all()
@@ -381,6 +384,8 @@ def test_a_robot_arms_mcap_generates_from_its_topics(tmp_path):
                          dataset_id="arm", cameras=["/cam/front/compressed"])
     sample, source = g.sample(0)
     assert source["status"] == "generated", source
+    assert load.load_bundle(tmp_path / "out" / "trajectory" / "episode_000000.json", check_media=False).ok
+    assert source["camera_sources"] == {"cam_front": "/cam/front/compressed"}
     cam = sample.cameras["cam_front"]
     assert cam.media["topic"] == "/cam/front/compressed" and cam.media["uri"] == "episode_0.mcap"
     assert list(cam.video_frame_index) == list(range(12))

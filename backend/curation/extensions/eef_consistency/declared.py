@@ -340,7 +340,7 @@ class Generated:
             return None, self._source(status="unsupported", reason=UNREADABLE, message=f"{type(exc).__name__}: {exc}"[:300])
         bundle["dataset"]["generator"] = f"curation eef {GENERATE_VERSION} (dataset declaration)"
         data = json.dumps(bundle, ensure_ascii=False, allow_nan=False).encode()
-        res = load.load_bundle(bundle, check_media=False, episodes=[ep])
+        res = load.load_bundle(bundle, check_media=False, episodes=[ep], trusted=True)   # its own frames
         if not res.ok or ep not in res.samples:
             message = res.errors[0].message if res.errors else "no sample"
             return None, self._source(status="unsupported", reason=INVALID, message=message[:300])
@@ -485,7 +485,7 @@ class GeneratedMcap(Generated):
             return None, self._source(status="unsupported", reason=UNREADABLE, message=f"{type(exc).__name__}: {exc}"[:300])
         bundle["dataset"]["generator"] = f"curation eef {GENERATE_VERSION} (dataset declaration, mcap)"
         data = json.dumps(bundle, ensure_ascii=False, allow_nan=False).encode()
-        res = load.load_bundle(bundle, check_media=False, episodes=[ep])
+        res = load.load_bundle(bundle, check_media=False, episodes=[ep], trusted=True)   # its own frames
         if not res.ok or ep not in res.samples:
             message = res.errors[0].message if res.errors else "no sample"
             return None, self._source(status="unsupported", reason=INVALID, message=message[:300])
