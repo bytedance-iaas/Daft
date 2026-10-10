@@ -14,6 +14,12 @@ Either block failing stops the other (a shared abort event, :meth:`Run.check_int
 stop reaches every process of both. The CPU block books its CPU-pool slots to the run's key
 (:attr:`Run.cpu_key`), the VLM block's chain to a key of its own, so that one chain leaving the pool
 never gives back the other's slots.
+
+Since registry 5.3 (design doc 23 §1, §4.3) a dispatch unit is a *chain*: stages linked by ``after``. The CPU
+block's second root, ``vlm_prep`` (the model modules' CPU halves), starts a chain of its own, and the vlm stage
+that comes after it continues that chain across the blocks - an episode's CPU half done, its model half is next.
+A chain is named after the block of its last stage (``cpu``, ``vlm``: a plan from before keeps its two names),
+or after its first stage when that name is taken (``vlm_prep`` with no model half).
 """
 from __future__ import annotations
 
@@ -24,21 +30,35 @@ from curation.pipeline.episode_state import EpisodeState, state_path
 from .runbase import Interrupt, TaskFailure
 
 
-def chains_of(plan: dict) -> dict[str, list[tuple[str, list[str]]]]:
-    """``block -> [(stage, modules)]``: each block's per-episode stages in order (the episode store's layout)."""
-    out: dict[str, list[tuple[str, list[str]]]] = {}
+def stages_by_chain(plan: dict) -> dict[str, list[dict]]:
+    """``chain -> its stages in order``: the plan's block stages linked by ``after`` (module docstring)."""
+    chains: list[list[dict]] = []
     for st in plan["stages"]:
-        if st.get("block") and st.get("command") == "check" and not st.get("full_set"):
-            out.setdefault(st["block"], []).append((st["id"], list(st["modules"])))
+        if not st.get("block"):
+            continue
+        after = st.get("after")
+        host = next((c for c in chains if after and c[-1]["id"] == after), None)
+        if host is not None:
+            host.append(st)
+        else:
+            chains.append([st])
+    out: dict[str, list[dict]] = {}
+    for chain in chains:
+        key = chain[-1]["block"]
+        out[chain[0]["id"] if key in out else key] = chain
     return out
+
+
+def chains_of(plan: dict) -> dict[str, list[tuple[str, list[str]]]]:
+    """``chain -> [(stage, modules)]``: each chain's per-episode stages in order (the episode store's layout)."""
+    return {key: [(st["id"], list(st["modules"])) for st in stages
+                  if st.get("command") == "check" and not st.get("full_set")]
+            for key, stages in stages_by_chain(plan).items()}
 
 
 def stages_by_block(plan: dict) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {}
-    for st in plan["stages"]:
-        if st.get("block"):
-            out.setdefault(st["block"], []).append(st)
-    return out
+    """The dispatch units of a plan: its chains (kept under the name the run's blocks had)."""
+    return stages_by_chain(plan)
 
 
 def prepare_store(run, plan: dict, selection: list[int]) -> None:
@@ -54,7 +74,7 @@ def prepare_store(run, plan: dict, selection: list[int]) -> None:
 
 
 def run_block(run, block: str, stages: list[dict], selection: list[int], abort: threading.Event) -> None:
-    """One block's stages in order (module docstring)."""
+    """One chain's stages in order (module docstring); ``block``: the chain's name."""
     from .pipeline import run_funnel
 
     pool_key = run.cpu_key if block == "cpu" else (*run.cpu_key, block)
@@ -78,7 +98,7 @@ def run_block(run, block: str, stages: list[dict], selection: list[int], abort: 
                 chain.append(stages[i])
                 i += 1
             if not all(run.journal.done(s["id"]) for s in chain):
-                run_funnel(run, chain, selection, abort=abort, pool_key=pool_key)
+                run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block)
 
 
 def _first(errors: list[BaseException]) -> BaseException:

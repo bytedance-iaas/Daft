@@ -51,18 +51,18 @@ def cpu_shares_for(stages: list[dict]) -> dict[str, int]:
 
 
 def run_funnel(run, stages: list[dict], selection: list[int], *,
-               abort: threading.Event | None = None, pool_key=None) -> None:
-    """A chain of per-episode stages over ``selection`` (``abort``, ``pool_key``: see
+               abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
+    """A chain of per-episode stages over ``selection`` (``abort``, ``pool_key``, ``chain``: see
     :func:`.episode_pipeline.run_episodes`)."""
     if not os.environ.get("CURATOR_CLI"):
         from .episode_pipeline import run_episodes
 
-        return run_episodes(run, stages, selection, abort=abort, pool_key=pool_key)
-    return run_batches(run, stages, selection, abort=abort)
+        return run_episodes(run, stages, selection, abort=abort, pool_key=pool_key, chain=chain)
+    return run_batches(run, stages, selection, abort=abort, chain=chain)
 
 
 def run_batches(run, stages: list[dict], selection: list[int], *,
-                abort: threading.Event | None = None, pool_key=None) -> None:
+                abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
     """Compatibility path for external CLI wrappers and batch comparison tests.
 
     Every worker commits each episode into SQLite before publishing its batch's
@@ -79,8 +79,8 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
     store = EpisodeState(path)
     try:
         store.bootstrap(str(run.wd.root), modules)
-        if store.blocks is not None:                       # plan 2.0: this chain's block
-            saved = store.positions(selection, stages[0].get("block"))
+        if store.blocks is not None:                       # plan 2.0: this chain's place in the store
+            saved = store.positions(selection, chain or stages[0].get("block"))
         else:
             store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
             saved = store.progress_for(selection)
@@ -122,13 +122,15 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
         if run.journal.done(sid):
             return
         mods = st["modules"]
+        last = getattr(run, "last_stage_of", None)     # a CPU half's module is judged later (registry 5.3)
+        own = [m for m in mods if last is None or last(m) in (None, sid)]
         output = run.wd.episodes_file(run.run_key, f"{sid}.out")
         index = EpisodeState(path)
         try:
             stage_inputs = sorted(set(index.stage_inputs(mods)) | seen[sid])
             if sid in failed:
                 write_lines(output, stage_inputs)
-                for module in mods:
+                for module in own:
                     total, errors = index.counts(module)
                     run.module_result(module, "failed", total=total, errors=errors,
                                       digest=input_digest(stage_inputs),
@@ -137,7 +139,7 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
             else:
                 write_lines(output, index.survivors(mods))
                 errors_found = False
-                for module in mods:
+                for module in own:
                     total, errors = index.counts(module)
                     errors_found |= errors > 0
                     run.module_result(module, "completed_with_errors" if errors else "succeeded",
@@ -273,10 +275,7 @@ def _check_batch(run, st: dict, episodes: list[int], number: int, offset: int,
     if st.get("_pipeline_concurrency") is not None:
         argv += ["--concurrency", str(st["_pipeline_concurrency"])]
     vlm = st.get("kind") == "vlm" and run.stage_asks_model(mods)   # an EEF stage without a model: no model
-    if vlm:
-        argv += run.vlm_args()
-    elif st.get("kind") == "vlm":
-        argv.append("--no-vlm")                # the task has no model, or the module's switch is off
+    argv += run.half_args(st, mods)            # a module of two halves: which one, and the model's settings
     argv += run.module_param_args(mods)                        # every module's parameters (registry 2.1)
     if sid == "frame":
         resources.admit_memory(run, sid)

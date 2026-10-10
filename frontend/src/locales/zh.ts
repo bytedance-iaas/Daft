@@ -139,6 +139,8 @@ export const zh = {
     vlm: 'VLM 档',
     verdict: '判决',
     dedup: '去重',
+    // registry 5.3 (design doc 23 §1): the CPU halves of model modules, the CPU block's second root
+    vlm_prep: '模型准备档',
     profile: '技能画像',
     profile_vlm: '技能画像 VLM 档',
     final: '终判',
@@ -871,7 +873,7 @@ export const zh = {
     wholeStage: (elapsed: string) => `${elapsed}（整体）`,
     pipelineEpisodes: {
       title: 'Episode 流水线',
-      stage: { integrity: '完整性验证', numeric: '数值验证', frame: '视频验证', vlm: '模型验证', done: '已完成' },
+      stage: { integrity: '完整性验证', numeric: '数值验证', frame: '视频验证', vlm_prep: '模型准备', vlm: '模型验证', done: '已完成' },
       verdict: { keep: '漏斗保留', drop: '漏斗拒绝', held: '待补跑' },
       /** a two-block run (design doc 17 §3.3): the policy on the findings so far; the final verdict is the report's */
       provisional: { keep: '暂判保留', drop: '暂判拒绝', held: '待补跑' } as Record<string, string>,
@@ -883,7 +885,7 @@ export const zh = {
       episode: (index: number) => `ep ${index}`,
       columnEpisode: 'Episode',
       columnStage: '最近阶段',
-      processingStage: { integrity: '完整性处理', numeric: '数值处理', frame: '帧处理', vlm: 'VLM 处理' } as Record<string, string>,
+      processingStage: { integrity: '完整性处理', numeric: '数值处理', frame: '帧处理', vlm_prep: '模型准备处理', vlm: 'VLM 处理' } as Record<string, string>,
       processingTotal: '累计处理耗时',
       columnResult: '当前结果',
       latest: '最新',

@@ -1,5 +1,5 @@
 {
- "registry_version": "5.2",
+ "registry_version": "5.3",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -9,7 +9,8 @@
     "integrity",
     "numeric",
     "frame",
-    "dedup"
+    "dedup",
+    "vlm_prep"
    ]
   },
   {
@@ -25,9 +26,16 @@
   "numeric",
   "frame",
   "dedup",
+  "vlm_prep",
   "vlm"
  ],
  "full_set_stages": [],
+ "root_stages": [
+  "vlm_prep"
+ ],
+ "prep_stages": {
+  "vlm_prep": "vlm"
+ },
  "finding_levels": [
   {
    "id": "blocking",
@@ -1984,7 +1992,8 @@
     }
    ],
    "mergeable": false,
-   "vlm_switch": "use_vlm"
+   "vlm_switch": "use_vlm",
+   "prep_stage": "vlm_prep"
   },
   {
    "id": "task_success",

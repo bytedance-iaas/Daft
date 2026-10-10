@@ -10,6 +10,13 @@ describe('a row of the episode pipeline', () => {
     expect(rowStages(row)).toBe('完整性验证 ✓ · 数值验证 ✗ · 视频验证 … · 模型验证 …');
   });
 
+  it('a model module of two halves waits for its CPU half, then its model half (registry 5.3)', () => {
+    const row = { stages: { numeric: 'done', vlm_prep: 'done', vlm: 'running' }, verdict: null, reason: null } as const;
+    expect(waitingStages(row)).toEqual(['vlm']);
+    expect(rowStages(row)).toBe('数值验证 ✓ · 模型准备 ✓ · 模型验证 …');
+    expect(waitingStages({ ...row, stages: { numeric: 'done', vlm_prep: 'waiting', vlm: 'waiting' } })).toEqual(['vlm_prep']);
+  });
+
   it('a finished two-block row shows its provisional verdict', () => {
     const row = { stages: { numeric: 'done', vlm: 'done' }, verdict: 'drop', reason: null, provisional: true } as const;
     expect(rowFinished(row)).toBe(true);

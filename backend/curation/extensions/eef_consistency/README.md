@@ -189,6 +189,29 @@ jq -c '[.details.merged.episode.label, ([.details.merged.cells[] | select(.flags
 把声明里一路相机的 `mount` 写成 `fixed_external` 并加假设 `{"code": "mount_declared_fixed"}`（控制台声明抽屉里「会动」的相机点「视为固定」就是这样），
 生成的记录 `details.trajectory_source.declared_fixed` 列出它，报告 EEF 小节的 `declared_fixed_cameras` 也列出它。
 
+### 两半：CPU 半段与模型半段（设计 23 §2.1、设计 25 F5.24b）
+
+接上一节，先起假模型（`tests/cli/fakevlm_server.py`，或仓库根 `.claude/launch.json` 的 `curator-fakevlm`，端口 8766），在 `backend/` 下：
+
+```bash
+V="--vlm-endpoint http://127.0.0.1:8766/v1 --vlm-model fake-vlm"
+R=$(mktemp -d)
+../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $D/eef_ds2_lr3 --run-dir $R --episodes 0,6 \
+  --declaration decl.json $P $V --prep --json | jq -c '.modules.eef_video_consistency.episodes'
+ls $R/scratch/vlm/000000/eef_video_consistency | head; wc -l < $R/checks/eef_video_consistency/results.jsonl
+../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $D/eef_ds2_lr3 --run-dir $R --episodes 0,6 \
+  --declaration decl.json $P $V --prepared --json | jq -c '.modules.eef_video_consistency.episodes'
+jq -c '[.episode_index, .details.merged.episode.label, .details.halves]' $R/checks/eef_video_consistency/results.jsonl
+ls $R/scratch/vlm 2>/dev/null || echo "packages gone"
+```
+
+`--prep` 打出 `{"total":2,"ok":2,"error":0}`，假模型的日志里没有请求；`scratch/vlm/000000/eef_video_consistency/` 下有 `prep.json`、
+`requests.json` 和每个复核窗口的图与视频（`r000_i00.jpg`、`r000_v00.mp4` …），`results.jsonl` 还是空的（0 行）。`--prepared` 才发请求，写出两行结果，
+`details.halves` 是 `{"vlm_prep": …, "vlm": …}`（两半各用了多少秒），结论与一次 `check` 相同；之后请求包没了。
+同样的命令加 `--param eef_video_consistency.use_vlm=false`（或把 `$V` 换成 `--no-vlm`）只跑 `--prep`：直接写结果行，`halves` 只有 `vlm_prep`。
+`../.venv/bin/python -m curation.cli plan --preflight <预检 JSON> --modules eef_video_consistency,task_success` 的阶段里有
+`vlm_prep`（CPU 块）和 `after: vlm_prep` 的 `vlm`；加 `--param eef_video_consistency.use_vlm=false` 后 EEF 只在 `vlm_prep` 里。
+
 ### 原有 EEF 数据
 
 在 `backend/` 下执行（DEMO 数据在仓库外 `~/ws/ws_general/galbot/`，可用 `CURATOR_EEF_DEMO_DATA` 改位置；

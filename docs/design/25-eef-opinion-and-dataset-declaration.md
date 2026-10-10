@@ -2,7 +2,8 @@
 
 > 状态：**开工稿 v1.1（2026-10-09 晚，三轮评审后）**。评审答复见 §11（第三轮是对照代码的核实，改了 D84 的提醒方式、§7 的发现粒度与边界、
 > 旧任务的缺省级别冻结，F5.24 拆成 a / b）；§10 是开工时的缺省选择，实测后可改。D81–D86 已登记到 00 §7、账本已加 F5.22–F5.26；
-> **F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关已落地**（注册表 5.2、C4 5.1.0，§9.1–§9.3 是落地记录），下一步 F5.24b。
+> **F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关、F5.24b EEF 拆两半已落地**（注册表 5.3、C4 5.2.0，§9.1–§9.4 是落地记录），
+> 下一步 F5.25。
 > 来源：2026-10-09 晚的讨论——「能不能画、能不能比，都不取决于 mcap 还是 LeRobot」「记录能还原就不该要用户上传轨迹」「模块都设计成只输出意见，
 > 不再有判废」「两个渠道不平均、取大、冲突请人看」「完整版可视化展示原始数据里直接看得到的东西，迷你版服务任务」「数据集配置复用 mcap 的配置、做得更通用」。
 > 工程基线：`feat/curator-v2` @ 8c4d89f8b（F5.21，trajectory.json 能算就可选、算不了就必选；注册表 4.4、C4 4.6.0、C7 `viz-mapping/1.1`）。
@@ -407,6 +408,39 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   62 格单渠道 `no_vlm_backend`，ep0「一致 0.32」与 F5.23 有模型时的读数相同；开着 `task_success`、EEF 关掉 VLM：EEF 0 次请求、`vlm_off`，任务成败照常 14 次。
   ⑤ d2 的 `exterior_2_left` 记 `mount_declared_fixed` 跑 ep0、ep6：两条都按第三视角测，报告小节写「按声明视为固定的相机：28221883_left」。
   不勾 EEF 的任务判决不变：本 feature 没有动判决与非 EEF 模块的代码路径（`--no-vlm` 只在有 `vlm_switch` 的段上传）。
+
+### 9.4 F5.24b 落地记录（2026-10-10）
+
+- **契约**：C1 升 5.3：CPU 块的段多 `vlm_prep`（`BLOCKS["cpu"]` 的最后一个，`ROOT_STAGES` 说它自成起点）、`PREP_STAGES = {"vlm_prep": "vlm"}`，
+  模块多 `prep_stage`（只有 EEF 填 `vlm_prep`）；导出多 `root_stages`、`prep_stages`。C4 升 5.2.0（`RegistryStage` 加 `vlm_prep`、
+  模块目录的这几个字段、任务进度的段 id 说明，中英变更记录）。C2 计划仍是 2.0：`vlm_prep` 是新的段 id，`after` 多一条跨块的边
+  （`vlm` after `vlm_prep`），只在 Schema 的说明里补；部分记录不进 C2，留在运行目录的请求包里。
+- **planner**（`build_plan(..., model=)`，模块可以带 `params`）：有 `prep_stage` 的模块进 `vlm_prep` 段（`kind: cpu`，并发同 CPU 档）；
+  它问模型（开关开着且任务有模型）时也进 `vlm` 段，`vlm` 段 `after: vlm_prep`；不问时只在 `vlm_prep`，`vlm` 段（若有任务成败）不带 `after`。
+  `curation plan` 多 `--param`、`--no-vlm`；Daemon 的 `ensure_plan` 传模块参数与「任务有没有模型」。估算没有给 CPU 半段单独计时（照旧不计）。
+- **派发**（`blocks.py`）：派发单位从「块」改成「链」——按 `after` 把段连起来，`[vlm_prep, vlm]` 是一条跨块的链；链名取最后一段的块
+  （旧计划仍是 `cpu`、`vlm` 两条），被占用时取第一段 id。每条链一个线程、一份 CPU 名额记账，episode 状态库按链记位置，续跑各自接着做。
+  没有另做「两条链之间的交接」：CPU 半段与模型半段在同一条链里逐条交接，设计 23 §4.3 说的「图」在这里就是多了一条链。
+  `vlm_prep` 层每条在途占 CPU 名额（`pooled_layers`），在途上限是下游队列（两次派发量或 vlm 并发度取大，D77 的有界暂存）。
+  命令参数由 `Run.half_args` 给：`vlm_prep` 带 `--prep` 与模型设置（只拼请求，不调用、不要密钥）或 `--no-vlm`，后面的 `vlm` 带 `--prepared`；
+  模块的状态与条数只由它的最后一段发布（`Run.last_stage_of`）；重试按计划逐段走，同样先 `--prep` 再 `--prepared`。
+- **CLI**：`check --prep` / `--prepared`（互斥）。CPU 半段（`EefJudge` 的 `prep` 模式）做 `_sample`、测量、自运动、记录比对、复核窗口或整段意见的
+  渲染与编码（`eef_review.plan_review`、`opinion.plan_opinion`），把请求与部分记录写进 `scratch/vlm/<episode>/eef_video_consistency/`
+  （`package.py`：`requests.json` + 图与视频文件 + 最后写的 `prep.json`，记下用了哪个文件、配置、模型做的），这一档不写结果行
+  （`check_stage.PREPARED`，状态库里只记交接）；读不出轨迹的条目、CPU 出错的条目也只进包（`final` / `error`），由模型半段写成记录或出错行。
+  模型半段（`ask` 模式）读包、发请求（`answer_review`、`answer_opinion`）、合并，记录落盘后删包（`committed` 钩子），出错的留着；
+  没有包或输入变了是出错行（「CPU 半段没留下东西」）。不问模型时 `--prep` 就是整个模块（`halves` 只有 `vlm_prep`）。
+  一次调用的 `full` 模式 = 两个函数接起来，单独跑 `check --modules eef_video_consistency` 与以前一样。记录多 `details.halves`
+  （两半各用的秒数），`timing.processing_times` 按它把时间记到 `vlm_prep` / `vlm` 两层。
+- **请求包的去留**（D77）：记录落盘即删；暂停、停止保留，续跑时这些条目已在 `vlm` 位置，直接问；运行结束（完成或失败）由调度器删整个
+  `scratch/vlm/`（`Run.drop_packages`），之后的重试、继续运行重做 CPU 半段。
+- **界面**：阶段名「模型准备档」（日志、计划）、流水线卡片「模型准备」，Episode 流水线一行先看 `vlm_prep` 再看 `vlm`。
+  任务详情与报告的「准备 / 等模型」分时（设计 23 §5）没有单独做：记录的 `halves` 与流水线的逐层处理时间已经能看。
+- **验收**：① `use_vlm=false`、或任务没有模型：计划里 EEF 只在 `vlm_prep`，记录 `halves` 只有 `vlm_prep`，任务成功（`tests/orchestr/test_eef_tasks.py`
+  两种情况）。② 开着 VLM：计划 `vlm_prep`（CPU 块）→ `vlm`（`after: vlm_prep`），两半写出的记录与一次 `check` 逐条相同（判决模式与意见模式，
+  `tests/cli/test_eef_check.py`），dataset2 上 `--prep` 留下复核窗口的图与视频、`--prepared` 写出结论后包没了。③ 在模型半段卡住时暂停：
+  `vlm_prep` 已完成、还没问的条目的包留着；续跑后它们的 `halves.vlm_prep` 等于包里记的值（没有重做 CPU 半段），运行结束 `scratch/vlm/` 不在了。
+  ④ 不勾 EEF 的任务：计划与派发同以前（链就是两块），对账黄金基线回放逐位不变。
 
 ## 10. 开工时的缺省选择（实测后可改）
 

@@ -533,6 +533,40 @@ class Run:
                 return True
         return False
 
+    def half_args(self, st: dict, modules) -> list[str]:
+        """The model arguments of a check command of plan stage ``st`` (registry 5.2-5.3, design doc 23 §2.1):
+        ``--prep`` for a prep stage (the modules' CPU halves), ``--prepared`` for the stage after one (their model
+        halves); the model's settings when the modules ask one - a CPU half reads them to build its requests and
+        never calls - else ``--no-vlm`` where a model could have been asked."""
+        out: list[str] = []
+        prep = st.get("id") in registry.PREP_STAGES
+        if prep:
+            out.append("--prep")
+        elif st.get("after") in registry.PREP_STAGES:
+            out.append("--prepared")
+        if st.get("kind") == "vlm" or prep:
+            out += self.vlm_args() if self.stage_asks_model(modules) else ["--no-vlm"]
+        return out
+
+    def last_stage_of(self, module: str) -> str | None:
+        """The plan stage that makes ``module``'s records: its last one (a module of two halves is in its prep stage
+        and, when it asks a model, the stage after it)."""
+        last = None
+        for st in self.plan_doc().get("stages") or []:
+            if module in (st.get("modules") or []):
+                last = st["id"]
+        return last
+
+    def drop_packages(self) -> None:
+        """The requests kept between the halves of model modules (design doc 23 §2.3, D77): gone once the task's run
+        is over - a later retry or continuation makes them again; a pause or a stop keeps them."""
+        from curation.extensions.eef_consistency import package
+
+        root = pathlib.Path(package.root(str(self.wd.root)))
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+            log.info("task %s: kept model requests %s removed", self.task_id, root)
+
     def vlm_args(self) -> list[str]:
         snap = self.task.vlm_snapshot if isinstance(self.task.vlm_snapshot, dict) else None
         if not snap or not snap.get("endpoint") or not snap.get("model"):

@@ -226,6 +226,11 @@ class EefJudge:
         #: missing (``vlm_missing``: set by the stage, which knows whether an endpoint is configured)
         self.use_vlm = bool(params.get("use_vlm", True))
         self.vlm_missing: str | None = None
+        #: the half of the module this call runs (registry 5.3, design doc 23 §2.1, design doc 25 F5.24b): ``full`` -
+        #: all of it (a call of its own, a plan from before 5.3); ``prep`` - the CPU half in vlm_prep: everything that
+        #: asks no model, the requests built and kept in the episode's package (``package``), or the record itself when
+        #: no model is asked; ``ask`` - the model half in vlm: the package read back, asked, merged into the record
+        self.mode = "full"
         self.out_dir = module_dir(run_dir, MODULE)
         # a remote LeRobot dataset's videos are read where they are, only the episode's window, through the
         # vlm stage's shared blocks (design doc 23 §3.2); the scratch directory keeps the record's meta and data
@@ -431,21 +436,36 @@ class EefJudge:
 
     def judge(self, ep: int, log) -> tuple[dict | None, list[str]]:
         """The channels, then their merge (design doc 25 §6-§7): an opinion with a confidence, never a reject.
-        ``None``: the CPU failed (the cause is on ``log``; the record is an error line, held)."""
+        ``None``: the CPU failed (the cause is on ``log``; the record is an error line, held). In ``prep`` mode with
+        a model to ask, everything goes into the episode's package and the struct only says so
+        (``check_stage.PREPARED``); in ``ask`` mode the package makes the record."""
+        if self.mode == "ask":
+            return self._answer(int(ep), log)
+        keep = self.mode == "prep" and self.vlm_missing is None
+        t0 = time.perf_counter()
         sample, source = self._sample(ep)
         if sample is None:                          # nothing to compare: "cannot tell", nobody asked (§7.5)
             if self.opinion:
-                return self._unassessed(int(ep), source), []
-            why = "trajectory.json 里没有这一条" if source is None else \
-                f"这一条生成不出轨迹：{source.get('message') or source.get('reason')}"
-            got = self._judged(self._merged(why=why), _unsupported_detail(int(ep), "projection_missing"), None, [])
-            if source is not None:
-                got[0]["detail"]["trajectory_source"] = source
+                got = self._unassessed(int(ep), source), []
+            else:
+                why = "trajectory.json 里没有这一条" if source is None else \
+                    f"这一条生成不出轨迹：{source.get('message') or source.get('reason')}"
+                got = self._judged(self._merged(why=why), _unsupported_detail(int(ep), "projection_missing"), None, [])
+                if source is not None:
+                    got[0]["detail"]["trajectory_source"] = source
+            if keep:                               # nothing to ask: the record is made, kept for the model half
+                prep_s = round(time.perf_counter() - t0, 3)
+                got[0]["detail"]["halves"] = {"vlm_prep": prep_s}
+                return self._keep(ep, {"final": got[0], "evidence": got[1], "prep_s": prep_s}, [])
             return got
         try:
+            if keep:
+                return self._prepare(int(ep), sample, source, log, t0)
             got, evidence = self._judge(ep, sample, log)
             if got is not None and source is not None:   # generated or derived: how (design doc 25 §4.1)
                 got["detail"].setdefault("trajectory_source", source)
+            if got is not None and self.mode == "prep":   # the whole module in the CPU block: its time is that stage's
+                got["detail"]["halves"] = {"vlm_prep": round(time.perf_counter() - t0, 3)}
             return got, evidence
         finally:
             if self.mcap:                                 # the episode's topic videos are done with
@@ -454,6 +474,181 @@ class EefJudge:
 
                 for cid in sample.cameras:
                     MM.drop(O.media_path(sample, cid, self.media_root))
+
+    # ------------------------------------------------------------ the two halves (design doc 23 §2.1)
+    def _package(self, ep: int) -> str:
+        from ..extensions.eef_consistency import package
+
+        return package.path(self.run_dir, MODULE, ep)
+
+    def _package_config(self) -> dict:
+        """What a kept half was made with: another file, configuration, template or model makes it again."""
+        return {"input": self.result.sha256, "config": self.config, "review": self.review_config,
+                "template": self.template_sha}
+
+    def _keep(self, ep: int, prep: dict, requests: list) -> tuple[dict, list[str]]:
+        from ..extensions.eef_consistency import package
+        from ..pipeline.check_stage import PREPARED
+
+        package.write(self._package(ep), {**prep, "episode_index": int(ep), "made_with": self._package_config()},
+                      requests)
+        return {PREPARED: True}, []
+
+    def kept(self, episodes: list[int]) -> set[int]:
+        """The episodes whose CPU half is kept for the model half, made with this call's inputs (``--resume``)."""
+        from ..extensions.eef_consistency import package
+
+        out = set()
+        for e in episodes:
+            prep = package.read_prep(self._package(e))
+            if prep is not None and prep.get("made_with") == self._package_config():
+                out.add(int(e))
+        return out
+
+    def committed(self, ep: int, record: dict | None) -> None:
+        """The record the model half made is on disk: its package goes (D77); an error keeps it for a retry."""
+        from ..extensions.eef_consistency import package
+        from ..pipeline.records import is_error
+
+        if self.mode == "ask" and record is not None and not is_error(record):
+            package.remove(self._package(ep))
+
+    def _prepare(self, ep: int, sample, source, log, t0: float) -> tuple[dict, list[str]]:
+        """The CPU half (design doc 23 §2.1): the measurement, the wrist cameras' own motion, the record comparison
+        and every request rendered - kept in the package with the partial record; nobody asked."""
+        from ..extensions.eef_consistency import opinion as OP
+        from ..extensions.eef_consistency import runner
+        from . import eef_review
+
+        options = getattr(self.ask, "video_options", {})
+        if self.opinion:
+            bridged = None
+            if sample.hand_poses:          # short pose gaps bridged with the default (design doc 22 §5.2), and said so
+                from ..extensions.eef_consistency import umi
+
+                bridged = umi.fill_gaps(sample)
+            plan, failure = None, None
+            try:
+                self._fetch(sample)
+                plan = OP.plan_opinion(sample, media_root=self.media_root, model=self.model,
+                                       allowed_mounts=self.cfg.allowed_mounts, options=options)
+            except Exception as e:  # noqa: BLE001 - an opinion that could not be had changes nothing
+                failure = f"{type(e).__name__}: {e}"[:300]
+                self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {failure}")
+            ego = self._ego_motion(ep, sample)
+            detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
+                      "overall": "opinion", "config_hash": self.config, "seeds_sha256": None,
+                      "template_sha256": None, "input_file_sha256": self.result.sha256,
+                      "review_config": self.review_config}
+            if ego is not None:
+                detail["ego_motion"] = ego
+            if self.derived is not None:
+                detail["trajectory_source"] = self.derived.sample(int(ep))[1]
+            evidence = self._attach_record(detail, sample)
+            prep = {"kind": "opinion", "bridged": bridged, "failure": failure,
+                    "plan": None if plan is None else {
+                        "cameras": plan["cameras"], "times": plan["times"], "prompt_version": plan["prompt_version"],
+                        "order": [[c, i] for c, i, _ in plan["requests"]]}}
+            requests = [] if plan is None else [r for _, _, r in plan["requests"]]
+        else:
+            try:
+                self._fetch(sample)
+                detail, _ = runner.run_episode(sample, self.cfg)
+            except Exception as e:  # noqa: BLE001 - one episode failing never stops the call
+                cause = f"{type(e).__name__}: {e}"[:500]
+                self.ctx.log("warn", f"{MODULE}: episode {ep} failed: {cause}")
+                return self._keep(ep, {"error": cause}, [])
+            evidence = [self._rel(e["path"]) for e in detail.get("evidence", [])]
+            self._record_paths(detail)
+            plan, failure = None, None
+            try:
+                plan = eef_review.plan_review(sample, {"details": detail}, run_dir=self.run_dir,
+                                              media_root=self.media_root, model=self.model,
+                                              per_camera=self.per_camera, frames_per_window=self.per_window,
+                                              video=True, video_options=options)
+            except Exception as e:  # noqa: BLE001 - no second opinion: the CPU's reading alone
+                failure = f"{type(e).__name__}: {e}"[:300]
+                self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {failure}")
+            prep = {"kind": "review", "failure": failure,
+                    "plan": None if plan is None else {
+                        "cameras": plan["cameras"], "truncated": plan["truncated"], "episode": plan["episode"],
+                        "order": [[c, i] for c, i, _ in plan["requests"]]}}
+            requests = [] if plan is None else [r for _, _, r in plan["requests"]]
+        if source is not None:                     # generated or derived: how (design doc 25 §4.1)
+            detail.setdefault("trajectory_source", source)
+        prep.update(detail=detail, evidence=evidence, prep_s=round(time.perf_counter() - t0, 3))
+        return self._keep(ep, prep, requests)
+
+    def _answer(self, ep: int, log) -> tuple[dict | None, list[str]]:
+        """The model half (design doc 23 §2.1): the package read back, its requests asked, the channels merged."""
+        from ..extensions.eef_consistency import opinion as OP
+        from ..extensions.eef_consistency import package
+        from ..extensions.eef_consistency import review as R
+        from . import eef_review
+
+        where = self._package(ep)
+        prep = package.read_prep(where)
+        if prep is None:
+            log.add(MODULE, cause="the CPU half kept nothing for this episode (vlm_prep did not finish it)")
+            return None, []
+        if prep.get("made_with") != self._package_config():
+            log.add(MODULE, cause="the CPU half was kept with other inputs (file, configuration or model)")
+            return None, []
+        if prep.get("error"):
+            log.add(MODULE, cause=str(prep["error"]))
+            return None, []
+        if "final" in prep:                        # nothing to ask: the CPU half made the record
+            return prep["final"], list(prep.get("evidence") or [])
+        if self.vlm_missing:
+            log.add(MODULE, cause=f"the kept requests have no model to ask ({self.vlm_missing})")
+            return None, []
+        requests = package.read_requests(where)
+        detail, evidence = prep["detail"], list(prep.get("evidence") or [])
+        order = (prep.get("plan") or {}).get("order") or []
+        t1 = time.perf_counter()
+        if prep["kind"] == "opinion":
+            if prep["plan"] is None:
+                op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "failed", "cameras": {},
+                      "segments": 0, "flagged": False, "max_confidence": None, "requests": 0,
+                      "failure": prep.get("failure")}
+            else:
+                plan = {**prep["plan"], "requests": [(c, i, r) for (c, i), r in zip(order, requests)]}
+                try:
+                    op = OP.answer_opinion(plan, self.ask, self.cache)
+                except Exception as e:  # noqa: BLE001 - an opinion that could not be had changes nothing
+                    op = {"protocol": OP.PROTOCOL, "prompt_version": prep["plan"]["prompt_version"], "status": "failed",
+                          "cameras": {}, "segments": 0, "flagged": False, "max_confidence": None, "requests": 0,
+                          "failure": f"{type(e).__name__}: {e}"[:300]}
+                    self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {type(e).__name__}: {e}")
+            op["elapsed_s"] = round(time.perf_counter() - t1, 3)
+            if prep.get("bridged") is not None:
+                op["interpolation"] = prep["bridged"]
+            merged = self._merged(opinion=op, ego=detail.get("ego_motion"))
+            detail.update(opinion=op, merged=merged, reason=merged["episode"]["reason"],
+                          vlm={"model": self.model, "prompt_version": op.get("prompt_version", OP.PROMPT_VERSION),
+                               "answer_schema": OP.ANSWER_SCHEMA, "timeout_s": self.timeout_s,
+                               "call_kind": eef_review.TAG},
+                          halves={"vlm_prep": prep.get("prep_s"), "vlm": round(time.perf_counter() - t1, 3)})
+            return {"passed": True, "score": None, "detail": detail}, evidence
+        asked: dict = {}
+        if prep["plan"] is None:
+            review = {"status": R.INCOMPLETE, "reasons": ["review_failed"], "cameras": {}, "failure": prep.get("failure")}
+        else:
+            plan = {**prep["plan"], "requests": [(c, i, r) for (c, i), r in zip(order, requests)]}
+            try:
+                review = eef_review.answer_review(plan, {"details": detail}, run_dir=self.run_dir, ask=self.ask,
+                                                  cache=self.cache, out_dir=self.out_dir, requests=asked)
+            except Exception as e:  # noqa: BLE001 - no second opinion: the CPU's suspects go to a person
+                review = {"status": R.INCOMPLETE, "reasons": ["review_failed"], "cameras": {},
+                          "failure": f"{type(e).__name__}: {e}"[:300]}
+                self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {type(e).__name__}: {e}")
+        review["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        merged = self._merged(detail=detail, review=review)
+        if merged["episode"]["conflicts"]:          # the person's card shows every window (a conflict is the only card)
+            eef_review.write_card_evidence(review, asked, self.run_dir)
+        evidence += list(review.get("evidence") or [])
+        detail["halves"] = {"vlm_prep": prep.get("prep_s"), "vlm": round(time.perf_counter() - t1, 3)}
+        return self._judged(merged, detail, review, evidence)
 
     def _fetch(self, sample) -> None:
         if self.mcap and self.src.cache is not None:   # a streamed TOS dataset has no cache: read in place

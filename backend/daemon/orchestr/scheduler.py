@@ -101,6 +101,11 @@ class Job:
                                              f"编排出错（{type(err).__name__}: {err}）"[:500]))
         finally:
             run.close()
+        if outcome[0] in ("done", "failed"):
+            try:                           # the run is over: the requests kept between halves go (D77)
+                run.drop_packages()
+            except Exception:  # noqa: BLE001 - the janitor sweeps the run directory in the end
+                log.warning("could not remove the kept model requests of %s", self.task_id, exc_info=True)
         if outcome[0] != "done":
             self._restore_modules(modules_before)
         if outcome[0] == "failed":

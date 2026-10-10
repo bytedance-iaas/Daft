@@ -47,6 +47,12 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--site-config", metavar="FILE",
                    help="the planner's site settings (VLM parallelism and vlm blocks, YAML or JSON)")
     p.add_argument("--out", metavar="FILE", help="also write the plan here (plan.json)")
+    p.add_argument("--no-vlm", action="store_true",
+                   help="the task has no model backend: a module with a CPU half (eef_video_consistency) runs "
+                        "wholly in it (vlm_prep), with no model half")
+    from . import modparams
+
+    modparams.add_argument(p)
     p.set_defaults(func=run)
 
 
@@ -90,9 +96,13 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                             model_parallelism=args.vlm_parallelism,
                             backend_parallelism=args.backend_parallelism,
                             cpu_cores=args.cpu_cores, running_tasks=args.running_tasks)
-        plan = build_plan(preflight, [m.strip() for m in args.modules.split(",") if m.strip()],
+        from . import modparams
+
+        given = modparams.parse(getattr(args, "param", None))      # use_vlm and the like decide the halves
+        plan = build_plan(preflight, [{"id": m, "params": given.get(m, {})}
+                                      for m in (x.strip() for x in args.modules.split(",")) if m],
                           episodes, limits, SiteConfig.from_mapping(site),
-                          unlabeled_episodes=unlabeled)
+                          unlabeled_episodes=unlabeled, model=not args.no_vlm)
     except (PlanError, ValueError) as e:
         raise UsageError(f"cannot plan: {e}") from None
     if args.out:

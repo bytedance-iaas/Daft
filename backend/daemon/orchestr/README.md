@@ -55,6 +55,12 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
   没有任务标注的条目 vlm 段不判成败（D72；D72 之前排好的计划还带一个 autolabel 段，直接记 skipped）；dedup 是 CPU 块最后一个逐条段，和前面的段交叠（D70）。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
+  注册表 5.3 起（设计 23 §1、§4.3，设计 25 F5.24b）派发的单位是**链**：计划里按 `after` 连起来的段。CPU 块的第二个起点 `vlm_prep`（EEF 的 CPU 半段）
+  自成一条链，`after: vlm_prep` 的 vlm 段接在它后面——一条 episode 的 CPU 半段做完就进模型半段，跨块的只有这一条边。链按最后一段所在的块命名
+  （`cpu`、`vlm`，旧计划照旧是这两个名字），名字被占了就用第一段的 id（没有模型半段时的 `vlm_prep`）；每条链一个线程、一份 CPU 名额记账。
+  `vlm_prep` 层每条在途占一个 CPU 名额（解码、画标记、编码），它的命令带 `--prep`，跟在后面的 vlm 段带 `--prepared`；模块的状态与条数只由它的
+  最后一段发布（`Run.last_stage_of`）。模型半段在途上限按下游队列（两次派发量或 vlm 并发度取大）卡住 `vlm_prep`。每条 episode 的请求包
+  （`scratch/vlm/`，D77）在记录落盘后删掉；暂停、停止保留，续跑直接用；运行结束（完成或失败）整个删掉，之后的重试、继续运行重做 CPU 半段。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
   numeric/frame 共用 CPU 总预算，逐条释放额度；预算为 1 时交替推进，也不持有整批锁。任务的 `limits.cpu_concurrency` 是上限，实际值见 plan 的 `value` 和 `bound_by`。

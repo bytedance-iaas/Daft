@@ -123,10 +123,7 @@ def _start_worker(run, layer, selection, path, next_stage):
     model = vlm and run.stage_asks_model(st["modules"])
     if not vlm:
         argv += ["--concurrency", str(layer.width)]
-    elif model:
-        argv += run.vlm_args()
-    else:
-        argv.append("--no-vlm")                # the task has no model, or the module's switch is off
+    argv += run.half_args(st, list(st["modules"]))   # a module of two halves: which one, and the model's settings
     argv += run.module_param_args(list(st["modules"]))        # every module's parameters (registry 2.1)
     cli = run._cli_environment(need_input=True, need_output=False, need_vlm=model)
     if cli.input_region:
@@ -181,7 +178,10 @@ def _finish_stage(run, layer, store):
     survivors = inputs if layer.failed else store.survivors(mods)
     write_lines(run.wd.episodes_file(run.run_key, f"{sid}.out"), survivors)
     errors_found = False
+    last = getattr(run, "last_stage_of", None)
     for module in mods:
+        if last is not None and last(module) not in (None, sid):   # its other half writes its records (5.3)
+            continue
         total, errors = store.counts(module)
         errors_found |= errors > 0
         state = "failed" if layer.failed else "completed_with_errors" if errors else "succeeded"
@@ -204,6 +204,8 @@ def pooled_layers(run, stages: list[dict]) -> set[str]:
     if any(s["id"] == "integrity" for s in stages) \
             and run.module_params("data_integrity").get("decode_test"):
         pooled.add("integrity")
+    # the CPU halves of model modules decode, measure and encode (registry 5.3, design doc 23 §4.2)
+    pooled |= {s["id"] for s in stages if s["id"] in ("vlm_prep",)}
     return pooled
 
 
@@ -214,9 +216,10 @@ def cpu_pool_of(run, size: int) -> CpuPool:
 
 
 def run_episodes(run, stages: list[dict], selection: list[int], *,
-                 abort: threading.Event | None = None, pool_key=None) -> None:
-    """The layers of one chain over ``selection``. ``abort``: shared with the other block's chain (set when
-    either fails, :mod:`.blocks`); ``pool_key``: whom the CPU pool books this chain's slots to."""
+                 abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
+    """The layers of one chain over ``selection``. ``abort``: shared with the other chains (set when one
+    fails, :mod:`.blocks`); ``pool_key``: whom the CPU pool books this chain's slots to; ``chain``: its name in
+    the episode store (:func:`.blocks.chains_of`; its first stage's block by default)."""
     from .pipeline import cpu_shares_for, effective_batch_size
 
     if not stages:
@@ -228,7 +231,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
     pool = cpu_pool_of(run, max([cpu_budget] + [int(s.get("concurrency") or 1)
                                                 for s in stages if s["id"] in pooled]))
     pool_key = pool_key if pool_key is not None else run.cpu_key
-    block = stages[0].get("block")
+    block = chain or stages[0].get("block")
     # a CPU layer's share of the budget; else its own concurrency (the data integrity layer,
     # I/O bound, design doc 14 §2.2), else a VLM layer's episode gate
     layers = [Layer(s, shares.get(s["id"], int(s.get("concurrency")
@@ -266,7 +269,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
                 by_id[dest].ready.append(ep)
         from curation.contracts import modules as registry
 
-        title = registry.BLOCK_TITLES.get(block, "") if block else ""
+        title = registry.BLOCK_TITLES.get(stages[-1].get("block"), "") if block else ""
         run.log("system", "info", f"{title}流水线：逐条交接并持续补位，每次最多派发 {batch_size} 条；"
                                   + "，".join(f"{l.sid} 并发 {l.width}" for l in layers)
                                   + (f"；CPU 档每条占全局 CPU 池的一个名额（共 {pool.size} 个，"

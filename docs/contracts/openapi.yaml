@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.1.0
+  version: 5.2.0
   description: |
     ## Overview
 
@@ -192,6 +192,13 @@ info:
     platform can draw on it, and why not) and the parameters that apply to this dataset (`applicable_params`:
     the gripper reference only where there is a third-person camera).
 
+    **5.2.0** (2026-10-10): the EEF module runs in two halves. Its CPU part (measuring, rendering the marked videos
+    and building the requests) runs in the CPU block's new stage `vlm_prep`, beside the other CPU checks, and keeps
+    each episode's requests until the model part in `vlm` has asked them; without a model the whole module runs
+    there. The module catalogue lists `vlm_prep` among the stages (`root_stages`: a stage that starts on its own;
+    `prep_stages`: which stage's records it prepares) and marks the module with `prep_stage`. A task's progress and
+    timeline show `vlm_prep` as a stage of its own.
+
   x-description-zh: |
     ## 概览
 
@@ -308,6 +315,11 @@ info:
     **5.1.0**（2026-10-10）：EEF 模块不再必须有模型：新参数 `use_vlm`（缺省开）决定它请不请模型，模块目录里这类模块带 `vlm_switch`。
     没选模型服务的任务照常运行——预检报 `available` 并附一条提醒，结论里写明模型那一路缺了、为什么。预检的 EEF 条目还列出数据集的每路相机
     （`cameras`：安装方式、平台能否在上面画、不能的原因）和这个数据集上适用的参数（`applicable_params`：有第三视角相机时才有夹爪参考）。
+
+    **5.2.0**（2026-10-10）：EEF 模块分两半运行。CPU 那一半（测量、画带标记的视频、准备送模型的请求）在 CPU 块的新阶段 `vlm_prep` 里跑，
+    和其他 CPU 检查并排，每条 episode 的请求保留到 `vlm` 里的模型那一半问完为止；没有模型时整个模块都在那里跑完。模块目录的阶段里多了
+    `vlm_prep`（`root_stages`：自成起点的阶段；`prep_stages`：它为哪个阶段准备记录），模块带 `prep_stage`。任务的进度与时间线把 `vlm_prep`
+    作为单独的一段显示。
 
 servers:
   - url: "{base}/api/v1"
@@ -3853,6 +3865,14 @@ components:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
           description: "stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it"
+        root_stages:
+          type: array
+          items: {$ref: "#/components/schemas/RegistryStage"}
+          description: "stages that start on their own in their block rather than after the stage before (5.2.0: vlm_prep, beside the CPU block's other stages)"
+        prep_stages:
+          type: object
+          description: "a stage that prepares another stage's records -> that stage (5.2.0: vlm_prep -> vlm): a module with a prep_stage runs its CPU part there, its model part in the other"
+          additionalProperties: {$ref: "#/components/schemas/RegistryStage"}
         finding_levels:
           type: array
           description: blocking (rejects), review (asks a person), info (reported only), with the console's titles
@@ -3962,8 +3982,13 @@ components:
                   present on a module that may ask a model without needing one (5.1.0): the boolean parameter that
                   switches the model on (on by default). A task without a model backend still runs it; the
                   model's part is then missing
+              prep_stage:
+                $ref: "#/components/schemas/RegistryStage"
+                description: >-
+                  present on a module that runs in two parts (5.2.0): the stage of its CPU part; its records come
+                  from its stage when a model is asked, from this one when not
     RegistryStage:
-      enum: [integrity, numeric, frame, dedup, autolabel, vlm, profile]
+      enum: [integrity, numeric, frame, dedup, vlm_prep, autolabel, vlm, profile]
       description: a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
     FindingLevel:
       enum: [blocking, review, info]
@@ -4539,7 +4564,7 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
         full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}

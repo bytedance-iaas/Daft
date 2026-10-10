@@ -36,7 +36,7 @@ from .merge import declared_frame_policy
 SCHEMA_VERSION = "2.0"
 #: the stages that hand episodes on one at a time (the Daemon's episode pipeline); a plan from before
 #: D70 / D72 may also carry whole-set stages and an autolabel stage, which ran as one command
-STREAM_STAGES = ("integrity", "numeric", "frame", "vlm")
+STREAM_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm")
 
 
 class PlanError(ValueError):
@@ -53,6 +53,14 @@ def _registry(registry: Iterable[Any] | None) -> dict[str, Any]:
             raise PlanError(f"module {spec.id!r} has unknown stage {spec.stage!r}")
         by_id[spec.id] = spec
     return by_id
+
+
+def _params_of(modules: Iterable[Any]) -> dict[str, dict]:
+    """The task's parameters of each module given as ``{"id", "params"}`` (the rest: none)."""
+    if isinstance(modules, str):
+        return {}
+    return {item["id"]: dict(item.get("params") or {}) for item in modules
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)}
 
 
 def _requested(modules: Iterable[Any], specs: Mapping[str, Any]) -> list[str]:
@@ -150,6 +158,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
                site_config: SiteConfig | Mapping[str, Any] | None = None, *,
                unlabeled_episodes: Iterable[int] | None = None,
                registry: Iterable[Any] | None = None,
+               model: bool = True,
                validate: bool = False) -> dict[str, Any]:
     """Build ``plan.json`` (``docs/contracts/cli/plan.schema.json``).
 
@@ -159,6 +168,8 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
     ``site_config`` a :class:`SiteConfig` or mapping. ``unlabeled_episodes``
     makes the count of episodes task_success will not judge exact when the caller
     knows which lack a task text. ``registry`` defaults to C1 (tests pass extra example modules).
+    ``model``: whether the task has a model backend - a module with a CPU half (``prep_stage``, registry 5.3)
+    that asks no model (its switch off in its ``params``, or no backend) runs whole in that half's stage.
     ``validate=True`` checks the result against the contract (needs jsonschema
     and ``docs/contracts``).
     """
@@ -173,6 +184,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
         raise PlanError("the preflight has no dataset block")
     count = int(dataset["episode_count"])
     selected = _selected(episodes, dataset_episodes(dataset))
+    params = _params_of(modules)
     requested = set(_requested(modules, specs))
     # a rider (registry 1.14) is never selected on its own: whenever its host is requested it
     # runs in the host's requests, and without the host it is left out quietly
@@ -206,17 +218,38 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
         notes.append(f"{unlabeled} selected episode(s) have no task text: task_success does not "
                      "judge them (their cameras are still checked for picture defects, one request "
                      "each), every other check still runs on them")
+    def asks(spec) -> bool:             # the model half runs: the module asks one and the task has one
+        return model and spec.asks_model(params.get(spec.id)) if hasattr(spec, "asks_model") \
+            else "vlm" in spec.needs
+
+    prepped: set[str] = set()           # the modules whose CPU half is planned (registry 5.3)
     for block, block_stages in registry_mod.BLOCKS.items():
         previous = None
         for stage_id in block_stages:
-            members = [s for s in chosen if s.stage == stage_id]
+            if stage_id in getattr(registry_mod, "PREP_STAGES", {}):
+                # the CPU halves (design doc 23 §1): every module with this prep stage - and all of it when it
+                # asks no model
+                members = [s for s in chosen if getattr(s, "prep_stage", None) == stage_id]
+            else:
+                members = [s for s in chosen if s.stage == stage_id
+                           and not (getattr(s, "prep_stage", None) and not asks(s))]
             if not members:
                 continue
             # a module with a model switch (registry 5.2, EEF's use_vlm) keeps its stage a model stage: whether
             # it asks the model is the task's parameter, which the Daemon reads when it starts the stage
-            kind = "vlm" if any("vlm" in s.needs or getattr(s, "vlm_switch", None) for s in members) else "cpu"
+            kind = "vlm" if any("vlm" in s.needs or getattr(s, "vlm_switch", None) for s in members) \
+                and stage_id not in getattr(registry_mod, "PREP_STAGES", {}) else "cpu"
             stage: dict[str, Any] = {"id": stage_id, "kind": kind, "command": "check", "block": block}
-            if previous:
+            if stage_id in getattr(registry_mod, "PREP_STAGES", {}):
+                prepped |= {s.id for s in members}
+                for s in members:
+                    notes.append(f"{s.id}: its CPU half runs in {stage_id}, beside the {block} block's other "
+                                 f"stages" + (", its model half in " + registry_mod.PREP_STAGES[stage_id]
+                                              if asks(s) else " - wholly, no model asked"))
+            elif any(s.id in prepped for s in members):
+                # the model half after its CPU half, across the blocks (design doc 23 §4.2)
+                stage["after"] = next(p for p, target in registry_mod.PREP_STAGES.items() if target == stage_id)
+            elif previous:
                 stage["after"] = previous
             if kind == "cpu":
                 stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
@@ -230,7 +263,8 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
                 stage["gates"]["episode"] = stage["gates"]["probe"]
                 stage["merge"] = _merge_proposal(members, site, notes)
             stages.append(stage)
-            previous = stage_id
+            if stage_id not in getattr(registry_mod, "ROOT_STAGES", ()):
+                previous = stage_id
     stages.append({"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"})
 
     if not chosen:

@@ -287,7 +287,7 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; vlm) and final - autolabel and profile only in plans made while those stages existed; stages of new modules follow the same pattern"
+          "description": "1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern"
         },
         "kind": {
           "enum": [
@@ -339,7 +339,7 @@
         "after": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "2.0: the stage before it in its block; a block's first stage has none"
+          "description": "2.0: the stage before it in its block; a block's first stage and a second root (vlm_prep) have none. The one edge across the blocks: vlm after vlm_prep when a module of vlm ran its CPU part there - an episode reaches vlm once vlm_prep is done with it"
         },
         "full_set": {
           "type": "boolean",

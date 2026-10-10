@@ -27,8 +27,10 @@ def _context(runtime, task):
     if not path.is_file():
         return run_dir, None, [], None
     plan = read_json(run_dir / "plan.json", {}) or {}
-    modules = [m for st in plan.get("stages") or []
-               if st.get("id") in agg.EPISODE_STAGES for m in st.get("modules") or []]
+    # a module of two halves is in its CPU half's stage too (registry 5.3): listed once
+    modules = list(dict.fromkeys(m for st in plan.get("stages") or []
+                                 if st.get("id") in agg.EPISODE_STAGES or st.get("id") in registry.PREP_STAGES
+                                 for m in st.get("modules") or []))
     # the task's policy, frozen at start (design doc 17 §4.1): the verdict so far is graded with it
     policy = policy_mod.load(str(run_dir))
     return run_dir, EpisodeState(path, policy), modules, policy

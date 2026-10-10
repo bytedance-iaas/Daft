@@ -8,7 +8,9 @@ const copy = zh.taskDetail.pipelineEpisodes;
 const STAGE: Record<string, string> = copy.stage;
 /** The per-episode stages of the two blocks, as the card lists them. */
 const CPU_STAGES = ['integrity', 'numeric', 'frame'];
-const ORDER = [...CPU_STAGES, 'vlm'];
+/** A model module's CPU half, then its model half (registry 5.3, design doc 23 §1): one chain across the blocks. */
+const MODEL_STAGES = ['vlm_prep', 'vlm'];
+const ORDER = [...CPU_STAGES, ...MODEL_STAGES];
 const MARK: Record<string, string> = { done: '✓', error: '✗', running: '…', waiting: '…' };
 
 type Row = Pick<PipelineEpisode, 'stages' | 'next_stage' | 'last_stage' | 'verdict' | 'reason' | 'provisional'>;
@@ -19,7 +21,8 @@ const open = (state: string | undefined) => state === 'waiting' || state === 'ru
 export function waitingStages(row: Row): string[] {
   const s = row.stages ?? {};
   const cpu = CPU_STAGES.find((id) => open(s[id]));
-  return [cpu, open(s.vlm) ? 'vlm' : undefined].filter((id): id is string => Boolean(id));
+  const model = MODEL_STAGES.find((id) => open(s[id]));
+  return [cpu, model].filter((id): id is string => Boolean(id));
 }
 
 export function rowFinished(row: Row): boolean {

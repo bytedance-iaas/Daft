@@ -269,6 +269,12 @@ def test_an_eef_task_without_a_model_runs_on_the_cpu(daemon):
         task = d.wait(tid)
         assert task["state"] in ("succeeded", "completed_with_errors"), json.dumps(task)[:2000]
         rd = d.run_dir(tid)
+        # registry 5.3 (F5.24b acceptance ①): no model half - the module runs wholly in the CPU block
+        plan = json.load(open(os.path.join(rd, "plan.json")))
+        assert [s["modules"] for s in plan["stages"] if s["id"] == "vlm_prep"] == [[EEF]]
+        assert not [s for s in plan["stages"] if EEF in s.get("modules", []) and s["id"] == "vlm"]
+        (row,) = [m for m in task["modules"] if m["id"] == EEF]
+        assert row["state"] == "succeeded" and row["episodes_error"] == 0
         recs = [json.loads(x) for x in open(os.path.join(rd, "checks", EEF, "results.jsonl"))]
         assert recs and all(r["details"]["merged"]["episode"]["label"] for r in recs)
         missing = {c.get("missing") for r in recs for c in r["details"]["merged"]["cells"] if "single_source" in c["flags"]}
@@ -319,6 +325,15 @@ def test_an_eef_task_runs_end_to_end(daemon):
         assert passed_of(r) is not False and r["details"]["merged"]["episode"]["label"]
     usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
     assert {u["call_kind"] for u in usage if u.get("module") == EEF} == {"eef_review"}
+    # registry 5.3 (design doc 23 §2.1): its CPU half ran in the CPU block's vlm_prep, the model half in vlm
+    (prep,) = [s for s in plan["stages"] if s["id"] == "vlm_prep"]
+    assert (prep["block"], prep["modules"], vlm["after"]) == ("cpu", [EEF], "vlm_prep")
+    # an episode with nothing to ask (7: not in the file) has its record made by the CPU half
+    assert {ep: set(r["details"]["halves"]) for ep, r in recs.items()} == {
+        ep: ({"vlm_prep", "vlm"} if ep < 7 else {"vlm_prep"}) for ep in recs}
+    stages = {st["id"]: st for st in task["progress"]["stages"]}
+    assert stages["vlm_prep"]["state"] == "succeeded" and stages["vlm"]["state"] == "succeeded"
+    assert not os.path.exists(os.path.join(rd, "scratch", "vlm"))          # nothing kept once the run is over
     rev = task["result_rev"]
     verdicts = {x["episode_index"]: x for x in (json.loads(y) for y in open(
         os.path.join(rd, "revisions", f"r{rev:04d}", "verdicts.jsonl")))}
@@ -405,3 +420,53 @@ def test_a_person_settles_a_conflict_and_the_delivery_follows(daemon, fake_vlm):
               encoding="utf-8") as fh:
         delivered = {e["episode_index"] for e in json.load(fh)["episodes"]}
     assert drop not in delivered and (keep == drop or keep in delivered)
+
+
+@pytest.mark.slow
+def test_an_eef_task_pauses_between_its_halves_and_asks_what_it_kept(daemon, fake_vlm):
+    """F5.24b acceptance ②③ (design doc 23 §2.1-§2.3, D77): the CPU half keeps every episode's requests in the
+    run directory; held at the model, a pause leaves them there, and the resume asks them as they were kept -
+    no CPU half again (the records' vlm_prep time is the kept one) - and lets them go."""
+    d = daemon()
+    traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
+              "review_windows_per_camera": 1, "review_frames_per_window": 2}
+    needle = "You review ONE point P"
+    hold = fake_vlm.hold(needle)
+    try:
+        tid = d.create(modules=["timestamp_check", {"id": EEF, "params": params}],
+                       params={"start_now": True, "vlm_hedge": False, "limits": {"vlm_parallelism": 1}})["id"]
+        rd = d.run_dir(tid)
+        kept_dir = os.path.join(rd, "scratch", "vlm")
+
+        def kept() -> dict[int, float]:
+            if not os.path.isdir(kept_dir):
+                return {}
+            out = {}
+            for name in os.listdir(kept_dir):
+                prep = os.path.join(kept_dir, name, EEF, "prep.json")
+                if os.path.isfile(prep):
+                    out[int(name)] = json.load(open(prep)).get("prep_s")
+            return out
+
+        d.wait_for(lambda: len(kept()) == 8 and fake_vlm.count(needle) > 0,
+                   what="every episode's CPU half kept while the model is asked")
+        r = d.action(tid, "pause")
+        assert r.status_code == 200, r.text
+    finally:
+        hold.set()
+    paused = d.wait(tid, ("paused",), timeout=180)
+    stages = {s["id"]: s["state"] for s in paused["progress"]["stages"]}
+    assert stages["vlm_prep"] == "succeeded" and stages["vlm"] != "succeeded"
+    left = kept()
+    assert left, "the requests not asked yet stay kept through the pause"
+    assert d.action(tid, "resume").status_code == 200
+    task = d.wait(tid)
+    assert task["state"] in ("succeeded", "completed_with_errors"), json.dumps(task)[:2000]
+    recs = {r["episode_index"]: r for r in (json.loads(x) for x in open(os.path.join(rd, "checks", EEF,
+                                                                                      "results.jsonl")))}
+    assert sorted(recs) == list(range(8))
+    for ep, prep_s in left.items():                          # asked as kept: its CPU half was not done again
+        assert recs[ep]["details"]["halves"]["vlm_prep"] == prep_s
+    assert not os.path.exists(kept_dir)

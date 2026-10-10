@@ -45,7 +45,10 @@ from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact,
                       write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
-FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm", "dedup")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "dedup")
+#: a module's half kept for the next stage (registry 5.3, design doc 23 §2.1): the struct a CPU half returns when
+#: its model half will write the record - nothing to write in this stage
+PREPARED = "prepared"
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
 #: P15: this many consecutive failures on one infrastructure cause at the start
 #: of a VLM stage fail the module instead of timing out episode by episode.
@@ -128,10 +131,14 @@ class StageOptions:
     #: the modules' parameters (``--param``, defaults filled in by the record writer): the judgement
     #: lines a record 2.0's findings are drawn with (design doc 17 §1.3)
     params: dict[str, dict] = field(default_factory=dict)
+    #: registry 5.3 (design doc 23 §2.1): the modules' CPU halves (their ``prep_stage``), not their stage
+    prep: bool = False
+    #: episodes whose CPU half is already kept for the model half (``--resume`` of a prep stage skips them)
+    prepared: Callable[[list[int]], set[int]] | None = None
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
-        stages = {stage_of(m) for m in self.modules}
+        stages = {registry_mod.get(m).prep_stage if self.prep else stage_of(m) for m in self.modules}
         if len(stages) != 1 or not stages <= set(FUNNEL_STAGES):
             raise ValueError(f"modules {self.modules} are not one funnel stage")
         self.stage = stages.pop()
@@ -258,6 +265,9 @@ class StageRun:
         done = {e for e in eps
                 if all(e in current[m] and not is_error(current[m][e]) and e not in stale.get(m, ())
                        for m in self.o.modules)}
+        prepared = getattr(self.o, "prepared", None)
+        if prepared is not None:                     # a CPU half kept for its model half is done here too
+            done |= set(prepared([e for e in eps if e not in done]))
         crashes = self._stale_inflight()
         crashed = {e for e in eps if crashes.get(e, 0) >= CRASH_LIMIT and e not in done}
         return [e for e in eps if e not in done and e not in crashed], len(done), crashed
@@ -270,7 +280,7 @@ class StageRun:
         from ..cli.errors import CliError, ModuleFailed
 
         o = self.o
-        if o.stage == "vlm" and "task_success" not in o.modules:
+        if o.stage in ("vlm", "vlm_prep") and "task_success" not in o.modules:
             return _NoRows()
         if o.stage == "integrity":
             # its own rows: v1's readers without the semantics sample (design doc 14 §2.3)
@@ -301,7 +311,8 @@ class StageRun:
         return {m: record_from_struct(m, ep, structs.get(m), incidents=logs[m].items(),
                                       evidence=(evidence or {}).get(m), elapsed_s=elapsed,
                                       params=self.o.params.get(m), context=(contexts or {}).get(m))
-                for m in self.o.modules}
+                for m in self.o.modules
+                if not (isinstance(structs.get(m), dict) and structs[m].get(PREPARED))}
 
     def _numeric(self, ep: int, row: dict, logs) -> dict:
         cfg, reg = self.o.cfg, self.registry
@@ -736,6 +747,12 @@ class StageRun:
                 release(row)
         return self._records(ep, structs, logs, time.monotonic() - t0, evidence, contexts)
 
+    def _committed(self, ep: int, records: dict[str, dict]) -> None:
+        """An episode's records are durable: the EEF module's model half lets its kept package go (D77)."""
+        hook = getattr(self.o.eef, "committed", None)
+        if hook is not None:
+            hook(ep, records.get(self.o.eef.module))
+
     # ------------------------------------------------------------ the run
     def run(self) -> dict:
         o, ctx = self.o, self.ctx
@@ -823,6 +840,7 @@ class StageRun:
                 for rec in records.values():
                     writer.write(rec)
                 self._store.finish(o.stage, ep, records, o.pipeline_next)
+                self._committed(ep, records)
             inflight.remove(ep)
             self.done += 1
             stream.completed(ep, records is not None and (self._store.blocks is not None or all(
@@ -849,8 +867,8 @@ class StageRun:
                         complete(ep, self._records(ep, {}, {m: log for m in o.modules}, 0.0))
                         ctx.log("warn", f"episode {ep} crashed the process twice; recorded as error")
                         continue
-                    if ep not in remaining:
-                        records = {m: current[m][ep] for m in o.modules}
+                    if ep not in remaining:              # done before; a kept CPU half has no record here
+                        records = {m: current[m][ep] for m in o.modules if ep in current[m]}
                         complete(ep, records)
                         continue
                     if o.verify_source is not None:
@@ -915,6 +933,7 @@ class StageRun:
                         writer.write(rec)
                     if self._store is not None:
                         self._store.finish(o.stage, ep, records, o.pipeline_next)
+                    self._committed(ep, records)
                     inflight.remove(ep)
                     self.done += 1
                     rate = (time.monotonic() - started) / max(1, self.done)
@@ -941,8 +960,13 @@ class StageRun:
         judged = [e for e in o.episodes if e not in self.missing]
         out: dict = {}
         version = "1.0"
+        prepared = getattr(o, "prepared", None)
+        kept = set(prepared(judged)) if prepared is not None else set()
         for m in o.modules:
             version, counts, errors, found = check_counts(latest_results(o.run_dir, m, judged), judged)
+            if getattr(o, "prep", False) and kept:   # a CPU half kept for its model half: ok here, judged there
+                errors = [e for e in errors if e not in kept]
+                counts = {**counts, "ok": counts["total"] - len(errors), "error": len(errors)}
             entry = {"part": o.part, "input_digest": digest, "episodes": counts,
                      "error_episodes": errors}
             if version != "1.0":
@@ -959,11 +983,13 @@ class StageRun:
         stop nothing, D57); a funnel run - no error, nothing that blocks under the policy."""
         cur = {m: latest_results(self.o.run_dir, m, self.o.episodes)
                for m in self.o.modules}
+        prepared = getattr(self.o, "prepared", None)
+        kept = set(prepared(list(self.o.episodes))) if prepared is not None else set()
         out = []
         for e in self.o.episodes:
             recs = [cur[m].get(e) for m in self.o.modules]
             if self.two_blocks:
-                if all(r is not None for r in recs):
+                if all(r is not None for r in recs) or e in kept:     # a kept CPU half goes on to its model half
                     out.append(e)
                 continue
             if not all(passes_funnel(r, self.funnel_policy) for r in recs):

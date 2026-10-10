@@ -305,13 +305,17 @@ def select(sample, camera_id: str) -> tuple[str, str | None, str | None, list[in
     return pid or "tcp", aid, bid, frames
 
 
-def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
-                    allowed_mounts, options: dict | None = None) -> dict:
-    """Every participating camera's clip asked in parts; the segments with their evidence frame numbers.
-    ``{"status", "cameras": {id: {...}}, "segments", "flagged", "max_confidence", "requests"}``."""
+def plan_opinion(sample, *, media_root: str, model: str | None, allowed_mounts, options: dict | None = None) -> dict:
+    """Every participating camera's clip parts rendered into their requests, nobody asked - the CPU half
+    (design doc 23 §2.1). ``{"cameras": {id: row}, "requests": [(camera, clip index, Request)], "times",
+    "prompt_version"}``: a skipped camera's row says why, a part that could not be rendered is a failed clip;
+    ``times``: each camera's seconds per sample frame, for the stretches the model will name."""
+    from .umi import PROMPT_VERSION as UMI_PROMPT
+
     allowed = set(allowed_mounts)
     cams: dict[str, dict] = {}
-    requests = 0
+    requests: list[tuple[str, int, R.Request]] = []
+    times: dict[str, list] = {}
     for cid in sorted(sample.cameras):
         cam = sample.cameras[cid]
         if cam.mount not in allowed:
@@ -328,45 +332,68 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
         for part in clip_ranges(frames, fps if fps > 0 else 15.0):
             clip: dict = {"start_frame": part[0], "end_frame": part[-1]}
             try:
-                req = build_request(sample, cid, part, pid, aid, media_root=media_root, model=model, options=options,
-                                    finger_id=bid)
+                req = build_request(sample, cid, part, pid, aid, media_root=media_root, model=str(model),
+                                    options=options, finger_id=bid)
             except Exception as e:  # noqa: BLE001 - one part that cannot be rendered does not stop the others
                 clip.update(status=R.FAILED, failure={"code": "video_unreadable", "message": str(e)[:300]})
                 row["clips"].append(clip)
                 continue
             clip["video"] = req.videos[-1].metadata()   # nothing is kept: the report draws the overlay live
-            got = ask_clip(req, ask, cache)
-            requests += 0 if got.get("cache_hit") else got.get("attempts", 0)
-            req.videos.clear()                      # the record keeps metadata, never the video's Base64
-            clip.update({k: got[k] for k in ("status", "attempts", "cache_hit", "repaired") if k in got})
-            if got["status"] != R.ANSWERED:
-                clip["failure"] = got.get("failure")
-                row["clips"].append(clip)
-                continue
-            a = got["answer"]
-            clip.update(gripper_visible=a["gripper_visible"], summary=a["summary"])
+            requests.append((cid, len(row["clips"]), req))
             row["clips"].append(clip)
-            for seg in a["segments"]:
-                row["segments"].append({
-                    "start_frame": seg["start_frame"], "end_frame": seg["end_frame"],
-                    "start_s": _time(sample, cid, seg["start_frame"]), "end_s": _time(sample, cid, seg["end_frame"]),
-                    "aspect": seg["aspect"], "confidence": round(float(seg["confidence"]), 3),
-                    "evidence_frames": list(seg["evidence_frames"]), "observation": seg["observation"]})
+        cams[cid] = row
+        times[cid] = [_time(sample, cid, f) for f in range(sample.n_frames)]
+    return {"cameras": cams, "requests": requests, "times": times,
+            "prompt_version": UMI_PROMPT if sample.hand_poses else PROMPT_VERSION}
+
+
+def answer_opinion(plan: dict, ask, cache: R.Cache) -> dict:
+    """The model half (design doc 23 §2.1): each planned part asked (or its cached answer), the camera rows
+    finished. ``{"status", "cameras": {id: {...}}, "segments", "flagged", "max_confidence", "requests"}``."""
+    cams = json.loads(json.dumps(plan["cameras"]))
+    times = plan.get("times") or {}
+    requests = 0
+    for cid, i, req in plan["requests"]:
+        row, clip = cams[cid], cams[cid]["clips"][i]
+        got = ask_clip(req, ask, cache)
+        requests += 0 if got.get("cache_hit") else got.get("attempts", 0)
+        req.videos.clear()                          # the record keeps metadata, never the video's Base64
+        clip.update({k: got[k] for k in ("status", "attempts", "cache_hit", "repaired") if k in got})
+        if got["status"] != R.ANSWERED:
+            clip["failure"] = got.get("failure")
+            continue
+        a = got["answer"]
+        clip.update(gripper_visible=a["gripper_visible"], summary=a["summary"])
+        when = times.get(cid) or []
+        for seg in a["segments"]:
+            row["segments"].append({
+                "start_frame": seg["start_frame"], "end_frame": seg["end_frame"],
+                "start_s": when[seg["start_frame"]] if seg["start_frame"] < len(when) else None,
+                "end_s": when[seg["end_frame"]] if seg["end_frame"] < len(when) else None,
+                "aspect": seg["aspect"], "confidence": round(float(seg["confidence"]), 3),
+                "evidence_frames": list(seg["evidence_frames"]), "observation": seg["observation"]})
+    for row in cams.values():
+        if row.get("status") == "skipped":
+            continue
         answered = [c for c in row["clips"] if c.get("status") == R.ANSWERED]
         row["status"] = "answered" if len(answered) == len(row["clips"]) else "partial" if answered else "failed"
-        cams[cid] = row
     asked = [c for c in cams.values() if c.get("status") != "skipped"]
     segments = [s for c in asked for s in c.get("segments") or []]
     status = ("not_assessable" if not asked else
               "answered" if all(c["status"] == "answered" for c in asked) else
               "failed" if all(c["status"] == "failed" for c in asked) else "partial")
     top = max((s["confidence"] for s in segments), default=None)
-    from .umi import PROMPT_VERSION as UMI_PROMPT
-
-    return {"protocol": PROTOCOL, "prompt_version": UMI_PROMPT if sample.hand_poses else PROMPT_VERSION,
-            "status": status, "cameras": cams,
+    return {"protocol": PROTOCOL, "prompt_version": plan["prompt_version"], "status": status, "cameras": cams,
             "segments": len(segments), "flagged": bool(top is not None and top >= FLAG_CONFIDENCE),
             "max_confidence": top, "requests": requests}
+
+
+def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
+                    allowed_mounts, options: dict | None = None) -> dict:
+    """Every participating camera's clip asked in parts; the segments with their evidence frame numbers -
+    both halves in one call (:func:`plan_opinion`, then :func:`answer_opinion`)."""
+    return answer_opinion(plan_opinion(sample, media_root=media_root, model=model, allowed_mounts=allowed_mounts,
+                                       options=options), ask, cache)
 
 
 def summary(results: dict) -> dict:

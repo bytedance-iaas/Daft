@@ -73,6 +73,9 @@ still run), and a robot arm's trajectory is generated from the declaration.
 5.2 (design doc 25 §4.2-§4.3, D84): the EEF module no longer ``needs`` a VLM - its ``use_vlm`` switch (on by default)
 says whether it asks one (``vlm_switch``); with it off, or with no backend, the model's channel is missing and the
 task still runs.
+5.3 (design doc 25 F5.24b, design doc 23 §1-§2.1, D76): the EEF module runs in two halves - its CPU half
+(``prep_stage``: the CPU block's ``vlm_prep``, a second root of that block) measures, renders and keeps the requests;
+its model half in ``vlm`` only asks and merges. Without a model the CPU half writes the module's records itself.
 """
 from __future__ import annotations
 
@@ -80,18 +83,24 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "5.2"
+REGISTRY_VERSION = "5.3"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
-Stage = Literal["integrity", "numeric", "frame", "dedup", "vlm"]
+Stage = Literal["integrity", "numeric", "frame", "dedup", "vlm_prep", "vlm"]
 
 #: The two blocks and their stages in order (design doc 17 §3.1). The VLM block is one stage since
-#: 3.2: the caption pass before it (``autolabel``) is gone.
-BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup"),
+#: 3.2: the caption pass before it (``autolabel``) is gone. Since 5.3 the CPU block has a second root,
+#: ``vlm_prep`` (design doc 23 §1): the CPU halves of model modules, beside integrity -> ... -> dedup.
+BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup", "vlm_prep"),
                                       "vlm": ("vlm",)}
+#: Stages that start a chain of their own in their block rather than following the stage before (5.3).
+ROOT_STAGES: tuple[str, ...] = ("vlm_prep",)
+#: A prep stage and the stage whose records it prepares (5.3, design doc 23 §2): a module with a ``prep_stage``
+#: runs its CPU half there and its model half in the other; the model half's stage comes after it.
+PREP_STAGES: dict[str, str] = {"vlm_prep": "vlm"}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
 #: No stage needs the whole selection at once since D70 (dedup streams like the others);
@@ -245,6 +254,9 @@ class ModuleSpec:
     #: 5.2 (design doc 25 D84): a module that may ask a model without needing one - the boolean parameter that
     #: switches it (on by default); a task without a backend still runs it, the model's channel then missing
     vlm_switch: str | None = None
+    #: 5.3 (design doc 23 §2.1, D76): the stage of the module's CPU half (``PREP_STAGES``); its records come from
+    #: ``stage`` when the model is asked, from this stage when not
+    prep_stage: str | None = None
 
     @property
     def covers(self) -> tuple[str, ...]:
@@ -286,6 +298,8 @@ class ModuleSpec:
             out["rides_on"] = self.rides_on
         if self.vlm_switch:
             out["vlm_switch"] = self.vlm_switch
+        if self.prep_stage:
+            out["prep_stage"] = self.prep_stage
         return out
 
     def asks_model(self, params: dict | None = None) -> bool:
@@ -601,7 +615,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="eef_video_consistency", name_zh="EEF–视频一致性",
         summary_zh="比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配",
         level="episode", needs=frozenset({"video", "eef_input"}), block="vlm", stage="vlm",
-        depends_on=(), vlm_switch="use_vlm",
+        depends_on=(), vlm_switch="use_vlm", prep_stage="vlm_prep",
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
         # 5.0 (design doc 25 §7.3, D81): opinions with a confidence, no machine reject - a person's "inconsistent" on
         # a conflict still blocks (kind human); unsettled / opinion_mismatch are retired, kept for older records
@@ -775,6 +789,7 @@ def export() -> dict:
             "blocks": [{"id": b, "title_zh": BLOCK_TITLES[b], "stages": list(stages)}
                        for b, stages in BLOCKS.items()],
             "stages": list(STAGES), "full_set_stages": list(FULL_SET_STAGES),
+            "root_stages": list(ROOT_STAGES), "prep_stages": dict(PREP_STAGES),
             "finding_levels": [{"id": lv, "title_zh": title} for lv, title in FINDING_LEVELS],
             "unassessable_reasons": [{"id": r, "title_zh": title} for r, title in UNASSESSABLE_REASONS],
             "review_lines": [line.to_json() for line in REVIEW_LINES],

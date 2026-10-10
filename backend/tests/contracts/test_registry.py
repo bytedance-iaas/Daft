@@ -182,6 +182,18 @@ def test_the_eef_module_gives_opinions():
     assert props["ego_motion_window_s"]["default"] == 0.5 and "eef_ego_motion" in [t.id for t in spec.tables]
 
 
+def test_the_eef_module_runs_in_two_halves():
+    """5.3 (design doc 23 §1-§2.1, design doc 25 F5.24b): its CPU half in the CPU block's second root vlm_prep, its
+    records from vlm when a model is asked; no other module has a CPU half of its own yet."""
+    spec = M.get("eef_video_consistency")
+    assert (spec.prep_stage, spec.stage, M.PREP_STAGES[spec.prep_stage]) == ("vlm_prep", "vlm", "vlm")
+    assert M.BLOCKS["cpu"][-1] == "vlm_prep" and M.ROOT_STAGES == ("vlm_prep",)
+    assert [m.id for m in M.MODULES if m.prep_stage] == ["eef_video_consistency"]
+    exported = M.export()
+    assert exported["root_stages"] == ["vlm_prep"] and exported["prep_stages"] == {"vlm_prep": "vlm"}
+    assert {m["id"]: m.get("prep_stage") for m in exported["modules"]}["eef_video_consistency"] == "vlm_prep"
+
+
 def test_the_eef_module_asks_the_model_by_its_switch():
     """5.2 (design doc 25 §4.2-§4.3, D84): the EEF module no longer needs a model - ``use_vlm`` (on by default) says
     whether it asks one; the gripper reference applies only where a camera is a fixed third-person one."""

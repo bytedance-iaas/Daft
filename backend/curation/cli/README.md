@@ -307,9 +307,18 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 ```
 preflight → plan → snapshot
 CPU 块：check 数据完整性 → check 数值档 → check 帧档 → check dedup（逐条交接，和前面的段交叠，D70）
-VLM 块：check task_success（及 EEF；没有任务标注的条目不判，D72）
+        并排的第二个起点：check --prep EEF 的 CPU 半段（vlm_prep，注册表 5.3）
+VLM 块：check task_success（及 EEF 的模型半段，--prepared，接在 vlm_prep 后面；没有任务标注的条目不判，D72）
 两块都结束 → aggregate --phase final --revision N → report --revision N → （同步运行目录到交付目录）→ verify
 ```
+
+EEF 分两半（设计 23 §2.1、设计 25 F5.24b）：`check --modules eef_video_consistency --prep` 读轨迹、测量、算自运动、比对记录、画带标记的
+视频、拼好请求，不问模型，每条 episode 的请求与部分记录留在 `scratch/vlm/<episode>/eef_video_consistency/`（`requests.json`、`prep.json`
+与图、视频文件），这一档不写这个模块的结果行；`--resume` 跳过已经留好、而且用同样的输入做出来的。`check … --prepared`（与 task_success
+同一调用）读回请求、发请求、合并、写结果行，结果落盘后删掉这一条的请求包，出错的留着等重试。两半与一次 `check` 写出的记录相同
+（`tests/cli/test_eef_check.py::test_the_two_halves_make_the_records_one_call_makes`）。不问模型时（`--no-vlm` 或
+`use_vlm=false`）`--prep` 直接写结果行，计划里也没有它的模型半段；`curation plan` 加 `--no-vlm` / `--param` 得到同样的计划。
+`--prep` 用的模型设置（`--vlm-*`）只用来拼请求与缓存键，不调用；给了没有 CPU 半段的模块是用法错误。
 
 块内的逐条段由 Daemon 的流水线逐条交接（`check --pipeline-state … --pipeline-next …`，常驻 worker）：一条在本段有了记录（判完或出错）
 就交给下一段，判废的发现、执行出错都不拦它。D70 起块里没有全量步骤了。没有 `aggregate --phase funnel`：判决只在两块都结束后由 `final` 按任务策略算一次。

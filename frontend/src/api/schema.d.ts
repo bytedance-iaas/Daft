@@ -1899,6 +1899,12 @@ export interface components {
             stages: components["schemas"]["RegistryStage"][];
             /** @description stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it */
             full_set_stages: components["schemas"]["RegistryStage"][];
+            /** @description stages that start on their own in their block rather than after the stage before (5.2.0: vlm_prep, beside the CPU block's other stages) */
+            root_stages?: components["schemas"]["RegistryStage"][];
+            /** @description a stage that prepares another stage's records -> that stage (5.2.0: vlm_prep -> vlm): a module with a prep_stage runs its CPU part there, its model part in the other */
+            prep_stages?: {
+                [key: string]: components["schemas"]["RegistryStage"];
+            };
             /** @description blocking (rejects), review (asks a person), info (reported only), with the console's titles */
             finding_levels: {
                 id: components["schemas"]["FindingLevel"];
@@ -1959,13 +1965,15 @@ export interface components {
                 rides_on?: components["schemas"]["ModuleId"];
                 /** @description present on a module that may ask a model without needing one (5.1.0): the boolean parameter that switches the model on (on by default). A task without a model backend still runs it; the model's part is then missing */
                 vlm_switch?: string;
+                /** @description present on a module that runs in two parts (5.2.0): the stage of its CPU part; its records come from its stage when a model is asked, from this one when not */
+                prep_stage?: components["schemas"]["RegistryStage"];
             }[];
         };
         /**
          * @description a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
          * @enum {unknown}
          */
-        RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "autolabel" | "vlm" | "profile";
+        RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "vlm_prep" | "autolabel" | "vlm" | "profile";
         /** @enum {unknown} */
         FindingLevel: "blocking" | "review" | "info";
         /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-4 */
@@ -2376,7 +2384,7 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description two-block plans: integrity, numeric, frame, dedup, autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, dedup, vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
@@ -4319,7 +4327,7 @@ export interface components {
             }[];
         };
         stage: {
-            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; vlm) and final - autolabel and profile only in plans made while those stages existed; stages of new modules follow the same pattern */
+            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";
@@ -4339,7 +4347,7 @@ export interface components {
              * @enum {unknown}
              */
             block?: "cpu" | "vlm";
-            /** @description 2.0: the stage before it in its block; a block's first stage has none */
+            /** @description 2.0: the stage before it in its block; a block's first stage and a second root (vlm_prep) have none. The one edge across the blocks: vlm after vlm_prep when a module of vlm ran its CPU part there - an episode reaches vlm once vlm_prep is done with it */
             after?: string;
             /** @description 2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired) */
             full_set?: boolean;

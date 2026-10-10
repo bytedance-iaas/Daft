@@ -587,3 +587,84 @@ def test_without_a_model_the_cpu_alone_gives_the_opinion(cli, mini_dataset, tmp_
     refused = cli("check", "--modules", "task_success", "--input", mini_dataset, "--run-dir", str(tmp_path / "ts"),
                   "--episodes", "0", "--no-vlm")
     assert refused.rc == 2 and "task_success needs a model" in refused.doc["error"]["message"]
+
+
+def _essence(rec: dict) -> dict:
+    """What a record says, without timings, paths of evidence and the halves' bookkeeping."""
+    d = rec["details"]
+    out = {"findings": sorted((f["code"], f.get("severity")) for f in rec.get("findings") or []),
+           "label": d["merged"]["episode"]["label"], "p": d["merged"]["episode"]["p"],
+           "cells": [(c["subitem"], c.get("camera"), c.get("label"), c.get("p"), c.get("missing"))
+                     for c in d["merged"]["cells"]]}
+    if "review" in d:
+        out["review"] = (d["review"].get("status"), sorted((w.get("camera_id"), tuple(w.get("frames") or []),
+                                                             w.get("status"), (w.get("answer") or {}).get("review_status"))
+                                                            for cam in (d["review"].get("cameras") or {}).values()
+                                                            for w in cam.get("windows") or []))
+    if "opinion" in d:
+        out["opinion"] = (d["opinion"]["status"], d["opinion"]["segments"], d["opinion"]["max_confidence"])
+    return out
+
+
+@pytest.mark.parametrize("reference", ["seeds", "none"])
+def test_the_two_halves_make_the_records_one_call_makes(cli, mini_dataset, tmp_path, reference):
+    """Registry 5.3 (design doc 23 §2.1-§2.3, design doc 25 F5.24b): ``check --prep`` measures, renders and keeps
+    each episode's requests without asking (no result line, a package per episode); ``check --prepared`` reads them
+    back, asks and writes the same records one call writes, then lets the packages go. --resume of the CPU half
+    keeps what it kept; a model half without its package is an error line."""
+    from curation.extensions.eef_consistency import package
+
+    traj = _files(tmp_path / "f")
+    if reference == "none":
+        alone = tmp_path / "alone" / "trajectory.json"
+        alone.parent.mkdir()
+        alone.write_text(open(traj, encoding="utf-8").read())
+        traj = str(alone)
+    args = ("--modules", EEF, "--input", mini_dataset, "--episodes", "0-2", "--param", f"{EEF}.trajectory_json={traj}",
+            *VLM)
+    with fake_vlm(tmp_path / "one"):
+        whole = cli("check", "--run-dir", str(tmp_path / "one"), *args)
+    rd = str(tmp_path / "two")
+    sent: list = []
+    with fake_vlm(tmp_path / "two-a") as fake:
+        answer = fake.answer
+        fake.answer = lambda payload, answer=answer: (sent.append(1), answer(payload))[1]
+        prep = cli("check", "--run-dir", rd, *args, "--prep")
+    assert whole.rc == 0 and prep.rc == 0, (whole.doc, prep.doc)
+    assert not sent, "the CPU half asks nobody"
+    assert prep.doc["modules"][EEF]["episodes"] == {"total": 3, "ok": 3, "error": 0}
+    assert results(rd, EEF) == {}                                         # no record yet: the model half writes it
+    kept = [package.path(rd, EEF, e) for e in range(3)]
+    assert all(package.read_prep(k) is not None for k in kept)
+    again = cli("check", "--run-dir", rd, *args, "--prep", "--resume")
+    assert again.rc == 0 and again.doc["modules"][EEF]["skipped_existing"] == 3
+    with fake_vlm(tmp_path / "two-b"):
+        ask = cli("check", "--run-dir", rd, *args, "--prepared")
+    assert ask.rc == 0, ask.doc
+    one, two = results(str(tmp_path / "one"), EEF), results(rd, EEF)
+    assert sorted(one) == sorted(two) == [0, 1, 2]
+    for e in one:
+        assert _essence(one[e]) == _essence(two[e]), e
+        assert set(two[e]["details"]["halves"]) == {"vlm_prep", "vlm"}
+    assert not any(os.path.exists(k) for k in kept)                       # the packages went with the records (D77)
+    with fake_vlm(tmp_path / "three-a"):
+        lost = cli("check", "--run-dir", str(tmp_path / "three"), *args, "--prepared")
+    assert lost.rc == 0 and lost.doc["modules"][EEF]["episodes"]["error"] == 3
+    assert "kept nothing" in json.dumps(results(str(tmp_path / "three"), EEF)[0]["error"])
+
+
+def test_without_a_model_the_cpu_half_writes_the_records(cli, mini_dataset, tmp_path):
+    """Registry 5.3 (design doc 25 F5.24b acceptance ①): 「使用 VLM 辅助」 off - the CPU half is the whole module,
+    its records written in vlm_prep, nothing kept for a model half."""
+    from curation.extensions.eef_consistency import package
+
+    rd = str(tmp_path / "run")
+    res = cli("check", "--modules", EEF, "--input", mini_dataset, "--episodes", "0-1", "--run-dir", rd, "--prep",
+              "--param", f"{EEF}.trajectory_json={_files(tmp_path / 'f')}", "--param", f"{EEF}.use_vlm=false")
+    assert res.rc == 0, res.doc
+    recs = results(rd, EEF)
+    assert sorted(recs) == [0, 1] and all(set(r["details"]["halves"]) == {"vlm_prep"} for r in recs.values())
+    assert not os.path.exists(package.root(rd))
+    usage = cli("check", "--modules", "task_success", "--input", mini_dataset, "--episodes", "0", "--run-dir", rd,
+                "--prep")
+    assert usage.rc == 2 and "no CPU half" in usage.doc["error"]["message"]

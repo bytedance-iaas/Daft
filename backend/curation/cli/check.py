@@ -57,13 +57,21 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--pipeline-next", metavar="STAGE",
                    choices=("numeric", "frame", "vlm", "dedup", "done"), default="done",
                    help=argparse.SUPPRESS)
+    halves = p.add_mutually_exclusive_group()
+    halves.add_argument("--prep", action="store_true",
+                        help="run the modules' CPU halves (registry 5.3: their prep_stage, vlm_prep): measure, render "
+                             "and keep each episode's requests for the model half; with no model to ask (--no-vlm, "
+                             "use_vlm=false) the CPU half writes the records itself. No model is called")
+    halves.add_argument("--prepared", action="store_true",
+                        help="the model half of modules whose CPU half ran in vlm_prep: read the kept requests, ask, "
+                             "merge and write the records")
     runctx.add_vlm(p)
     runctx.add_behaviour(p)
     modparams.add_argument(p)
     p.set_defaults(func=run)
 
 
-def _modules(raw: str) -> tuple[list[str], str]:
+def _modules(raw: str, prep: bool = False) -> tuple[list[str], str]:
     from ..contracts import modules as registry
 
     mods = [m.strip() for m in str(raw).split(",") if m.strip()]
@@ -72,7 +80,11 @@ def _modules(raw: str) -> tuple[list[str], str]:
     unknown = [m for m in mods if m not in registry.ids()]
     if unknown:
         raise UsageError(f"unknown module(s) {unknown}; known: {', '.join(registry.ids())}")
-    stages = {registry.get(m).stage for m in mods}
+    if prep:                                           # the CPU halves (registry 5.3)
+        whole = [m for m in mods if not registry.get(m).prep_stage]
+        if whole:
+            raise UsageError(f"--prep: {', '.join(whole)} has no CPU half of its own (no prep_stage)")
+    stages = {registry.get(m).prep_stage if prep else registry.get(m).stage for m in mods}
     if len(stages) != 1:
         raise UsageError(f"--modules {','.join(mods)} spans stages {sorted(stages)}; "
                          f"one call runs one stage")
@@ -90,13 +102,16 @@ def _modules(raw: str) -> tuple[list[str], str]:
 def run(ctx: Context, args: argparse.Namespace) -> Result:
     from ..pipeline import records
 
-    modules, stage = _modules(args.modules)
+    modules, stage = _modules(args.modules, prep=getattr(args, "prep", False))
     run_dir = runctx.run_dir_of(args, create=True)
     if args.part is not None and not (len(args.part) == 4 and args.part.isdigit()):
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
-    plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
+    # a module of two halves is in two stages of the plan: the call names its own
+    plan_stage = runctx.load_plan_stage(args.plan_stage, modules,
+                                        stage_id=stage if getattr(args, "prep", False) or getattr(args, "prepared", False)
+                                        else None)
     runctx.apply_thread_limit()
-    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm", "dedup"):
+    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm_prep", "vlm", "dedup"):
         raise UsageError("--pipeline-state is only valid for a block's segments")
     src = runctx.open_source(ctx, args)
     storage = src.storage
@@ -270,6 +285,8 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
 
     eef_mods = [m for m in modules if "eef_input" in registry.get(m).needs]   # D49: the EEF gate
     has_task = "task_success" in modules
+    # registry 5.3 (design doc 23 §2.1): the CPU half alone (vlm_prep) asks nobody; the model half reads what it kept
+    cpu_half, model_half = getattr(args, "prep", False), getattr(args, "prepared", False)
     if has_task and getattr(args, "no_vlm", False):
         raise UsageError("--no-vlm: task_success needs a model; the flag is for a stage whose modules can go without one")
     cache = getattr(args, "_worker_cache", None)
@@ -294,6 +311,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
             from .eef_check import EefJudge
 
             judge = EefJudge(ctx, args, run_dir, src, cfg, gates)
+            judge.mode = "prep" if cpu_half else "ask" if model_half else "full"
         # design doc 25 D84: the EEF module asks a model only when 「使用 VLM 辅助」 is on and there is one (--no-vlm:
         # the task has none); alone in the stage without one, the stage opens no session (its model channel is
         # missing, said why)
@@ -303,7 +321,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
             from ..extensions.eef_consistency import combine as CB
 
             judge.vlm_missing = CB.VLM_OFF if not judge.use_vlm else CB.NO_BACKEND
-        model_needed = has_task or (judge is not None and judge.vlm_missing is None)
+        model_needed = (has_task or (judge is not None and judge.vlm_missing is None)) and not cpu_half
         session = runctx.VlmSession(ctx, args, cfg, "task_success" if has_task else eef_mods[0], run_dir,
                                     by_tag={"eef_review": eef_mods[0]} if eef_mods else None) if model_needed else None
         if session is not None:
@@ -345,6 +363,8 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
                         pipeline_next=args.pipeline_next,
                         episode_stream=getattr(args, "_episode_stream", None),
                         eef=judge, stale={judge.module: judge.stale(episodes)} if judge is not None else None,
+                        prep=cpu_half,
+                        prepared=judge.kept if cpu_half and judge is not None and judge.vlm_missing is None else None,
                         episode_blocks=_episode_blocks(src),
                         **_container_options(args, src))
     stage = StageRun(ctx, opts, EmbodimentRegistry())

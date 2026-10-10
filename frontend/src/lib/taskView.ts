@@ -46,8 +46,8 @@ export function currentStage<T extends { state: string }>(stages: readonly T[]):
 }
 
 /** The funnel's stages in order (the streaming pipeline's layers); integrity is the data integrity
- * module's, first (design doc 14). */
-export const FUNNEL_STAGES: readonly string[] = ['integrity', 'numeric', 'frame', 'vlm'];
+ * module's, first (design doc 14); vlm_prep the CPU halves of model modules (registry 5.3). */
+export const FUNNEL_STAGES: readonly string[] = ['integrity', 'numeric', 'frame', 'vlm_prep', 'vlm'];
 
 /** A stage's own name, as the CLI output, the log filter and the execution plan use it. */
 export function stageLabel(id: string): string {

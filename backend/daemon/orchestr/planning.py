@@ -47,10 +47,15 @@ def ensure_plan(run) -> dict:
         return doc
     from curation.planner import PlanError, build_plan
 
-    selected = [m.module_id for m in run.repo.get_task_modules(run.task_id) if m.selected]
+    # the modules with their parameters, and whether the task has a model: a module of two halves that asks
+    # none runs wholly in its CPU half (registry 5.3, design doc 25 F5.24b)
+    selected = [{"id": m.module_id, "params": m.params or {}}
+                for m in run.repo.get_task_modules(run.task_id) if m.selected]
+    snap = run.task.vlm_snapshot if isinstance(run.task.vlm_snapshot, dict) else None
     try:
         plan = build_plan(run.preflight, selected, run.selection(), plan_limits(run),
-                          run.cfg.site_config or None)
+                          run.cfg.site_config or None,
+                          model=bool(snap and snap.get("endpoint") and snap.get("model")))
     except (PlanError, ValueError) as err:
         raise TaskFailure("plan_failed", f"生成执行计划失败：{err}") from None
     write_json_atomic(run.wd.plan, plan)

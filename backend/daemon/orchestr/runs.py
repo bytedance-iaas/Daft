@@ -35,7 +35,7 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 log = logging.getLogger("daemon.orchestr")
 
 #: the stages the episode pipeline runs, dedup included since D70 (design doc 17 §3.2)
-EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm", "dedup")
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "dedup")
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"
@@ -60,9 +60,10 @@ class StageRun(Run):
         if self.journal.done(sid):
             return read_lines(out_file) or []
         self.progress(sid, state="running", done=0, total=len(episodes))
+        own = [m for m in mods if self.last_stage_of(m) in (None, sid)]   # a CPU half's module is judged later
         if not episodes:
             if fresh:
-                for m in mods:
+                for m in own:
                     self.module_result(m, "succeeded", total=0, errors=0,
                                        digest=input_digest([]))
             write_lines(out_file, [])
@@ -76,10 +77,7 @@ class StageRun(Run):
                 "--episodes", self.episodes_arg(f"{sid}.in", episodes),
                 "--plan-stage", str(self.wd.plan), "--survivors-out", str(out_file)]
         argv.append("--resume")
-        if vlm:
-            argv += self.vlm_args()
-        elif st.get("kind") == "vlm":
-            argv.append("--no-vlm")            # the task has no model, or the module's switch is off
+        argv += self.half_args(st, mods)       # a module of two halves: which one, and the model's settings
         argv += self.module_param_args(mods)
         if sid == "frame":
             resources.admit_memory(self, sid)
@@ -91,7 +89,7 @@ class StageRun(Run):
         if outcome.ok:
             doc = outcome.doc.get("modules") or {}
             any_error = False
-            for m in mods:
+            for m in own:
                 entry = doc.get(m) or {}
                 total, errors = self.counts_from_records(m)
                 any_error |= errors > 0
@@ -106,7 +104,7 @@ class StageRun(Run):
             return survivors
         if outcome.status == "module_failed":
             msg = outcome.message or outcome.reason()
-            for m in mods:
+            for m in own:
                 total, errors = self.counts_from_records(m)
                 self.module_result(m, "failed", total=total, errors=errors,
                                    digest=input_digest(episodes), error=msg[:2000])

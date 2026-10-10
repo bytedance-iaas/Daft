@@ -66,7 +66,8 @@ def test_full_plan_matches_the_design_example():
 
 
 def test_blocks_never_chain_into_each_other():
-    """design doc 17 §3.3: ``after`` names a stage of the same block; every stage takes the selection."""
+    """design doc 17 §3.3: ``after`` names a stage of the same block - but a model half after its CPU half
+    (registry 5.3, design doc 23 §4.2: vlm after vlm_prep); every stage takes the selection."""
     for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup"]):
         p = plan(chosen, preflight=X.preflight(64, without_task=5))
         by_id = {s["id"]: s for s in p["stages"]}
@@ -75,21 +76,38 @@ def test_blocks_never_chain_into_each_other():
                 continue
             assert s["id"] in C1.BLOCKS[s["block"]]
             if "after" in s:
-                assert by_id[s["after"]]["block"] == s["block"]
+                assert by_id[s["after"]]["block"] == s["block"] or (s["id"], s["after"]) == ("vlm", "vlm_prep")
             assert s["episodes"] in ("selected", "unlabeled")
             assert "full_set" not in s, "D70: a plan no longer marks a whole-set stage"
 
 
 def test_the_eef_module_is_in_the_vlm_block():
     """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success, and like every
-    stage it takes the whole selection (D57: nothing upstream filters it)."""
+    stage it takes the whole selection (D57: nothing upstream filters it). Registry 5.3 (design doc 23 §1-§2.1):
+    its CPU half runs first, in the CPU block's second root vlm_prep; the vlm stage comes after it."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "vlm", "final"]
+    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "vlm_prep", "vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
-        and vlm["episodes"] == "selected" and "hard_gates" not in vlm
+        and vlm["episodes"] == "selected" and "hard_gates" not in vlm and vlm["after"] == "vlm_prep"
+    assert stage(p, "vlm_prep") == {"id": "vlm_prep", "kind": "cpu", "command": "check", "block": "cpu",
+                                    "concurrency": 30, "modules": ["eef_video_consistency"], "episodes": "selected"}
     only = plan(["eef_video_consistency"])
-    assert ids(only) == ["vlm", "final"] and "after" not in stage(only, "vlm")
+    assert ids(only) == ["vlm_prep", "vlm", "final"] and stage(only, "vlm")["after"] == "vlm_prep"
+
+
+def test_without_a_model_the_eef_module_runs_wholly_in_its_cpu_half():
+    """Registry 5.3 (design doc 25 D84): 「使用 VLM 辅助」 off, or a task without a model - no model half; a vlm
+    stage of task_success alone then starts with its block again."""
+    off = {"id": "eef_video_consistency", "params": {"use_vlm": False}}
+    for chosen, model in (([off, "task_success"], True), (["eef_video_consistency"], False)):
+        p = plan(chosen, model=model)
+        assert stage(p, "vlm_prep")["modules"] == ["eef_video_consistency"]
+        assert "eef_video_consistency" not in (stage(p, "vlm") or {}).get("modules", [])
+        assert any("wholly, no model asked" in n for n in p["estimates"]["notes"])
+    p = plan([off, "task_success"])
+    assert stage(p, "vlm")["modules"] == ["task_success", "camera_defects"] and "after" not in stage(p, "vlm")
+    assert ids(plan(["eef_video_consistency"], model=False)) == ["vlm_prep", "final"]
 
 
 def test_the_data_integrity_module_is_the_cpu_blocks_first_stage():
