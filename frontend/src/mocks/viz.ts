@@ -5,7 +5,8 @@ import { HttpResponse, http } from 'msw';
 import type { DatasetDetail, Declaration, McapProbeRequest, Task, VizDisplayConfig, VizMapping, VizTemplate } from '../api/types';
 import { apiBaseUrl } from '../base';
 import { clock, db, findTask, nextId } from './db';
-import { checkDeclaration, declarationDoc, declarationInfoOf } from './declarationWorld';
+import { camerasOf, checkDeclaration, declarationDoc, declarationInfoOf } from './declarationWorld';
+import { cameraRows } from '../lib/declaration';
 import { eefOverlay } from './eef';
 import { API, body, cursorPage, err, idempotent } from './plumbing';
 import { DATASET_PROFILES, datasetFormatOf, MCAP_URI, profileFor } from './world';
@@ -44,6 +45,9 @@ interface Source {
   mapping: VizMapping | null;
   mappingVersion: number | null;
 }
+
+/** The registration overlays made so far (the first ask of each answers 202, as the Daemon's making does). */
+const madeOverlays = new Set<string>();
 
 function datasetSource(id: string): Source | Response {
   const d = db.datasets.find((x) => x.id === id);
@@ -247,6 +251,39 @@ export const vizHandlers = [
     if (!ran) return err(404, 'not_found', '这个任务没有勾选「EEF–视频一致性」，没有可叠加的投影', { reason: 'no_eef_module' });
     const measured = records.some((r) => r[EEF]?.details && (r[EEF].details as Record<string, unknown>).assessment_mode !== 'vlm_opinion');
     return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null, measured));
+  })),
+  // a registration's EEF marks (design doc 25 §5.1, C4 5.3.0): its confirmed declaration, or a handheld gripper's
+  // own data, makes the trajectory - 202 the first time an episode is asked (it is being made), then the marks
+  http.get(`${API}/datasets/:id/episodes/:index/eef-overlay`, withSource(datasetSource, (s, _request, params) => {
+    const index = episodeOf(s, params.index);
+    if (index instanceof Response) return index;
+    const d = s.dataset;
+    const doc = declarationDoc(d);
+    const umi = /umi|das_gripper/i.test(String(d.robot_type ?? ''));
+    if (!umi && doc.trajectory.kind !== 'generate')
+      return err(404, 'not_found', '平台还得不到这个数据集的轨迹：数据集声明还缺几项，或数据集没有位姿记录', {
+        reason: 'no_trajectory', kind: doc.trajectory.kind, missing: 'missing' in doc.trajectory ? (doc.trajectory.missing ?? []) : [],
+      });
+    const key = `${d.id}:${doc.version}:${index}`;
+    if (!madeOverlays.has(key)) {
+      madeOverlays.add(key);
+      return HttpResponse.json({ state: 'pending', progress: 0.4, message: '轨迹生成中' }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+    }
+    const first = modelOf(s).cameras[0]?.key ?? null;
+    const base = eefOverlay('', index, first, false);
+    const cams = base.cameras
+      .filter((c) => !c.skipped)
+      .map((c) => ({ ...c, mount: umi ? 'wrist' : c.mount, layers: c.layers.map((l) => ({ ...l, in_model: false, model_color: null })) }));
+    const rows = cameraRows(doc.declaration, camerasOf(d));
+    const unavailable = umi ? [] : rows.filter((r) => r.reason !== null && r.name !== first).map((r) => ({ source: r.source, camera_id: r.name, viz_camera: r.name, reason: r.reason }));
+    return HttpResponse.json({
+      ...base,
+      task_id: null,
+      dataset_id: d.id,
+      cameras: cams,
+      unavailable_cameras: unavailable,
+      trajectory: { kind: 'generate', declaration_version: doc.version || null },
+    });
   })),
   http.get(`${API}/datasets/:id/viz/episodes`, ({ request, params }) => {
     const s = datasetSource(String(params.id));

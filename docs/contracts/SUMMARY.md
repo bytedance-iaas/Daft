@@ -316,6 +316,13 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 ## 十六、数据可视化（2026-10-04，F13.1，设计 18，D60–D64）
 
 - **C7 字段映射（新）** `viz-mapping.schema.json`（`viz-mapping/1.0`，示例 `examples/viz-mapping.json`）：mcap 数据集的哪些 topic 是相机、
+  哪些是曲线（`role` state / action / other，`pair_with` 叠画，`fields` 点路径，`labels` 每维的名字，`transforms` 只用于显示）、任务描述与分段在哪、
+  帧号以哪个 topic 为准。它是可视化 mcap 读取器的配置，也是质检读取器 `ingest.mcap_mapping` 的来源（action 组 → action，没有 action 组时 state 组顶上；
+  cameras → video_topics；`builtin:umi` 带 `profile: umi_das`）；内置 UMI 模版派生的结果与 `_umi_mapping` 相同，判决不变。episode 的编号不进映射。
+- **C4 5.3.0（设计 25 §5，F5.25）**：新接口 `GET /datasets/{id}/episodes/{index}/eef-overlay`——登记的数据集按自己的记录与声明画 EEF 标记，
+  返回与任务级同一个 `EefOverlay`（`task_id` 为空，多 `dataset_id`、`unavailable_cameras` 与 `trajectory`）；轨迹包在做时 202 `VizMediaPending`，
+  这一条生成不出时 404 `not_generated`。`EefOverlayCamera` 多 `mount`；`EefOverlayLayer` 多 `dash` 与组 `record`（上传件覆盖平台生成的轨迹时，
+  任务级多一组数据集记录的虚线标记）。
 - **C1 5.3、C4 5.2.0（设计 23 §1–§2.1、设计 25 F5.24b）**：CPU 块的段多 `vlm_prep`（自成起点，`root_stages`），`prep_stages`
   说它为 `vlm` 准备记录，EEF 带 `prep_stage: vlm_prep`。C2 计划仍是 2.0：多段 id `vlm_prep` 与一条跨块的 `after`（`vlm` after `vlm_prep`）。
   EEF 的 CPU 半段不写结果行，请求与部分记录留在运行目录的 `scratch/vlm/`（不是契约），模型半段写成记录后删掉。
@@ -323,9 +330,6 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   夹爪参考两项带 `x-applies-when: third_person_camera`。C2 预检的模块条目多 `cameras[]`（安装方式、归属、能否画与原因）与 `applicable_params`，
   `schema_version` 不变；没选模型后端时 EEF 条目是 `available` 加一条 `vlm_backend_missing: …` 提醒，不再 `needs_input`。C7 的假设码说明多 `mount_declared_fixed`。
 - **C7 数据集声明（C4 5.0.0，设计 25 §3，F5.23）** `dataset-declaration.schema.json`（`dataset-declaration/1.0`，示例 `examples/dataset-declaration.json`：合法 5、不合法 16）：第一层原样是字段映射；`semantics`（位姿 / 关节 / 夹爪记录：列或 topic、布局、单位、`frame_id`、参考系）、`calibration`（`cameras.<来源>`：安装方式、属于谁、内参、外参 `static` / `column` / `camera_tcp`、媒体变换；`tool`；`handheld` 是一份 `umi-calibration/2`）、`timing`、`suspects`；每项带 `assurance` 与起草时的假设码。`viz-mapping/1.x` 读成只有第一层的声明。
-  哪些是曲线（`role` state / action / other，`pair_with` 叠画，`fields` 点路径，`labels` 每维的名字，`transforms` 只用于显示）、任务描述与分段在哪、
-  帧号以哪个 topic 为准。它是可视化 mcap 读取器的配置，也是质检读取器 `ingest.mcap_mapping` 的来源（action 组 → action，没有 action 组时 state 组顶上；
-  cameras → video_topics；`builtin:umi` 带 `profile: umi_das`）；内置 UMI 模版派生的结果与 `_umi_mapping` 相同，判决不变。episode 的编号不进映射。
 - **C4 2.4.0**：标签 `viz`。数据集级（`/datasets/{id}/viz`、`/viz/episodes`、`/viz/meta`、`/episodes/{index}/viz|series`、相机 `.mp4|.frames|.json`）
   给可视化页，任务级（`/tasks/{id}/viz`、`/tasks/{id}/episodes/{index}/viz|series|cameras/…`）给迷你播放器，读任务冻结的输入；
   `VizDataset` / `VizEpisode` / `VizSeries` 是统一展示模型。mcap 映射 `GET` / `PUT /datasets/{id}/mapping`（有版本，任务开始时冻结）、

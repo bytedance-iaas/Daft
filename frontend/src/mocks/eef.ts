@@ -338,6 +338,7 @@ export function eefOverlay(taskId: string, episode: number, vizCamera: string | 
   ];
   return {
     task_id: taskId,
+    dataset_id: null,
     episode_index: episode,
     cameras: [
       {
@@ -345,13 +346,14 @@ export function eefOverlay(taskId: string, episode: number, vizCamera: string | 
         viz_camera: vizCamera,
         image_size_wh: [640, 480],
         fps: 15,
+        mount: 'fixed_external',
         media_frames: Array.from({ length: frames }, (_, f) => f),
         times_s: Array.from({ length: frames }, (_, f) => (vizCamera ? Math.round((f / 15) * 1e6) / 1e6 : null)),
         hands: [{ id: 'eef', title: 'panda_link8', color: '#ff0000', opening_m: Array.from({ length: frames }, (_, f) => Math.round(0.085 * (0.5 + 0.5 * Math.cos(f / 30)) * 1e4) / 1e4) }],
         skipped: null,
         layers,
       },
-      { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, media_frames: [], times_s: [], hands: [], skipped: 'mount wrist does not take part', layers: [] },
+      { camera_id: 'wrist', viz_camera: null, image_size_wh: [640, 480], fps: 15, mount: 'wrist', media_frames: [], times_s: [], hands: [], skipped: 'mount wrist does not take part', layers: [] },
     ],
     interpolation: null,
   };

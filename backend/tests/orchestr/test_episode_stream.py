@@ -1,4 +1,5 @@
 """Exercise the actual check pool's streaming handoff, persistence and stop logic."""
+import os
 import threading
 from collections import deque
 from types import SimpleNamespace
@@ -81,3 +82,28 @@ def test_stream_pause_drains_active_work_without_admitting_more(tmp_path):
     stage.run()
     assert completed == [0]
     assert list(incoming) == [[1]]
+
+
+def test_a_worker_lets_go_of_the_eef_judge_with_its_model_stage():
+    """The EEF judge a worker kept goes with the model session (an EEF stage without a model has none): its
+    temporary files - an mcap camera's frames written as a video - must not outlive the worker."""
+    from curation.extensions.eef_consistency import mcap_media
+    from daemon.orchestr.stage_worker import _release
+
+    closed = []
+
+    class Session:
+        def __exit__(self, *exc):
+            closed.append("session")
+
+    class Judge:
+        def close(self):
+            closed.append("eef")
+            mcap_media.close()
+
+    video_dir = mcap_media._root()
+    _release({"session": Session(), "eef": Judge()})
+    _release({"session": None, "eef": Judge()})
+    _release(None)
+    assert closed == ["session", "eef", "eef"]
+    assert not os.path.exists(video_dir)

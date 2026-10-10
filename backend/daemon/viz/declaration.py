@@ -122,17 +122,30 @@ def draft_of(svc, ds: P.Dataset) -> dict:
     return {"declaration": None, "unresolved": []}
 
 
+def _handheld(ds: P.Dataset, decl: dict | None) -> bool:
+    """A handheld gripper's raw mcap (design doc 22 §5.4): the registration's preflight derives its trajectory (the
+    reader recognised the gripper's topics), or its mapping is the built-in UMI one - the declaration ``decl`` or,
+    when that says no more than the mapping, the registration's own."""
+    from curation.extensions.eef_consistency import derive
+
+    entry = next((m for m in _preflight(ds).get("modules") or []
+                  if isinstance(m, dict) and m.get("id") == "eef_video_consistency"), None) or {}
+    if (entry.get("trajectory_source") or {}).get("kind") == derive.MCAP_DERIVE:
+        return True
+    return any(isinstance(d, dict) and d.get("base") == "builtin:umi" for d in (decl, DCL.normalize(ds.viz_mapping)))
+
+
 def _trajectory(svc, ds: P.Dataset, decl: dict | None, drafted: bool, cameras: list[str]) -> dict:
     """What the EEF module would do with the declaration (design doc 25 §4.1), without the dataset's listing:
-    a session or a handheld export is told by the preflight's format and profile."""
+    a session or a handheld export is told by the preflight's format and robot type, a handheld recording by
+    :func:`_handheld`."""
     from curation.extensions.eef_consistency import declared, derive
 
     fmt = format_of(ds)
     d = _preflight(ds).get("dataset") or {}
     if fmt == "umi_session":
         return {"kind": derive.SESSION}
-    handheld = fmt == "mcap" and (d.get("profile") == "umi_das" or (decl or {}).get("base") == "builtin:umi")
-    if handheld:
+    if fmt == "mcap" and _handheld(ds, decl):
         return {"kind": derive.MCAP_DERIVE}
     if fmt == "lerobot" and str(d.get("robot_type") or "").startswith("umi"):
         return {"kind": derive.GENERATE}

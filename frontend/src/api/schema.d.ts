@@ -1406,6 +1406,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/episodes/{index}/eef-overlay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The EEF marks of a registered dataset's episode, from its own record and its declaration, for the full visualizer (5.3.0)
+         * @description The same marks as a task's overlay, from what the dataset itself gives: a robot arm's recorded pose with the
+         *     cameras and tool its declaration describes, a handheld gripper's recording, a raw UMI session, or the
+         *     dataset's own trajectory.json - never a task's upload, and without what a task adds (the observed point,
+         *     the residual, what a model saw: `in_model` is false). The episode's trajectory is made once per declaration
+         *     version and kept: 202 (`VizMediaPending`) while it is made, then 200. The cameras the declaration cannot
+         *     draw on are listed with their reason in `unavailable_cameras`. 404 `no_trajectory` when the platform cannot
+         *     have the dataset's trajectory (`details.missing` names what the declaration lacks), `not_generated` when
+         *     this episode has none, `format_not_generated` for a format it does not draw.
+         */
+        get: operations["getDatasetEpisodeEefOverlay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/episodes/{index}/eef-overlay": {
         parameters: {
             query?: never;
@@ -3395,8 +3426,28 @@ export interface components {
             downsampled: boolean;
         };
         EefOverlay: {
-            task_id: string;
+            /** @description the task's; null for a dataset's overlay (5.3.0) */
+            task_id: string | null;
+            /** @description 5.3.0: the registered dataset; null for a task whose dataset is not registered */
+            dataset_id: string | null;
             episode_index: number;
+            /** @description 5.3.0, a dataset's overlay: the dataset's cameras nothing is drawn on, and why */
+            unavailable_cameras?: {
+                /** @description the LeRobot feature key or the mcap topic */
+                source: string | null;
+                camera_id: string | null;
+                /** @description the player camera showing it, when there is one */
+                viz_camera: string | null;
+                /** @description mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing */
+                reason: string | null;
+            }[];
+            /** @description 5.3.0, a dataset's overlay: where the trajectory came from */
+            trajectory?: {
+                /** @enum {unknown} */
+                kind: "generate" | "mcap_derive" | "session" | "dataset_file";
+                /** @description the declaration it was made with */
+                declaration_version: number | null;
+            };
             cameras: components["schemas"]["EefOverlayCamera"][];
             /** @description 4.4.0: the gaps of a handheld gripper's poses bridged for the drawing; null for a tool on a robot */
             interpolation: null | {
@@ -3423,6 +3474,8 @@ export interface components {
             image_size_wh: number[];
             /** @description the camera clip's frame rate */
             fps: number | null;
+            /** @description 5.3.0: fixed_external, wrist or moving - a wrist camera's own hand stays still in its picture, so its marks cannot show that hand's pose */
+            mount?: string | null;
             /** @description per sample frame, the clip frame it shows (counted from the clip's start, i.e. `from_ts` of a LeRobot v3 file); null: no paired video frame. Clip time ≈ frame / fps. */
             media_frames: (number | null)[];
             /** @description 4.3.0: per sample frame, the episode time (seconds, the player's clock) at which the player shows its paired video frame - frame k of a LeRobot clip at k / fps, message k of an mcap topic at its own time; null when there is none or it is never shown (before an mcap stream's first keyframe), all null when `viz_camera` is null */
@@ -3447,10 +3500,12 @@ export interface components {
             /** @description 4.3.0: what the layer is, the same on every camera and hand - point, finger_axis, axis, axis_x, axis_y, axis_z, trail_past, trail_future, observed_point, observed_trail, residual */
             id: string;
             /**
-             * @description 4.3.0
+             * @description 4.3.0; 5.3.0 record: the dataset record's own TCP trail and axes when an upload overrides it
              * @enum {unknown}
              */
-            group: "declared" | "axes" | "trail_past" | "trail_future" | "observed" | "residual";
+            group: "declared" | "axes" | "trail_past" | "trail_future" | "observed" | "residual" | "record";
+            /** @description 5.3.0: drawn dashed, [dash, gap] in source pixels; absent or null: solid */
+            dash?: number[] | null;
             /** @description 4.3.0: its name in the layer list, with the point or axis it draws */
             title: string;
             /**
@@ -7091,6 +7146,35 @@ export interface operations {
                     "application/json": components["schemas"]["VizSeries"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDatasetEpisodeEefOverlay: {
+        parameters: {
+            query?: {
+                /** @description bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals */
+                max_gap_ms?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description the episode's own index (preflight `episode_indices`) */
+                index: components["parameters"]["PathIndex"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one entry per camera of the episode's trajectory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EefOverlay"];
+                };
+            };
+            202: components["responses"]["VizPending"];
             default: components["responses"]["Error"];
         };
     };

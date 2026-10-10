@@ -67,6 +67,8 @@ export interface OverlaySide {
   interpolation: EefOverlay['interpolation'];
   choice: OverlayChoice;
   onChoice: (c: OverlayChoice) => void;
+  /** a registration's marks, from its record and declaration (design doc 25 §5.1) */
+  dataset?: boolean;
 }
 
 /** The EEF marks over the focused camera (design doc 22 §3.3): which bundle camera, the hands, the sample frame of
@@ -117,7 +119,8 @@ function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock })
           </div>
         </>
       ) : null}
-      <div className="note">{S.note}</div>
+      {cam.mount === 'wrist' ? <div className="note">{zh.viz.overlay.wristNote}</div> : null}
+      <div className="note">{side.dataset ? S.noteDataset : S.note}</div>
     </>
   );
 }

@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/PageHeader';
 import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer';
-import { useVizModel, type VizRef } from '../../features/visualizer/data';
-import { Player, type PlayerControl } from '../../features/visualizer/Player';
+import { useDatasetEefOverlay, useVizModel, type VizRef } from '../../features/visualizer/data';
+import { Player, type PlayerControl, type PlayerOverlays } from '../../features/visualizer/Player';
+import { parseChoice, type OverlayChoice } from '../../lib/eefOverlay';
 import { readPrefs, writePrefs } from '../../lib/prefs';
 import { firstEpisode, hasEpisode } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
@@ -45,6 +46,12 @@ export function VisualizePage() {
   const unfold = collapsed ? <RailButton fold={false} onClick={() => fold(false)} /> : null;
   const control = useRef<PlayerControl | null>(null);
   const [display, setDisplay] = useState(false);
+  // what the viewer chose to see of the EEF marks, shared with the mini player (kept in this browser)
+  const [choice, setChoiceState] = useState<OverlayChoice>(() => parseChoice(readPrefs().eefOverlay));
+  const setChoice = useCallback((c: OverlayChoice) => {
+    setChoiceState(c);
+    writePrefs({ eefOverlay: c });
+  }, []);
 
   useEffect(() => {
     if (datasetId) writePrefs({ lastVizDataset: datasetId });
@@ -67,6 +74,23 @@ export function VisualizePage() {
   const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
   // an mcap dataset without a confirmed mapping (the model says so even when the list is stale)
   const pending = item?.viz?.state === 'mapping_pending' || model.data?.mapping.state === 'none';
+  // the registration's EEF marks (design doc 25 §5.1): from its record and declaration, made once (202 meanwhile)
+  const eef = useDatasetEefOverlay(datasetId, current, !!model.data && !pending, choice.maxGapMs);
+  const ready = eef.data?.state === 'ready' ? eef.data.overlay : null;
+  const overlays: PlayerOverlays | null = useMemo(() => {
+    const cams = (ready?.cameras ?? []).filter((c) => c.viz_camera && !c.skipped && c.layers.length);
+    if (!ready || !cams.length) return null;
+    const names = new Map((model.data?.cameras ?? []).map((c) => [c.key, c.name]));
+    return {
+      cameras: Object.fromEntries(cams.map((c) => [c.viz_camera as string, c])),
+      focus: null,
+      choice,
+      onChoice: setChoice,
+      interpolation: ready.interpolation,
+      dataset: true,
+      unavailable: (ready.unavailable_cameras ?? []).map((u) => ({ name: (u.viz_camera && names.get(u.viz_camera)) || u.camera_id || u.source || '', reason: u.reason })),
+    };
+  }, [ready, model.data, choice, setChoice]);
 
   return (
     <div className="page">
@@ -114,6 +138,27 @@ export function VisualizePage() {
             </div>
           ) : source && current !== null ? (
             <div style={{ marginBottom: 16 }}>
+              {eef.data?.state === 'pending' ? (
+                <div className="vz-note muted" data-testid="vz-overlay-making">
+                  {zh.viz.overlay.making(eef.data.progress)}
+                </div>
+              ) : eef.data?.state === 'none' && eef.data.reason === 'not_generated' ? (
+                // this episode has no trajectory (the others may): the server says why
+                <div className="vz-note muted" data-testid="vz-overlay-none">
+                  {eef.data.message}
+                </div>
+              ) : eef.data?.state === 'none' && eef.data.kind === 'missing_declaration' ? (
+                <div className="vz-note muted" data-testid="vz-overlay-declare">
+                  {zh.viz.overlay.declare}
+                  <Button type="text" size="mini" onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId)}?declaration=1`)}>
+                    {zh.viz.overlay.declareGo}
+                  </Button>
+                </div>
+              ) : eef.data?.state === 'failed' ? (
+                <div className="vz-warn" role="alert" data-testid="vz-overlay-failed">
+                  {zh.viz.overlay.failed}
+                </div>
+              ) : null}
               <Player
                 source={source}
                 index={current}
@@ -124,6 +169,7 @@ export function VisualizePage() {
                 onNextEpisode={next !== null ? () => go(datasetId, next) : undefined}
                 lead={unfold}
                 prefetch={next}
+                overlays={overlays}
               />
             </div>
           ) : model.isError ? (

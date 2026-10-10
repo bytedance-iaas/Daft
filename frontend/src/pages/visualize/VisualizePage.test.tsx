@@ -127,6 +127,59 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(db.vizDisplays.get('ds_droid200')?.config?.cameras).toEqual([{ key: 'exterior_1' }, { key: 'exterior_2', hidden: true }, { key: 'wrist' }]);
   });
 
+  it('draws the EEF marks the dataset declaration generates, once they are made; the cameras it cannot draw on are greyed (design doc 25 §5.1)', async () => {
+    const SRC = 'observation.images.exterior_image_1_left';
+    db.declarations.set('ds_droid100', {
+      doc: {
+        schema_version: 'dataset-declaration/1.0',
+        semantics: {
+          pose: { key: 'observation.state.cartesian_position', layout: 'xyz_rpy_xyz_extrinsic', units: { position: 'm', angle: 'rad' }, frame_id: 'panda_link8', reference_frame: 'robot_base', pose_type: 'absolute' },
+        },
+        calibration: {
+          cameras: { [SRC]: { camera_id: 'exterior_image_1_left', mount: 'fixed_external', intrinsics: { fx_cx_fy_cy: [500, 320, 500, 240], model: 'pinhole' }, extrinsics: { mode: 'static', xyz_rpy: [1, 0, 0.5, 0, 0, 0] } } },
+          tool: { tcp_offset_m: [0, 0, 0.1] },
+        },
+      },
+      version: 1,
+      updatedAt: 1,
+    });
+    const { user } = renderApp('/visualize?dataset=ds_droid100&ep=0');
+    expect(await screen.findByTestId('vz-overlay-making')).toHaveTextContent('轨迹生成中 40%');       // 202 first: being made
+    await user.click(await screen.findByTestId('vz-overlay', {}, { timeout: 8000 }));
+    const menu = await screen.findByTestId('vz-overlay-menu');
+    expect(within(menu).queryByRole('button', { name: zh.viz.overlay.presets.model })).toBeNull();   // nothing a model saw
+    const off = within(menu).getByTestId('vz-overlay-unavailable');
+    expect(off).toHaveTextContent(zh.viz.overlay.reasons.mount_unknown);
+    expect(screen.queryByTestId('vz-overlay-making')).toBeNull();
+  });
+
+  it('a handheld gripper\'s wrist cameras come with their note (design doc 25 §5.4)', async () => {
+    const { user } = renderApp('/visualize?dataset=ds_umi&ep=0');
+    await user.click(await screen.findByTestId('vz-overlay', {}, { timeout: 8000 }));
+    expect(await screen.findByTestId('vz-overlay-wrist-note')).toHaveTextContent(zh.viz.overlay.wristNote);
+  });
+
+  it('a dataset with a pose record but an unfinished declaration says so, and leads to the declaration (design doc 25 §5.1)', async () => {
+    const { user } = renderApp('/visualize?dataset=ds_droid100&ep=0');
+    const note = await screen.findByTestId('vz-overlay-declare', {}, { timeout: 8000 });
+    expect(note).toHaveTextContent(zh.viz.overlay.declare);
+    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+    await user.click(within(note).getByRole('button', { name: zh.viz.overlay.declareGo }));
+    await waitFor(() => expect(currentLocation()).toBe('/datasets/ds_droid100?declaration=1'));
+  });
+
+  it('an episode the platform cannot make a trajectory for says why, the others still draw', async () => {
+    const why = 'episode 0 生成不出轨迹：robot0：这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback';
+    server.use(
+      http.get('*/api/v1/datasets/:id/episodes/:index/eef-overlay', () =>
+        HttpResponse.json({ error: { code: 'not_found', message: why, details: { reason: 'not_generated', source: { kind: 'derived' } } } }, { status: 404 }),
+      ),
+    );
+    renderApp('/visualize?dataset=ds_umi&ep=0');
+    expect(await screen.findByTestId('vz-overlay-none', {}, { timeout: 8000 })).toHaveTextContent(why);
+    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+  });
+
   it('says an mcap dataset needs its mapping confirmed first', async () => {
     db.vizMappings.delete('ds_mcap');
     renderApp('/visualize?dataset=ds_mcap');

@@ -108,11 +108,10 @@ def _rows(path: Path) -> list[dict]:
     return out
 
 
-def _viz(svc, task_id: str, owner: str, index: int):
-    """(file -> VizEpisode camera key, topic -> key, the episode times of a camera's frames); empty maps and
-    no times when the task's input cannot be read."""
+def camera_maps(svc, src, index: int):
+    """(file -> VizEpisode camera key, topic -> key, the episode times of a camera's frames) of ``src`` (a task's
+    input or a registration); empty maps and no times when the input cannot be read."""
     try:
-        src = svc.task_source(task_id, owner)
         reader = svc.reader_of(src)
         if reader == "lerobot":
             m, row = svc.lerobot.row(src, index)
@@ -142,50 +141,77 @@ def _viz(svc, task_id: str, owner: str, index: int):
 
             return {}, {c["source"]: c["key"] for c in cams if c.get("source")}, mcap_times
     except Exception:  # noqa: BLE001 - the layers still come back; the player just has nothing to put them on
-        log.warning("eef overlay: the cameras of task %s episode %s could not be matched", task_id, index,
+        log.warning("eef overlay: the cameras of %s %s episode %s could not be matched", src.scope, src.id, index,
                     exc_info=True)
     return {}, {}, None
 
 
-def episode_overlay(rt, svc, task_id: str, owner: str, index: int, *, max_gap_ms: float | None = None) -> dict:
+def overlay_cameras(path: Path, index: int, *, observations: list[Path] = (), judged: bool = False,
+                    max_gap_ms: float | None = None, cache=None, scope: tuple = (),
+                    kept: bool = False) -> tuple[list[dict], dict | None]:
+    """The layers of every camera of the bundle at ``path`` for episode ``index`` (each with its media uri and
+    topic, to be matched to a player camera) and the poses bridged for a UMI hand; kept in ``cache``. ``kept``:
+    the platform's own bundle in the viz disk cache: its frames are not checked against their schema again, and
+    the cache's reads touch the file's times - one made again is a new file (written, renamed), told by its inode."""
     from curation.extensions.eef_consistency import load, overlay, umi
 
+    stat = path.stat()
+    seen = tuple((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in observations)
+    stamp = (stat.st_ino, stat.st_size) if kept else (stat.st_size, stat.st_mtime_ns)
+    key = (*scope, str(path), *stamp, int(index), judged, seen, max_gap_ms)
+    cached = (cache or _CACHE).get(key)
+    if cached is not None:
+        return json.loads(json.dumps(cached[0])), cached[1]
+    result = load.load_bundle(path, check_media=False, episodes=[int(index)], trusted=kept)
+    if not result.ok:
+        raise ApiError("not_found", "轨迹包读不了，画不出投影", details={"reason": "trajectory_invalid"})
+    sample = result.samples.get(int(index))
+    if sample is None:
+        raise ApiError("not_found", f"轨迹包里没有 episode {index}", details={"reason": "no_episode"})
+    observed = {f.stem: overlay.observed_tracks(_rows(f), sample.n_frames) for f in observations
+                if f.stem in sample.cameras}
+    bridged = None
+    if sample.hand_poses:              # a UMI hand's short pose gaps (design doc 22 §5.2): the checks' default or the viewer's
+        default = umi.default_gap_s(sample)
+        done = umi.fill_gaps(sample, max_gap_ms / 1000 if max_gap_ms is not None else None)
+        bridged = {"max_gap_s": done["max_gap_s"], "default_s": default,
+                   "step_s": round(default / umi.GAP_STEPS, 6) if default else None,
+                   "range_steps": list(umi.GAP_RANGE_STEPS), "frames": done["frames"]}
+    cameras = overlay.episode_overlay(sample, observed, judged)
+    for c in cameras:
+        media = sample.cameras[c["camera_id"]].media
+        c["media_uri"], c["topic"] = media.get("uri"), media.get("topic")
+    (cache or _CACHE).put(key, (cameras, bridged), len(json.dumps(cameras)))
+    return json.loads(json.dumps(cameras)), bridged
+
+
+def episode_overlay(rt, svc, task_id: str, owner: str, index: int, *, max_gap_ms: float | None = None) -> dict:
     task = rt.repo.get_task(task_id, owner=owner)
     path, params = _bundle(rt, task, owner, int(index))
     judged = any(params.get(p) for p in REFERENCES)
-    stat = path.stat()
     observations = _observation_files(rt, task.id, index) if judged else []
-    seen = tuple((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in observations)
-    key = (task.id, str(path), stat.st_size, stat.st_mtime_ns, int(index), judged, seen, max_gap_ms)
-    cached = _CACHE.get(key)
-    cameras, bridged = cached if cached is not None else (None, None)
-    if cameras is None:
-        result = load.load_bundle(path, check_media=False, episodes=[int(index)])
-        if not result.ok:
+    try:
+        cameras, bridged = overlay_cameras(path, int(index), observations=observations, judged=judged,
+                                           max_gap_ms=max_gap_ms, scope=("task", task.id))
+    except ApiError as err:
+        if (err.details or {}).get("reason") == "trajectory_invalid":
             raise ApiError("not_found", "这个任务的 trajectory.json 读不了，画不出投影",
-                           details={"reason": "trajectory_invalid"})
-        sample = result.samples.get(int(index))
-        if sample is None:
-            raise ApiError("not_found", f"trajectory.json 里没有 episode {index}", details={"reason": "no_episode"})
-        observed = {f.stem: overlay.observed_tracks(_rows(f), sample.n_frames) for f in observations
-                    if f.stem in sample.cameras}
-        bridged = None
-        if sample.hand_poses:              # a UMI hand's short pose gaps (design doc 22 §5.2): the checks' default or the viewer's
-            default = umi.default_gap_s(sample)
-            done = umi.fill_gaps(sample, max_gap_ms / 1000 if max_gap_ms is not None else None)
-            bridged = {"max_gap_s": done["max_gap_s"], "default_s": default,
-                       "step_s": round(default / umi.GAP_STEPS, 6) if default else None,
-                       "range_steps": list(umi.GAP_RANGE_STEPS), "frames": done["frames"]}
-        cameras = overlay.episode_overlay(sample, observed, judged)
-        for c in cameras:
-            media = sample.cameras[c["camera_id"]].media
-            c["media_uri"], c["topic"] = media.get("uri"), media.get("topic")
-        _CACHE.put(key, (cameras, bridged), len(json.dumps(cameras)))
-    files, topics, times = _viz(svc, task.id, owner, int(index))
+                           details={"reason": "trajectory_invalid"}) from None
+        raise
+    src = svc.task_source(task.id, owner)
+    record = {}
+    if params.get(PARAM):           # an upload overrides what the declaration generates: the record's own, dashed (§5.3)
+        from .eef_dataset import record_layers
+
+        record = record_layers(rt, svc, task, src, int(index))
+    files, topics, times = camera_maps(svc, src, int(index))
     out = []
     for c in cameras:
         viz = topics.get(c["topic"]) if c["topic"] else files.get(c["media_uri"])
         frames = c["media_frames"]
+        extra = record.get(c["topic"] or c["media_uri"]) or []
         out.append({k: v for k, v in c.items() if k not in ("media_uri", "topic")}
-                   | {"viz_camera": viz, "times_s": times(viz, frames) if viz and times else [None] * len(frames)})
-    return {"task_id": task.id, "episode_index": int(index), "cameras": out, "interpolation": bridged}
+                   | {"viz_camera": viz, "times_s": times(viz, frames) if viz and times else [None] * len(frames),
+                      "layers": c["layers"] + extra})
+    return {"task_id": task.id, "dataset_id": task.dataset_id, "episode_index": int(index), "cameras": out,
+            "interpolation": bridged}

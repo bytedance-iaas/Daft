@@ -2,8 +2,8 @@
 
 > 状态：**开工稿 v1.1（2026-10-09 晚，三轮评审后）**。评审答复见 §11（第三轮是对照代码的核实，改了 D84 的提醒方式、§7 的发现粒度与边界、
 > 旧任务的缺省级别冻结，F5.24 拆成 a / b）；§10 是开工时的缺省选择，实测后可改。D81–D86 已登记到 00 §7、账本已加 F5.22–F5.26；
-> **F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关、F5.24b EEF 拆两半已落地**（注册表 5.3、C4 5.2.0，§9.1–§9.4 是落地记录），
-> 下一步 F5.25。
+> **F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关、F5.24b EEF 拆两半、F5.25 数据集级叠加已落地**（注册表 5.3、C4 5.3.0，
+> §9.1–§9.5 是落地记录），下一步 F5.26。
 > 来源：2026-10-09 晚的讨论——「能不能画、能不能比，都不取决于 mcap 还是 LeRobot」「记录能还原就不该要用户上传轨迹」「模块都设计成只输出意见，
 > 不再有判废」「两个渠道不平均、取大、冲突请人看」「完整版可视化展示原始数据里直接看得到的东西，迷你版服务任务」「数据集配置复用 mcap 的配置、做得更通用」。
 > 工程基线：`feat/curator-v2` @ 8c4d89f8b（F5.21，trajectory.json 能算就可选、算不了就必选；注册表 4.4、C4 4.6.0、C7 `viz-mapping/1.1`）。
@@ -441,6 +441,42 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   `tests/cli/test_eef_check.py`），dataset2 上 `--prep` 留下复核窗口的图与视频、`--prepared` 写出结论后包没了。③ 在模型半段卡住时暂停：
   `vlm_prep` 已完成、还没问的条目的包留着；续跑后它们的 `halves.vlm_prep` 等于包里记的值（没有重做 CPU 半段），运行结束 `scratch/vlm/` 不在了。
   ④ 不勾 EEF 的任务：计划与派发同以前（链就是两块），对账黄金基线回放逐位不变。
+
+### 9.5 F5.25 落地记录（2026-10-10）
+
+- **契约**：C4 升 5.3.0：新接口 `GET /datasets/{id}/episodes/{index}/eef-overlay`（`getDatasetEpisodeEefOverlay`，可带 `max_gap_ms`），
+  返回与任务级同一个 `EefOverlay`：`task_id` 可空、多 `dataset_id`、`unavailable_cameras[]`（`source`、`camera_id`、`viz_camera`、`reason`）、
+  `trajectory`（`kind`、`declaration_version`）；`EefOverlayCamera` 多 `mount`；`EefOverlayLayer` 的组多 `record`、多 `dash`（虚线的画、空长度）。
+  轨迹包还在生成时 202 `VizMediaPending`；404 的原因：`format_not_generated`（Lance 等）、`no_trajectory`（带 `kind` 与 `missing`）、`no_episode`、
+  `not_generated`（这一条生成不出，带 `source`）；生成出错 500 `generate_failed`。C1 不变。
+- **Daemon**（`daemon/viz/eef_dataset.py`）：轨迹从哪来按 §4.1 的顺序判（`plan_of`，与声明抽屉同一个判断）——原始 UMI 会话、数据集自带的 trajectory.json
+  整份读；机械臂按声明逐条生成（LeRobot、mcap，`declared.Generated` / `GeneratedMcap`）；原始手持夹爪 mcap 逐条从录制推出（声明里的手持标定，没有就用内置 DEMO 标定）。
+  在可视化的构建池里做（`Builder.ensure`，做的时候 202），落可视化磁盘缓存 `eef/<登记、指纹、声明版本、来源>/ep<N>.json`；生成不出的条目留一个小的
+  `{"unsupported": 轨迹来源}`，接口回 404 `not_generated`，原因取各路相机的原因（如「这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback」）。
+  做包的任务顺带按缺省插值间隔算好图层（内存缓存），预生成过的条目第一次打开就直接出图。预生成：登记、重新预检、改声明之后（`refresh_preflight`）
+  在后台做前 3 条（`warm_overlay`）。图层与任务级同一套（`overlay.episode_overlay`），全部 `in_model = false`；`unavailable_cameras` 是声明里算不出的相机，
+  已经画上的不列。
+- **手持夹爪的识别**（`viz/declaration._handheld`）：登记的预检说 EEF 的轨迹「从录制推出」（`trajectory_source.kind = mcap_derive`，读取器认出了夹爪的 topic），
+  或映射以内置 UMI 为底（声明的，或声明只到映射这一层时登记自己的）。F5.23 原先拿预检的 `dataset.profile` 比 `umi_das`——那是数据集语义档案，永远对不上——
+  声明抽屉与叠加都认不出原始 DAS 录制，这次一起修了。
+- **缓存的身份**：可视化磁盘缓存每读一次刷新文件时间（按时间淘汰），图层的内存缓存对缓存里的包按 inode 认（重做的包是写好再改名的新文件），
+  不再每次重算；这些包是平台自己写的，读的时候不再逐帧对 Schema 校验（`load_bundle(trusted=True)`，DAS 1491 帧读包 1.3 秒 → 0.3 秒）。
+- **上传覆盖时的「记录」组**（§5.3，`record_layers`）：任务的上传件覆盖了冻结声明能生成的轨迹时，用 `inputs/declaration.json` 生成数据集记录这一条的轨迹包
+  （缓存在 `eef-record/<任务、声明摘要、指纹>/`），取过去轨迹、中心点与三轴，id 加 `record_` 前缀、组 `record`、`dash [6, 4]`、标题「记录 · …」，按媒体
+  uri / topic 接到任务这路相机的图层后面；声明还生成不了（缺项）或格式不是 LeRobot / mcap 时没有这一组。
+- **界面**：见设计 07 §4.5 与迷你版一节——完整版「叠加」菜单（没有模型预设、没有观测与残差），画不了的相机置灰写原因，腕部说明（菜单、右侧「叠加」一节、
+  报告 EEF 小节），「轨迹生成中 N%」，这一条生成不出时写原因，声明没补全时引到声明抽屉；迷你版多「数据集记录（虚线）」组。
+- **顺带修的**：常驻 worker 结束时只关了模型会话、没关缓存的 EEF 判定器，mcap 相机写成的临时视频（`eef-mcap-*`）每跑一次流水线的 EEF 段就留一份；
+  现在随会话一起释放（`stage_worker._release`）。
+- **验收**（本机 Daemon，dataset2 与 DAS 录制）：① dataset2（LeRobot v3）完整版 ep0：`kind = generate`、声明第 7 版，两路外部相机（`fixed_external`）
+  画中心点 P、两指连线 B、三轴、朝向、过去 / 未来轨迹；每个图层的帧与 `times_s` 和 F5.24b 的任务 task-mzjtovist 迷你版逐个相同（同帧同位）。
+  Daemon 起来后第一次 1.8 秒，之后 0.04 秒。② 上传覆盖：上传件 = ep2 生成的轨迹包换上 ep0 的干净位姿（数据集各条是同一段录制的副本），`use_vlm = false`、
+  只跑 ep2（task-dmflaofgp）：迷你版多 `record_*` 虚线组，记录组逐帧等于完整版 ep2 的图层、实线等于完整版 ep0 的；三维上记录比上传件绕工具 z 轴
+  （接近轴）转了 30.00°（每帧都是）。③ DAS（本机）：ep0 真正首次 5.7 秒（从录制推 1491 帧 + 算图层），包已在、Daemon 重启后首次 2.3 秒，之后 0.2 秒；
+  登记后预生成过的条目首次打开就命中。TOS 上的 DAS 这轮没有需求方的密钥，没有实测，留到集群上验。④ DAS 两路腕部相机 `mount = wrist`，
+  右侧「叠加」一节写「腕部相机的标记检验不了本手的位姿（本手在画面里不动），看自运动一致性」；ep1（这条录制没有 camera_info，内置标定不带内参兜底）
+  在播放器上方写明原因。测试：`tests/viz/test_declaration.py`（按声明画、缓存、覆盖时的记录组、手持夹爪的识别）、`tests/viz/test_eef_overlay.py`
+  （原始 DAS 录制、缓存命中不重读）、`tests/orchestr/test_episode_stream.py`（worker 释放判定器），前端 `VisualizePage`、`eefOverlay`、`sectionViews` 的用例。
 
 ## 10. 开工时的缺省选择（实测后可改）
 

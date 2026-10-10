@@ -59,6 +59,17 @@ class EpisodeStream:
         self.output.send(("episode", {"episode": episode, "survivor": survivor}))
 
 
+def _release(prepared: dict | None) -> None:
+    """What a worker kept for its model stage: the model session (an EEF stage without a model has none) and
+    the EEF judge, whose temporary files (an mcap camera's video, remote media) go with it."""
+    if prepared is None:
+        return
+    if prepared.get("session") is not None:
+        prepared["session"].__exit__(None, None, None)
+    if prepared.get("eef") is not None:
+        prepared["eef"].close()
+
+
 def _serve(conn, argv: list[str], env: dict[str, str], cwd: str | None) -> None:
     """Spawn entry: CLI semantics with a connection in place of stdio."""
     os.setsid()
@@ -110,16 +121,12 @@ def _serve(conn, argv: list[str], env: dict[str, str], cwd: str | None) -> None:
                                         "message": "worker returned invalid JSON"}}
             if streaming:
                 # Flush latency and uninstall transport before acknowledging EOF.
-                prepared = cache.pop("vlm", None)
-                if prepared is not None and prepared["session"] is not None:   # an EEF stage without a model has none
-                    prepared["session"].__exit__(None, None, None)
+                _release(cache.pop("vlm", None))
             output.send(("result", {"returncode": rc, "doc": doc}))
             if streaming:
                 break
     finally:
-        prepared = cache.get("vlm")
-        if prepared is not None and prepared["session"] is not None:
-            prepared["session"].__exit__(None, None, None)
+        _release(cache.pop("vlm", None))
         conn.close()
 
 

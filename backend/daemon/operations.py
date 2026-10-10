@@ -93,6 +93,7 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getTaskEpisodeViz": ("GET", "/api/v1/tasks/{id}/episodes/{index}/viz"),
     "getTaskEpisodeSeries": ("GET", "/api/v1/tasks/{id}/episodes/{index}/series"),
     "getTaskEpisodeEefOverlay": ("GET", "/api/v1/tasks/{id}/episodes/{index}/eef-overlay"),
+    "getDatasetEpisodeEefOverlay": ("GET", "/api/v1/datasets/{id}/episodes/{index}/eef-overlay"),
     # F13.3 mcap: frame packs, mappings, probing, templates
     "getDatasetCameraFrames": ("GET", "/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.frames"),
     "getDatasetCameraFrameIndex": ("GET", "/api/v1/datasets/{id}/episodes/{index}/cameras/{camera}.json"),

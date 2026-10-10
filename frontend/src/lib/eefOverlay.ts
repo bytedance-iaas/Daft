@@ -189,6 +189,8 @@ function drawLayer(ctx: CanvasRenderingContext2D, layer: EefOverlayLayer, v: rea
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.lineWidth = Math.max(1.5, layer.width * Math.max(fit.scale, 0.75)) * widen;
+  // a dashed layer (C4 5.3.0: the dataset record's own marks): [dash, gap] in source pixels, at least a few on screen
+  ctx.setLineDash(layer.dash ? layer.dash.map((d) => Math.max(3, d * fit.scale)) : []);
   if (layer.kind === 'polyline') {
     line(ctx, v, fit);
     return;

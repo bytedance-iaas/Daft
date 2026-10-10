@@ -251,7 +251,7 @@ def camera_overlay(sample, camera_id: str, observed: dict[str, np.ndarray] | Non
     cam = sample.cameras[camera_id]
     picked = OP.select(sample, camera_id)
     base = {"camera_id": camera_id, "image_size_wh": [int(v) for v in cam.image_size_wh],
-            "fps": float(cam.media.get("fps") or 0) or None,
+            "fps": float(cam.media.get("fps") or 0) or None, "mount": cam.mount,
             "media_frames": [int(v) if v >= 0 else None for v in cam.video_frame_index]}
     if isinstance(picked, str):
         return {**base, "skipped": picked, "layers": [], "hands": []}

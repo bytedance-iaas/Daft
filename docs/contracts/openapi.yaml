@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.2.0
+  version: 5.3.0
   description: |
     ## Overview
 
@@ -199,6 +199,14 @@ info:
     `prep_stages`: which stage's records it prepares) and marks the module with `prep_stage`. A task's progress and
     timeline show `vlm_prep` as a stage of its own.
 
+    **5.3.0** (2026-10-10): `GET /datasets/{id}/episodes/{index}/eef-overlay` gives a registered dataset's EEF marks
+    for the full visualizer, from what the dataset itself records and its declaration (never a task's upload): 202
+    while the episode's trajectory is made, then `EefOverlay` with `dataset_id`, the cameras nothing is drawn on and
+    why (`unavailable_cameras`) and where the trajectory came from (`trajectory`). `EefOverlay.task_id` is null
+    there, and every overlay now says its `dataset_id`; an overlay camera says its `mount`. A task whose uploaded
+    trajectory overrides the one its declaration generates also gets the record's own marks, dashed: the layer
+    group `record` and the new layer field `dash`.
+
   x-description-zh: |
     ## 概览
 
@@ -320,6 +328,11 @@ info:
     和其他 CPU 检查并排，每条 episode 的请求保留到 `vlm` 里的模型那一半问完为止；没有模型时整个模块都在那里跑完。模块目录的阶段里多了
     `vlm_prep`（`root_stages`：自成起点的阶段；`prep_stages`：它为哪个阶段准备记录），模块带 `prep_stage`。任务的进度与时间线把 `vlm_prep`
     作为单独的一段显示。
+
+    **5.3.0**（2026-10-10）：`GET /datasets/{id}/episodes/{index}/eef-overlay` 给完整版可视化画已登记数据集的 EEF 标记，只用数据集自己的记录
+    与它的声明（从不用任务上传的文件）：这一条的轨迹还在生成时返回 202，之后返回 `EefOverlay`，带 `dataset_id`、画不了的相机与原因
+    （`unavailable_cameras`）和轨迹从哪来（`trajectory`）。这里的 `EefOverlay.task_id` 是 null，所有叠加都带上 `dataset_id`；叠加的相机带
+    `mount`。上传的轨迹覆盖了声明能生成的轨迹时，任务的叠加多一组数据集记录自己的标记，画虚线：图层组 `record` 与图层的新字段 `dash`。
 
 servers:
   - url: "{base}/api/v1"
@@ -2944,6 +2957,37 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/VizSeries"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/episodes/{index}/eef-overlay:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/PathIndex"
+    get:
+      tags: [viz]
+      operationId: getDatasetEpisodeEefOverlay
+      summary: The EEF marks of a registered dataset's episode, from its own record and its declaration, for the full visualizer (5.3.0)
+      description: |
+        The same marks as a task's overlay, from what the dataset itself gives: a robot arm's recorded pose with the
+        cameras and tool its declaration describes, a handheld gripper's recording, a raw UMI session, or the
+        dataset's own trajectory.json - never a task's upload, and without what a task adds (the observed point,
+        the residual, what a model saw: `in_model` is false). The episode's trajectory is made once per declaration
+        version and kept: 202 (`VizMediaPending`) while it is made, then 200. The cameras the declaration cannot
+        draw on are listed with their reason in `unavailable_cameras`. 404 `no_trajectory` when the platform cannot
+        have the dataset's trajectory (`details.missing` names what the declaration lacks), `not_generated` when
+        this episode has none, `format_not_generated` for a format it does not draw.
+      parameters:
+        - name: max_gap_ms
+          in: query
+          description: "bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals"
+          schema: {type: number, exclusiveMinimum: 0, maximum: 2000}
+      responses:
+        "200":
+          description: one entry per camera of the episode's trajectory
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EefOverlay"}
+        "202":
+          $ref: "#/components/responses/VizPending"
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}/eef-overlay:
     parameters:
@@ -5787,10 +5831,33 @@ components:
     EefOverlay:
       type: object
       additionalProperties: false
-      required: [task_id, episode_index, cameras, interpolation]
+      required: [task_id, dataset_id, episode_index, cameras, interpolation]
       properties:
-        task_id: {type: string}
+        task_id: {type: [string, "null"], description: "the task's; null for a dataset's overlay (5.3.0)"}
+        dataset_id: {type: [string, "null"], description: "5.3.0: the registered dataset; null for a task whose dataset is not registered"}
         episode_index: {type: integer, minimum: 0}
+        unavailable_cameras:
+          type: array
+          description: "5.3.0, a dataset's overlay: the dataset's cameras nothing is drawn on, and why"
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, camera_id, viz_camera, reason]
+            properties:
+              source: {type: [string, "null"], description: "the LeRobot feature key or the mcap topic"}
+              camera_id: {type: [string, "null"]}
+              viz_camera: {type: [string, "null"], description: "the player camera showing it, when there is one"}
+              reason:
+                type: [string, "null"]
+                description: "mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing"
+        trajectory:
+          type: object
+          description: "5.3.0, a dataset's overlay: where the trajectory came from"
+          additionalProperties: false
+          required: [kind, declaration_version]
+          properties:
+            kind: {enum: [generate, mcap_derive, session, dataset_file]}
+            declaration_version: {type: [integer, "null"], description: "the declaration it was made with"}
         cameras:
           type: array
           items: {$ref: "#/components/schemas/EefOverlayCamera"}
@@ -5831,6 +5898,9 @@ components:
           maxItems: 2
           description: "the source video's size; every coordinate is a pixel of it"
         fps: {type: [number, "null"], description: "the camera clip's frame rate"}
+        mount:
+          type: [string, "null"]
+          description: "5.3.0: fixed_external, wrist or moving - a wrist camera's own hand stays still in its picture, so its marks cannot show that hand's pose"
         media_frames:
           type: array
           items: {type: [integer, "null"], minimum: 0}
@@ -5877,7 +5947,15 @@ components:
           description: >-
             4.3.0: what the layer is, the same on every camera and hand - point, finger_axis, axis, axis_x,
             axis_y, axis_z, trail_past, trail_future, observed_point, observed_trail, residual
-        group: {enum: [declared, axes, trail_past, trail_future, observed, residual], description: "4.3.0"}
+        group:
+          enum: [declared, axes, trail_past, trail_future, observed, residual, record]
+          description: "4.3.0; 5.3.0 record: the dataset record's own TCP trail and axes when an upload overrides it"
+        dash:
+          type: [array, "null"]
+          items: {type: number, minimum: 0}
+          minItems: 2
+          maxItems: 2
+          description: "5.3.0: drawn dashed, [dash, gap] in source pixels; absent or null: solid"
         title: {type: string, description: "4.3.0: its name in the layer list, with the point or axis it draws"}
         kind:
           enum: [point, cross, segment, arrow, polyline]

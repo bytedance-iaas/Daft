@@ -96,7 +96,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 22 | 轨迹叠加进迷你播放器；手持夹爪（DAS mcap）的意见路线（`22-eef-overlay-and-umi-mcap.md`：叠加图层与对时、`export-umi-mcap` 与夹爪标定 `umi-calibration/2`、EEF 1.1 的 `per_hand`、插值间隔、自运动一致性、不传 trajectory.json 时平台从录制推出轨迹（内置 DAS DEMO 标定）；决策 D74–D75、D80；首节是开工指引，§7 是 DEMO 的假设与生产输入） |
 | 23 | EEF 与任务成败的 CPU 半段挪进 CPU 块、源数据按块读只下载一次、完整性缺省只做 L1（`23-model-prep-and-source-cache.md`，D76–D79 提议；S1 已落地：L2 缺省关，`vlm` 段内 EEF 与任务成败共用按块读的缓存） |
 | 24 | EEF 的轨迹由平台生成，用户不上传 trajectory.json（`24-eef-trajectory-generated.md`；注册表 4.3；原始手持夹爪 mcap 由设计 22 §5.4 逐条推出） |
-| 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22 输出口径、F5.23 数据集声明已落地：注册表 5.1、C4 5.0.0，§9.1、§9.2 是落地记录） |
+| 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关、F5.24b EEF 拆两半、F5.25 数据集级叠加已落地：注册表 5.3、C4 5.3.0，§9.1–§9.5 是落地记录） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

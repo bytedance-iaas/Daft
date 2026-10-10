@@ -36,7 +36,7 @@ import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
 import { fetchVizDisplay, prefetchVizEpisode, saveVizDisplay, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
-import { OverlayMenu } from './OverlayMenu';
+import { OverlayMenu, type UnavailableCamera } from './OverlayMenu';
 import { SidePanel, type OverlaySide } from './SidePanel';
 import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
@@ -55,6 +55,9 @@ export interface PlayerOverlays {
   onChoice: (c: OverlayChoice) => void;
   /** a handheld gripper's pose gaps bridged for the drawing (C4 4.4.0), or null */
   interpolation: EefOverlay['interpolation'];
+  /** a registration's marks (design doc 25 §5.1): nothing a model saw, the cameras nothing is drawn on */
+  dataset?: boolean;
+  unavailable?: readonly UnavailableCamera[];
 }
 
 /** What a page around the player may do to it. */
@@ -483,7 +486,9 @@ function PlayerView({
             </Button>
           </Dropdown>
         ) : null}
-        {overlays && overlayCams.length ? <OverlayMenu cameras={overlayCams} choice={choice} onChange={overlays.onChoice} /> : null}
+        {overlays && overlayCams.length ? (
+          <OverlayMenu cameras={overlayCams} choice={choice} onChange={overlays.onChoice} dataset={overlays.dataset} unavailable={overlays.unavailable} />
+        ) : null}
         <Button size="small" className={sideOpen ? 'on' : ''} title={zh.viz.infoTitle} icon={<IconInfoCircle />} onClick={() => setSideOpen((v) => !v)}>
           {zh.viz.info}
         </Button>
@@ -733,7 +738,7 @@ function PlayerView({
             clientDecoded={clientKeys}
             overlay={
               focusedCell?.kind === 'video' && overlays?.cameras[focusedCell.key]
-                ? { cam: overlays.cameras[focusedCell.key], interpolation: overlays.interpolation, choice, onChoice: overlays.onChoice }
+                ? { cam: overlays.cameras[focusedCell.key], interpolation: overlays.interpolation, choice, onChoice: overlays.onChoice, dataset: overlays.dataset }
                 : null
             }
           />

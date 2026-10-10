@@ -303,3 +303,29 @@ def test_a_task_without_a_trajectory_reads_what_its_checks_derived(mc, tmp_path)
     assert cam["camera_id"] == "robot0_camera0" and cam["viz_camera"] == "robot0_sensor_camera0_compressed"
     assert cam["times_s"] == pytest.approx([0.05 + 0.1 * k for k in range(20)])
 
+
+
+def test_the_full_visualizer_derives_a_handheld_grippers_recording(client_for, tmp_path, monkeypatch):
+    """F5.25 (design doc 25 §5.1): a raw DAS recording needs no declaration beyond its mapping - each episode's
+    trajectory is derived from the recording with the built-in calibration (design doc 22 §5.4) and drawn on the
+    hand's own camera, a camera it cannot calibrate left out; asked again, the kept layers come back as they were
+    (reading the kept bundle through the disk cache touches its times, not its identity)."""
+    from curation.extensions.eef_consistency import load
+
+    from ..eef import das_mcap
+    from .test_declaration import _overlay as dataset_overlay
+
+    data = tmp_path / "inputs"
+    das_mcap.make_das(data / "das")
+    c = client_for(base_path="/curation", local_data_root=data)
+    ds = _mcap_dataset(c, data / "das", "das")
+    body = dataset_overlay(c, ds, 0)
+    assert body["trajectory"]["kind"] == "mcap_derive" and body["task_id"] is None
+    (cam,) = body["cameras"]
+    assert (cam["camera_id"], cam["mount"]) == ("robot0_camera0", "wrist")
+    assert cam["viz_camera"] == "robot0_sensor_camera0_compressed"
+    reads = []
+    real = load.load_bundle
+    monkeypatch.setattr(load, "load_bundle", lambda *a, **k: reads.append(a) or real(*a, **k))
+    assert dataset_overlay(c, ds, 0)["cameras"] == body["cameras"]
+    assert reads == []

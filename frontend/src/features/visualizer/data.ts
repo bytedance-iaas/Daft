@@ -204,6 +204,41 @@ export async function probeMedia(url: string, signal?: AbortSignal): Promise<Med
   return { state: 'failed', message: ApiError.fromResponse(res.status, body).message };
 }
 
+/** A registration's EEF marks (design doc 25 §5.1): made by the Daemon the first time (202 with its progress until
+ * then); `none` when the platform cannot have the dataset's (or this episode's) trajectory. */
+export type DatasetOverlay =
+  | { state: 'ready'; overlay: EefOverlay }
+  | { state: 'pending'; progress: number | null; message: string }
+  | { state: 'none'; reason: string; kind: string; message: string }
+  | { state: 'failed'; message: string };
+
+export function useDatasetEefOverlay(datasetId: string | null, episode: number | null, enabled = true, maxGapMs: number | null = null) {
+  return useQuery<DatasetOverlay>({
+    queryKey: ['eef-overlay', 'dataset', datasetId, episode, maxGapMs],
+    queryFn: async () => {
+      const { data, error, response } = await api().GET('/datasets/{id}/episodes/{index}/eef-overlay', {
+        params: { path: { id: datasetId as string, index: episode as number }, query: maxGapMs !== null ? { max_gap_ms: maxGapMs } : {} },
+      });
+      if (response.status === 202) {
+        const p = (data ?? {}) as Partial<VizMediaPending>;
+        if (p.state === 'failed') return { state: 'failed', message: p.message ?? '' };
+        return { state: 'pending', progress: typeof p.progress === 'number' ? p.progress : null, message: p.message ?? '' };
+      }
+      if (error !== undefined || !response.ok) {
+        const e = ApiError.fromResponse(response.status, error);
+        if (response.status === 404) return { state: 'none', reason: String(e.details?.reason ?? ''), kind: String(e.details?.kind ?? ''), message: e.message };
+        return { state: 'failed', message: e.message };
+      }
+      return { state: 'ready', overlay: data as EefOverlay };
+    },
+    enabled: enabled && datasetId !== null && episode !== null,
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data?.state === 'pending' ? STREAM_POLL_MS : false),
+    // another gap: the marks on screen stay until the new ones come
+    placeholderData: (prev) => (prev?.state === 'ready' && prev.overlay.dataset_id === datasetId && prev.overlay.episode_index === episode ? prev : undefined),
+  });
+}
+
 /** A task's EEF marks are not there to draw: it did not run the module, or its bundle has no such episode. */
 export function noEefOverlay(e: unknown): boolean {
   // not_derived: a handheld gripper's trajectory the checks have not derived from the recording yet (design doc 22 §5.4)

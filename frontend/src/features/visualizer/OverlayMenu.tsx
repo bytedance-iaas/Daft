@@ -6,14 +6,34 @@ import { zh } from '../../locales/zh';
 
 const O = () => zh.viz.overlay;
 
-/** The layer list's sections: the marks first, the measured ones last. */
-const GROUP_ORDER: readonly LayerEntry['group'][] = ['declared', 'axes', 'trail_past', 'trail_future', 'observed', 'residual'];
+/** The layer list's sections: the marks first, the measured ones last; the dataset record's own (dashed) after. */
+const GROUP_ORDER: readonly LayerEntry['group'][] = ['declared', 'axes', 'trail_past', 'trail_future', 'observed', 'residual', 'record'];
+
+/** A camera nothing is drawn on, by its player name, and why (a registration's overlay, C4 5.3.0). */
+export interface UnavailableCamera {
+  name: string;
+  reason: string | null;
+}
 
 /**
- * The mini player's 「叠加」 menu (design doc 22 §3.3): 原图 / 叠加 / 只看观测, the two presets, the hands and
- * the layers the cameras declare (ticking one makes the choice the viewer's own), and the labels.
+ * The 「叠加」 menu (design doc 22 §3.3): 原图 / 叠加 / 只看观测, the two presets, the hands and the layers the
+ * cameras declare (ticking one makes the choice the viewer's own), and the labels. On a registration's page
+ * (design doc 25 §5.1, `dataset`) nothing was shown to a model - no such preset - and the cameras it cannot
+ * draw on are listed greyed with their reason; a wrist camera's marks come with a note (§5.4).
  */
-export function OverlayMenu({ cameras, choice, onChange }: { cameras: readonly EefOverlayCamera[]; choice: OverlayChoice; onChange: (c: OverlayChoice) => void }) {
+export function OverlayMenu({
+  cameras,
+  choice,
+  onChange,
+  dataset = false,
+  unavailable = [],
+}: {
+  cameras: readonly EefOverlayCamera[];
+  choice: OverlayChoice;
+  onChange: (c: OverlayChoice) => void;
+  dataset?: boolean;
+  unavailable?: readonly UnavailableCamera[];
+}) {
   const entries = layerEntries(cameras);
   const layers = cameras.flatMap((c) => c.layers);
   const hands = [...new Map(cameras.flatMap((c) => c.hands).map((h) => [h.id, h])).values()];
@@ -37,9 +57,11 @@ export function OverlayMenu({ cameras, choice, onChange }: { cameras: readonly E
         <Button size="mini" type={choice.preset === 'default' ? 'primary' : 'secondary'} onClick={() => onChange({ ...choice, mode: 'on', preset: 'default', layers: {} })}>
           {O().presets.default}
         </Button>
-        <Button size="mini" type={choice.preset === 'model' ? 'primary' : 'secondary'} title={O().presets.modelTitle} onClick={() => onChange({ ...choice, mode: 'on', preset: 'model', maxGapMs: null })}>
-          {O().presets.model}
-        </Button>
+        {!dataset ? (
+          <Button size="mini" type={choice.preset === 'model' ? 'primary' : 'secondary'} title={O().presets.modelTitle} onClick={() => onChange({ ...choice, mode: 'on', preset: 'model', maxGapMs: null })}>
+            {O().presets.model}
+          </Button>
+        ) : null}
       </div>
       {hands.length > 1 ? (
         <div className="row">
@@ -65,6 +87,24 @@ export function OverlayMenu({ cameras, choice, onChange }: { cameras: readonly E
             ))}
         </div>
       ))}
+      {unavailable.length ? (
+        <div className="grp" data-testid="vz-overlay-unavailable">
+          <div className="k">{O().unavailable}</div>
+          {unavailable.map((u) => (
+            <div key={u.name} className="off">
+              <Checkbox checked={false} disabled>
+                {u.name}
+              </Checkbox>
+              <span className="muted">{O().reasons[u.reason ?? ''] ?? u.reason ?? ''}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {cameras.some((c) => c.mount === 'wrist') ? (
+        <div className="note" data-testid="vz-overlay-wrist-note">
+          {O().wristNote}
+        </div>
+      ) : null}
       <div className="row">
         <Checkbox checked={choice.labels} onChange={(v: boolean) => onChange({ ...choice, labels: v })}>
           {O().labels}

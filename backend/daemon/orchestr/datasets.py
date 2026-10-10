@@ -153,6 +153,22 @@ class DatasetOps:
         ds = self.orch.repo.find_dataset(source=src.source, uri=src.uri, region=src.region, owner=owner)
         return for_cli(ds.viz_mapping) if ds is not None else None
 
+    def warm_overlay(self, ds: P.Dataset) -> None:
+        """The first episodes' EEF trajectories made ahead for the full visualizer (design doc 25 §5.1, §10): on
+        the viz build pool, after the registration's preflight; nothing when it cannot have one."""
+        try:
+            from curation.planner import dataset_episodes
+
+            from ..viz.eef_dataset import warm
+            from ..viz.service import viz_of
+
+            dataset = (ds.preflight or {}).get("dataset") if isinstance(ds.preflight, dict) else None
+            if not isinstance(dataset, dict) or not format_supported(ds.preflight):
+                return
+            warm(viz_of(self.orch.rt), ds, dataset_episodes(dataset)[:3])
+        except Exception:  # noqa: BLE001 - only a head start
+            log.warning("dataset %s: no EEF overlay made ahead", ds.id, exc_info=True)
+
     def refresh_preflight(self, ds: P.Dataset, owner: str) -> P.Dataset:
         """The registration's preflight taken again after its declaration changed: the listing stays unless the
         checks can now read the format or no longer can (then the whole ``repreflight``)."""
@@ -162,9 +178,12 @@ class DatasetOps:
         if format_supported(preflight) != format_supported(before):
             return self.repreflight(ds, owner)[0]
         # the files did not change (the listing and its fingerprint stay); the metadata fingerprint is the preflight's
-        return self.orch.repo.update_dataset(ds.id, owner=owner, preflight=preflight, preflighted_at=self.orch.clock(),
-                                             meta_fingerprint=str(preflight.get("meta_fingerprint") or ds.meta_fingerprint),
-                                             source_fingerprint=ds.source_fingerprint)
+        updated = self.orch.repo.update_dataset(ds.id, owner=owner, preflight=preflight,
+                                                preflighted_at=self.orch.clock(),
+                                                meta_fingerprint=str(preflight.get("meta_fingerprint") or ds.meta_fingerprint),
+                                                source_fingerprint=ds.source_fingerprint)
+        self.warm_overlay(updated)
+        return updated
 
     def mapping_args(self, src: Source, owner: str, mapping: dict | None = None) -> list[str]:
         """``--set ingest.mcap_mapping=...``: the check reader's mapping derived from ``mapping`` (one
@@ -256,6 +275,7 @@ class DatasetOps:
             repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=now, trigger="add",
                                                      result="same"))
             ds = repo.get_dataset(ds.id, owner=owner)
+            self.warm_overlay(ds)
         return ds, created, listing_doc
 
     def compare(self, ds: P.Dataset, listing_doc: dict | None, meta_fp: str) -> dict | None:
@@ -313,6 +333,7 @@ class DatasetOps:
             updated = repo.update_dataset(ds.id, owner=owner, preflight=preflight,
                                           meta_fingerprint=meta_fp, source_fingerprint=fingerprint,
                                           preflighted_at=now, manifest_path=manifest_path)
+        self.warm_overlay(updated)
         return updated, listing_doc
 
 

@@ -199,12 +199,14 @@ def find_forbidden_keys(value: Any, path: str = "") -> Iterable[str]:
 
 def load_bundle(source: str | os.PathLike | bytes | dict, *, lerobot_root: str | os.PathLike | None = None,
                 media_exists: Callable[[str], bool] | None = None, check_media: bool = True,
-                episodes: Iterable[int] | None = None) -> LoadResult:
+                episodes: Iterable[int] | None = None, trusted: bool = False) -> LoadResult:
     """Validate a trajectory bundle and parse its samples.
 
     ``lerobot_root`` resolves ``media_uri_base=lerobot_root`` URIs (the directory holding ``meta/``);
     ``media_exists`` overrides the file-existence probe (remote stores). ``episodes`` limits the
-    parsed samples (validation of the container still covers the whole file).
+    parsed samples (validation of the container still covers the whole file). ``trusted``: a bundle the
+    platform wrote itself (the visualizer's kept ones) - its frames are not checked against their schema
+    again, the rest is.
     """
     base_dir = None
     if isinstance(source, dict):
@@ -262,7 +264,7 @@ def load_bundle(source: str | os.PathLike | bytes | dict, *, lerobot_root: str |
         if wanted is not None and ep not in wanted:
             issues += col.issues
             continue
-        parsed, summary = _parse_sample(entry, i, col, media_exists if check_media else None)
+        parsed, summary = _parse_sample(entry, i, col, media_exists if check_media else None, trusted=trusted)
         issues += col.issues
         summaries.append(summary)
         if parsed is not None and col.n_errors == 0:
@@ -297,8 +299,8 @@ def _media_uri_ok(uri: str) -> bool:
     return ".." not in pathlib.PurePosixPath(uri).parts
 
 
-def _parse_sample(entry: dict, idx: int, col: _Collector,
-                  media_exists: Callable[[str], bool] | None) -> tuple[EefSample | None, dict]:
+def _parse_sample(entry: dict, idx: int, col: _Collector, media_exists: Callable[[str], bool] | None, *,
+                  trusted: bool = False) -> tuple[EefSample | None, dict]:
     from curation.contracts import schemas
 
     ep = entry["episode_index"]
@@ -313,7 +315,7 @@ def _parse_sample(entry: dict, idx: int, col: _Collector,
     if col.n_errors:
         return None, summary
     frame_validator = schemas.validator("eef/frame.schema.json")
-    for j, r in enumerate(rows):
+    for j, r in enumerate(() if trusted else rows):
         for e in frame_validator.iter_errors(r):
             loc = "/".join(map(str, e.absolute_path)) or "<root>"
             col.error(SCHEMA, f"{loc}: {e.message}", frame_index=j, path=f"{where}/frames/{j}")

@@ -134,6 +134,13 @@ describe('eefOverlay: drawing', () => {
     }
   });
 
+  it('draws the dataset record\'s own marks dashed, the others solid (C4 5.3.0)', () => {
+    const rec = layer('record_trail_past', 'record', { kind: 'polyline', dash: [6, 4], frames: [[0, 0, 10, 10], null, null] });
+    const { ctx, calls } = recorder();
+    drawFrame(ctx, cam([layer('point', 'declared', { label: 'P' }), rec]), 0, containFit(640, 480, 640, 480), { w: 640, h: 480 }, { choice: DEFAULT_CHOICE });
+    expect(calls.filter((c) => c.startsWith('setLineDash'))).toEqual(['setLineDash()', 'setLineDash(6,4)']);
+  });
+
   it('makes the focused camera bold and the others faint', () => {
     const strong = recorder();
     drawFrame(strong.ctx, cam(), 0, containFit(640, 480, 640, 480), { w: 640, h: 480 }, { choice: DEFAULT_CHOICE, emphasis: 'strong' });

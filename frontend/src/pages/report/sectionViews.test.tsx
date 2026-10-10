@@ -2,6 +2,7 @@ import { screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ReportModuleSection } from '../../api/types';
 import { sectionDigest } from '../../lib/sectionStats';
+import { zh } from '../../locales/zh';
 import { sampleSummary } from '../../mocks/world';
 import { renderWithProviders } from '../../test/render';
 import { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
@@ -180,6 +181,8 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(figures).toHaveTextContent('时间差（中位）0.47 秒');
     expect(await within(screen.getByTestId('chart-ego-bands')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中 5'));
     expect(await within(screen.getByTestId('chart-ego-reasons')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('时间差 5'));
+    // design doc 25 §5.4: the wrist cameras' marks cannot show their own hand's pose
+    expect(screen.getByTestId('eef-wrist-note')).toHaveTextContent(zh.viz.overlay.wristNote);
   });
 
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
