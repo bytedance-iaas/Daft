@@ -70,7 +70,7 @@ class StageRun(Run):
             self.progress(sid, note="没有 episode 进入这一档", force=True)
             return []
         self.modules_running(mods)
-        vlm = st.get("kind") == "vlm"
+        vlm = st.get("kind") == "vlm" and self.stage_asks_model(mods)   # an EEF stage without a model: no model
         argv = ["check", "--modules", ",".join(mods), *self.source_args(),
                 "--run-dir", str(self.wd.root),
                 "--episodes", self.episodes_arg(f"{sid}.in", episodes),
@@ -78,6 +78,8 @@ class StageRun(Run):
         argv.append("--resume")
         if vlm:
             argv += self.vlm_args()
+        elif st.get("kind") == "vlm":
+            argv.append("--no-vlm")            # the task has no model, or the module's switch is off
         argv += self.module_param_args(mods)
         if sid == "frame":
             resources.admit_memory(self, sid)

@@ -120,15 +120,18 @@ def _start_worker(run, layer, selection, path, next_stage):
             "--run-dir", str(run.wd.root), "--episodes", "0",
             "--plan-stage", str(run.wd.plan), "--resume",
             "--pipeline-state", str(path), "--pipeline-next", next_stage]
+    model = vlm and run.stage_asks_model(st["modules"])
     if not vlm:
         argv += ["--concurrency", str(layer.width)]
-    else:
+    elif model:
         argv += run.vlm_args()
+    else:
+        argv.append("--no-vlm")                # the task has no model, or the module's switch is off
     argv += run.module_param_args(list(st["modules"]))        # every module's parameters (registry 2.1)
-    cli = run._cli_environment(need_input=True, need_output=False, need_vlm=vlm)
+    cli = run._cli_environment(need_input=True, need_output=False, need_vlm=model)
     if cli.input_region:
         argv += ["--input-region", cli.input_region]
-    if vlm and cli.vlm_api_key_env:
+    if model and cli.vlm_api_key_env:
         argv += ["--vlm-api-key-env", cli.vlm_api_key_env]
     # an mcap / lance run shares its source cache with every command (D44)
     proc = StageWorker(CliCommand(argv, env={**cli.env, **run.source_env()}, stage=sid,

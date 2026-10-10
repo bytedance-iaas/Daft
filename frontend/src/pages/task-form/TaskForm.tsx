@@ -41,7 +41,9 @@ import {
   taskParams,
   toTaskCreate,
   toTaskPatch,
+  offersVlm,
   usesVlm,
+  withVlm,
   validateScreen1,
   validateScreen2,
   vlmChoice,
@@ -284,7 +286,7 @@ export function TaskForm(p: TaskFormProps) {
   const errors1 = shown[1] ? validateScreen1(v, ctx) : {};
   const errors2 = shown[2] ? validateScreen2(v, ctx) : {};
   const errors: Errors = { ...errors1, ...errors2, ...serverErrors };
-  const vlm = usesVlm(v, reg);
+  const vlm = offersVlm(v, reg);
   const count = selectionCount(v.episodeMode, v.headN, v.expr, total, own);
   const footer = zh.taskForm.footerSummary(count === null ? '?' : String(count), activeModules(v).length);
 
@@ -627,12 +629,23 @@ export function TaskForm(p: TaskFormProps) {
           {!p.batch ? <PreflightCard state={preflight} registry={reg} onRerun={preflight.rerun} /> : null}
           <EpisodeSection v={v} set={set} errors={errors} total={total} own={own} preview={preview} />
           <ModuleSection v={v} set={set} errors={errors} registry={reg} availability={availability} marked={marked} />
-          {vlm ? <ModelSection v={v} set={set} errors={errors} backends={p.backends} registry={reg} onAddBackend={() => setAddBackend(true)} /> : null}
-          <AdvancedSection v={v} set={set} errors={errors} vlm={vlm} />
+          {vlm ? (
+            <ModelSection v={v} set={set} errors={errors} backends={p.backends} registry={reg} required={usesVlm(v, reg)} onAddBackend={() => setAddBackend(true)} />
+          ) : null}
+          <AdvancedSection v={v} set={set} errors={errors} vlm={withVlm(v, reg)} />
         </div>
 
         <div style={{ display: screen === 2 ? 'block' : 'none' }} data-testid="screen-2">
-          <ModuleSettings v={v} set={set} errors={errors} registry={reg} preflight={result} embodimentOptions={embodimentOptions} onUploadBusy={onUploadBusy} />
+          <ModuleSettings
+            v={v}
+            set={set}
+            errors={errors}
+            registry={reg}
+            preflight={result}
+            embodimentOptions={embodimentOptions}
+            onUploadBusy={onUploadBusy}
+            onRerun={!p.batch ? preflight.rerun : undefined}
+          />
         </div>
       </div>
 

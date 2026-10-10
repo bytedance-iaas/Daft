@@ -150,3 +150,36 @@ def test_an_incomplete_declaration_fails_the_module_with_what_is_missing(declare
     assert res.rc == 4, res.doc
     assert res.doc["error"]["details"]["reason"] == "declaration_incomplete"
     assert {m["code"] for m in res.doc["error"]["details"]["missing"]} >= {"intrinsics_missing"}
+
+
+def test_a_moving_camera_declared_fixed_takes_part_and_is_noted(declared, tmp_path):
+    """F5.24a acceptance ⑤ (design doc 25 §3.3): a moving camera is not drawn, nor offered a gripper reference; a
+    person declaring it fixed (assumption ``mount_declared_fixed``) makes it a third-person camera - the reference
+    applies, the trajectory is generated with it - and the records and the report say it was declared fixed."""
+    from curation.extensions.eef_consistency import report as eef_report
+
+    doc = json.loads(open(_declaration(tmp_path)).read())
+    cam = doc["calibration"]["cameras"][f"observation.images.{CAM}"]
+    cam["mount"] = "moving"
+    moving = tmp_path / "moving.json"
+    moving.write_text(json.dumps(doc))
+    entry = _entry(run("preflight", "--input", declared, "--modules", EEF, "--declaration", str(moving)).doc)
+    assert entry["trajectory_source"]["kind"] == "missing_declaration"
+    assert {(c["camera_id"], c["reason"]) for c in entry["cameras"]} >= {(CAM, "moving_camera_unsupported")}
+    assert "observation_seeds" not in entry["applicable_params"]
+    cam.update(mount="fixed_external", assurance="model_assumed", assumptions=[{"code": "mount_declared_fixed"}])
+    fixed = tmp_path / "fixed.json"
+    fixed.write_text(json.dumps(doc))
+    entry = _entry(run("preflight", "--input", declared, "--modules", EEF, "--declaration", str(fixed)).doc)
+    assert entry["availability"] == "available" and entry["trajectory_source"]["kind"] == "generate"
+    assert [(c["camera_id"], c["mount"], c["drawable"]) for c in entry["cameras"] if c["camera_id"] == CAM] == [
+        (CAM, "fixed_external", True)]
+    assert {"observation_seeds", "gripper_template"} <= set(entry["applicable_params"])
+    res = run("check", "--modules", EEF, "--input", declared, "--run-dir", str(tmp_path / "rd"), "--episodes", "0-1",
+              "--declaration", str(fixed), "--param", f"{EEF}.observation_seeds={_seeds(tmp_path)}", "--no-vlm")
+    assert res.rc == 0, res.doc
+    recs = results(str(tmp_path / "rd"), EEF)
+    assert all(r["details"]["trajectory_source"]["declared_fixed"] == [CAM] for r in recs.values())
+    assert all(CAM in r["details"]["cameras"] for r in recs.values())               # measured as a fixed camera
+    summary = eef_report.source_summary(recs)
+    assert summary == {"trajectory_sources": [{"name": "generated", "count": 2}], "declared_fixed_cameras": [CAM]}

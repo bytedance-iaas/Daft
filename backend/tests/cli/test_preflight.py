@@ -126,19 +126,26 @@ def test_robot_type_outside_the_registry_skips_only_kinematics(cli, dataset):
 
 
 def test_a_handheld_grippers_mcap_needs_no_trajectory(cli, tmp_path):
-    """Design doc 22 §5.4 (D80): nothing to generate from (design doc 24), yet the recording carries the trajectory;
-    the module only waits for a model."""
+    """Design doc 22 §5.4 (D80): nothing to generate from (design doc 24), yet the recording carries the trajectory.
+    Design doc 25 D84: no model backend is only a reminder, none with the model switched off; two wrist cameras, so
+    no gripper reference to offer."""
     from ..eef import das_mcap as F
 
     F.make_das(tmp_path / "das")
     doc = _valid(cli("preflight", "--input", str(tmp_path / "das")).doc)
     eef = _mod(doc, "eef_video_consistency")
-    assert (eef["availability"], eef["reason_code"]) == ("needs_input", "vlm_backend_missing")
+    assert eef["availability"] == "available" and "reason_code" not in eef
+    assert any(n.startswith("vlm_backend_missing:") for n in eef["notes"])
     assert eef["subitems"]["ego_motion"]["availability"] == "available"
     assert any("derives each episode's trajectory" in n for n in eef["notes"])
-    ready = _mod(_valid(cli("preflight", "--input", str(tmp_path / "das"), "--vlm-backend", "ark").doc),
-                 "eef_video_consistency")
-    assert ready["availability"] == "available"
+    assert eef["trajectory_source"]["kind"] == "mcap_derive"
+    assert {c["mount"] for c in eef["cameras"]} == {"wrist"} and all(c["drawable"] for c in eef["cameras"])
+    assert "observation_seeds" not in eef["applicable_params"] and "use_vlm" in eef["applicable_params"]
+    assert "gripper_calibration" not in eef["applicable_params"]                  # retired
+    for extra in (["--vlm-backend", "ark"], ["--param", "eef_video_consistency.use_vlm=false"]):
+        ready = _mod(_valid(cli("preflight", "--input", str(tmp_path / "das"), *extra).doc), "eef_video_consistency")
+        assert ready["availability"] == "available"
+        assert not any(n.startswith("vlm_backend_missing:") for n in ready["notes"]), extra
 
 
 @pytest.mark.parametrize("robot_type", [None, "", "unknown"])
@@ -488,3 +495,15 @@ def registry_ids():
     from curation.contracts import modules as registry
 
     return registry.ids()
+
+
+def test_a_dataset_of_images_only_has_no_eef_check(cli, dataset):
+    """F5.24a acceptance ③ (design doc 25 §2.1): the module draws on video; pictures stored as images give it nothing
+    to read, whatever else the dataset records."""
+    info = json.load(open(os.path.join(dataset, "meta", "info.json"), encoding="utf-8"))
+    feats = {k: ({**v, "dtype": "image"} if v.get("dtype") == "video" else v) for k, v in info["features"].items()}
+    edit_info(dataset, features=feats)
+    eef = _mod(_valid(cli("preflight", "--input", dataset, "--modules", "eef_video_consistency").doc),
+               "eef_video_consistency")
+    assert (eef["availability"], eef["reason_code"]) == ("unsupported", "missing_input")
+    assert eef["reason_args"] == {"missing": ["video"], "video_cause": "none_declared"}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import registry from '../../../docs/contracts/modules.json';
 import type { ModuleRegistry, PreflightResult } from '../api/types';
-import { moduleParamFields, reasonText } from './preflight';
+import { asksModel, moduleParamFields, reasonText } from './preflight';
 
 describe('reasonText', () => {
   it('says a Git LFS pointer upload in Chinese, with the files and the fix', () => {
@@ -42,5 +42,28 @@ describe('moduleParamFields', () => {
     // the robot type and the VLM backend have fields of their own; a choice group is asked for as a group
     expect(required(result({ availability: 'needs_input', input_hint: { field: 'vlm' } }))).toEqual([]);
     expect(required(result({ availability: 'needs_input', input_hint: { field: 'observation_seeds' } }))).toEqual([]);
+  });
+});
+
+describe('the EEF module on screen 2 (design doc 25 §4.2-§4.3, registry 5.2)', () => {
+  const reg = registry as unknown as ModuleRegistry;
+  const eef = reg.modules.find((m) => m.id === 'eef_video_consistency')!;
+  const keys = (entry: Record<string, unknown>) => moduleParamFields(eef, { modules: [{ id: eef.id, ...entry }] } as unknown as PreflightResult).map((f) => f.key);
+
+  it('offers only the parameters that apply to the dataset', () => {
+    const all = keys({ availability: 'available' });
+    expect(all).toContain('observation_seeds');
+    expect(all).not.toContain('record_mapping');                          // retired (5.1)
+    const wrist = keys({ availability: 'available', applicable_params: all.filter((k) => !['observation_seeds', 'gripper_template'].includes(k)) });
+    expect(wrist).not.toContain('observation_seeds');
+    expect(wrist).toContain('use_vlm');
+  });
+
+  it('asks a model by its switch; a module that needs one always does', () => {
+    expect(eef.vlm_switch).toBe('use_vlm');
+    expect(asksModel(eef)).toBe(true);                                    // on by default
+    expect(asksModel(eef, { use_vlm: false })).toBe(false);
+    expect(asksModel(reg.modules.find((m) => m.id === 'task_success'), { use_vlm: false })).toBe(true);
+    expect(asksModel(reg.modules.find((m) => m.id === 'timestamp_check'))).toBe(false);
   });
 });

@@ -255,6 +255,7 @@ export const zh = {
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
     vlm_backend_none: () => '没有可用的 VLM 后端：在「系统和资源配置」里添加一个并验证通过',
     trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
+    declaration_incomplete: () => '数据集声明还缺几项，平台还生成不了轨迹：到数据集页补声明，或在第二屏上传 trajectory.json',
     trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
     observation_seed_missing: () => '还要上传观测种子或夹爪外观模板（二选一，在第二屏上传）：没有它们找不到画面里的夹爪，每一条都只能转人工',
     eef_review_not_available: () => 'EEF–视频一致性的 VLM 复核还没有提供',
@@ -561,6 +562,8 @@ export const zh = {
     presetQuickHelp: '只开不调用模型的模块，秒级出报告；模型配置区整块隐藏。',
     presetCustomHelp: '按需勾选。',
     callsModel: '调用模型',
+    // registry 5.2 (design doc 25 D84): asks a model when the task has one and its switch is on
+    modelOptional: '可用模型辅助',
     moduleNeedsInput: '需要补充',
     moduleNeedsEmbodiment: '需要补充机器人型号',
     moduleNeedsEefFiles: '需要补充投影轨迹',
@@ -573,6 +576,8 @@ export const zh = {
     noModule: '至少开启一个质检模块',
     sectionModel: '模型配置',
     modelDesc: (names: string) => `${names}会调用视觉语言模型`,
+    modelOptionalDesc: (names: string) => `选填：${names}开着「使用 VLM 辅助」时请模型给意见，不选就只用 CPU 的测量`,
+    modelOptionalNone: '没选模型服务：开着「使用 VLM 辅助」的模块照常运行，模型那一路记为「没有模型后端」。要模型的意见就在这里选一个。',
     backend: 'VLM 后端',
     backendPlaceholder: '选择 VLM 后端',
     noBackend: '还没有 VLM 后端',
@@ -611,6 +616,26 @@ export const zh = {
     screen2Title: '模块设置',
     needsInputTitle: '需要补充',
     nothingToSet: '开启的模块都不需要额外设置，可以直接创建。',
+    // EEF's trajectory.json by where the trajectory comes from (design doc 25 §4.3)
+    eefTrajectory: {
+      overrides: '上传即覆盖平台得到的轨迹，并额外比对上传件与数据集记录',
+      byDeclaration: '轨迹由平台按数据集声明生成，不用上传',
+      fromData: '轨迹由平台从数据集自身的数据生成（手持夹爪的标定与状态），不用上传',
+      source: {
+        session: 'UMI 原始会话：轨迹由平台从会话算出，不用上传',
+        mcap_derive: '手持夹爪的录制自带轨迹：平台逐条推出，不用上传',
+        dataset_file: '用数据集自带的 trajectory.json，不用上传',
+      } as Record<string, string>,
+      missingDeclaration: '数据集记录了位姿，但数据集声明还缺：',
+      gotoDeclaration: '到数据集页补声明',
+      notRegistered: '这个数据集没有登记，没有声明可补：可以上传 trajectory.json，或登记数据集后在数据集页补声明。',
+      rerun: '补完后重新预检',
+      uploadInstead: '改为上传 trajectory.json',
+      uploadInsteadHint: '上传即绕过声明，用上传件里的轨迹与标定',
+      required: '补完数据集声明后重新预检，或上传 trajectory.json，或跳过该模块',
+    },
+    eefNoModel: '没选模型服务：只用 CPU 的测量，模型那一路记为「没有模型后端」。要模型的意见就回第一屏选一个。',
+    eefOffNoReference: '关掉「使用 VLM 辅助」又没给夹爪参考：第三视角相机不测，那几项判断不了',
     skippedTitle: '已跳过',
     skipModule: '跳过该模块',
     advancedLines: '判定线（高级）',
@@ -1534,6 +1559,8 @@ export const zh = {
     },
     eef: {
       verdictNote: '先由 CPU 比对、再请模型复核：两边一致就判过或判废；意见冲突、模型给不出意见或判不了的，进人工裁决',
+      // design doc 25 §3.3: a moving camera a person declared fixed
+      declaredFixed: (cams: string) => `按声明视为固定的相机：${cams}（它真动起来时画面运动分项会报）`,
       // registry 5.0 (design doc 25 §7, D81, D82): opinions with a confidence, no reject
       v5: {
         note: '两个渠道（CPU 测量或自运动、模型复核或意见）各给结论与置信度，按分项 × 相机取较大的一个，不平均；只有两边结论相反（冲突）才请人看，模块不判废',
@@ -1722,6 +1749,7 @@ export const zh = {
       finger: (axis: string) => (axis === 'finger_line' ? ' · 手指连线' : ` · 手指连线沿 ${eefAxisName(axis)}`),
       failed: (why: string) => `没问成：${why}`,
       notAssessable: (why: string | null) => (why ? `没有问模型，也不转人工：${why}` : '没有问模型，也不转人工'),
+      notAsked: (why: string) => `没有问模型（${why}）：这一条只有 CPU 的测量`,
       skipped: '没有问',
       unseen: '模型说这一段看不清夹爪',
       none: '模型认为全程一致',
@@ -1740,6 +1768,8 @@ export const zh = {
       derived: '轨迹由平台从录制推出',
       builtin: (gripper: string) => `内置的 DEMO 标定（${gripper}）`,
       uploaded: (gripper: string) => `上传的夹爪标定（${gripper}）`,
+      generated: (v: number | null) => (v ? `轨迹由平台按数据集声明（第 ${v} 版）生成` : '轨迹由平台按数据集声明生成'),
+      declaredFixed: (cams: string) => `按声明视为固定：${cams}（它真动起来时画面运动分项会报）`,
       assumed: (items: string) => `按假设值：${items}`,
       paired: (hand: string, pct: string, intrinsics: string) => `${hand}：配对 ${pct}%，内参来自${intrinsics}`,
       intrinsics: { camera_info: '录制里的 camera_info', intrinsics_fallback: '标定里的内参回退' } as Record<string, string>,
@@ -1747,6 +1777,8 @@ export const zh = {
       reason: {
         episode_missing: '数据集里没有这一条',
         trajectory_not_derived: '这一条推不出轨迹',
+        trajectory_not_generated: '这一条生成不出轨迹',
+        record_unreadable: '这一条的记录读不出来',
         recording_unreadable: '这一条的录制读不出来',
         trajectory_invalid: '推出的轨迹没有通过校验',
       } as Record<string, string>,
@@ -2553,6 +2585,10 @@ export const zh = {
     cameraCols: { camera: '相机', id: '编号', mount: '安装方式', owner: '属于', intrinsics: '内参 fx cx fy cy', model: '畸变模型', extrinsics: '外参', state: '能否画' },
     mounts: { fixed_external: '第三视角（固定）', wrist: '腕部', moving: '会动（不支持）' } as Record<string, string>,
     mountUnknown: '认不出，请选',
+    // design doc 25 §3.3: a moving camera that does not move in fact
+    treatFixed: '视为固定',
+    treatFixedHint: '这路相机实际不动：改成第三视角（要补固定外参），按第三视角参与质检，结果与报告注明「按声明视为固定」；它真动起来时画面运动分项会报',
+    declaredFixedTag: '按声明视为固定',
     models: { pinhole: '针孔（无畸变）', opencv_brown: 'OpenCV Brown', opencv_fisheye: 'OpenCV 鱼眼' } as Record<string, string>,
     coefficients: '畸变系数',
     extrinsicModes: { column: '逐行的位姿列', static: '固定外参', camera_tcp: '相机到工具（腕部）' } as Record<string, string>,

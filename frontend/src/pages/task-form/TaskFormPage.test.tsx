@@ -666,3 +666,79 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     expect(batch.shared.params.start_now).toBe(true);
   });
 });
+
+describe('新建任务 · 第二屏按轨迹来源、相机与 VLM 开关 (design doc 25 §4.2-§4.3, F5.24a)', () => {
+  /** Screen 1 of a registered dataset, EEF ticked on top of 快速质检, then screen 2. */
+  async function eefScreen2(uri: string, title: RegExp, name: string) {
+    const seen = record();
+    const { user } = renderApp(`/tasks/new?dataset=${uri}&region=cn-beijing`);
+    await screen.findByText(title);
+    await fill(user, '任务名称', name);
+    await fill(user, '交付目录', `tos://pai-kit-deliveries/${name}`);
+    await user.click(screen.getByText('快速质检'));
+    await user.click(screen.getByRole('checkbox', { name: 'EEF–视频一致性' }));
+    return { user, seen };
+  }
+  const next = async (user: Awaited<ReturnType<typeof eefScreen2>>['user']) => {
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(s2()).toBeVisible());
+  };
+
+  it('the declaration lacks the intrinsics: complete it on the dataset page, the upload folded away as the way around (acceptance ①)', async () => {
+    const { user } = await eefScreen2('tos://pai-kit-datasets/lerobot/droid_100', /LeRobot v3 · 100 条 episode/, 'eef-decl');
+    const card = screen.getByTestId('module-eef_video_consistency');
+    expect(card).toHaveTextContent('数据集声明还缺几项');
+    expect(card).toHaveTextContent('可用模型辅助');                             // no longer 调用模型 (D84)
+    await next(user);
+    const block = within(s2()).getByTestId('eef-trajectory-declaration');
+    expect(block).toHaveTextContent('数据集声明还缺：相机内参（exterior_image_1_left）');
+    expect(within(block).getByTestId('eef-goto-declaration')).toHaveAttribute('href', '/datasets/ds_droid100?declaration=1');
+    expect(within(block).getByText('改为上传 trajectory.json')).toBeInTheDocument();
+    expect(within(block).queryByTestId('upload-button-trajectory_json')).toBeNull();          // folded
+    // third-person cameras: the gripper reference is offered
+    expect(within(s2()).getByTestId('choice-gripper_reference')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(fieldErrors(s2())).toContain('补完数据集声明后重新预检，或上传 trajectory.json，或跳过该模块'));
+    await user.click(within(block).getByText('改为上传 trajectory.json'));
+    expect(await within(block).findByTestId('upload-button-trajectory_json')).toBeVisible();
+  });
+
+  it('a handheld gripper dataset: the trajectory is the platform\'s, no gripper reference to give (acceptance ②)', async () => {
+    const { user } = await eefScreen2('tos://pai-kit-datasets/umi/umi_640_notask', /LeRobot v2 · 640 条 episode/, 'eef-umi');
+    await next(user);
+    expect(within(s2()).getByTestId('eef-trajectory-source')).toHaveTextContent('轨迹由平台从数据集自身的数据生成');
+    expect(requiredFieldLabels(s2())).not.toContain('trajectory.json');
+    expect(within(s2()).queryByTestId('choice-gripper_reference')).toBeNull();      // two wrist cameras
+    expect(within(s2()).getByRole('switch', { name: '使用 VLM 辅助' })).toBeChecked();
+  });
+
+  it('no model chosen: the task is created all the same, its model part to be missing; with VLM off nothing is asked of a model (acceptance ④)', async () => {
+    const { user, seen } = await eefScreen2('tos://pai-kit-datasets/umi/umi_640_notask', /LeRobot v2 · 640 条 episode/, 'eef-nomodel');
+    // the model section stays, optional: clearing the default backend leaves a reminder, not an error
+    await waitFor(() => expect(chosen('VLM 后端')).toContain('ark-prod'));
+    const backend = screen.getByRole('combobox', { name: 'VLM 后端' }).closest('.arco-select') as HTMLElement;
+    await user.hover(backend);
+    await user.click(backend.querySelector('.arco-select-clear-icon') as HTMLElement);
+    expect(await screen.findByTestId('model-optional-none')).toHaveTextContent('没选模型服务');
+    expect(requiredFieldLabels(s1())).not.toContain('VLM 后端');
+    await next(user);
+    expect(within(s2()).getByTestId('model-reminder-eef_video_consistency')).toHaveTextContent('模型那一路记为「没有模型后端」');
+    await user.click(within(s2()).getByRole('switch', { name: '使用 VLM 辅助' }));
+    expect(within(s2()).queryByTestId('model-reminder-eef_video_consistency')).toBeNull();   // wrist cameras: nothing unmeasured
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
+    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown; params: Record<string, unknown> };
+    expect(body.vlm).toBeUndefined();
+    expect(body.params.vlm_retry).toBeUndefined();
+    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { use_vlm: false } });
+  });
+
+  it('VLM off without a gripper reference on third-person cameras: they would go unmeasured, said so', async () => {
+    const { user } = await eefScreen2('tos://pai-kit-datasets/lerobot/droid_100', /LeRobot v3 · 100 条 episode/, 'eef-off');
+    await next(user);
+    await user.click(within(s2()).getByRole('switch', { name: '使用 VLM 辅助' }));
+    expect(within(s2()).getByTestId('model-reminder-eef_video_consistency')).toHaveTextContent('第三视角相机不测');
+    // the model section of screen 1 goes with it: nothing would ask a model
+    expect(within(s1()).queryByRole('combobox', { name: 'VLM 后端' })).toBeNull();
+  });
+});

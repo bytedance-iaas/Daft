@@ -152,7 +152,7 @@ def test_the_eef_module_gives_opinions():
     in the catalogue, retired, for older records."""
     assert M.native_ids() == ("data_integrity", "eef_video_consistency")
     spec = M.get("eef_video_consistency")
-    assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video", "vlm"} <= spec.needs
+    assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video"} <= spec.needs
     assert spec.depends_on == () and "eef_video_review" not in M.ids()
     assert (spec.code("inconsistent").level, spec.code("inconsistent").appealable) == ("info", False)
     assert (spec.code("conflict").level, spec.code("conflict").review_line) == ("review", "eef_check")
@@ -180,6 +180,23 @@ def test_the_eef_module_gives_opinions():
     ego = spec.code("ego_motion_suspect")
     assert (ego.level, ego.item, ego.scope_kind) == ("info", "MV-4", "camera")
     assert props["ego_motion_window_s"]["default"] == 0.5 and "eef_ego_motion" in [t.id for t in spec.tables]
+
+
+def test_the_eef_module_asks_the_model_by_its_switch():
+    """5.2 (design doc 25 §4.2-§4.3, D84): the EEF module no longer needs a model - ``use_vlm`` (on by default) says
+    whether it asks one; the gripper reference applies only where a camera is a fixed third-person one."""
+    spec = M.get("eef_video_consistency")
+    assert "vlm" not in spec.needs and spec.vlm_switch == "use_vlm"
+    assert spec.asks_model() and spec.asks_model({"use_vlm": True}) and not spec.asks_model({"use_vlm": False})
+    assert M.get("task_success").asks_model({"use_vlm": False})          # a module that needs one always asks
+    assert not M.get("data_integrity").asks_model()
+    props = spec.param_schema["properties"]
+    assert props["use_vlm"] == {**props["use_vlm"], "type": "boolean", "default": True}
+    assert {k for k, p in props.items() if p.get("x-applies-when") == M.THIRD_PERSON_CAMERA} == {
+        "observation_seeds", "gripper_template"}
+    exported = {m["id"]: m for m in M.export()["modules"]}
+    assert exported["eef_video_consistency"]["vlm_switch"] == "use_vlm"
+    assert "vlm_switch" not in exported["task_success"]
 
 
 def test_the_data_integrity_module_is_the_first_stage():

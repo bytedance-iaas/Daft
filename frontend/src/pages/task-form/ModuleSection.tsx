@@ -15,6 +15,7 @@ const EEF_FILES = new Set(['trajectory_json', 'observation_seeds']);
 
 function needsInputText(a: ModuleAvailability): string {
   if (a.input_hint?.field === 'embodiment_id') return zh.taskForm.moduleNeedsEmbodiment;
+  if (a.reason_code === 'declaration_incomplete') return reasonText(a);     // the declaration first (design doc 25 §4.3)
   if (EEF_FILES.has(a.input_hint?.field ?? '')) return zh.taskForm.moduleNeedsEefFiles;
   if (a.input_hint?.field === 'vlm') return zh.taskForm.moduleNeedsVlm;
   return reasonText(a);
@@ -55,7 +56,16 @@ function ModuleCard({
       <Checkbox checked={checked} disabled={disabled} onChange={onToggle} aria-label={m.name_zh}>
         <b>{m.name_zh}</b>
       </Checkbox>{' '}
-      <RoleTag m={m} policy={policy} /> {needsVlm(m) ? <Tag size="small" color="purple">{zh.taskForm.callsModel}</Tag> : null}
+      <RoleTag m={m} policy={policy} />{' '}
+      {needsVlm(m) ? (
+        <Tag size="small" color="purple">
+          {zh.taskForm.callsModel}
+        </Tag>
+      ) : m.vlm_switch ? (
+        <Tag size="small" color="purple" bordered>
+          {zh.taskForm.modelOptional}
+        </Tag>
+      ) : null}
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
         {m.summary_zh}
       </div>

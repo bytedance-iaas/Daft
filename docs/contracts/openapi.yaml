@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.0.0
+  version: 5.1.0
   description: |
     ## Overview
 
@@ -185,6 +185,13 @@ info:
     Site templates may hold a declaration. The module parameters `gripper_calibration` and `record_mapping`
     and their upload kinds are retired (older tasks still read them): the declaration says both.
 
+    **5.1.0** (2026-10-10): the EEF module no longer needs a model: its new parameter `use_vlm` (on by default) says
+    whether it asks one, and the module catalogue marks such a module with `vlm_switch`. A task without a model
+    backend still runs it - the preflight says `available` with a note, the opinion says the model's part is
+    missing and why. The preflight's EEF entry also lists the dataset's cameras (`cameras`: mount, whether the
+    platform can draw on it, and why not) and the parameters that apply to this dataset (`applicable_params`:
+    the gripper reference only where there is a third-person camera).
+
   x-description-zh: |
     ## 概览
 
@@ -297,6 +304,10 @@ info:
     轨迹，不用再上传；预检的 EEF 条目说明轨迹从哪来（`trajectory_source`），声明缺相机内参、外参或工具的数据集报 `needs_input`
     `declaration_incomplete` 并列出缺的项。站点模版可以保存声明。模块参数 `gripper_calibration`、`record_mapping` 及其上传种类停用（旧任务照常读），
     这两样都由声明给出。
+
+    **5.1.0**（2026-10-10）：EEF 模块不再必须有模型：新参数 `use_vlm`（缺省开）决定它请不请模型，模块目录里这类模块带 `vlm_switch`。
+    没选模型服务的任务照常运行——预检报 `available` 并附一条提醒，结论里写明模型那一路缺了、为什么。预检的 EEF 条目还列出数据集的每路相机
+    （`cameras`：安装方式、平台能否在上面画、不能的原因）和这个数据集上适用的参数（`applicable_params`：有第三视角相机时才有夹爪参考）。
 
 servers:
   - url: "{base}/api/v1"
@@ -3945,6 +3956,12 @@ components:
                 description: >-
                   present on a module answered inside this host module's requests (1.19.0): it runs
                   whenever the host runs, has no request of its own and cannot be selected alone
+              vlm_switch:
+                type: string
+                description: >-
+                  present on a module that may ask a model without needing one (5.1.0): the boolean parameter that
+                  switches the model on (on by default). A task without a model backend still runs it; the
+                  model's part is then missing
     RegistryStage:
       enum: [integrity, numeric, frame, dedup, autolabel, vlm, profile]
       description: a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)

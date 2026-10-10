@@ -39,7 +39,7 @@ describe('unwrap and the one Error body (doc 03 §1)', () => {
   it('returns data for 2xx', async () => {
     const reg = await unwrap(api().GET('/modules'));
     expect(reg.modules.length).toBe(10);                                                        // + data_integrity (design doc 14), camera_defects (registry 1.14), - the skill profile
-    expect(reg.registry_version).toBe('5.1');                                                   // taxonomy 2.0 item ids; 4.x EEF inputs; 5.0 EEF opinions (design doc 25)
+    expect(reg.registry_version).toBe('5.2');                                                   // taxonomy 2.0 item ids; 4.x EEF inputs; 5.0 EEF opinions (design doc 25)
     expect(reg.modules.filter((m) => m.codes.some((c) => c.level === 'blocking')).map((m) => m.id)).not.toContain('eef_video_consistency'); // D81: EEF gives opinions, rejects nothing
     expect(reg.modules.find((m) => m.id === 'camera_defects')?.rides_on).toBe('task_success');
   });

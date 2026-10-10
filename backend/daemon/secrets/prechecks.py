@@ -358,14 +358,26 @@ def run_prechecks(svc: SecretsService, *, input: InputTarget | None = None,
 # tasks
 # ---------------------------------------------------------------------------
 
-def needs_vlm(module_ids: Iterable[str]) -> bool:
-    """Whether any of these modules calls a VLM (C1 ``needs`` has ``vlm``)."""
+def needs_vlm(module_ids: Iterable[str], *, params: dict | None = None, has_model: bool = False) -> bool:
+    """Whether any of these modules calls a VLM: one whose C1 ``needs`` has ``vlm``, or (registry 5.2, design doc 25
+    D84) one whose ``vlm_switch`` is on in ``params`` (module id -> its parameters) when the task chose a model."""
     known = set(registry.ids())
-    return any(mid in known and "vlm" in registry.get(mid).needs for mid in module_ids)
+    for mid in module_ids:
+        if mid not in known:
+            continue
+        spec = registry.get(mid)
+        if "vlm" in spec.needs:
+            return True
+        if spec.vlm_switch and has_model and spec.asks_model((params or {}).get(mid) or {}):
+            return True
+    return False
 
 
 def task_needs_vlm(repo: P.Repository, task_id: str) -> bool:
-    return needs_vlm(m.module_id for m in repo.get_task_modules(task_id) if m.selected)
+    rows = [m for m in repo.get_task_modules(task_id) if m.selected]
+    task = repo.get_task(task_id)
+    return needs_vlm([m.module_id for m in rows], params={m.module_id: m.params or {} for m in rows},
+                     has_model=bool(getattr(task, "vlm_model_id", None)))
 
 
 def prechecks_for_task(svc: SecretsService, task: P.Task, *, checks: Iterable[str] = CHECKS,

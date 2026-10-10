@@ -212,7 +212,9 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             members = [s for s in chosen if s.stage == stage_id]
             if not members:
                 continue
-            kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
+            # a module with a model switch (registry 5.2, EEF's use_vlm) keeps its stage a model stage: whether
+            # it asks the model is the task's parameter, which the Daemon reads when it starts the stage
+            kind = "vlm" if any("vlm" in s.needs or getattr(s, "vlm_switch", None) for s in members) else "cpu"
             stage: dict[str, Any] = {"id": stage_id, "kind": kind, "command": "check", "block": block}
             if previous:
                 stage["after"] = previous

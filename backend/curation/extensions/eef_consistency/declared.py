@@ -271,7 +271,7 @@ class Generated:
         self.lr = LM.LeRobot(self.root)
         self.calibration = {"declaration_sha256": self.sha256, "version": version,
                             "cameras": sorted(c["camera_id"] for c in self.mapping["cameras"].values()),
-                            "assumed": _assumed_fields(self.decl)}
+                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl)}
         self._guard = threading.Lock()
         self._locks: dict[int, threading.Lock] = {}
         self._done: dict[int, tuple] = {}
@@ -310,8 +310,9 @@ class Generated:
             return got
 
     def _source(self, **why) -> dict:
+        fixed = self.calibration["declared_fixed"]
         return {"kind": "generated", "declaration": {"sha256": self.sha256, "version": self.version},
-                "assumed": self.calibration["assumed"], **why}
+                "assumed": self.calibration["assumed"], **({"declared_fixed": fixed} if fixed else {}), **why}
 
     def _data_key(self, ep: int) -> str:
         info = self.lr.info
@@ -343,6 +344,19 @@ class Generated:
             return None, self._source(status="unsupported", reason=INVALID, message=message[:300])
         _write(DM.bundle_path(self.out_dir, ep), data)
         return res.samples[ep], self._source(status="generated")
+
+
+#: a camera drafted as moving that a person declared fixed (design doc 25 §3.3): it takes part as a third-person one
+#: and the report says 「按声明视为固定」; if it does move, the camera-motion sub-item reports it
+MOUNT_DECLARED_FIXED = "mount_declared_fixed"
+
+
+def declared_fixed(decl: Mapping | None) -> list[str]:
+    """The camera ids the declaration takes as fixed by a person's say-so (assumption ``mount_declared_fixed``)."""
+    cams = ((decl or {}).get("calibration") or {}).get("cameras") or {}
+    return sorted(str(c.get("camera_id") or short_name(src)) for src, c in cams.items()
+                  if isinstance(c, dict) and c.get("mount") == FIXED_EXTERNAL
+                  and any(isinstance(a, dict) and a.get("code") == MOUNT_DECLARED_FIXED for a in c.get("assumptions") or []))
 
 
 def _assumed_fields(decl: Mapping) -> list[str]:
@@ -433,7 +447,7 @@ class GeneratedMcap(Generated):
         self.staged = None
         self.calibration = {"declaration_sha256": self.sha256, "version": version,
                             "cameras": sorted(c["camera_id"] for c in self.mapping["cameras"].values()),
-                            "assumed": _assumed_fields(self.decl)}
+                            "assumed": _assumed_fields(self.decl), "declared_fixed": declared_fixed(self.decl)}
         self._guard = threading.Lock()
         self._locks: dict[int, threading.Lock] = {}
         self._done: dict[int, tuple] = {}

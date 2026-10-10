@@ -187,10 +187,12 @@ class Orchestrator:
         transitions.record(self.repo, action=action, task_id=task_id, actor=who.display_name,
                            at=self.clock(), detail=detail, owner=who.owner_id)
 
-    def _needs_vlm(self, module_ids) -> bool:
+    def _needs_vlm(self, modules: list[P.TaskModule], has_model: bool) -> bool:
         from ..secrets import prechecks
 
-        return prechecks.needs_vlm(module_ids)
+        rows = [m for m in modules if m.selected]
+        return prechecks.needs_vlm([m.module_id for m in rows], params={m.module_id: m.params or {} for m in rows},
+                                   has_model=has_model)
 
     # ================================================================== create
     def _resolve(self, body: dict, who: Principal) -> tuple[taskspec.Resolved, dict]:
@@ -275,11 +277,10 @@ class Orchestrator:
         return {m["id"]: m for m in doc.get("modules") or [] if isinstance(m, dict) and "id" in m}
 
     def _draft(self, fields: dict, modules: list[P.TaskModule], owner: str) -> Draft:
-        selected = [m.module_id for m in modules if m.selected]
         return Draft(fields["input_source"], fields["input_uri"], fields.get("input_region"),
                      fields.get("input_cred_id"), fields["output_uri"], fields.get("output_region"),
                      fields.get("output_cred_id"), fields.get("vlm_model_id"),
-                     fields.get("vlm_reasoning_effort"), self._needs_vlm(selected),
+                     fields.get("vlm_reasoning_effort"), self._needs_vlm(modules, bool(fields.get("vlm_model_id"))),
                      dataset_id=fields.get("dataset_id"), owner=owner)
 
     def _warnings(self, fields: dict, owner: str) -> list[str]:

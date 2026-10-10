@@ -83,8 +83,10 @@ def test_the_preflight_lets_a_handheld_gripper_go_without_the_file(das, tmp_path
     assert entry["subitems"][C.EGO_MOTION]["availability"] == C.AVAILABLE
     assert entry["subitems"][C.POSITION]["reason_code"] == C.OWN_HAND_CAMERA
     assert "derives each episode's trajectory" in entry["notes"][0] and "built-in DAS DEMO" in entry["notes"][0]
-    # with the VLM backend still to choose, as any opinion
-    assert PF.module_entry(entry, vlm_backend=False)["reason_code"] == C.VLM_BACKEND_MISSING
+    # with the VLM backend still to choose: available, with a reminder (design doc 25 D84); none with the model off
+    late = PF.module_entry(entry, vlm_backend=False)
+    assert late["availability"] == C.AVAILABLE and late["notes"][-1] == PF.NOTE_VLM_BACKEND_MISSING
+    assert PF.module_entry(entry, vlm_backend=False, use_vlm=False) == entry
     # any other dataset still needs the file
     other = PF.consistency_entry({}, episodes=[0], media_exists=None, lerobot_root=str(das / "data"))
     assert other["availability"] == C.NEEDS_INPUT and other["reason_code"] == C.TRAJECTORY_MISSING

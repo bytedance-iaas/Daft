@@ -17,7 +17,7 @@ import type {
 import { REGION_RE } from '../../lib/deeplink';
 import { parseForDisplay } from '../../lib/episodes';
 import { changedParams, groupFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
-import { availability, embodimentHint, moduleParamFields, needsVlm } from '../../lib/preflight';
+import { asksModel, availability, availabilityOf, embodimentHint, moduleParamFields, needsVlm } from '../../lib/preflight';
 import { presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
@@ -116,8 +116,20 @@ export function activeModules(v: FormValues): string[] {
   return v.modules.filter((id) => !v.skipped.includes(id));
 }
 
+/** A selected module needs a model (task_success): the task must choose one. */
 export function usesVlm(v: FormValues, reg: ModuleRegistry | undefined): boolean {
   return activeModules(v).some((id) => needsVlm(reg?.modules.find((m) => m.id === id)));
+}
+
+/** A selected module would ask a model if the task has one (design doc 25 D84: EEF with 「使用 VLM 辅助」 on): the
+ * form offers the model section, required only when `usesVlm`. */
+export function offersVlm(v: FormValues, reg: ModuleRegistry | undefined): boolean {
+  return activeModules(v).some((id) => asksModel(reg?.modules.find((m) => m.id === id), v.params[id]));
+}
+
+/** The task will have a model: one is needed, or one is offered and chosen. */
+export function withVlm(v: FormValues, reg: ModuleRegistry | undefined): boolean {
+  return usesVlm(v, reg) || (offersVlm(v, reg) && Boolean(v.vlmBackend));
 }
 
 export function effectiveOutputCredential(v: FormValues): string {
@@ -181,6 +193,8 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   if (usesVlm(v, ctx.registry)) {
     if (!v.vlmBackend) e.vlmBackend = zh.errors.requiredSelect(zh.taskForm.backend);
     if (!v.vlmModel) e.vlmModel = zh.errors.requiredSelect(zh.taskForm.model);
+  } else if (offersVlm(v, ctx.registry) && v.vlmBackend && !v.vlmModel) {
+    e.vlmModel = zh.errors.requiredSelect(zh.taskForm.model);          // optional, but a backend needs its model
   }
   for (const k of Object.keys(v.timeouts) as TimeoutKey[]) {
     const t = v.timeouts[k];
@@ -200,9 +214,11 @@ export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
   for (const id of active) {
     const spec = ctx.registry?.modules.find((m) => m.id === id);
     const fields = moduleParamFields(spec, ctx.preflight);    // a file the preflight asks for is required here
+    // the declaration lacks something (design doc 25 §4.3): complete it, or upload, or skip the module
+    const lacking = availabilityOf(ctx.preflight, id)?.trajectory_source?.kind === 'missing_declaration';
     for (const f of fields) {
       const problem = validateParam(f, v.params[id]?.[f.key] ?? f.default);
-      if (problem) e[`params.${id}.${f.key}`] = problem;
+      if (problem) e[`params.${id}.${f.key}`] = lacking && f.key === 'trajectory_json' ? zh.taskForm.eefTrajectory.required : problem;
     }
     // A required choice group (registry 1.10) needs one of its parameters: the EEF module finds
     // the gripper from observation seeds or a gripper template - without either every episode
@@ -249,7 +265,7 @@ export function moduleChoices(v: FormValues, reg: ModuleRegistry | undefined): M
 }
 
 export function vlmChoice(v: FormValues, reg: ModuleRegistry | undefined): VlmChoice | undefined {
-  if (!usesVlm(v, reg)) return undefined;
+  if (!withVlm(v, reg)) return undefined;
   return { backend: v.vlmBackend, model: v.vlmModel, reasoning_effort: (v.effort || null) as VlmChoice['reasoning_effort'] };
 }
 
@@ -261,7 +277,7 @@ export function taskParams(v: FormValues, reg: ModuleRegistry | undefined, start
   return {
     start_now: startNow,
     clips: v.clips,
-    ...(usesVlm(v, reg) ? { vlm_retry: v.vlmRetry, vlm_hedge: v.vlmHedge, vlm_timeouts_s: { ...v.timeouts } } : {}),
+    ...(withVlm(v, reg) ? { vlm_retry: v.vlmRetry, vlm_hedge: v.vlmHedge, vlm_timeouts_s: { ...v.timeouts } } : {}),
     ...(Object.keys(limits).length ? { limits } : {}),
     ...(v.policy !== 'default' ? { policy: { preset: v.policy } } : {}),
   };

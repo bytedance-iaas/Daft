@@ -411,12 +411,14 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                    if c in spec.needs and not caps[c]]
         notes: list[str] = []
         if lacking:
-            args: dict = {"missing": lacking}
+            # not ``args``: that is the command's, which the modules after this one still read (their parameters,
+            # the dataset declaration)
+            missing: dict = {"missing": lacking}
             if "video" in lacking:
-                args["video_cause"] = video_cause
+                missing["video_cause"] = video_cause
             entry.update(availability="unsupported", reason="; ".join(
                 video_reason if c == "video" else _CAP_REASON[c] for c in lacking),
-                reason_code="missing_input", reason_args=args)
+                reason_code="missing_input", reason_args=missing)
         elif "eef_input" in spec.needs and container is not None and container["kind"] != "mcap":
             # mcap cameras are image topics the module reads itself (F5.13); lance is not read yet
             entry.update(availability="unsupported",
@@ -433,7 +435,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                                       handheld=container is not None and container.get("profile") == "umi_das",
                                       decl=getattr(args, "declaration_doc", None), info=info,
                                       kind=container["kind"] if container is not None else "lerobot")
-            entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
+            entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend),
+                                                    use_vlm=_asks_model(args, spec)))
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"
@@ -623,13 +626,46 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
              "session": "trajectory computed from the raw UMI session (plan, SLAM camera poses, session calibration)"}
             .get(how, "trajectory from the dataset's own trajectory.json")]
     entry["trajectory_source"] = source
+    entry["cameras"] = _entry_cameras(plan, entry, decl, cameras)
+    entry["applicable_params"] = eef_preflight.applicable_params(entry["cameras"])
+    if entry.get("availability") == EC.AVAILABLE and not params.get("use_vlm", True) \
+            and not (params.get("observation_seeds") or params.get("gripper_template")) \
+            and any(c.get("mount") == "fixed_external" for c in entry["cameras"]):
+        entry["notes"] = [*entry.get("notes", []), eef_preflight.NOTE_THIRD_PERSON_UNMEASURED]
     return entry
 
 
+def _asks_model(args, spec) -> bool:
+    """Whether the task has a module with a model switch (registry 5.2: EEF's ``use_vlm``) ask the model."""
+    return spec.asks_model(modparams.with_defaults(spec.id, getattr(args, "module_params", {}).get(spec.id)))
+
+
+def _entry_cameras(plan: dict, entry: dict, decl: dict | None, cameras: list[str]) -> list[dict]:
+    """C2 ``cameras`` of the EEF entry (design doc 25 §4.2): the declaration's view of them when the trajectory is
+    generated or the declaration lacks something, a handheld gripper's wrist cameras, else the bundle's (none when
+    the bundle could not be read: unknown)."""
+    from ..declaration import WRIST, short_name
+    from ..extensions.eef_consistency import derive
+
+    bundle = entry.pop("_cameras", None)
+    if "readiness" in plan:
+        return [{k: c.get(k) for k in ("source", "camera_id", "mount", "owner", "drawable", "reason")}
+                for c in plan["readiness"]["cameras"]]
+    if plan["kind"] == derive.MCAP_DERIVE:                # a handheld gripper's wrist cameras, one per hand
+        from ..declaration.draft import owner_of
+
+        cal = ((decl or {}).get("calibration") or {}).get("cameras") or {}
+        return [{"source": src, "camera_id": (cal.get(src) or {}).get("camera_id") or short_name(src), "mount": WRIST,
+                 "owner": (cal.get(src) or {}).get("owner") or owner_of(src, len(cameras), arms=len(cameras))[0],
+                 "drawable": True, "reason": None} for src in cameras]
+    return list(bundle or [])
+
+
 def _cameras_of(info: dict | None, decl: dict | None, kind: str) -> list[str]:
-    """The dataset's camera sources: LeRobot video / image keys, an mcap declaration's camera topics."""
-    if kind == "mcap":
-        return [c["topic"] for c in (decl or {}).get("cameras") or []]
+    """The dataset's camera sources: LeRobot video / image keys, an mcap declaration's camera topics (without one,
+    the cameras the mcap preflight named)."""
+    if kind == "mcap" and (decl or {}).get("cameras"):
+        return [c["topic"] for c in decl["cameras"]]
     feats = (info or {}).get("features") or {}
     return [k for k, f in feats.items() if isinstance(f, dict) and f.get("dtype") in ("video", "image")
             and "depth" not in k.lower()]
@@ -677,7 +713,8 @@ def _umi_session(ctx: Context, args, storage, listing, specs, doc: dict) -> None
         if "eef_input" in spec.needs:
             base = _eef_entry(eef_preflight, storage, listing, str(storage.uri), getattr(args, "module_params", {}),
                               list(range(len(plans))), decl=getattr(args, "declaration_doc", None), kind="umi_session")
-            modules.append({"id": spec.id, **eef_preflight.module_entry(base, vlm_backend=bool(vlm_backend))})
+            modules.append({"id": spec.id, **eef_preflight.module_entry(base, vlm_backend=bool(vlm_backend),
+                                                                        use_vlm=_asks_model(args, spec))})
         else:
             modules.append({"id": spec.id, "availability": "unsupported", "reason": reason,
                             "reason_code": "format_unsupported_by_module",

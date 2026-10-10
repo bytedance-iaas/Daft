@@ -564,7 +564,9 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
       </>,
     );
   }
+  const fixed = Array.isArray(s.declared_fixed_cameras) ? (s.declared_fixed_cameras as unknown[]).map(String) : [];
   const notes: ReactNode[] = [
+    ...(fixed.length ? [<span data-testid="eef-declared-fixed-note">{Z.declaredFixed(fixed.join('、'))}</span>] : []),
     v5 ? (
       <span className="muted">
         {Z.v5.note}

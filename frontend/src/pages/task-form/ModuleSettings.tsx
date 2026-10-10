@@ -1,10 +1,12 @@
-import { Button, Card, Collapse, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
+import { Alert, Button, Card, Collapse, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { ApiError } from '../../api/errors';
-import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
+import type { ModuleAvailability, ModuleRegistry, ModuleSpec, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
 import { uploadFile, type UploadPhase } from '../../api/uploads';
+import { shortName } from '../../lib/declaration';
 import { groupFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
-import { availabilityOf, embodimentHint, moduleParamFields, reasonText } from '../../lib/preflight';
+import { asksModel, availabilityOf, embodimentHint, moduleParamFields, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormPatch, FormValues } from './formModel';
@@ -237,6 +239,108 @@ function ChoiceGroupField({
   );
 }
 
+/** What the declaration still lacks (design doc 25 §4.1), each item with its camera where it names one. */
+function missingText(missing: NonNullable<ModuleAvailability['trajectory_source']>['missing']): string {
+  return (missing ?? [])
+    .map((m) => {
+      const cam = /^calibration\.cameras\.(.+)\.[a-z_]+$/.exec(m.field)?.[1];
+      const what = zh.declaration.missing[m.code] ?? m.code;
+      return cam ? `${what}（${shortName(cam)}）` : what;
+    })
+    .join('、');
+}
+
+/**
+ * EEF's trajectory.json by where the platform gets the trajectory (design doc 25 §4.3, the preflight's
+ * `trajectory_source`): no pose record - the upload is required (as any asked parameter); the declaration lacks
+ * something - say what, link to the dataset page, the upload folded away as the way around it; generated or
+ * computed - optional, an upload overrides it.
+ */
+function TrajectoryField({
+  f,
+  a,
+  datasetId,
+  value,
+  error,
+  onChange,
+  onBusy,
+  onRerun,
+}: {
+  f: ParamField;
+  a: ModuleAvailability;
+  datasetId: string | null;
+  value: unknown;
+  error?: string;
+  onChange: (v: unknown) => void;
+  onBusy?: (busy: boolean) => void;
+  onRerun?: () => void;
+}) {
+  const T = zh.taskForm.eefTrajectory;
+  const src = a.trajectory_source!;
+  if (src.kind === 'missing_declaration') {
+    const given = typeof value === 'string' && value.startsWith(UPLOAD_PREFIX);
+    return (
+      <Field label={f.title} required error={error}>
+        <div data-testid="eef-trajectory-declaration">
+          <Alert
+            type="warning"
+            content={
+              <Space direction="vertical" size={4}>
+                <span>
+                  {T.missingDeclaration}
+                  {missingText(src.missing)}
+                </span>
+                {datasetId ? (
+                  <Space size={12}>
+                    <Link to={`/datasets/${datasetId}?declaration=1`} target="_blank" data-testid="eef-goto-declaration">
+                      {T.gotoDeclaration}
+                    </Link>
+                    {onRerun ? (
+                      <Button size="mini" type="text" style={{ padding: 0 }} onClick={onRerun}>
+                        {T.rerun}
+                      </Button>
+                    ) : null}
+                  </Space>
+                ) : (
+                  <span className="muted">{T.notRegistered}</span>
+                )}
+              </Space>
+            }
+          />
+          <Collapse bordered={false} defaultActiveKey={given || !datasetId ? ['upload'] : []} style={{ marginTop: 8 }}>
+            <Collapse.Item name="upload" header={T.uploadInstead} extra={<span className="muted" style={{ fontSize: 12 }}>{T.uploadInsteadHint}</span>}>
+              <UploadInput f={f} value={value} onChange={onChange} onBusy={onBusy} />
+            </Collapse.Item>
+          </Collapse>
+        </div>
+      </Field>
+    );
+  }
+  const computed = src.kind !== 'missing_pose' && src.kind !== 'upload';
+  return (
+    <Field label={f.title} required={f.required} extra={computed ? T.overrides : f.description} error={error}>
+      {computed ? (
+        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }} data-testid="eef-trajectory-source">
+          {src.kind === 'generate' ? (src.declaration ? T.byDeclaration : T.fromData) : (T.source[src.kind] ?? src.kind)}
+        </div>
+      ) : null}
+      <UploadInput f={f} value={value} onChange={onChange} onBusy={onBusy} />
+    </Field>
+  );
+}
+
+/** Reminders under a module with a model switch (design doc 25 §4.3): no model chosen - its model part will be
+ * missing; switched off without a gripper reference - the third-person cameras are not assessed. */
+function ModelReminder({ m, params, fields, vlmChosen }: { m: ModuleSpec; params: Record<string, unknown> | undefined; fields: ParamField[]; vlmChosen: boolean }) {
+  if (!m.vlm_switch) return null;
+  if (asksModel(m, params)) {
+    return vlmChosen ? null : <Alert type="info" style={{ marginTop: 8 }} content={zh.taskForm.eefNoModel} data-testid={`model-reminder-${m.id}`} />;
+  }
+  const reference = fields.filter((f) => f.choiceGroup?.id === 'gripper_reference');
+  if (!reference.length || reference.some((f) => params?.[f.key])) return null;
+  return <Alert type="warning" style={{ marginTop: 8 }} content={zh.taskForm.eefOffNoReference} data-testid={`model-reminder-${m.id}`} />;
+}
+
 /**
  * Screen 2 (D38, 07 §3): only the enabled modules, what they still need first (必填, e.g. the
  * robot type, or 「跳过该模块」), then each module's parameters generated from param_schema under
@@ -250,6 +354,7 @@ export function ModuleSettings({
   preflight,
   embodimentOptions,
   onUploadBusy,
+  onRerun,
 }: {
   v: FormValues;
   set: (patch: FormPatch) => void;
@@ -259,6 +364,8 @@ export function ModuleSettings({
   embodimentOptions: string[];
   /** A file of `<module>.<param>` started or stopped uploading (the form holds its submit meanwhile). */
   onUploadBusy?: (key: string, busy: boolean) => void;
+  /** The preflight taken again (after the dataset's declaration was completed elsewhere). */
+  onRerun?: () => void;
 }) {
   const specs = (registry?.modules ?? []).filter((m) => v.modules.includes(m.id));
   const active = activeModules(v);
@@ -269,8 +376,23 @@ export function ModuleSettings({
   const setParam = (mod: string, key: string, value: unknown) =>
     set((prev) => ({ params: { ...prev.params, [mod]: { ...(prev.params[mod] ?? {}), [key]: value } } }));
   const options = embodimentOptions.length ? embodimentOptions : needing.flatMap((m) => embodimentHint(preflight, m.id)?.options ?? []);
-  const renderEntry = (mod: string, entry: FieldOrGroup) =>
-    'group' in entry ? (
+  const renderEntry = (mod: string, entry: FieldOrGroup) => {
+    const a = availabilityOf(preflight, mod);
+    if ('field' in entry && entry.field.key === 'trajectory_json' && a?.trajectory_source)
+      return (
+        <TrajectoryField
+          key={entry.field.key}
+          f={entry.field}
+          a={a}
+          datasetId={v.datasetId || null}
+          value={v.params[mod]?.[entry.field.key]}
+          error={errors[`params.${mod}.${entry.field.key}`]}
+          onChange={(x) => setParam(mod, entry.field.key, x)}
+          onBusy={(b) => onUploadBusy?.(`${mod}.${entry.field.key}`, b)}
+          onRerun={onRerun}
+        />
+      );
+    return 'group' in entry ? (
       <ChoiceGroupField
         key={entry.group.id}
         mod={mod}
@@ -292,6 +414,7 @@ export function ModuleSettings({
         />
       </Field>
     );
+  };
 
   return (
     <Card title={zh.taskForm.screen2Title}>
@@ -349,6 +472,7 @@ export function ModuleSettings({
           }
         >
           {groupFields(moduleParamFields(m, preflight).filter((f) => !f.advanced)).map((entry) => renderEntry(m.id, entry))}
+          <ModelReminder m={m} params={v.params[m.id]} fields={moduleParamFields(m, preflight)} vlmChosen={Boolean(v.vlmBackend && v.vlmModel)} />
           {/* the judgement lines its findings are drawn with (registry 2.1 x-advanced, design doc 17 §1.3): folded away */}
           {moduleParamFields(m, preflight).some((f) => f.advanced) ? (
             <Collapse bordered={false} className="advanced-lines" data-testid={`advanced-${m.id}`}>

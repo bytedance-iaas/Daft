@@ -294,6 +294,8 @@ export interface EefOpinion {
   flagged: boolean;
   maxConfidence: number | null;
   failure: string | null;
+  /** not asked (status not_asked, design doc 25 D84): vlm_off or no_vlm_backend */
+  missing: string | null;
   cameras: EefOpinionCamera[];
   /** a handheld gripper (design doc 22 §5.2): each wrist camera marks only its own hand */
   handheld: boolean;
@@ -361,6 +363,7 @@ export function eefOpinion(details: D): EefOpinion | null {
     flagged: op.flagged === true,
     maxConfidence: n(op.max_confidence),
     failure: s(op.failure),
+    missing: s(op.missing),
     cameras,
     handheld: (s(op.prompt_version) ?? '').startsWith('umi-'),
     bridged,
@@ -370,6 +373,12 @@ export function eefOpinion(details: D): EefOpinion | null {
 // ---------------------------------------------------------------- a trajectory derived from the recording (design doc 22 §5.4)
 
 export interface EefTrajectorySource {
+  /** derived from a handheld gripper's recording, or generated from the dataset declaration (design doc 25 §4.1) */
+  kind: 'derived' | 'generated';
+  /** the declaration's version a generated trajectory came from */
+  version: number | null;
+  /** cameras a person declared fixed though drafted as moving (design doc 25 §3.3) */
+  declaredFixed: string[];
   gripper: string;
   builtin: boolean;
   /** the calibration's fields that are assumptions */
@@ -385,9 +394,27 @@ export interface EefTrajectorySource {
 /** How the platform had the episode's trajectory (``details.trajectory_source``): null for an uploaded file. */
 export function eefTrajectorySource(details: D): EefTrajectorySource | null {
   const src = obj(details.trajectory_source);
+  if (src.kind === 'generated') {
+    // a robot arm's trajectory generated from the dataset declaration (design doc 25 §4.1)
+    return {
+      kind: 'generated',
+      version: n(obj(src.declaration).version),
+      declaredFixed: arr(src.declared_fixed).map(s).filter((x): x is string => !!x),
+      gripper: '',
+      builtin: false,
+      assumed: arr(src.assumed).map(s).filter((x): x is string => !!x),
+      reason: s(src.reason),
+      message: s(src.message),
+      cameras: [],
+      suspects: [],
+    };
+  }
   if (src.kind !== 'derived') return null;
   const cal = obj(src.calibration);
   return {
+    kind: 'derived',
+    version: null,
+    declaredFixed: [],
     gripper: s(cal.gripper) ?? '',
     builtin: cal.builtin === true,
     assumed: arr(cal.assumed).map(s).filter((x): x is string => !!x),

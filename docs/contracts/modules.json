@@ -1,5 +1,5 @@
 {
- "registry_version": "5.1",
+ "registry_version": "5.2",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1650,8 +1650,7 @@
    "level": "episode",
    "needs": [
     "eef_input",
-    "video",
-    "vlm"
+    "video"
    ],
    "block": "vlm",
    "stage": "vlm",
@@ -1759,13 +1758,14 @@
       ],
       "x-max-mb": 64,
       "title": "观测种子",
-      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考可以不给：不给时只请模型看整段视频给出意见（哪些片段不匹配、置信度多少），不参与判决",
+      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考给了就按画面测量；不给时只有模型看整段视频的意见（哪些片段不匹配、置信度多少），关掉「使用 VLM 辅助」就判断不了。只用于第三视角相机",
       "default": "",
       "x-choice-group": {
        "id": "gripper_reference",
        "title": "夹爪参考",
        "required": false
-      }
+      },
+      "x-applies-when": "third_person_camera"
      },
      "gripper_template": {
       "type": "string",
@@ -1776,13 +1776,14 @@
       ],
       "x-max-mb": 64,
       "title": "夹爪外观模板",
-      "description": "gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，不用逐条 episode 点种子",
+      "description": "gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，不用逐条 episode 点种子。只用于第三视角相机",
       "default": "",
       "x-choice-group": {
        "id": "gripper_reference",
        "title": "夹爪参考",
        "required": false
-      }
+      },
+      "x-applies-when": "third_person_camera"
      },
      "record_mapping": {
       "type": "string",
@@ -1797,9 +1798,15 @@
       "default": "",
       "deprecated": true
      },
+     "use_vlm": {
+      "type": "boolean",
+      "title": "使用 VLM 辅助",
+      "description": "开着时请模型复核或看整段视频给意见，和 CPU 的测量各算各的、取大；关掉只用 CPU（夹爪参考的测量、腕部相机的自运动），不要求模型服务。没选模型服务时照常运行，模型那一路记为「没有模型后端」",
+      "default": true
+     },
      "threshold_profile": {
       "title": "阈值",
-      "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，所以不再提供「不判定」",
+      "description": "demo 由基准噪声底定、未校准：结论的档位（不一致 / 可能不一致）按它划，置信度只用来排序、不是概率",
       "default": "demo",
       "oneOf": [
        {
@@ -1810,7 +1817,7 @@
      },
      "camera_mounts": {
       "title": "参与的相机",
-      "description": "腕部相机只做位置与方向（D-E9）；移动相机不支持",
+      "description": "腕部相机只看自运动与本手的位置、方向；会动的相机不支持（实际不动的，可在数据集声明里「视为固定」）",
       "default": "fixed_external_and_wrist",
       "oneOf": [
        {
@@ -1976,7 +1983,8 @@
      "default_sort": "episode_index"
     }
    ],
-   "mergeable": false
+   "mergeable": false,
+   "vlm_switch": "use_vlm"
   },
   {
    "id": "task_success",

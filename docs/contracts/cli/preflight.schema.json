@@ -177,6 +177,28 @@
           "description": "Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafted record_mapping from a LeRobot info.json; no longer drafted since the dataset declaration)",
           "additionalProperties": {"$ref": "#/$defs/param_draft"}
         },
+        "cameras": {
+          "type": "array",
+          "description": "EEF-video consistency: the dataset's cameras as the module sees them - each one's mount (fixed_external, wrist, moving), its hand or arm, and whether the platform can draw on it (and why not: mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing, projection_missing)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["camera_id", "mount", "drawable"],
+            "properties": {
+              "source": {"type": ["string", "null"], "description": "the video key (LeRobot, Lance) or the topic (mcap)"},
+              "camera_id": {"type": "string"},
+              "mount": {"type": ["string", "null"]},
+              "owner": {"type": ["string", "null"]},
+              "drawable": {"type": "boolean"},
+              "reason": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$"}
+            }
+          }
+        },
+        "applicable_params": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "the module's parameters that apply to this dataset, in the registry's order (EEF-video consistency: the gripper reference only where there is a third-person camera; retired parameters never)"
+        },
         "trajectory_source": {
           "type": "object",
           "additionalProperties": false,

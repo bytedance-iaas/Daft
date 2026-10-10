@@ -222,20 +222,60 @@ def test_the_record_mapping_is_validated_on_arrival_and_preflighted(daemon, tmp_
     assert cells["without"] == {"availability": "unsupported", "reason_code": "record_mapping_missing"}
     assert cells["with"]["availability"] == "available"
 
-def test_the_module_needs_a_model(daemon):
-    """D49: the module reviews with a model; with the file and a model chosen it is available."""
+def test_the_module_needs_no_model(daemon):
+    """Design doc 25 D84 (registry 5.2): the module no longer needs a model - a task without one is accepted, the
+    module available, its model channel to be missing; with 「使用 VLM 辅助」 off nothing asks for a model either."""
     d = daemon()
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
     seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
-    mods = [*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
-                                                 "review_windows_per_camera": 2}}]
-    created = d.create(modules=mods, start_now=False)
-    rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
-    assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"
-    no_vlm = d.task_body(modules=[m for m in mods if m != "task_success"], start_now=False)
+    eef = {"id": EEF, "params": {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"]}}
+    cpu = [m for m in ALL_MODULES if m != "task_success"]
+    no_vlm = d.task_body(modules=[*cpu, eef], start_now=False)
     no_vlm.pop("vlm", None)
     r = d.api("POST", "/tasks", json=no_vlm)
+    assert r.status_code == 201, r.text
+    task = d.get(r.json()["id"])
+    rows = {m["id"]: m for m in task["modules"]}
+    assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"
+    assert task.get("vlm") is None
+    from daemon.secrets import prechecks
+
+    assert not prechecks.task_needs_vlm(d.rt.repo, task["id"])
+    off = {"id": EEF, "params": {**eef["params"], "use_vlm": False}}
+    assert not prechecks.needs_vlm([EEF], params={EEF: off["params"]}, has_model=True)
+    assert prechecks.needs_vlm([EEF], params={EEF: eef["params"]}, has_model=True)
+    assert not prechecks.needs_vlm([EEF], params={EEF: eef["params"]}, has_model=False)
+    with_ts = d.task_body(modules=[*ALL_MODULES, off], start_now=False)
+    with_ts.pop("vlm", None)
+    r = d.api("POST", "/tasks", json=with_ts)                    # task_success still needs one
     assert r.status_code == 400 and "VLM" in r.text, r.text
+
+
+@pytest.mark.slow
+def test_an_eef_task_without_a_model_runs_on_the_cpu(daemon):
+    """F5.24a acceptance ④: a task without a model (no backend) and one with the model switched off both run; the
+    EEF stage asks nothing, each record's single-source cells say why."""
+    d = daemon()
+    traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"]}
+    cases = {}
+    body = d.task_body(modules=["timestamp_check", {"id": EEF, "params": params}])
+    body.pop("vlm", None)
+    cases["no_vlm_backend"] = d.api("POST", "/tasks", json=body).json()["id"]
+    cases["vlm_off"] = d.create(modules=["timestamp_check", "task_success",
+                                         {"id": EEF, "params": {**params, "use_vlm": False}}])["id"]
+    for why, tid in cases.items():
+        task = d.wait(tid)
+        assert task["state"] in ("succeeded", "completed_with_errors"), json.dumps(task)[:2000]
+        rd = d.run_dir(tid)
+        recs = [json.loads(x) for x in open(os.path.join(rd, "checks", EEF, "results.jsonl"))]
+        assert recs and all(r["details"]["merged"]["episode"]["label"] for r in recs)
+        missing = {c.get("missing") for r in recs for c in r["details"]["merged"]["cells"] if "single_source" in c["flags"]}
+        assert missing <= {why, "cpu_cannot_tell"} and why in missing, (why, missing)
+        usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))] \
+            if os.path.exists(os.path.join(rd, "usage.jsonl")) else []
+        assert not [u for u in usage if u.get("module") == EEF]
 
 
 def test_a_module_that_only_orders_its_stage_after_dedup_is_accepted(daemon):

@@ -44,6 +44,28 @@ export function setCamera(doc: Declaration, source: string, patch: Partial<Camer
   return out;
 }
 
+export const DECLARED_FIXED = 'mount_declared_fixed';
+
+/** Whether a person declared this camera fixed though it was drafted as moving (design doc 25 §3.3). */
+export function isDeclaredFixed(c: CameraCalibration | undefined): boolean {
+  return Boolean(c && c.mount === 'fixed_external' && (c.assumptions ?? []).some((a) => a.code === DECLARED_FIXED));
+}
+
+/**
+ * A moving camera taken as fixed (design doc 25 §3.3, 「视为固定」): a third-person camera on that assumption
+ * (`model_assumed`, `mount_declared_fixed`) - it then needs fixed extrinsics like any; or back to moving, the
+ * assumption gone.
+ */
+export function declareFixed(doc: Declaration, source: string, fixed: boolean): Declaration {
+  const cam = doc.calibration?.cameras?.[source];
+  const rest = (cam?.assumptions ?? []).filter((a) => a.code !== DECLARED_FIXED);
+  return setCamera(
+    doc,
+    source,
+    fixed ? { mount: 'fixed_external', assurance: 'model_assumed', assumptions: [...rest, { code: DECLARED_FIXED }] } : { mount: 'moving', assumptions: rest },
+  );
+}
+
 export function setTool(doc: Declaration, patch: Partial<ToolModel> | null): Declaration {
   const out = clone(doc);
   const cal = (out.calibration ??= {});

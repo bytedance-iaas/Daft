@@ -270,6 +270,8 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
 
     eef_mods = [m for m in modules if "eef_input" in registry.get(m).needs]   # D49: the EEF gate
     has_task = "task_success" in modules
+    if has_task and getattr(args, "no_vlm", False):
+        raise UsageError("--no-vlm: task_success needs a model; the flag is for a stage whose modules can go without one")
     cache = getattr(args, "_worker_cache", None)
     prepared = cache.get("vlm") if cache is not None else None
     if prepared is None:
@@ -292,21 +294,33 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
             from .eef_check import EefJudge
 
             judge = EefJudge(ctx, args, run_dir, src, cfg, gates)
+        # design doc 25 D84: the EEF module asks a model only when 「使用 VLM 辅助」 is on and there is one (--no-vlm:
+        # the task has none); alone in the stage without one, the stage opens no session (its model channel is
+        # missing, said why)
+        endpoint = bool((cfg["checks"]["task_success"]["vlm"] or {}).get("endpoint")) \
+            and not getattr(args, "no_vlm", False)
+        if judge is not None and not (judge.use_vlm and endpoint):
+            from ..extensions.eef_consistency import combine as CB
+
+            judge.vlm_missing = CB.VLM_OFF if not judge.use_vlm else CB.NO_BACKEND
+        model_needed = has_task or (judge is not None and judge.vlm_missing is None)
         session = runctx.VlmSession(ctx, args, cfg, "task_success" if has_task else eef_mods[0], run_dir,
-                                    by_tag={"eef_review": eef_mods[0]} if eef_mods else None)
-        session.__enter__()
+                                    by_tag={"eef_review": eef_mods[0]} if eef_mods else None) if model_needed else None
+        if session is not None:
+            session.__enter__()
         try:
             if judge is not None:
                 judge.open()
             from ..adapters.vlm_client import camera_check_from_config, vlm_completion_from_config
 
-            vlm_completion = vlm_completion_from_config(cfg)
             # D71 / D73: the judgement answers for every camera in its one request; there is no
             # review client and no label guard (the slots stay for v1's shape of TaskClients).
             # An episode without a task text gets the picture-defect request instead.
-            cameras = camera_check_from_config(cfg)
+            vlm_completion = vlm_completion_from_config(cfg) if has_task else None
+            cameras = camera_check_from_config(cfg) if has_task else None
         except BaseException:
-            session.__exit__(*sys.exc_info())
+            if session is not None:
+                session.__exit__(*sys.exc_info())
             raise
         clients = TaskClients(vlm_completion, None, None, cameras=cameras)
         if cache is not None:
@@ -338,7 +352,8 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         payload = stage.run()
     finally:
         if cache is None:
-            session.__exit__(*sys.exc_info())
+            if session is not None:
+                session.__exit__(*sys.exc_info())
             if judge is not None:
                 judge.close()
     if judge is not None and judge.module in payload.get("modules", {}):

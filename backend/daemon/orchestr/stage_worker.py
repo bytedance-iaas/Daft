@@ -111,14 +111,14 @@ def _serve(conn, argv: list[str], env: dict[str, str], cwd: str | None) -> None:
             if streaming:
                 # Flush latency and uninstall transport before acknowledging EOF.
                 prepared = cache.pop("vlm", None)
-                if prepared is not None:
+                if prepared is not None and prepared["session"] is not None:   # an EEF stage without a model has none
                     prepared["session"].__exit__(None, None, None)
             output.send(("result", {"returncode": rc, "doc": doc}))
             if streaming:
                 break
     finally:
         prepared = cache.get("vlm")
-        if prepared is not None:
+        if prepared is not None and prepared["session"] is not None:
             prepared["session"].__exit__(None, None, None)
         conn.close()
 

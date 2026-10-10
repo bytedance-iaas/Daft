@@ -153,7 +153,7 @@
    "required": ["code"],
    "properties": {
     "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64,
-             "description": "what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...)"},
+             "description": "what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...), or what a person took as given: mount_declared_fixed (a camera drafted as moving declared fixed - it takes part as a third-person camera, reports say so)"},
     "args": {"type": "object", "maxProperties": 16}
    }
   },

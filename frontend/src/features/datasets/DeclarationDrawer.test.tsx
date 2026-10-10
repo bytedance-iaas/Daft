@@ -49,3 +49,23 @@ describe('数据集声明 (design doc 25 §3, F5.23)', () => {
     expect(db.declarations.get('ds_droid100')).toBeUndefined();
   });
 });
+
+describe('视为固定 (design doc 25 §3.3, F5.24a acceptance ⑤)', () => {
+  it('a camera set as moving can be declared fixed: a third-person camera on an assumption, saved with it', async () => {
+    const { user } = renderApp('/datasets/ds_droid100?declaration=1');
+    const drawer = await findDrawer('数据集声明 · droid_100');
+    await within(drawer).findByTestId('decl-status');
+    const mount = within(drawer).getByTestId('decl-mount-exterior_image_2_left');
+    await user.click(mount);
+    await user.click(await screen.findByRole('option', { name: T.mounts.moving }));
+    expect(await within(drawer).findByTestId('decl-reason-exterior_image_2_left')).toHaveTextContent(T.reasons.moving_camera_unsupported);
+    await user.click(within(drawer).getByTestId('decl-treat-fixed-exterior_image_2_left'));
+    expect(await within(drawer).findByTestId('decl-declared-fixed-exterior_image_2_left')).toHaveTextContent(T.declaredFixedTag);
+    expect(within(drawer).getByTestId('decl-reason-exterior_image_2_left')).toHaveTextContent(T.reasons.intrinsics_missing);
+    await user.click(within(drawer).getByTestId('decl-save'));
+    expect(await screen.findByText(T.saved(1))).toBeInTheDocument();
+    const cam = db.declarations.get('ds_droid100')!.doc.calibration!.cameras!['observation.images.exterior_image_2_left'];
+    expect([cam.mount, cam.assurance]).toEqual(['fixed_external', 'model_assumed']);
+    expect(cam.assumptions!.map((a) => a.code)).toContain('mount_declared_fixed');
+  });
+});

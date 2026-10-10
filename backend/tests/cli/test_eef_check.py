@@ -136,7 +136,7 @@ def test_a_trajectory_that_cannot_be_generated_is_asked_for(mini_dataset, tmp_pa
     assert entry["input_hint"] == {"field": "trajectory_json"} and "could not be generated" in entry["reason"]
 
 
-def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
+def test_preflight_asks_for_the_file_and_reminds_of_a_model(mini_dataset, tmp_path):
     traj = _files(tmp_path)
     doc = run("preflight", "--input", mini_dataset, "--modules", EEF).doc
     (entry,) = doc["modules"]
@@ -145,7 +145,11 @@ def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
     assert entry["input_hint"] == {"field": "trajectory_json"}
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF,
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
-    assert entry["availability"] == "needs_input" and entry["input_hint"] == {"field": "vlm"}    # D49
+    # design doc 25 D84: no model backend is a reminder, not a question
+    assert entry["availability"] == "available" and "input_hint" not in entry
+    assert any(n.startswith("vlm_backend_missing:") for n in entry["notes"])
+    assert [(c["mount"], c["drawable"]) for c in entry["cameras"]] == [("fixed_external", True)]
+    assert "observation_seeds" in entry["applicable_params"] and "record_mapping" not in entry["applicable_params"]
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
     assert entry["availability"] == "available"
@@ -548,3 +552,38 @@ def test_the_report_shows_the_eef_section(chain):
     asked = sum(1 for e in review if any(i["kind"] == "eef_consistency" for i in e["review"]))
     assert sec["adjudication"]["pending"] == asked <= s["conflict_episodes"]
     assert f"- 人工裁决:待裁 {asked} 条" in md
+
+
+def test_without_a_model_the_cpu_alone_gives_the_opinion(cli, mini_dataset, tmp_path):
+    """Design doc 25 D84 (F5.24a acceptance ④): 「使用 VLM 辅助」 off, or on in a task without a model (--no-vlm) - the
+    module runs on the CPU alone and asks nobody; the record has the same shape, its model channel missing and said
+    why. A stage that needs a model refuses --no-vlm."""
+    traj = _files(tmp_path / "f")
+    shapes, temporal = {}, {}
+    for name, extra in (("model", VLM), ("off", (*VLM, "--param", f"{EEF}.use_vlm=false")), ("none", ("--no-vlm",))):
+        rd = str(tmp_path / name)
+        sent: list = []
+        with fake_vlm(tmp_path) as fake:
+            answer = fake.answer
+            fake.answer = lambda payload, answer=answer: (sent.append(1), answer(payload))[1]
+            res = cli("check", "--modules", EEF, "--input", mini_dataset, "--run-dir", rd, "--episodes", "0-2",
+                      "--param", f"{EEF}.trajectory_json={traj}", *extra)
+        assert res.rc == 0, res.doc
+        assert res.doc["modules"][EEF]["episodes"] == {**res.doc["modules"][EEF]["episodes"], "total": 3, "error": 0}
+        recs = results(rd, EEF)
+        assert sorted(recs) == [0, 1, 2] and bool(sent) == (name == "model"), (name, len(sent))
+        shapes[name] = {e: (sorted(r), sorted(set(r["details"]["merged"]) - {"tracking"}),    # tracking: the model's
+                            [(c["subitem"], c.get("camera")) for c in r["details"]["merged"]["cells"]])
+                        for e, r in recs.items()}
+        # episode 2 (offset 9 px): the CPU reads its time alignment; the model's side is what differs
+        temporal[name] = next(c for c in recs[2]["details"]["merged"]["cells"] if c["subitem"] == "temporal_alignment")
+        if name != "model":
+            assert all(not r["details"]["review"] or r["details"]["review"].get("status") != "answered"
+                       for r in recs.values() if "review" in r["details"])
+    assert shapes["model"] == shapes["off"] == shapes["none"]
+    assert temporal["model"]["missing"] == "model_cannot_see"
+    assert (temporal["off"]["missing"], temporal["none"]["missing"]) == ("vlm_off", "no_vlm_backend")
+    assert all("single_source" in t["flags"] and t["label"] == "consistent" for t in temporal.values())
+    refused = cli("check", "--modules", "task_success", "--input", mini_dataset, "--run-dir", str(tmp_path / "ts"),
+                  "--episodes", "0", "--no-vlm")
+    assert refused.rc == 2 and "task_success needs a model" in refused.doc["error"]["message"]

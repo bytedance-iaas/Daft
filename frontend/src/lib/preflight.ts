@@ -43,6 +43,18 @@ export function needsVlm(m: ModuleSpec | undefined): boolean {
   return Boolean(m && (m.needs as string[]).includes('vlm'));
 }
 
+/** Whether a module asks a model with these parameters (registry 5.2, design doc 25 D84): it needs one, or its
+ * switch (`vlm_switch`, EEF's 「使用 VLM 辅助」) is on - by its default when the form leaves it alone. */
+export function asksModel(m: ModuleSpec | undefined, params?: Record<string, unknown>): boolean {
+  if (!m) return false;
+  if (needsVlm(m)) return true;
+  if (!m.vlm_switch) return false;
+  const given = params?.[m.vlm_switch];
+  if (given !== undefined && given !== null) return given !== false;
+  const props = (m.param_schema as { properties?: Record<string, { default?: unknown }> } | undefined)?.properties;
+  return props?.[m.vlm_switch]?.default !== false;
+}
+
 /** Modules opted into by hand: no preset and no 全选可用 turns them on - the EEF module, which needs an
  * uploaded file and, since D49, judges episodes (it stays opt-in). The advisory camera defects ride on
  * task_success and are not offered at all (`offered`). */
@@ -74,13 +86,16 @@ export function presetSelection(preset: 'full' | 'quick', reg: ModuleRegistry, r
 }
 
 /**
- * A module's parameter fields for this dataset (C1 param_schema): a parameter its preflight asks for - needs_input
- * naming it in `input_hint.field`, outside a choice group - is required here though optional in the schema. That is
- * EEF's trajectory.json where the platform cannot compute the trajectory: optional only where it can (design doc 24).
+ * A module's parameter fields for this dataset (C1 param_schema): only those its preflight says apply here
+ * (`applicable_params`, design doc 25 §4.2: EEF's gripper reference only with a third-person camera); a parameter
+ * its preflight asks for - needs_input naming it in `input_hint.field`, outside a choice group - is required here
+ * though optional in the schema. That is EEF's trajectory.json where the platform cannot compute the trajectory:
+ * optional only where it can (design doc 24).
  */
 export function moduleParamFields(spec: ModuleSpec | undefined, result: PreflightResult | null | undefined): ParamField[] {
-  const fields = paramFields(spec?.param_schema);
   const a = spec ? availabilityOf(result, spec.id) : undefined;
+  const applicable = a?.applicable_params ? new Set(a.applicable_params) : null;
+  const fields = paramFields(spec?.param_schema).filter((f) => !applicable || applicable.has(f.key));
   const asked = a?.availability === 'needs_input' ? a.input_hint?.field : undefined;
   return asked ? fields.map((f) => (f.key === asked && !f.choiceGroup ? { ...f, required: true } : f)) : fields;
 }

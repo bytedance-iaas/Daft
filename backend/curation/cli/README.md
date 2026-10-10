@@ -92,6 +92,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 **VLM**：`--vlm-backend <名>`（站点配置 `vlm_backends` 里的预设）或 `--vlm-endpoint <URL> --vlm-model <名>`（缺省取 `$CURATION_VLM_ENDPOINT` / `$CURATION_VLM_MODEL`）；密钥只放在环境变量里，`--vlm-api-key-env <变量名>` 指明是哪个变量（缺省 `ARK_API_KEY`）。每条调模型的命令先 `GET /models` 探活一次，不通就退出码 4，不会逐条报错。
 `check` 可加 `--vlm-reasoning-effort <档位>`：给了才在每个模型请求里带 `reasoning_effort`，值原样转交、命令行不校验；不给时请求与 v1 逐字节相同（v1 从不发这个字段）。
+`check` 的 `--no-vlm`（设计 25 D84）：这次调用没有模型后端（任务没选模型时 Daemon 传）——带模型开关的模块（EEF，`use_vlm`）只跑 CPU 的那部分、
+模型一路记 `no_vlm_backend`；所选模块里有要模型的（`task_success`）时是用法错误。不带它时照旧用 `--vlm-*` 或配置里的端点。
 
 **凭证只走环境变量**，没有任何参数接收密钥（argv 在 `ps` 里全局可见）：
 
@@ -142,6 +144,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `info.json` 结构校验沿用 v1 的 `validate_info`，报错原文放进 `validation`（中文，照抄给用户）。
 - 运动学极限：型号读到且在规格库里是 `available`；读到但不在规格库里是 `unsupported`，只跳过这一项，其余模块照常；读不到（缺失、空串或 `unknown`）是 `needs_input`，`input_hint.options` 列出规格库的 9 个型号。`--embodiment-id` 覆盖 `robot_type`，与 v1 相同。
 - 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示这些条不判成败（D72）。
+  EEF–视频一致性（注册表 5.2 起不再必须有模型）：没传 `--vlm-backend` 照常 `available`，`notes` 末尾一条 `vlm_backend_missing: …` 作提醒；
+  `--param eef_video_consistency.use_vlm=false` 时不提醒。它的条目另有 `trajectory_source`、`cameras`（每路相机的安装方式、归属、能否画与原因）
+  与 `applicable_params`（这个数据集上适用的参数：有第三视角相机才有夹爪参考，停用的参数不在内）。
 - `--modules` 只报告所选模块，没选的模块不追问。原因文案用英文，`validation` 里 v1 的报错保持中文原文。
 - 列目录时发现缺文件的条写进 `warnings`：LeRobot v2 缺数据 parquet 或某个机位视频的条照 v1 跳过（见 snapshot）；v3 的不跳过，检查时读不了、记为出错。
 - 编号不是 0 … count-1 时（从大数据集里取出、没有重新编号的子集；mcap 按文件名 `episode_<N>.mcap` 编号），`dataset.episode_indices` 写出全部编号，写法同 `--episodes`（如 `1,3,5`、`2604-2626`），`warnings` 里另有一句提示；编号正常的数据集没有这个字段（F12.8）。
@@ -248,7 +253,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   模型复核（VLM 参数与其他 VLM 模块相同：`--vlm-backend` / `--vlm-endpoint` / `--vlm-model` / `--retry` / `--hedge`；调用种类
   `eef_review`，用量记在这个模块名下；超时默认 120 秒，`--set checks.task_success.vlm.timeouts_s.eef_review=S`），然后按设计 12
   附录 C.9 给出 `passed = true`（判过）、`false`（判废，理由在 `details.reason`）或 `null`（转人工）。没给文件时 `preflight` 报
-  `needs_input: trajectory_missing`，给了文件没给 VLM 后端时报 `needs_input: vlm_backend_missing`。只有它、没有 `task_success` 时
+  `needs_input: trajectory_missing`；没给 VLM 后端不再是 `needs_input`（注册表 5.2，设计 25 D84）：`available` 带一条提醒，
+  运行时没有模型（`--no-vlm`）或 `use_vlm=false` 就只用 CPU 的测量。只有它、没有 `task_success` 时
   不读 v1 的数据行，媒体自己读（远端数据集按需分段读到临时目录，调用结束删掉）。`aggregate` 在调用边界把它作为一票否决项加进
   v1 的判决配置（`verdict.py` 不变），不选它时配置与之前完全相同。每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`、
   `template_sha256`、`review_config`（窗口数、帧数、模型、prompt / Schema 版本、预处理），`--resume` 只跳过这些都没变的行，

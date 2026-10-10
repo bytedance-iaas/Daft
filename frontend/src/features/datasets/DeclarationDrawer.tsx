@@ -26,9 +26,11 @@ import {
   clone,
   declarationJson,
   declared,
+  declareFixed,
   emptyDeclaration,
   FINGER_AXES,
   fxcxfycy,
+  isDeclaredFixed,
   LAYOUTS,
   missingOf,
   MODELS,
@@ -522,7 +524,12 @@ function Cameras({ value, onChange, rows, columns }: { value: Declaration; onCha
                 placeholder={T.mountUnknown}
                 style={{ width: 160 }}
                 data-testid={`decl-mount-${r.name}`}
-                onChange={(v: CameraCalibration['mount']) => set(r.source, { mount: v, ...(v === 'wrist' && !r.calibration?.owner ? { owner: 'arm' } : {}) })}
+                onChange={(v: CameraCalibration['mount']) =>
+                  // a moving camera made fixed, or a declared-fixed one made moving again: the assumption follows (§3.3)
+                  (v === 'fixed_external' && r.calibration?.mount === 'moving') || (v === 'moving' && isDeclaredFixed(r.calibration))
+                    ? onChange(declareFixed(value, r.source, v === 'fixed_external'))
+                    : set(r.source, { mount: v, ...(v === 'wrist' && !r.calibration?.owner ? { owner: 'arm' } : {}) })
+                }
               >
                 {MOUNTS.map((m) => (
                   <Select.Option key={m} value={m}>
@@ -532,6 +539,19 @@ function Cameras({ value, onChange, rows, columns }: { value: Declaration; onCha
               </Select>
               {r.calibration?.mount === 'wrist' ? (
                 <Input size="mini" value={r.calibration.owner ?? ''} addBefore={T.cameraCols.owner} style={{ width: 160 }} onChange={(v) => set(r.source, { owner: v || null })} />
+              ) : null}
+              {r.calibration?.mount === 'moving' ? (
+                <Tooltip content={T.treatFixedHint}>
+                  <Button size="mini" data-testid={`decl-treat-fixed-${r.name}`} onClick={() => onChange(declareFixed(value, r.source, true))}>
+                    {T.treatFixed}
+                  </Button>
+                </Tooltip>
+              ) : isDeclaredFixed(r.calibration) ? (
+                <Tooltip content={T.treatFixedHint}>
+                  <Tag size="small" color="orange" data-testid={`decl-declared-fixed-${r.name}`}>
+                    {T.declaredFixedTag}
+                  </Tag>
+                </Tooltip>
               ) : null}
             </Space>
           ),

@@ -2,7 +2,7 @@ import { Alert, Button, Card, Collapse, Grid, InputNumber, Select, Space, Switch
 import { Link } from 'react-router-dom';
 import type { ModuleRegistry, VlmBackend } from '../../api/types';
 import { effortOptions, knowsLevels } from '../../features/keys/BackendDrawer';
-import { needsVlm } from '../../lib/preflight';
+import { asksModel, needsVlm } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormValues, TimeoutKey } from './formModel';
@@ -10,13 +10,15 @@ import { activeModules } from './formModel';
 
 const { Row, Col } = Grid;
 
-/** 模型配置 (07 §3, 08 §4.1): backend, model, 思考强度 (「模型默认」 sends nothing). */
+/** 模型配置 (07 §3, 08 §4.1): backend, model, 思考强度 (「模型默认」 sends nothing). Required when a module needs a
+ * model; optional when the modules only use one if there is one (design doc 25 D84: EEF's 「使用 VLM 辅助」). */
 export function ModelSection({
   v,
   set,
   errors,
   backends,
   registry,
+  required = true,
   onAddBackend,
 }: {
   v: FormValues;
@@ -24,12 +26,13 @@ export function ModelSection({
   errors: Errors;
   backends: VlmBackend[];
   registry: ModuleRegistry | undefined;
+  required?: boolean;
   onAddBackend: () => void;
 }) {
   const backend = backends.find((b) => b.name === v.vlmBackend);
   const model = backend?.models.find((m) => m.model_name === v.vlmModel);
   const names = (registry?.modules ?? [])
-    .filter((m) => needsVlm(m) && activeModules(v).includes(m.id))
+    .filter((m) => activeModules(v).includes(m.id) && (needsVlm(m) || asksModel(m, v.params[m.id])))
     .map((m) => m.name_zh)
     .join(zh.common.and);
   const slow = ['high', 'xhigh', 'max'].includes(v.effort);
@@ -39,11 +42,12 @@ export function ModelSection({
         <Space>
           {zh.taskForm.sectionModel}
           <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
-            {zh.taskForm.modelDesc(names)}
+            {required ? zh.taskForm.modelDesc(names) : zh.taskForm.modelOptionalDesc(names)}
           </Typography.Text>
         </Space>
       }
     >
+      {!required && !v.vlmBackend ? <Alert type="info" style={{ marginBottom: 12 }} content={zh.taskForm.modelOptionalNone} data-testid="model-optional-none" /> : null}
       <Row gutter={24}>
         <Col span={8}>
           <Field
@@ -55,7 +59,7 @@ export function ModelSection({
                 </Link>
               </span>
             }
-            required
+            required={required}
             error={errors.vlmBackend}
           >
             <Select
@@ -63,9 +67,10 @@ export function ModelSection({
               placeholder={zh.taskForm.backendPlaceholder}
               aria-label={zh.taskForm.backend}
               status={errors.vlmBackend ? 'error' : undefined}
-              onChange={(x: string) => {
+              allowClear={!required}
+              onChange={(x: string | undefined) => {
                 const b = backends.find((y) => y.name === x);
-                set({ vlmBackend: x, vlmModel: b?.models.length === 1 ? b.models[0].model_name : '', effort: '' }, 'vlmBackend');
+                set({ vlmBackend: x ?? '', vlmModel: b?.models.length === 1 ? b.models[0].model_name : '', effort: '' }, 'vlmBackend');
               }}
               options={backends.map((b) => ({ label: `${b.name}（${b.kind === 'ark' ? zh.credentials.kindArk : zh.credentials.kindCustomShort}${b.verify_state === 'ok' ? '' : ` · ${zh.verify[b.verify_state]}`}）`, value: b.name }))}
             />
@@ -80,7 +85,7 @@ export function ModelSection({
           </Field>
         </Col>
         <Col span={8}>
-          <Field label={zh.taskForm.model} required error={errors.vlmModel} extra={backend && !backend.models.length ? zh.taskForm.noModel : undefined}>
+          <Field label={zh.taskForm.model} required={required || Boolean(v.vlmBackend)} error={errors.vlmModel} extra={backend && !backend.models.length ? zh.taskForm.noModel : undefined}>
             <Select
               value={v.vlmModel || undefined}
               placeholder={zh.taskForm.modelPlaceholder}

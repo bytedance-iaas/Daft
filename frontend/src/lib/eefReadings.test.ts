@@ -118,6 +118,18 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(eefTrajectorySource(eefOpinionRecord(3).details as Record<string, unknown>)).toBeNull();     // an uploaded file
   });
 
+  it('reads a trajectory generated from the declaration, and an opinion nobody was asked for (design doc 25 §3.3, D84)', async () => {
+    const { eefOpinion, eefTrajectorySource } = await import('./eefReadings');
+    const src = eefTrajectorySource({
+      trajectory_source: { kind: 'generated', status: 'generated', declaration: { sha256: 'x', version: 3 }, assumed: ['calibration.tool'], declared_fixed: ['head'] },
+    })!;
+    expect(src).toMatchObject({ kind: 'generated', version: 3, assumed: ['calibration.tool'], declaredFixed: ['head'], reason: null });
+    expect(zh.eefDetail.source.generated(src.version)).toBe('轨迹由平台按数据集声明（第 3 版）生成');
+    const op = eefOpinion({ assessment_mode: 'vlm_opinion', opinion: { status: 'not_asked', missing: 'no_vlm_backend', cameras: {} } })!;
+    expect([op.status, op.missing]).toEqual(['not_asked', 'no_vlm_backend']);
+    expect(zh.eefDetail.opinion.notAsked(zh.eefDetail.output.missing[op.missing!])).toBe('没有问模型（没有模型后端）：这一条只有 CPU 的测量');
+  });
+
   it('says which part of a clip got no answer and why', async () => {
     const { eefOpinion } = await import('./eefReadings');
     const op = eefOpinion({

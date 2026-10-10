@@ -516,6 +516,23 @@ class Run:
             shutil.rmtree(root, ignore_errors=True)
             log.info("task %s: source cache %s removed", self.task_id, root)
 
+    def stage_asks_model(self, modules) -> bool:
+        """Whether a command of these modules asks a model (registry 5.2, design doc 25 D84): one needs a model, or
+        its switch is on and the task has one - an EEF stage without a model runs its CPU part alone."""
+        rows = {m.module_id: m for m in self.repo.get_task_modules(self.task.id)}
+        snap = self.task.vlm_snapshot if isinstance(self.task.vlm_snapshot, dict) else None
+        has_model = bool(snap and snap.get("endpoint") and snap.get("model"))
+        for mid in modules:
+            if mid not in registry.ids():
+                continue
+            spec = registry.get(mid)
+            if "vlm" in spec.needs:
+                return True
+            row = rows.get(mid)
+            if spec.vlm_switch and has_model and spec.asks_model((row.params if row is not None else None) or {}):
+                return True
+        return False
+
     def vlm_args(self) -> list[str]:
         snap = self.task.vlm_snapshot if isinstance(self.task.vlm_snapshot, dict) else None
         if not snap or not snap.get("endpoint") or not snap.get("model"):

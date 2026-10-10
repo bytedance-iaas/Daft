@@ -56,14 +56,57 @@ def _unsupported(reason: str, code: str, args: dict | None = None) -> dict:
     return out
 
 
-def module_entry(base: dict, *, vlm_backend: bool) -> dict:
-    """The module's preflight entry (D49): the file first (``consistency_entry``), then a VLM backend -
-    the module reviews with a model and cannot run without one."""
-    if base.get("availability") != C.AVAILABLE or vlm_backend:
+#: the reminder of an available module without a model backend (design doc 25 D84): a note, never needs_input
+NOTE_VLM_BACKEND_MISSING = ("vlm_backend_missing: no VLM backend chosen - the module runs on the CPU's measurement alone, "
+                            "the model's channel missing (single_source: no_vlm_backend); pick one to have its opinion")
+
+
+#: with the model off and no gripper reference nothing measures a fixed third-person camera (design doc 25 §4.3)
+NOTE_THIRD_PERSON_UNMEASURED = ("use_vlm is off and there is no gripper reference: the fixed third-person cameras are "
+                                "not assessed (cannot tell); give a gripper reference or turn the model on")
+
+
+def module_entry(base: dict, *, vlm_backend: bool, use_vlm: bool = True) -> dict:
+    """The module's preflight entry: what ``consistency_entry`` (or the source's entry) says. Since registry 5.2 (design
+    doc 25 D84) the module no longer needs a model: without a backend it is still available, with a reminder - the
+    model's channel is then missing; with 「使用 VLM 辅助」 off nothing is said."""
+    if base.get("availability") != C.AVAILABLE or vlm_backend or not use_vlm:
         return dict(base)
-    return {**base, "availability": C.NEEDS_INPUT, "reason_code": C.VLM_BACKEND_MISSING,
-            "reason": "no VLM backend chosen; pick one (add one first if there is none)",
-            "input_hint": {"field": "vlm"}}
+    return {**base, "notes": [*base.get("notes", []), NOTE_VLM_BACKEND_MISSING]}
+
+
+def bundle_cameras(result) -> list[dict]:
+    """The cameras of a trajectory bundle as the C2 preflight lists them: mount, hand, whether a projection can be
+    computed or was given (``drawable``)."""
+    out: dict[str, dict] = {}
+    for s in result.samples.values():
+        hands = ((s.sample or {}).get("umi") or {}).get("camera_hands") or {}
+        for cid, cam in s.cameras.items():
+            media = cam.media or {}
+            src = media.get("topic") or next((p for p in str(media.get("uri") or "").split("/")
+                                              if p.startswith("observation.images.")), None)
+            c = out.setdefault(cid, {"source": src, "camera_id": cid, "mount": cam.mount, "owner": hands.get(cid),
+                                     "drawable": False, "reason": None})
+            if cam.mount == "moving":
+                c["reason"] = "moving_camera_unsupported"
+                continue
+            if cam.provided or cam.calibration(s) is not None:
+                c["drawable"], c["reason"] = True, None
+            elif not c["drawable"]:
+                c["reason"] = C.PROJECTION_MISSING
+    return list(out.values())
+
+
+def applicable_params(cameras: list[dict] | None) -> list[str]:
+    """The module's parameters that apply to the dataset (design doc 25 §4.2): retired (``deprecated``) ones never,
+    those with ``x-applies-when: third_person_camera`` (the gripper reference) only where a camera is a fixed
+    third-person one - or where the cameras are not known (``cameras`` empty)."""
+    from ...contracts import modules as registry
+
+    props = registry.get(MODULE_ID).param_schema.get("properties") or {}
+    third = not cameras or any(c.get("mount") == "fixed_external" for c in cameras)
+    return [k for k, p in props.items() if not p.get("deprecated")
+            and (p.get("x-applies-when") != "third_person_camera" or third)]
 
 
 def _record_check(params: dict, root: str | None):
@@ -265,5 +308,5 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
                              table.get("reason_code") or C.PROJECTION_MISSING)
     else:
         entry = {"availability": C.AVAILABLE}
-    entry.update(subitems=subitems, episode_counts=counts, notes=notes)
+    entry.update(subitems=subitems, episode_counts=counts, notes=notes, _cameras=bundle_cameras(result))
     return entry

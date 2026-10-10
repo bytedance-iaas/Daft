@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Declaration } from '../api/types';
-import { applyTemplate, canGenerate, cameraReason, fxcxfycy, missingOf, parseDeclaration, setCamera, shortName, withFour } from './declaration';
+import { applyTemplate, canGenerate, cameraReason, declareFixed, fxcxfycy, isDeclaredFixed, missingOf, parseDeclaration, setCamera, shortName, withFour } from './declaration';
 
 const FRONT = 'observation.images.front';
 const base: Declaration = {
@@ -41,5 +41,19 @@ describe('the dataset declaration form (design doc 25 §3)', () => {
     expect(out.calibration!.tool!.tcp_offset_m).toEqual([0, 0, 0.1034]);
     expect(out.semantics!.pose!.frame_id).toBe('panda_link8') ;
     expect(out.suspects).toBeUndefined();
+  });
+});
+
+describe('a moving camera declared fixed (design doc 25 §3.3)', () => {
+  it('becomes a third-person camera on an assumption, and goes back without it', () => {
+    const moving = setCamera(base, FRONT, { mount: 'moving', assumptions: [{ code: 'mount_from_keyword', args: { word: 'head' } }] });
+    expect(cameraReason(moving.calibration!.cameras![FRONT])).toBe('moving_camera_unsupported');
+    const fixed = declareFixed(moving, FRONT, true);
+    const cam = fixed.calibration!.cameras![FRONT];
+    expect([cam.mount, cam.assurance, isDeclaredFixed(cam)]).toEqual(['fixed_external', 'model_assumed', true]);
+    expect(cam.assumptions!.map((a) => a.code)).toEqual(['mount_from_keyword', 'mount_declared_fixed']);
+    expect(cameraReason(cam)).toBe('intrinsics_missing');                // a fixed camera's needs from now on
+    const back = declareFixed(fixed, FRONT, false).calibration!.cameras![FRONT];
+    expect([back.mount, isDeclaredFixed(back), back.assumptions!.map((a) => a.code)]).toEqual(['moving', false, ['mount_from_keyword']]);
   });
 });

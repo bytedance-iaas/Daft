@@ -103,6 +103,10 @@ class _RemoteLeRobotRecords:
         return self.local.read(sample, specs)
 
 
+class _NoModel(Exception):
+    """The model is not asked (VLM switched off, or no backend): why, as a ``single_source.missing`` reason."""
+
+
 class EefJudge:
     """The EEF module's per-episode judge inside the vlm stage (``StageRun``, D49): built once per
     call (file, template, configuration), opened inside the call's VLM session (model, asker, cache),
@@ -218,6 +222,10 @@ class EefJudge:
                 except RC.RecordMappingError as e:
                     self.record_note = f"the declaration's records cannot be compared: {e}"
         self.ctx, self.run_dir, self.storage, self.params = ctx, run_dir, storage, params
+        #: design doc 25 D84: 「使用 VLM 辅助」 - off, the model is never asked; on without a backend, its channel is
+        #: missing (``vlm_missing``: set by the stage, which knows whether an endpoint is configured)
+        self.use_vlm = bool(params.get("use_vlm", True))
+        self.vlm_missing: str | None = None
         self.out_dir = module_dir(run_dir, MODULE)
         # a remote LeRobot dataset's videos are read where they are, only the episode's window, through the
         # vlm stage's shared blocks (design doc 23 §3.2); the scratch directory keeps the record's meta and data
@@ -360,15 +368,17 @@ class EefJudge:
         from ..extensions.eef_consistency.umi import PROMPT_VERSION as UMI_PROMPT
         from . import eef_review
 
-        self.model = str(self.vlm["model"])
+        self.model = None if self.vlm_missing else str(self.vlm["model"])
         self.review_config = hashlib.sha256(json.dumps(
             {"windows": self.per_camera, "frames": self.per_window, "model": self.model, "prompt": R.PROMPT_VERSION,
+             **({"vlm_missing": self.vlm_missing} if self.vlm_missing else {}),
              "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS,
              "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {},
              **({"opinion": [OP.PROTOCOL, OP.PROMPT_VERSION, OP.ANSWER_SCHEMA, OP.MAX_CLIP_S]} if self.opinion else {}),
              **({"umi_prompt": UMI_PROMPT} if self.umi else {})},
             sort_keys=True).encode()).hexdigest()
-        self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
+        self.ask = None if self.vlm_missing else \
+            eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
         where = (self.derived.describe() if self.derived is not None
                  else f"trajectory.json sha256 {self.result.sha256[:12]}, {len(self.result.samples)} episode(s) declared")
@@ -376,7 +386,8 @@ class EefJudge:
             self.ctx.log("warning", f"{MODULE}: {self.record_note}")
         self.ctx.log("info", f"{MODULE}: {where}, profile {self.params['threshold_profile']}, "
                              f"seeds {self.cfg.seed_root or 'none'}, gripper template "
-                             f"{self.template_sha[:12] if self.template_sha else 'none'}, model {self.model}"
+                             f"{self.template_sha[:12] if self.template_sha else 'none'}, model "
+                             f"{self.model or {'vlm_off': 'none (VLM switched off)', 'no_vlm_backend': 'none (no backend)'}.get(self.vlm_missing, 'none')}"
                              + ("; no gripper reference: the model's opinion only, no verdict (design doc 12 §10.5)"
                                 if self.opinion else ""))
 
@@ -466,11 +477,16 @@ class EefJudge:
 
             bridged = umi.fill_gaps(sample)
         try:
+            if self.vlm_missing:                 # nobody to ask: the channel is missing, said why (design doc 25 §7.1)
+                raise _NoModel(self.vlm_missing)
             self._fetch(sample)
             op = OP.opinion_episode(sample, media_root=self.media_root, ask=self.ask, cache=self.cache,
                                     model=self.model,
                                     allowed_mounts=self.cfg.allowed_mounts,
                                     options=getattr(self.ask, "video_options", {}))
+        except _NoModel as e:
+            op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "not_asked", "cameras": {},
+                  "segments": 0, "flagged": False, "max_confidence": None, "requests": 0, "missing": str(e)}
         except Exception as e:  # noqa: BLE001 - an opinion that could not be had changes nothing
             op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "failed", "cameras": {},
                   "segments": 0, "flagged": False, "max_confidence": None, "requests": 0,
@@ -481,7 +497,12 @@ class EefJudge:
             op["interpolation"] = bridged
         ego = self._ego_motion(ep, sample)
         evidence: list[str] = []                                  # the overlay is drawn live
-        merged = self._merged(opinion=op, ego=ego)
+        nobody = None
+        if self.vlm_missing:
+            from ..extensions.eef_consistency import combine as CB
+
+            nobody = f"没给夹爪参考，模型也没问（{CB.MISSING_ZH.get(self.vlm_missing, self.vlm_missing)}）"
+        merged = self._merged(opinion=op, ego=ego, why=nobody)
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
                   "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,
@@ -578,7 +599,8 @@ class EefJudge:
         cfg = CB.settings(prof)
         cpu = CH.cpu_channel(detail, prof, full_at=cfg["full_at"]) if detail else None
         rev = CH.review_channel(review, detail) if review is not None else None
-        vlm_missing = CB.MODEL_NO_ANSWER if review is not None and not (review.get("cameras") or {}) else None
+        vlm_missing = self.vlm_missing or (CB.MODEL_NO_ANSWER if review is not None and not (review.get("cameras") or {})
+                                           else None)
         op = CH.opinion_channel(opinion, umi=self.umi) if opinion is not None else None
         eg = CH.ego_channel(ego, getattr(prof, "ego_motion", None), full_at=cfg["full_at"]) if ego else None
         merged = CB.merge(cpu=cpu, review=rev, opinion=op, ego=eg, cfg=cfg, vlm_missing=vlm_missing,
@@ -609,6 +631,9 @@ class EefJudge:
             return None, []
         evidence = [self._rel(e["path"]) for e in detail.get("evidence", [])]
         self._record_paths(detail)
+        if self.vlm_missing:                         # no model (switched off, or no backend): the CPU alone
+            merged = self._merged(detail=detail)
+            return self._judged(merged, detail, None, evidence)
         t1 = time.perf_counter()
         requests: dict = {}
         try:

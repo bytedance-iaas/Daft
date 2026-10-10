@@ -70,6 +70,9 @@ older records get their level). Tasks started from 5.0 on freeze the default lev
 5.1 (design doc 25 §3, D83): the dataset declaration says what the EEF module's ``gripper_calibration`` and
 ``record_mapping`` gave - both parameters are ``deprecated`` (the console does not offer them; an older task's
 still run), and a robot arm's trajectory is generated from the declaration.
+5.2 (design doc 25 §4.2-§4.3, D84): the EEF module no longer ``needs`` a VLM - its ``use_vlm`` switch (on by default)
+says whether it asks one (``vlm_switch``); with it off, or with no backend, the model's channel is missing and the
+task still runs.
 """
 from __future__ import annotations
 
@@ -77,7 +80,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "5.1"
+REGISTRY_VERSION = "5.2"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -239,6 +242,9 @@ class ModuleSpec:
     #: 1.14: a rider is answered inside the model requests of the module it names - it is never
     #: selected on its own, runs whenever its host runs, and makes no request of its own
     rides_on: str | None = None
+    #: 5.2 (design doc 25 D84): a module that may ask a model without needing one - the boolean parameter that
+    #: switches it (on by default); a task without a backend still runs it, the model's channel then missing
+    vlm_switch: str | None = None
 
     @property
     def covers(self) -> tuple[str, ...]:
@@ -278,7 +284,17 @@ class ModuleSpec:
                "mergeable": self.merge_units is not None}
         if self.rides_on:
             out["rides_on"] = self.rides_on
+        if self.vlm_switch:
+            out["vlm_switch"] = self.vlm_switch
         return out
+
+    def asks_model(self, params: dict | None = None) -> bool:
+        """Whether the module asks a model in a task with these parameters: it needs one, or its switch is on."""
+        if "vlm" in self.needs:
+            return True
+        if self.vlm_switch:
+            return bool((params or {}).get(self.vlm_switch, True))
+        return False
 
 
 def _no_params() -> dict:
@@ -307,6 +323,9 @@ def _upload(kind: str, accept: list[str], max_mb: int, **fields) -> dict:
 #: The EEF module's two ways to find the gripper in the picture (1.10): a form offers one of them.
 #: Optional since 1.12 (D-E15): without either, the model gives its opinion only (design doc 12 §10.5).
 GRIPPER_REFERENCE = {"id": "gripper_reference", "title": "夹爪参考", "required": False}
+#: 5.2 (design doc 25 §4.2): a parameter that applies only where the dataset has a fixed third-person camera - the
+#: preflight's ``applicable_params`` leaves it out elsewhere (the gripper reference is measured in such a camera).
+THIRD_PERSON_CAMERA = "third_person_camera"
 
 
 def upload_params(module_id: str) -> dict[str, str]:
@@ -417,25 +436,31 @@ def _eef_params() -> dict:
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
-                            "每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考可以不给：不给时只请模型看整段视频给出意见"
-                            "（哪些片段不匹配、置信度多少），不参与判决",
-                default="", **{"x-choice-group": GRIPPER_REFERENCE}),
+                            "每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考给了就按画面测量；不给时只有模型看整段视频的意见"
+                            "（哪些片段不匹配、置信度多少），关掉「使用 VLM 辅助」就判断不了。只用于第三视角相机",
+                default="", **{"x-choice-group": GRIPPER_REFERENCE, "x-applies-when": THIRD_PERSON_CAMERA}),
             "gripper_template": _upload(
                 "eef_gripper_template", [".json"], 64, title="夹爪外观模板",
                 description="gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，"
-                            "不用逐条 episode 点种子",
-                default="", **{"x-choice-group": GRIPPER_REFERENCE}),
+                            "不用逐条 episode 点种子。只用于第三视角相机",
+                default="", **{"x-choice-group": GRIPPER_REFERENCE, "x-applies-when": THIRD_PERSON_CAMERA}),
             "record_mapping": _upload(
                 "eef_record_mapping", [".json"], 8, title="数据集记录映射",
                 description="已停用（5.1）：数据集的位姿与关节记录写在数据集声明里。旧任务给过的仍然照用", default="",
                 deprecated=True),
+            "use_vlm": {
+                "type": "boolean", "title": "使用 VLM 辅助",
+                "description": "开着时请模型复核或看整段视频给意见，和 CPU 的测量各算各的、取大；关掉只用 CPU（夹爪参考的测量、"
+                               "腕部相机的自运动），不要求模型服务。没选模型服务时照常运行，模型那一路记为「没有模型后端」",
+                "default": True},
             "threshold_profile": {
-                "title": "阈值", "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，"
-                                                "所以不再提供「不判定」",
+                "title": "阈值", "description": "demo 由基准噪声底定、未校准：结论的档位（不一致 / 可能不一致）按它划，"
+                                                "置信度只用来排序、不是概率",
                 "default": "demo",
                 "oneOf": [{"const": "demo", "title": "demo（未校准）"}]},
             "camera_mounts": {
-                "title": "参与的相机", "description": "腕部相机只做位置与方向（D-E9）；移动相机不支持",
+                "title": "参与的相机", "description": "腕部相机只看自运动与本手的位置、方向；会动的相机不支持"
+                                                    "（实际不动的，可在数据集声明里「视为固定」）",
                 "default": "fixed_external_and_wrist",
                 "oneOf": [{"const": "fixed_external_and_wrist", "title": "外部固定与腕部"},
                           {"const": "fixed_external", "title": "只看外部固定相机"}]},
@@ -575,8 +600,8 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
         id="eef_video_consistency", name_zh="EEF–视频一致性",
         summary_zh="比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配",
-        level="episode", needs=frozenset({"video", "vlm", "eef_input"}), block="vlm", stage="vlm",
-        depends_on=(),
+        level="episode", needs=frozenset({"video", "eef_input"}), block="vlm", stage="vlm",
+        depends_on=(), vlm_switch="use_vlm",
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
         # 5.0 (design doc 25 §7.3, D81): opinions with a confidence, no machine reject - a person's "inconsistent" on
         # a conflict still blocks (kind human); unsettled / opinion_mismatch are retired, kept for older records

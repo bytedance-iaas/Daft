@@ -200,6 +200,7 @@ def _summary(rev: Revision, m: str) -> dict:
         out.update(eef_report.review_summary(res))
         out.update(eef_report.verdict_summary(res))     # records before registry 5.0 (pass / reject / a person)
         out.update(eef_report.merged_summary(res))      # 5.0 on: opinions with a confidence (design doc 25 §7)
+        out.update(eef_report.source_summary(res))      # the trajectory's source, cameras declared fixed (§3.3)
         out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
         out.update(eef_report.record_summary(res))     # the dataset's own record: reported only (§8.7)
         out.update(eef_report.ego_summary(res))        # the wrist cameras' own motion: reported only (design doc 22 §5.3)

@@ -345,6 +345,23 @@ def review_summary(results: dict) -> dict:
 P_BINS = (("<0.2", 0.2), ("0.2–0.4", 0.4), ("0.4–0.7", 0.7), ("0.7–0.9", 0.9), ("≥0.9", None))
 
 
+def source_summary(results: dict) -> dict:
+    """Where the episodes' trajectories came from (design doc 25 §4.1) and the cameras a person declared fixed
+    (``declared_fixed_cameras``: the report says 「按声明视为固定」, §3.3)."""
+    kinds: dict[str, int] = {}
+    fixed: set[str] = set()
+    for rec in results.values():
+        src = (rec.get("details") or {}).get("trajectory_source")
+        if not isinstance(src, dict):
+            continue
+        kinds[str(src.get("kind") or "unknown")] = kinds.get(str(src.get("kind") or "unknown"), 0) + 1
+        fixed.update(str(c) for c in src.get("declared_fixed") or [])
+    if not kinds:
+        return {}
+    return {"trajectory_sources": [{"name": k, "count": v} for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])],
+            "declared_fixed_cameras": sorted(fixed)}
+
+
 def merged_summary(results: dict) -> dict:
     """The opinions of registry 5.0 (design doc 25 §7): the episodes by label and by p, the conflicts (the only
     cards), what single sources missed, why an episode could not be told, and the CPU voided by tracking."""

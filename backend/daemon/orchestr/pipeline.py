@@ -272,9 +272,11 @@ def _check_batch(run, st: dict, episodes: list[int], number: int, offset: int,
             "--resume", "--pipeline-state", db_path, "--pipeline-next", next_stage]
     if st.get("_pipeline_concurrency") is not None:
         argv += ["--concurrency", str(st["_pipeline_concurrency"])]
-    vlm = st.get("kind") == "vlm"
+    vlm = st.get("kind") == "vlm" and run.stage_asks_model(mods)   # an EEF stage without a model: no model
     if vlm:
         argv += run.vlm_args()
+    elif st.get("kind") == "vlm":
+        argv.append("--no-vlm")                # the task has no model, or the module's switch is off
     argv += run.module_param_args(mods)                        # every module's parameters (registry 2.1)
     if sid == "frame":
         resources.admit_memory(run, sid)

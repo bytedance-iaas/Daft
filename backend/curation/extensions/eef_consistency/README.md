@@ -167,6 +167,28 @@ D=~/ws/ws_general/galbot/dataset2
 跑 ep 0 与 6：`checks/eef_video_consistency/trajectory/episode_000000.json` 等逐条生成；ep0「一致」，ep6 位置「不一致」且诊断支持 `extrinsics_error`
 （与上传 `trajectory.json` 的结果相同）；`details.trajectory_source.kind` 是 `generated`，记录比对 `source: internal`（位姿列对关节角正解）。
 
+### 不用模型、相机与适用参数（设计 25 §4.2–§4.3，F5.24a）
+
+接上一节（`decl.json` 已写好），在 `backend/` 下：
+
+```bash
+P="--param eef_video_consistency.observation_seeds=$D/observations_seed"
+../.venv/bin/python -m curation.cli preflight --input $D/eef_ds2_lr3 --modules eef_video_consistency --declaration decl.json --json \
+  | jq '.modules[0] | {availability, cams: [.cameras[] | [.camera_id, .mount, .drawable]], params: .applicable_params, notes: [.notes[] | select(startswith("vlm_backend_missing"))]}'
+R=$(mktemp -d)
+../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $D/eef_ds2_lr3 --run-dir $R --episodes 0,6 \
+  --declaration decl.json $P --no-vlm --json | jq '.modules.eef_video_consistency.episodes'
+jq -c '[.details.merged.episode.label, ([.details.merged.cells[] | select(.flags | index("single_source")) | .missing] | unique)]' \
+  $R/checks/eef_video_consistency/results.jsonl
+```
+
+预检：`available`，两路 `fixed_external`、都能画，`applicable_params` 里有 `observation_seeds` / `gripper_template`、没有停用的 `record_mapping`，
+`notes` 末尾一条 `vlm_backend_missing: …`（加 `--vlm-backend ark` 或 `--param eef_video_consistency.use_vlm=false` 时没有）。`check --no-vlm` 不发任何模型请求，
+两条照常出结论，单渠道的格写 `no_vlm_backend`；换成 `--param eef_video_consistency.use_vlm=false`（带不带 `--vlm-*` 都一样）写 `vlm_off`。
+`check --modules task_success … --no-vlm` 是用法错误（退出码 2）。DAS（`$D/umi_das`）的预检两路都是 `wrist`、归 `robot0` / `robot1`，`applicable_params` 里没有夹爪参考。
+把声明里一路相机的 `mount` 写成 `fixed_external` 并加假设 `{"code": "mount_declared_fixed"}`（控制台声明抽屉里「会动」的相机点「视为固定」就是这样），
+生成的记录 `details.trajectory_source.declared_fixed` 列出它，报告 EEF 小节的 `declared_fixed_cameras` 也列出它。
+
 ### 原有 EEF 数据
 
 在 `backend/` 下执行（DEMO 数据在仓库外 `~/ws/ws_general/galbot/`，可用 `CURATOR_EEF_DEMO_DATA` 改位置；
@@ -230,7 +252,8 @@ D=~/ws/ws_general/galbot/dataset2
    ```
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
-   `needs_input: trajectory_missing`——平台算不出这个数据集的轨迹，要传文件；给了文件但不给 `--vlm-backend` 时是 `needs_input: vlm_backend_missing`）；`plan.json` 的 `vlm`
+   `needs_input: trajectory_missing`——平台算不出这个数据集的轨迹，要传文件；给了文件但不给 `--vlm-backend` 时仍是 `available`，`notes` 末尾一条
+   `vlm_backend_missing: …` 提醒，注册表 5.2 起模块不再必须有模型）；`plan.json` 的 `vlm`
    阶段是 `eef_video_consistency`；EEF 的 `check` 打印判完的条数与按细码的发现数（注册表 5.0：`inconsistent` 只报告、`conflict` 请人看），
    每条记录的 `details.merged` 写着每个分项 × 相机两边的结论与 p、合并后的标签与标记，`episode` 是整条的标签、p 与一句依据，`details.review` 是每个复核窗口
    （问的点与轴、模型答复）；`revisions/r0001/verdicts.jsonl` 里没有一条因为它是 `drop`，有冲突的条在 `review` 里列着 `("conflict", "eef_check")`；

@@ -1957,6 +1957,8 @@ export interface components {
                 mergeable: boolean;
                 /** @description present on a module answered inside this host module's requests (1.19.0): it runs whenever the host runs, has no request of its own and cannot be selected alone */
                 rides_on?: components["schemas"]["ModuleId"];
+                /** @description present on a module that may ask a model without needing one (5.1.0): the boolean parameter that switches the model on (on by default). A task without a model backend still runs it; the model's part is then missing */
+                vlm_switch?: string;
             }[];
         };
         /**
@@ -3866,6 +3868,18 @@ export interface components {
             drafts?: {
                 [key: string]: components["schemas"]["param_draft"];
             };
+            /** @description EEF-video consistency: the dataset's cameras as the module sees them - each one's mount (fixed_external, wrist, moving), its hand or arm, and whether the platform can draw on it (and why not: mount_unknown, moving_camera_unsupported, intrinsics_missing, extrinsics_missing, camera_tcp_missing, projection_missing) */
+            cameras?: {
+                /** @description the video key (LeRobot, Lance) or the topic (mcap) */
+                source?: string | null;
+                camera_id: string;
+                mount: string | null;
+                owner?: string | null;
+                drawable: boolean;
+                reason?: string | null;
+            }[];
+            /** @description the module's parameters that apply to this dataset, in the registry's order (EEF-video consistency: the gripper reference only where there is a third-person camera; retired parameters never) */
+            applicable_params?: string[];
             /** @description EEF-video consistency: how the task's trajectory is had - upload (the trajectory_json parameter), session (a raw UMI session), generate (a handheld gripper's LeRobot export, or a robot arm's pose record by the dataset declaration), mcap_derive (a handheld gripper's raw mcap), dataset_file (the dataset's own trajectory.json); missing_declaration (the pose is recorded, the declaration lacks what missing names: complete it on the dataset page, or upload a trajectory.json), missing_pose (no pose record: upload a trajectory.json) */
             trajectory_source?: {
                 /** @enum {unknown} */
@@ -3974,7 +3988,7 @@ export interface components {
         /** @description a dotted path into a decoded message: field names, list indexes (joints.0) and * for every element */
         "$defs-path": string;
         assumption: {
-            /** @description what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...) */
+            /** @description what the draft assumed (mount_from_keyword, tool_from_robot_type, pose_frame_by_robot, units_by_convention, ...), or what a person took as given: mount_declared_fixed (a camera drafted as moving declared fixed - it takes part as a third-person camera, reports say so) */
             code: string;
             args?: Record<string, unknown>;
         };

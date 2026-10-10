@@ -7,7 +7,7 @@
 // report sections and logs still carry skill_profile and the profile_vlm stage: the pages must keep
 // rendering such a task, and here they are exercised on it. Its adjudication cards, by contrast, are
 // read live and follow the current contract - one card, one question per line.
-import { canGenerate } from '../lib/declaration';
+import { cameraRows, canGenerate, shortName } from '../lib/declaration';
 import { db } from './db';
 import modulesJson from '../../../docs/contracts/modules.json';
 import type {
@@ -417,6 +417,26 @@ const DIGEST = 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b
 
 const DIGEST2 = 'sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6a5b4c3d2';
 
+type EefCamera = NonNullable<PreflightResult['modules'][number]['cameras']>[number];
+
+/** EEF's parameters that apply (design doc 25 §4.2): retired ones never, the gripper reference only with a
+ * third-person camera (or when the cameras are not known). */
+function eefApplicable(m: (typeof registry.modules)[number], cameras: EefCamera[]): string[] {
+  const props = ((m.param_schema as { properties?: Record<string, { deprecated?: boolean; 'x-applies-when'?: string }> }).properties ?? {}) as Record<
+    string,
+    { deprecated?: boolean; 'x-applies-when'?: string }
+  >;
+  const third = !cameras.length || cameras.some((c) => c.mount === 'fixed_external');
+  return Object.entries(props)
+    .filter(([, x]) => !x.deprecated && (x['x-applies-when'] !== 'third_person_camera' || third))
+    .map(([k]) => k);
+}
+
+/** Without a model backend the module still runs (design doc 25 D84): a reminder, as the CLI's note. */
+function eefNotes(opts: { vlmBackend?: string }, notes: string[] = []): string[] {
+  return opts.vlmBackend ? notes : [...notes, "vlm_backend_missing: no VLM backend chosen - the module runs on the CPU's measurement alone"];
+}
+
 /** The preflight result for a dataset, given the VLM backend and robot type chosen so far. */
 export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; embodiment?: string }): PreflightResult {
   if (!p.format.supported) {
@@ -453,11 +473,15 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
       // like the CLI: the file is optional only where the platform can compute the trajectory - a handheld gripper's
       // data (design doc 24, design doc 22 §5.4); any other dataset is offered and asks for the upload on screen 2
       if (/umi|das_gripper/i.test(p.robotType ?? '')) {
+        // two wrist cameras, one per hand: no third-person camera, no gripper reference to offer
+        const cameras: EefCamera[] = p.cameras.map((c, i) => ({ source: `observation.images.${c}`, camera_id: c, mount: 'wrist', owner: `robot${i}`, drawable: true, reason: null }));
         return {
           id: m.id,
           availability: 'available',
-          notes: ["trajectory generated from the dataset's state and camera calibration"],
+          notes: eefNotes(opts, ["trajectory generated from the dataset's state and camera calibration"]),
           trajectory_source: { kind: 'generate' },
+          cameras,
+          applicable_params: eefApplicable(m, cameras),
         };
       }
       // design doc 25 §4.1: a confirmed declaration that is enough generates the trajectory; a DROID-like dataset
@@ -465,8 +489,21 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
       const ds = db.datasets.find((x: { uri: string }) => x.uri === p.uri);
       const stored = ds ? db.declarations.get(ds.id) : undefined;
       const sources = p.cameras.map((c) => `observation.images.${c}`);
+      const declared = (doc: Parameters<typeof cameraRows>[0]): EefCamera[] =>
+        cameraRows(
+          doc,
+          p.cameras.map((c) => ({ source: `observation.images.${c}`, name: c, width: null, height: null })),
+        ).map((r) => ({ source: r.source, camera_id: r.calibration?.camera_id ?? shortName(r.source), mount: r.calibration?.mount ?? null, owner: r.calibration?.owner ?? null, drawable: r.reason === null, reason: r.reason }));
       if (stored && canGenerate(stored.doc, sources)) {
-        return { id: m.id, availability: 'available', trajectory_source: { kind: 'generate', declaration: { drafted: false } } };
+        const cameras = declared(stored.doc);
+        return {
+          id: m.id,
+          availability: 'available',
+          notes: eefNotes(opts),
+          trajectory_source: { kind: 'generate', declaration: { drafted: false } },
+          cameras,
+          applicable_params: eefApplicable(m, cameras),
+        };
       }
       if (p.name.startsWith('eef_ds2') || p.name.startsWith('droid')) {
         const missing = sources.map((src) => ({ field: `calibration.cameras.${src}.intrinsics`, code: 'intrinsics_missing' }));
@@ -478,6 +515,8 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
           reason_args: { missing },
           input_hint: { field: 'trajectory_json' },
           trajectory_source: { kind: 'missing_declaration', declaration: { drafted: !stored }, missing },
+          cameras: sources.map((src) => ({ source: src, camera_id: shortName(src), mount: 'fixed_external', owner: null, drawable: false, reason: 'intrinsics_missing' })),
+          applicable_params: eefApplicable(m, [{ camera_id: 'x', mount: 'fixed_external', drawable: false }]),
         };
       }
       return {
@@ -487,6 +526,8 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
         reason_code: 'trajectory_missing',
         input_hint: { field: 'trajectory_json' },
         trajectory_source: { kind: 'missing_pose' },
+        cameras: [],
+        applicable_params: eefApplicable(m, []),
       };
     }
     if (needs.includes('state') && p.missing.includes('state')) {

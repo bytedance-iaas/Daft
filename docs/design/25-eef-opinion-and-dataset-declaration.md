@@ -2,7 +2,7 @@
 
 > 状态：**开工稿 v1.1（2026-10-09 晚，三轮评审后）**。评审答复见 §11（第三轮是对照代码的核实，改了 D84 的提醒方式、§7 的发现粒度与边界、
 > 旧任务的缺省级别冻结，F5.24 拆成 a / b）；§10 是开工时的缺省选择，实测后可改。D81–D86 已登记到 00 §7、账本已加 F5.22–F5.26；
-> **F5.22 输出口径、F5.23 数据集声明已落地**（注册表 5.1、C4 5.0.0，§9.1、§9.2 是落地记录），下一步 F5.24a。
+> **F5.22 输出口径、F5.23 数据集声明、F5.24a 第二屏与 VLM 开关已落地**（注册表 5.2、C4 5.1.0，§9.1–§9.3 是落地记录），下一步 F5.24b。
 > 来源：2026-10-09 晚的讨论——「能不能画、能不能比，都不取决于 mcap 还是 LeRobot」「记录能还原就不该要用户上传轨迹」「模块都设计成只输出意见，
 > 不再有判废」「两个渠道不平均、取大、冲突请人看」「完整版可视化展示原始数据里直接看得到的东西，迷你版服务任务」「数据集配置复用 mcap 的配置、做得更通用」。
 > 工程基线：`feat/curator-v2` @ 8c4d89f8b（F5.21，trajectory.json 能算就可选、算不了就必选；注册表 4.4、C4 4.6.0、C7 `viz-mapping/1.1`）。
@@ -376,6 +376,37 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   `trajectory_source=generate`，生成的轨迹与 `dataset2/trajectory.json` 逐帧投影最大差 0.005 px（28126 个点，`tests/eef/test_declaration.py` 的 DEMO 用例）；
   按声明跑 `check`：ep0「一致」0.32，ep6 位置 0.8、诊断支持 `extrinsics_error`，与上传轨迹的结果相同。② das 起草出两路 `wrist`、归 `robot0` / `robot1`，
   手持夹爪用内置 DEMO 标定、各项 `model_assumed`。③ 改声明后旧任务读冻结的版本（`tests/viz/test_declaration.py`）。④ `viz-mapping/1.1` 文件照读、照存。
+
+### 9.3 F5.24a 落地记录（2026-10-10）
+
+- **契约**：C1 升 5.2：EEF 的 `needs` 去掉 `vlm`，新参数 `use_vlm`（布尔，缺省开），模块条目多 `vlm_switch: "use_vlm"`（`ModuleSpec.asks_model(params)`：
+  要模型的模块恒为真，有开关的看开关）；夹爪参考两项加 `x-applies-when: third_person_camera`；几段参数说明去掉了已失效的「参与判决」与内部编号。
+  C2 预检的模块条目加 `cameras[]`（`source`、`camera_id`、`mount`、`owner`、`drawable`、`reason`）与 `applicable_params`（仍是 1.0）。C4 升 5.1.0
+  （`vlm_switch`、中英变更记录）。C7 只在假设代码的说明里补了 `mount_declared_fixed`。
+- **预检**（`cli/preflight.py::_eef_entry`）：`cameras[]` 按来源取——按声明判断的（生成或缺项）用 `declared.readiness` 的相机状态，原始手持 mcap
+  是逐只手的腕部相机（归属按名字），其余读轨迹包（`eef_preflight.bundle_cameras`）；读不到时为空，空表示「不知道」，这时夹爪参考照常给。
+  没选后端时 EEF 条目照常 `available`，`notes` 末尾一条 `vlm_backend_missing: …`；`use_vlm=false` 不提醒；关掉 VLM 又没给夹爪参考、有第三视角相机时
+  另加一条「第三视角相机不测」。顺手修了预检里一个变量遮蔽：前一个模块缺输入时，循环里的 `args` 被改成了一个字典，后面 EEF 读不到任务参数与声明
+  （mcap 数据集常见：缺状态列的模块排在前面）。
+- **CLI**（`check`）：新开关 `--no-vlm`——这次调用没有模型后端（Daemon 在任务没选模型时传）；带上它而所选模块里有 `task_success` 时是用法错误。
+  EEF 在 `use_vlm=false` 或 `--no-vlm` 时不开 VLM 会话、不发请求：复核与整段意见都不做，意见块 `status: not_asked` 带原因；合并时模型一路记
+  `vlm_off` / `no_vlm_backend`，记录的形状与开着时相同（`merged` 的 `tracking` 只在模型复核过时才有）。`planner` 把有 `vlm_switch` 的模块所在段仍定为
+  `vlm` 段（闸门照给）；Daemon 起这一段时按 `Run.stage_asks_model` 决定传 `--vlm-*` 还是 `--no-vlm`（三处：常驻 worker、批次、整段）。
+  `prechecks.needs_vlm` / `task_needs_vlm` 与建任务时的检查按「需要模型，或开关开着且任务选了模型」算，没选模型的 EEF 任务能建能跑。
+- **「视为固定」**（§3.3，验收 ⑤）：声明抽屉里「会动」的相机多一个「视为固定」按钮，改成 `fixed_external`、`model_assumed`、假设 `mount_declared_fixed`；
+  也可以直接在下拉里改，假设跟着加减。生成的轨迹来源带 `declared_fixed`（相机编号），报告 EEF 小节的 `declared_fixed_cameras` 列出它们，
+  控制台小节末尾写「按声明视为固定的相机：…（它真动起来时画面运动分项会报）」，Episode 明细的 EEF 区块也写。数据集级的标定可疑（F5.26）对这类相机不另作处理。
+- **界面**：第二屏按 `applicable_params` 给参数，trajectory.json 按 `trajectory_source` 分三种写法（必填 / 先补声明、上传折叠 / 可选并说轨迹从哪来），
+  「补完后重新预检」按钮直接重跑预检；模型配置在只有「可用模型辅助」的模块时选填，可清空；EEF 卡片标「可用模型辅助」。Episode 明细的 EEF 区块
+  对按声明生成的轨迹写「轨迹由平台按数据集声明（第 N 版）生成」与按假设值的字段，模型没问时写「没有问模型（原因）：这一条只有 CPU 的测量」。
+- **验收**（本机 `curator-daemon-eef`，dataset2 = `eef_ds2_lr3`，das = `umi_das`）：① 把 d2 声明的两路内参清空（第 2 版）后第二屏出「数据集声明还缺：
+  相机内参（exterior_1_left）、相机内参（exterior_2_left）、至少一路能画的相机」与「到数据集页补声明」，上传框折叠；恢复（第 3 版）后点「补完后重新预检」，
+  轨迹一项写「轨迹由平台按数据集声明生成，不用上传」，夹爪参考在。② das 的预检 `mcap_derive`、两路腕部相机归 `robot0` / `robot1`，`applicable_params`
+  里没有夹爪参考。③ 只有图片的 LeRobot 数据集 EEF `unsupported: missing_input`（`video_cause: none_declared`，`tests/cli/test_preflight.py`）。
+  ④ 第一屏清空后端建的 d2 任务（没给种子）7 条全「判断不了：没给夹爪参考，模型也没问（没有模型后端）」，没有模型请求；给种子不选模型：
+  62 格单渠道 `no_vlm_backend`，ep0「一致 0.32」与 F5.23 有模型时的读数相同；开着 `task_success`、EEF 关掉 VLM：EEF 0 次请求、`vlm_off`，任务成败照常 14 次。
+  ⑤ d2 的 `exterior_2_left` 记 `mount_declared_fixed` 跑 ep0、ep6：两条都按第三视角测，报告小节写「按声明视为固定的相机：28221883_left」。
+  不勾 EEF 的任务判决不变：本 feature 没有动判决与非 EEF 模块的代码路径（`--no-vlm` 只在有 `vlm_switch` 的段上传）。
 
 ## 10. 开工时的缺省选择（实测后可改）
 

@@ -78,6 +78,10 @@ def add_vlm(p: argparse.ArgumentParser) -> None:
     g.add_argument("--vlm-reasoning-effort", metavar="LEVEL",
                    help="send reasoning_effort=LEVEL with every model request (default: "
                         "none sent, as v1); the level is not checked here")
+    g.add_argument("--no-vlm", action="store_true",
+                   help="no VLM backend for this call (a task without a model): a module with a model switch "
+                        "(eef_video_consistency) runs its CPU part, its model channel recorded as no_vlm_backend; "
+                        "a module that needs a model (task_success) is a usage error")
 
 
 def add_behaviour(p: argparse.ArgumentParser) -> None:
