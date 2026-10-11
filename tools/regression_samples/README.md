@@ -151,8 +151,9 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 3. 打开输出目录：`meta/info.json` 的 `total_episodes` 等于输出条数，`meta/episodes.jsonl` 每条一行，`injection.json` 的条目数相同。
 4. 用 PyAV 逐条解码输出视频：除 `garble`、`truncate_video`、`zero_fill`、`empty_video` 外，帧数都等于该条 parquet 的行数；
    `resolution` 那一路的宽高与 `injection.json` 里的 `actual` 一致。
-5. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒；
-   `duplicate` 记为可疑。
+5. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒。
+   `duplicate` 不归完整性（`duplicate_content` 已删，D87）：同一个任务再勾上重复检测（`duplicate_check`），明显档（字节级副本）与被复制的那条
+   各得一条 SET-1 发现、互相写明，只报告、都不拒；临界档（重编码副本）画面字节不同，查不出（`taxonomy.json` 里 SET-1 的平台注记）。
 
 登记：
 

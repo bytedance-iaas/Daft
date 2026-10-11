@@ -37,7 +37,7 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
   - 包 `daft.DataFrame.collect`，在硬门过滤**之前**截下每条的检查结果（v1 自己的报告里，被硬门拦下的条目只剩拦下它的那一项）；
   - 包 `requests` 与 `vlm_client.hedged_request`，录下或回放每一次模型调用（对冲补发只认赢的那一发）；
   - 包 `run_pipeline`、`save_report`、`_skill_profile_stage`、`caption_episodes`、`action_hash`、`episode_fingerprint`、`decode_window`，
-    拿到判决、报告、技能画像、补打的任务描述、去重遍历顺序和解码失败；
+    拿到判决、报告、技能画像、补打的任务描述、v1 精确去重的遍历顺序与剔除的重复对和解码失败；
   - 跑 `rejudge` 时再包 `run_rejudge` 与 `apply_decisions`，拿到它改的是哪次跑批、每条改标重判的结果。
 - **录制带**（`vlm_tape.jsonl.gz`）：每行一次调用，存请求的规范形式（提示词全文、每张图的 sha256、模型参数，不存图片本身）
   和当时的响应。回放时按请求哈希取回响应；v2 的请求只要和 v1 差一个字、一帧、一个 JPEG 参数，哈希就对不上。
@@ -45,9 +45,10 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
 - **规范化记录**：每个模块每条 episode 一行，格式与 v2 的 `checks/<module>/results.jsonl` 相同，
   见 [`docs/contracts/cli/result-record.schema.json`](../../docs/contracts/cli/result-record.schema.json)。
   `verdict` 取 `pass` / `fail` / `abstain` / `scored`（打分项，不投票）/ `error`（D33：降级得来的结论也算出错）。
-- **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 两块的顺序依次调 v2 的原子命令（设计 17 §3：CPU 块的检查与去重、
-  VLM 块的模型判定，每一段都拿全部所选条目；D72 起没有补描述这一步，无标注条目不判成败），写出一个普通的 v2 运行目录，`compare` 直接读它
-  （`checks/*/results.jsonl`、`revisions/r0001/` 的清单、`checks/dedup/groups.json`）。
+- **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 两块的顺序依次调 v2 的原子命令（设计 17 §3：CPU 块的检查、
+  VLM 块的模型判定，最后一步 `check duplicate` 是重复检测，D87；每一段都拿全部所选条目；D72 起没有补描述这一步，无标注条目不判成败），
+  写出一个普通的 v2 运行目录，`compare` 直接读它（`checks/*/results.jsonl`、`revisions/r0001/` 的清单、`checks/duplicate_check/groups.json`）。
+  `compare` 比重复检测时只比重复组与动作哈希撞车组；v1 一侧的去重对（`dedup.json` 里剔除的副本与它留下的那条）读成组再比。
   `--replay` 用 v1 的录制带回答；`--fake-vlm` 用内置假模型现答并录一盘新带。调模型的命令都带 `--hedge`
   （v1 总是对冲，挂钩替换的正是对冲函数）和 `--concurrency 64`（N=64 时八把闸门与 v1 出厂值逐项相等）。
   `/models` 探活不算模型调用：v2 每条命令探一次、v1 一次运行探两次，回放时这类请求可重复取用，不计入命中和剩余。
@@ -120,7 +121,7 @@ v2 的命令链对它自己的黄金基线（设计 13 起；v1 的带子答不�
 # 5. v2 的原子命令，按 Daemon 的顺序，由假模型现答并录下全部调用：这就是黄金基线
 $python -m parity run-v2 --out $W/v2-golden --input $W/mini --delivery $W/v2-golden-delivery --fake-vlm
 
-# 6. 回放这盘带子再跑一遍 → [run-v2] done; tape replay: hits=34 misses=0 unused=0
+# 6. 回放这盘带子再跑一遍 → [run-v2] done; tape replay: hits=8 misses=0 unused=0
 #    与基线对账：九项逐位一致、终判清单一致、回放无缺无余 → conclusion: PASS
 $python -m parity run-v2 --out $W/v2 --input $W/mini --delivery $W/v2-delivery --replay $W/v2-golden/vlm_tape.jsonl.gz
 $python -m parity compare --golden $W/v2-golden --candidate $W/v2 --all-strict
@@ -130,23 +131,24 @@ $python -m parity compare --golden $W/v2-golden --candidate $W/v2 --all-strict
 `--fake-vlm` 代替 `--replay …` 时不看带子，由假模型现答，结论应同样是 PASS。
 
 数据完整性模块（设计 14）是 v2 自己的第一道门，v1 没有，所以默认链不带它（加了会让 v1 对 v2 不对等：待裁清单多出可疑条目的卡片）。
-要录一盘带它的 v2 基线，两次 `run-v2` 都加 `--modules data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup,skill_profile`：
-补描述之后多一步 `check integrity`，数值档读它的放行名单；`compare --all-strict` 仍是 PASS，本模块另用
+要录一盘带它的 v2 基线，两次 `run-v2` 都加 `--modules data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,duplicate_check`：
+CPU 块最前面多一步 `check integrity`（不拦后面的段，D57）；`compare --all-strict` 仍是 PASS，本模块另用
 `compare --strict data_integrity --verdict-only task_success` 逐位比（`tests/test_v2_parity.py` 最后一条）。在干净的夹具上三份清单与默认基线相同。
 
 逐项核对：
 - 第 2 步的 `$W/rec/final.json` 里，`passed` 是 `[0, 1, 3, 4, 6]`，`reject` 是 `[2, 5, 7]`
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：
-  这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。
+  这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。这是 v1 自己的精确去重，v1 照旧。
   `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。
-- v2 的基线（第 5 步）终判清单**和 v1 不同**（D71 起 v2 只判一次、不复核、不仲裁，拿不准就转人工）：`$W/v2-golden/revisions/r0001/`
-  里 `passed` `[0, 3]`、`reject` `[1, 2, 4, 5, 6, 7]`——1、4、6 在 v1 里是仲裁救回的，v2 一次判决就判失败；
-  review 里 0、3 是 task_success 弃权，1、4、6 是可复议的判废，7 是被去重剔除条目的复议（D42）。
-  第 2–4 步是 v1 对 v1 自己（`release_v1` 的代码，清单照旧），第 5–6 步是 v2 对 v2 自录的基线；两边的 task_success 清单不再相等，
-  这是设计内的差异（设计 10 §3.0），不是回归。
+- v2 的基线（第 5 步）终判清单**和 v1 不同**：`$W/v2-golden/revisions/r0001/` 里 `passed` `[0, 3, 4, 6, 7]`、`reject` `[1, 2, 5]`——
+  1 在 v1 里是仲裁救回的，v2 只判一次、不复核、不仲裁，判失败就拒（D71）；4、6 没有任务标注，不判成败（D72）；
+  7 是 3 的字节级副本，v1 去重剔除了它，v2 的重复检测只报告（D87），3、7 都通过、各带一条 SET-1 发现。
+  review 里 0、3、7 是 task_success 弃权，1 是可复议的判废（D87 起没有去重剔除条目的复议）。
+  第 2–4 步是 v1 对 v1 自己（`release_v1` 的代码，清单照旧），第 5–6 步是 v2 对 v2 自录的基线；两边的 task_success 清单与重复的处理不再相等，
+  这是设计内的差异（设计 10 §3.0、设计 26 §0），不是回归。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
-  v2 的带子（`$W/v2-golden/vlm_tape.jsonl.gz`）37 条：probe 6（每条一次视频主判）、endstate 12（逐机位复核）、
-  arbitration 6、caption 5，另有 5 次文本调用和 3 次 `/models` 探活，`0 failed calls`。
+  v2 的带子（`$W/v2-golden/vlm_tape.jsonl.gz`）9 条：probe 8（每条一次视频请求；4、6 没有任务标注，只问画面缺陷，D72）
+  和 1 条 `/models` 探活，`0 failed calls`。
 - 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约一分半；`test_v2_parity.py` 就是第 5、6、8 步，
   外加「带子上少一个请求时对账必须失败」「按首轮完整流程重判的改标离开裁决基线的带子」两个反例；
   `test_dump_v1_e2e.py` 守着 v1 一侧的录制、回放与改答案必报；CI 的对账工具一步里一起跑）。
@@ -163,7 +165,7 @@ for F in mcap lance; do
 done
 ```
 
-两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 3]`、`reject` `[1, 2, 4, 5, 6, 7]`），回放 `misses=0 unused=0`；
+两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 3, 4, 6, 7]`、`reject` `[1, 2, 5]`，重复组 `[[3, 7]]`），回放 `hits=8 misses=0 unused=0`；
 v2 的交付是报告与结果清单（D69 起不写交付数据集），在 `$W/v2-mcap-delivery/` 与 `$W/v2-lance-delivery/` 下。
 自动化的版本是 `tools/parity/tests/test_containers_parity.py`。
 
@@ -274,9 +276,9 @@ $python -m parity compare --golden $W/v2-adj-golden --candidate $W/v2-adj --all-
 | `records/<module>.jsonl` | 六项漏斗检查的规范化记录，按 episode 下标排序 |
 | `verdicts.jsonl` | 漏斗判决：keep / drop、原因、硬门失败项、软分、弃权项 |
 | `autolabel.jsonl` | 无标注条目补打的任务描述（v1 的转储才有；v2 自 D72 起不补描述，这一项两边都没有时跳过） |
-| `dedup.json` | 去重遍历顺序、动作哈希撞车组、内容指纹、剔除的重复对 |
+| `dedup.json` | v1 精确去重的遍历顺序、动作哈希撞车组、内容指纹、剔除的重复对；`compare` 把剔除的重复对读成重复组，与 v2 的 `checks/duplicate_check/groups.json`（`order`、`action_collisions`、`fingerprints`、`groups`，D87）比 |
 | `skill_profile.json` | v1 的归族与标注分歧复核队列（`dump-v1` 仍写，v2 不产出、不比对，D68）|
-| `final.json` | 终判清单（v2 口径：passed = 漏斗 keep − 重复项）以及 v1 三个文件各自的名单 |
+| `final.json` | 终判清单（v1 交付的口径：passed = 漏斗 keep − 重复项；v2 自 D87 起不扣重复项）以及 v1 三个文件各自的名单 |
 | `vlm_tape.jsonl.gz` | 录制带（录制与补录模式） |
 | `replay_misses.jsonl` | 回放时没在录制带上找到的请求（回放模式） |
 | `suspect_hashes.txt` | 打分回答解析不了的请求（有才写） |
@@ -284,7 +286,7 @@ $python -m parity compare --golden $W/v2-adj-golden --candidate $W/v2-adj --all-
 ## 已知限制
 
 - **字节级重复的两条 episode** 发出的请求完全相同，回放时它们的响应可能对调。真模型对这两条给了不同回答时，
-  会表现为两条互换的差异，对账时对照 `dedup.json` 人工确认。
+  会表现为两条互换的差异，对账时对照重复组（v1 的 `dedup.json`、v2 的 `checks/duplicate_check/groups.json`）人工确认。
 - 除打分外，其它回答解析不了（比如仲裁返回的 JSON 坏了）时，导出只能认出「这条降级了」，定位不到是哪次请求，只能整份重跑。
 - `compare` 读 v2 运行目录时，取 `revisions/` 下最新的已提交版本（有 `commit.json` 的），没有就取编号最大的；`run-v2` 产生 r0001，
   带 `--from` 的裁决序列产生下一个版本。

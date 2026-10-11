@@ -197,9 +197,10 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 - `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑、重试补跑都靠它。
 - 进程每开始处理一条 episode，就把它记进 `<run-dir>/checks/<module>/inflight.json`，处理完抹掉。
   进程被杀或自己崩了，Daemon 从这个文件知道「出事时手上是哪几条」（04 篇 §7）。
-- 数据集级模块（`dedup`）也是逐条判的（D70）：一条 episode 进来就算它的 action 哈希，和已经判过的比；
-  哈希撞上了才读视频算内容指纹。并发恒为 1（状态在一个进程里），`--resume` 跳过已有记录的条目，
-  再把它们的哈希读回来重建状态。
+- 数据集级模块（重复检测 `duplicate_check`，`duplicate` 段，D87）也是逐条判的（D70）：一条 episode 进来就算它的 action 哈希，和已经判过的比；
+  哈希撞上了才读视频算内容指纹。一组重复的每一条都写明同组的其他条，组里先到的成员在这次调用结束（或暂停）时补写一条新记录；
+  `checks/duplicate_check/groups.json` 记顺序、动作哈希撞车、算过的指纹与各组成员。并发恒为 1（状态在一个进程里），`--resume` 跳过已有记录的条目，
+  再从它们的记录与 `groups.json` 重建状态（设计 26 §1）。
 
 > **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
 > `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、
@@ -280,8 +281,8 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 > 就 drop，`reasons` 列出全部 blocking 发现；否则任一已勾选模块出错或没有记录就 held；否则 keep，review 级发现按各自的裁决线进
 > `review.json`。默认策略复刻今天的硬门（P18），软分拒绝消失；预设 `report_only` 只报不拒（数据完整性的致命问题仍判废，策略版本 2）。`verdicts.jsonl` 2.0 每行是
 > `{episode_index, verdict, blocking, review, info_count, error_modules, reason}`；四份清单的 `reasons[]` 多 `code`、`item`，`kind` 取
-> `finding | human | execution_error | duplicate`。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
-> 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理），去重组留哪条在人工决定之后选；1.0 的运行目录拒绝聚合
+> `finding | human | execution_error`（D87 前还有 `duplicate`）。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
+> 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理）；重复检测只报告（D87），没有去重组要留哪条；1.0 的运行目录拒绝聚合
 > （退出码 2，D59）。细化见设计 17 §7「F12.3 落地时的细化」。F12.5 起 passed / reject / held 的每条多 `findings`：这一条的全部发现与它在
 > 这一版的级别（策略加已应用的人工裁决；`index` 指向模块记录里的那条，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项
 > 筛选读它（设计 17 §7「F12.5 落地时的细化」）。下文是漏斗判决（1.0）的写法。
@@ -291,13 +292,13 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 | 阶段 | 读 | 写 |
 |---|---|---|
 | `funnel` | 六项漏斗检查的结果 | `verdicts.jsonl`（每条 keep / drop、硬门失败项、软分、弃权项）和 `keep.txt` |
-| `final` | 上一步 + `dedup` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
+| `final` | 上一步 + `dedup` 的结果（D87 起没有，重复检测只报告）+ 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
 
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
 `passed` / `reject` / `held` 三份互斥，除缺源文件被剔除的条目（D40）外完备；`review` 是独立的复核视图，不和它们并列 ——
 里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选：归因于可复议模块的拒绝，
-现在是只归因于任务成败判定的、和去重的，D42）。已被拒绝的条目不再问成败；`held` 里的条目在补跑出结论之前不进 `review`。
+现在只有只归因于任务成败判定的，D42；去重的拒绝随 D87 取消）。已被拒绝的条目不再问成败；`held` 里的条目在补跑出结论之前不进 `review`。
 任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
 例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
 就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。

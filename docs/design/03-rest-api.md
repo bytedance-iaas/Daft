@@ -155,7 +155,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
               {"id": "video_action_sync", "params": {"sync_plots": "all"}},
-              "visual_quality", "task_success", "dedup"],
+              "visual_quality", "task_success", "duplicate_check"],
   "embodiment_id": "franka",
   "vlm": {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
           "reasoning_effort": null},              // null = 用模型上的配置；都为空则请求里不带该字段
@@ -220,7 +220,8 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   出错但已被别的模块确定拒绝的条目不在其中，它们聚合时就直接拒绝了（D35）。
   出错的条目当初没有进后面的档，所以补跑是从它出错的那一档接着往后跑，把该跑的都跑完。
   模块整体失败（从未产出结果）时，该模块全量跑。
-- 补跑完成后，下游的去重如果输入变了，会在同一个子任务里增量同步，不用再点一次。
+- 重复检测不看别的模块的判决（D87 起只报告），别的模块补跑出结果不用重跑它；它自己在补跑范围里时（省略 `modules` 就是），
+  出错或没有记录的条目按已有的记录与组接着比（设计 26 §1）。
 - **新结果完整生成、上传并核验之后才替换旧的**：判决清单和报告作为一个结果版本整体存放，
   切换的只是库里的 `result_rev`（CAS）。补跑失败或被停止，用户看到的仍是上一版，不会出现清单是新的、报告是旧的。
 - **补跑后任务的终态按当前结果重算**：出错的条目都救回来了，列表和报告上就从「错误」变为「已完成」；
@@ -352,7 +353,7 @@ GET /api/v1/tasks/{id}/episodes?rev=2&list=reject&review=true&q=ep12&cursor=…&
   `total` 是筛选后的条数，`counts` 是整个版本的条数（不受筛选影响），`limit` 1–500，缺省 50。
 - **发现**（C4 2.3.0，设计 17 §5.4，F12.5）：发现结果版本（C2 2.0）的条目多 `items`（它的发现涉及的检测项，按分类表顺序）与 `levels`
   （这些发现在这一版的级别，blocking 在前）；两者取自清单条目的 `findings`（C2 final-list 2.0：任务策略的级别，已计入应用过的人工裁决——
-  人的结论是它自己的 blocking 发现，复议恢复的可复议发现降为 info，已了结的 review 发现不再列出，去重组留下的那条没有重复发现）。
+  人的结论是它自己的 blocking 发现，复议恢复的可复议发现降为 info，已了结的 review 发现不再列出；D87 起重复检测的 `duplicate` 是 info，一组的每一条都有）。
   `level=blocking|review|info`、`item=STRM-5` 只留下有该级别 / 该检测项发现的条目，项编号格式不对是 400；漏斗的旧结果版本没有发现，
   这两个筛选一条也不留。
 
@@ -481,6 +482,7 @@ mcap 与 Lance 数据集（C4 1.11，D44）的视频在文件或表里，没有�
 GET /api/v1/tasks/{id}/logs?stage=vlm&subtask=&level=warn&cursor=…&limit=200
 ```
 
+`stage` 可以写一个段，也可以逗号分隔写几个（C4 6.0.0）：控制台的日志按 D88 的显示组筛选，一次传组内各段（设计 26 §2）。
 每个 stage 的 CLI 进程把完整的 stderr 事件流落到工作目录 `logs/<stage>.jsonl`，stage 结束后上传到交付目录。
 这个接口先读本地，本地已清理就读 TOS。SSE 负责「正在发生什么」，这里负责「当时发生了什么」。
 

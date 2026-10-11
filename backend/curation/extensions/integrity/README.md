@@ -7,16 +7,17 @@
 | 结论 | 什么时候 | 去向 |
 |---|---|---|
 | 判废 | 文件为空或过小、被截断、有成块的零填充、结构读不出、mcap CRC 不符、v1 的逐条结构校验不过（NaN/Inf、时间戳不是严格递增……）、开了逐帧解码时解码失败 | reject，不进后面的档，**不可复议** |
-| 可疑 | 帧数或行数与 episode 表对不上、mcap 录制中断但读得出、与另一条文件完全相同、mcap 某 topic 缺失或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 照常进后面的档、照常交付；人工裁决「完整性存疑」计入待裁 |
+| 可疑 | 帧数或行数与 episode 表对不上、mcap 录制中断但读得出、mcap 某 topic 缺失或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 照常进后面的档、照常交付；人工裁决「完整性存疑」计入待裁 |
 | 出错 | 存储读失败（超时、5xx、源缓存下载失败） | held，重试补跑（D33） |
 
 数据集级的发现（多余文件、近乎全黑的相机、episode 表的区间重叠）写在 `checks/data_integrity/dataset.json` 与报告里，不影响任何条目。
+与另一条完全相同的条目不归这里：原来按存储校验和比对整个视频 / mcap 文件的 `duplicate_content` 已删掉，D87 起由重复检测（`duplicate_check`，SET-1，只报告）给出（设计 26）。
 
 ## 代码
 
 | 文件 | 内容 |
 |---|---|
-| `judge.py` | `IntegrityJudge`：一次调用做一次数据集级检查（文件清单、v3 episode 表、多余文件、内容相同的文件、v1 的近黑相机先验、mcap 与多数条目比较），再逐条判定 |
+| `judge.py` | `IntegrityJudge`：一次调用做一次数据集级检查（文件清单、v3 episode 表、多余文件、v1 的近黑相机先验、mcap 与多数条目比较），再逐条判定 |
 | `files.py` | 单个文件的 L1 结构与 L2 整读（parquet、mp4、mcap）；`Blob` 把存储读失败变成 `ReadFailure` |
 | `mp4.py` | 不解码读 mp4：顶层 box、moov、视频轨样本表 → 每帧的时间、字节位置与大小 |
 | `rows.py` | 逐条读行（v1 的读取函数，不先解析数据集语义），跑 `validate_episode_row` |
@@ -46,9 +47,9 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    $PY -c "import json,sys; [print(r['episode_index'], r['status'], [f['code'] for f in r['findings']], r['details']['reason']) for r in map(json.loads, open(sys.argv[1]))]" "$D/run/checks/data_integrity/results.jsonl"
    ```
 
-   应看到 `ok 8, error 0; findings: duplicate_content 2`：3 与 7 是夹具故意做的字节级复制品，各有两条 `duplicate_content`（两路相机，默认策略下转人工），
-   `details.reason` 是「需要人工裁决：exterior 相机的视频与 ep 7 的内容完全相同（另有 1 项发现）」；其余 6 条没有发现；
-   `$D/run/checks/data_integrity/dataset.json` 的 `episode_findings` 只有 3 和 7。
+   应看到 `ok 8, error 0`，8 条都没有发现、`details.reason` 为空；`$D/run/checks/data_integrity/dataset.json` 的 `episode_findings` 是 `{}`。
+   3 与 7 是夹具故意做的字节级复制品：原来各有两条转人工的 `duplicate_content`，D87 起完整性不再比对文件，它们由重复检测报告
+   （`$C check --modules duplicate_check --input "$D/mini" --run-dir "$D/run" --episodes 0-7` 是 `findings: duplicate 2`，两条都通过，设计 26）。
 
 2. 几种损坏，每条一种：
 
@@ -62,8 +63,8 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    $C check --modules data_integrity --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7 --json
    ```
 
-   应看到 `findings: duplicate_content 2, file_empty 1, file_truncated 2, zero_filled 1`：0、1、2、4 各一条判废的发现（`file_empty`、`file_truncated`、
-   `file_truncated`、`zero_filled`），`message_zh` 写明哪个文件、哪路相机；5、6 没有发现，3、7 仍是转人工的 `duplicate_content`。
+   应看到 `findings: file_empty 1, file_truncated 2, zero_filled 1`：0、1、2、4 各一条判废的发现（`file_empty`、`file_truncated`、
+   `file_truncated`、`zero_filled`），`message_zh` 写明哪个文件、哪路相机；3、5、6、7 没有发现。
 
 3. mcap：
 
@@ -71,11 +72,12 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    cp -r "$D/mini_mcap" "$D/bad_mcap"
    $PY -c "import os,sys; p=sys.argv[1]; os.truncate(p, os.path.getsize(p)*6//10)" "$D/bad_mcap/episode_4.mcap"   # 录制中断
    $PY -c "import os,sys; p=sys.argv[1]; n=os.path.getsize(p)//3; f=open(p,'r+b'); f.seek(n); b=f.read(1); f.seek(n); f.write(bytes([b[0]^255]))" "$D/bad_mcap/episode_6.mcap"
-   $C check --modules data_integrity --input "$D/bad_mcap" --run-dir "$D/run_mcap" --episodes 0-7 --json
+   $C check --modules data_integrity --input "$D/bad_mcap" --run-dir "$D/run_mcap" --episodes 0-7 --param data_integrity.full_read=true --json
    ```
 
-   应看到 `findings: crc_mismatch 1, cut_unreadable 1, duplicate_content 2, stream_missing 1`：4 是 `cut_unreadable`（「录制中断，且读不出数据」），
-   6 是 `crc_mismatch`（「一个数据块的 CRC 校验不符」），两条都判废；干净的条目的 `details.files[0].crc` 是 `mcap_chunk`。
+   应看到 `findings: crc_mismatch 1, cut_unreadable 1, stream_missing 1`：4 是 `cut_unreadable`（「录制中断，且读不出数据」），
+   6 是 `crc_mismatch`（「一个数据块的 CRC 校验不符」），两条都判废；6 另有转人工的 `stream_missing`（夹具里它没有任务标注，缺 `/task`）；
+   干净的条目的 `details.files[0].crc` 是 `mcap_chunk`。CRC 要整读（L2）才查，不加 `full_read` 时只有 `cut_unreadable 1, stream_missing 1`（设计 23 §3.1）。
 
 4. 逐帧解码：在第 1 步的目录上加 `--resume --param data_integrity.decode_test=true` 再跑，`skipped_existing` 是 0（换了参数全部重做），每条 `details.tiers.L3` 为 `true`。
 

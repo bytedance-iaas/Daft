@@ -46,7 +46,7 @@
 | 文件中段零填充、mcap 数据块与数据区 CRC | 无 | L2（§3.3） |
 | NaN/Inf、时间戳、各列帧数、视频时间段（v1 的 `validate_episode_row`） | 读行时失败 → error → held | L2，判废并写明原因（D51） |
 | 解码失败 | 抽帧档对通过数值档的条目解码，抛异常才记 error | 抽帧档不变；L3 可选（§3.4） |
-| v3 episode 表自洽、多余文件、内容相同的文件、近乎全黑的相机 | 无（近黑相机提示 v1 有，v2 没接上） | 数据集级（§3.1） |
+| v3 episode 表自洽、多余文件、内容相同的文件（D87 起删掉，归重复检测）、近乎全黑的相机 | 无（近黑相机提示 v1 有，v2 没接上） | 数据集级（§3.1） |
 | mcap 某条缺一路别的条都有的 topic、某 topic 频率明显偏低 | 预检只有「topic 与第一条不同」的警告 | 与同数据集多数条目比（§3.5） |
 
 ## 1. 预检新增三项（F7.1，D52）
@@ -144,7 +144,7 @@ EEF 模块与本模块都置位。
 |---|---|---|
 | LeRobot v3 episode 表自洽：`dataset_from_index` / `dataset_to_index` 首尾相接、从 0 开始，区间长度等于 `length`；各相机 `to_timestamp − from_timestamp` 与 `length / fps` 相差不超过容差 | `meta/episodes/*.parquet`（预检也读） | 区间重叠或空缺 → 数据集级 `table_overlap`，涉及的条目可疑 `table_inconsistent`；单条长度或时间段对不上 → 可疑 `table_inconsistent` |
 | 多余文件：`data/`、`videos/` 下不被任何 episode 引用的文件 | 文件列表 | 数据集级 `orphan_files` |
-| 内容相同的文件：两条 episode 的视频文件或 mcap 文件内容相同（LeRobot v2 与 mcap；v3 的文件本来就共用） | TOS 用列表里的 CRC64；没有就用单段上传的 ETag（MD5）+ 大小；本地路径用大小 + 头尾各 64 KiB 的 sha256；都拿不到就不比 | 涉及的条目都可疑 `duplicate_content`。parquet 的重复交给「精确去重」 |
+| ~~内容相同的文件：两条 episode 的视频文件或 mcap 文件内容相同（LeRobot v2 与 mcap；v3 的文件本来就共用）~~ | ~~TOS 用列表里的 CRC64；没有就用单段上传的 ETag（MD5）+ 大小；本地路径用大小 + 头尾各 64 KiB 的 sha256；都拿不到就不比~~ | D87 起删掉（原来涉及的条目都可疑 `duplicate_content`）：重复检测（`duplicate_check`）的指纹（动作 + 各路画面）覆盖这一项查得出的全部情况，SET-1 只由它给出、只报告（设计 26 §1） |
 | 近乎全黑的相机（v1 的 `stats_prior_warnings`，只调用） | `meta/stats.json` | 数据集级 `dark_camera` |
 
 ### 3.2 L1 结构（每个文件读头尾，几次小范围读取）
@@ -231,7 +231,7 @@ LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 / L2 对账�
 | `decode_failed` | 判废 | L3 | 视频解码失败 |
 | `count_mismatch` | 可疑 | L1 / L2 / L3 | 帧数或行数与记录的长度对不上 |
 | `cut_off` | 可疑 | L1 | 录制中断，读得到的部分完好 |
-| `duplicate_content` | 可疑 | 数据集级 | 与另一条的文件内容完全相同 |
+| ~~`duplicate_content`~~ | ~~可疑~~ | ~~数据集级~~ | ~~与另一条的文件内容完全相同~~（D87 起删掉，由重复检测报告） |
 | `stream_missing` | 可疑 | 多数比较 | 缺一路其他条都有的 topic |
 | `rate_outlier` | 可疑 | 多数比较 | 某 topic 频率明显低于其他条 |
 | `decode_concealed` | 可疑 | L3 | 解码器掩盖了错误 |
@@ -351,7 +351,7 @@ mcap：对账工具的 8 条 mcap 夹具），每条只注入一种故障。测�
 
 | 故障 | 期望 | 测试 |
 |---|---|---|
-| 干净数据集 | 全部通过；夹具里故意做的字节级复制品（3、7）两条都可疑 `duplicate_content` | `test_a_clean_dataset_passes_but_its_byte_copies` |
+| 干净数据集 | 全部通过，夹具里故意做的字节级复制品（3、7）也没有发现（D87 前两条都可疑 `duplicate_content`；现在由重复检测报告） | `test_a_clean_dataset_passes_its_byte_copies_included` |
 | mp4 0 字节 | 预检警告；该条判废 `file_empty` | `test_empty_and_tiny_videos_are_warned_about`、`test_each_kind_of_damage_rejects_its_episode` |
 | mp4 截断（moov 在尾部被截掉） | 判废 `file_truncated` | 同上 |
 | mp4 截断（moov 在前，mdat 被截） | 判废 `file_truncated`，时间段从第一个缺失帧起 | `test_a_truncated_faststart_video_is_placed_in_time` |
@@ -368,7 +368,7 @@ mcap：对账工具的 8 条 mcap 夹具），每条只注入一种故障。测�
 | 读文件时存储返回 503（注入） | 该条 error、有 `read` incident；`--resume` 后通过 | `test_a_storage_failure_is_an_error_not_a_finding` |
 
 另外：①干净数据集上勾选本模块，passed / reject / held 与不勾选时逐项相同，待裁清单只多出可疑条目的卡片
-（`test_on_a_clean_dataset_the_verdicts_do_not_change`）；②判废终结漏斗、不可复议，可疑进「完整性存疑」，「数据无误」「数据确有问题」
+（D87 起夹具的字节级复制品不再可疑，待裁清单也相同；`test_on_a_clean_dataset_the_verdicts_do_not_change`）；②判废终结漏斗、不可复议，可疑进「完整性存疑」，「数据无误」「数据确有问题」
 「拿不准」照 §4.4 重算（`test_integrity_adjudication.py`）；③合成数据上的对账不受影响（默认链不含本模块），带上本模块录的 v2 基线
 回放逐位一致、三份清单与默认基线相同（`test_a_golden_with_the_data_integrity_gate_replays_exactly`）；Daemon 端到端：完整性层排在最前、
 实时面板读得到、可疑条目进裁决队列并计入待裁（`test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`）；

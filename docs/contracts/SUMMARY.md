@@ -7,7 +7,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 4.0（D68–D73 与分类表 2.0 合流，2026-10-08）：技能画像下线，剩 6 项漏斗检查 + 数据集级的去重，另有完整性、EEF、画面缺陷；检测项编号按分类表 2.0；两块 integrity → numeric → frame → dedup 与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 6.0（D87，2026-10-11）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷；检测项编号按分类表 2.0；两块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep）与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -26,7 +26,7 @@
 | 4 | `aggregate`、`report` 加 `--revision N`；报告类接口加 `?rev=N` | 结果版本号由 Daemon 分配，CLI 只往指定版本里写；历史版本可以回看 |
 | 5 | 新增 `GET /tasks/{id}/timeline` | 任务详情页静态稿里有执行时间线（系统暂停、子任务、结果版本），原端点表里没有数据来源 |
 | 6 | `report.json` 里不存 URL | 签名链接会过期，对外地址随部署变；链接由 REST 层在读取时补上 |
-| 7 | 被去重剔除的条目只出现在 `reject` | 由「三份清单互斥且完备」推出。v1 的 `passed.json` 里也有它们（交付的数据集里没有）；如果下游有脚本拿 `passed.json` 数交付条数，v2 的数字会变小，也就是变准了 |
+| 7 | 被去重剔除的条目只出现在 `reject` | 由「三份清单互斥且完备」推出。v1 的 `passed.json` 里也有它们（交付的数据集里没有）；如果下游有脚本拿 `passed.json` 数交付条数，v2 的数字会变小，也就是变准了。D87 起没有去重剔除：重复的条目只报告，留在 `passed` 里 |
 
 ## 三、已拍板（2026-09-21，D35）：已确定拒绝的条目又有模块出错
 
@@ -361,6 +361,8 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 
 ## 十八、去重改成流式，没有全量步骤了（2026-10-07，D70）
 
+> D87 起精确去重整个删掉，换成只报告的重复检测（见第二十一节）；这一节的流式走法原样留给重复检测。
+
 精确去重从 CPU 块的全量步骤改成块里最后一个逐条段，和前面的段交叠执行。
 
 - **C1 → 3.1**：`FULL_SET_STAGES` 变空（字段保留，将来真有只能看全集的模块再用）；`modules.json` 重新导出。
@@ -454,3 +456,22 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
   `confidence_uncalibrated`；`run.json` 的 `policy` 多 `defaults`（所选模块各细码的缺省级别）与 `appealable`（可复议的细码），任务按开跑时的
   冻结判决，没有它们的旧运行按 `registry_version` 用旧表（4.x 的 EEF `inconsistent` 仍是 blocking、可复议）。
 - **F5.22，C4 4.7.0**：模块目录里的发现码可带 `retired: true`；EEF 不再判废条目、`conflict` 是唯一请人看的；客户可见变更记录中英两版。
+
+## 二十一、重复检测取代精确去重；进度按组显示（2026-10-11，D87 / D88，设计 26）
+
+开发阶段，不留兼容：勾过精确去重的旧任务续跑、重试、执行裁决会失败。
+
+- **C1 6.0**：删 `dedup` 模块与 `dedup` 段；新模块 `duplicate_check`（「重复检测」，`native`，`needs: raw_bytes`，段 `duplicate`，
+  细码 `duplicate` → SET-1，缺省 info，不可复议；明细表 `duplicate_groups`：`episode_index`、`same_as`）；`BLOCKS["cpu"]` 的 `dedup`
+  改 `duplicate`；完整性删掉 `duplicate_content`。`taxonomy.json` 的 SET-1 平台注记重新生成（有读数）。
+- **判决**：一组动作与各路画面字节相同的条目，每一条都得到 `duplicate` 发现（`readings.same_as` 同组其余几条、`group_id` 组里最小的编号），
+  只报告——不判废、不留第一条、不转人工、不能复议；`aggregate` 不再选组里留哪条。记录的 `details` 是 `action_hash`、`same_as`、`group_id`、
+  `reason`；`checks/duplicate_check/groups.json` 是 `order`、`action_collisions`、`fingerprints`、`groups`，续跑靠它与已有记录重建状态。
+- **C2**（`schema_version` 不升）：计划的段 id 是 `duplicate`；终判清单与复核项的 `kind: duplicate`、`duplicate_of` 去掉；报告小节的统计是
+  `groups`、`duplicated` 与「重复组大小」图，明细表 `duplicate_groups`。1.0 的部分（旧格式）原样留着。
+- **C4 6.0.0**：`RegistryStage` 等枚举 `dedup` → `duplicate`，`stage_processing_s` 可有 `duplicate`；`EpisodeNote`、裁决问题去掉
+  `duplicate_of`，复议只针对任务成败判定；`GET /tasks/{id}/logs` 的 `stage` 可以写几个段、逗号隔开（控制台按组筛日志）。中英变更记录。
+- **C3**：只改说明。
+- **进度按组显示（D88）**：后台的段、并发、续跑都不变，控制台把段归成数据完整性（`integrity`）、CPU 检查（`numeric`、`frame`、`duplicate`、
+  `vlm_prep`）、模型检查（`vlm`）、生成报告（`final`、`report`、`verify`，旧任务还有 `export`）；组的完成数取各段最小值、在途相加、耗时取各段
+  运行的并集。归组只在前端（`frontend/src/lib/taskView.ts` 的 `STAGE_GROUPS`）。

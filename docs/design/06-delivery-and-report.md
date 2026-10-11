@@ -75,8 +75,8 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 
 > **策略判决（2026-10-01，设计 17 §4，D58，F12.3 实现；契约 C2 2.0 已定稿）**：模块只出发现，拒不拒由策略表在 `aggregate` 时算。
 > 默认策略复刻下文的硬门（P18）：今天硬门判废的细码 blocking，可疑 / 弃权 / 转人工 / 标注分歧 review，其余 info，**软分拒绝消失**；
-> 拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都可复议才能恢复）；去重组的 canonical 由
-> aggregate 选「未因别的原因被拒的第一条」；画像给全集与交付集两份分布。下文是漏斗判决的写法，F12.3 之前照旧生效，
+> 拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都可复议才能恢复）；重复只报告（D87，设计 26）：
+> 一组重复的每一条都有一条 info 的 `duplicate` 发现（SET-1），没有要留的 canonical、也不判废；画像给全集与交付集两份分布。下文是漏斗判决的写法，F12.3 之前照旧生效，
 > 旧任务按它只读打开（D59）。F12.5 起 `passed` / `reject` / `held` 的每条多 `findings`：这一条的全部发现与它在这一版的级别
 > （任务策略加上已应用的人工裁决；指向模块记录里那条发现的位置，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项筛选读它。
 
@@ -91,7 +91,7 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 
 **终判**（叠加判决之后的模块和人工裁决）：
 
-- `dedup` 找出的重复项改判拒绝，理由「与 X 字节级完全重复」。
+- `dedup` 找出的重复项改判拒绝，理由「与 X 字节级完全重复」（D87 起由重复检测取代：只报告、不判废，见设计 26）。
 - 已执行的人工裁决落到对应条目上（判失败、整条弃用 → 拒绝；恢复为可用 → 通过）。
 
 三个维度分开表达，互不替代：
@@ -106,7 +106,7 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 全部参与质检的 episode = passed ∪ reject ∪ held，三者互斥且完备
 源文件缺失而被剔除的 episode（D40）不参与质检，不在其中任何一份里
 review 与它们正交：多数条目在 passed 里（成败弃权、标注分歧，保守放行后等人确认），
-                  也可以在 reject 里（归因于可复议模块的拒绝：任务成败判定、去重，D42）
+                  也可以在 reject 里（归因于可复议模块的拒绝：任务成败判定，D42；D87 起没有去重的拒绝）
 ```
 
 **正常弃权和执行出错，处理方式不同**（D24）：
@@ -160,7 +160,7 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
 | 线 | 来源模块 | 人可以做的判断 | 执行后果 |
 |---|---|---|---|
 | 任务成败 | 任务成败判定（弃权，以及判废护栏拦下的「标注与画面疑似不符」） | 判成功 / 判失败 / 拿不准 / 整条弃用；答案可带 `new_label`（改写后的任务描述） | 给了成败结论就**不跑 VLM**，人说了算；只改描述、成败答「拿不准」的按新描述**重跑任务成败判定**（口径见纪律 5）；弃用直接进 reject |
-| 被拒复议 | 只归因于任务成败判定的 reject；去重的 reject（D42） | 恢复为可用 / 维持拒绝 / 拿不准 | 恢复为可用则推翻那个模块的结论、回到 passed |
+| 被拒复议 | 只归因于任务成败判定的 reject（D42；D87 起重复只报告，没有去重的 reject） | 恢复为可用 / 维持拒绝 / 拿不准 | 恢复为可用则推翻那个模块的结论、回到 passed |
 
 v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_check`）。一条 episode 的每条线只问一次、
 只有一个答案；改写标注不是独立的一问，而是成败答案上的一个可选字段。
@@ -169,7 +169,7 @@ v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_c
 
 1. **「整条弃用」压过别的答案**：点了弃用就是弃用。它是成败那一问的一个答案（D68），
    所以同一条线上后来的答案才能撤销它；别的线上的答案不改变弃用。
-2. **复议只受理归因于可复议模块的拒绝**（v1 只认任务成败判定；v2 加上去重，D42）：时间戳、残段、运动学、同步这些物理/结构硬门和软分拒绝是终局，
+2. **复议只受理归因于可复议模块的拒绝**（v1 只认任务成败判定；v2 曾加上去重（D42），D87 起重复只报告，又只剩任务成败判定）：时间戳、残段、运动学、同步这些物理/结构硬门和软分拒绝是终局，
    界面不给入口，后端再校验一次（裁决记录是可被手改的数据，不能只靠界面把门）。
 3. **「拿不准」是合法答案**：只记一笔，条目保留在队列里，仍计为待裁，执行时不动它。
 4. **改写描述通常要重跑模型，但人已经给了成败结论的不重跑**：同一个答案既带了新描述、又判了成功/失败，
@@ -178,10 +178,10 @@ v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_c
    拿不准转人工 —— 和首轮一样。D39 时 v2 有两种口径（`v1`：v1 的 `rejudge`，只跑多视角打分和逐机位复核；
    `full`：首轮的完整流程），单次判决之后两者没有区别了；`scope.relabel_rerun` 和每条改写上记的口径暂留，
    对话框里的选项也暂留，行为合一。
-6. **已被拒绝的条目不再问成败**（D42）：被去重或任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
-   去重拒掉的可以在「被拒复议」里恢复：卡片写明与哪条重复，恢复为可用就推翻去重的结论、回到 passed；
-   它若还有成败弃权，下一版里照常进成败裁决。恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
-   这是和 v1 的一处差异：v1 的重复项仍进成败裁决队列，人判成功就交付。
+6. **已被拒绝的条目不再问成败**（D42）：被任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
+   可复议的拒绝在「被拒复议」里恢复，恢复为可用就推翻那个模块的结论、回到 passed。
+   恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
+   D87 起重复只报告（设计 26）：重复本身不拒、不转人工、不能复议；重复的条目有成败弃权的，照常进成败裁决（和 v1 一样）。
 
 ### 5.2 与任务状态机的关系（D10）
 
@@ -248,7 +248,7 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
     {"id": "task_success", "state": "succeeded", "gate": "hard",
      "summary": {...},
      "adjudication": {"pending": 32, "url": "/tasks/<id>/adjudication?source=task_success"}},
-    {"id": "dedup", "state": "failed",
+    {"id": "dedup", "state": "failed",     // 1.0 时的精确去重；D87 起是只报告的 duplicate_check
      "error": "worker crashed", "retry": {"modules": ["dedup"]}}
   ],
   "skipped_modules": [{"id": "kinematic_limits",
@@ -297,8 +297,8 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 
 约定：序列是 `[{name, count}]`（画柱状图），`name` 是与语言无关的代码（页面翻成中文）或数据自己的名字（技能族、原因摘要）；
 按相机的行是 `[{camera, …}]`，相机用短名；其余是标量。1.0 就有的键（`counts`、`mean_score`、`fail_kinds`、`arbitration`、
-`abstain_reasons`、`collision_groups`、`removed`、`families`、`subskills`、`undersampled`，以及两个 EEF 模块的全部键）原样保留，
-新键只加不改；老报告没有新键，页面照样显示已有的内容并注明。
+`abstain_reasons`、`collision_groups`、`removed`、`families`、`subskills`、`undersampled`，以及两个 EEF 模块的全部键）原样保留
+（`collision_groups`、`removed` 是精确去重的，随 D87 没有了），新键只加不改；老报告没有新键，页面照样显示已有的内容并注明。
 
 | 模块 | 新增的汇总键（1.0 的键之外） |
 |---|---|
@@ -309,7 +309,7 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 | 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
 | 任务成败判定 | `judgements`（判定代码分布，D71 起只出 `success`、`failure`、`uncertain`；更早的任务还有 `recovery`、`endstate_success`、`arbitration_success`、`arbitration_failure`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
-| 精确去重 | `group_sizes`（按组大小数重复组） |
+| 重复检测（D87 起取代精确去重） | `groups`（确认的重复组数）、`duplicated`（涉及的条数）；`group_sizes`（按组大小数确认的重复组，不再数动作哈希撞车）（明细表另是 `duplicate_groups`：`episode_index`、`same_as`） |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
 CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。

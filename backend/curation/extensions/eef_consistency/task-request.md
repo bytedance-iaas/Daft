@@ -34,7 +34,7 @@ curl -s -u "$USER:$PASS" -X POST "$B/tasks" -H "Content-Type: application/json" 
   "episodes": {"mode": "all"},
   "modules": [
     "data_integrity", "timestamp_check", "motion_quality", "visual_quality", "video_action_sync",
-    "task_success", "dedup", "eef_video_consistency"
+    "task_success", "duplicate_check", "eef_video_consistency"
   ],
   "vlm": {"backend": "umi-ark", "model": "doubao-seed-2-1-lite-260915", "reasoning_effort": "minimal"},
   "params": {"start_now": true, "vlm_hedge": false}

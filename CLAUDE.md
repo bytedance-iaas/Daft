@@ -35,9 +35,11 @@ Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走�
 （`python -m curation.viz.transcode`）。
 
 **两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
-→ `frame`（visual_quality、video_action_sync）→ `dedup`；VLM 块 `vlm`（eef_video_consistency、task_success，camera_defects 骑在
+→ `frame`（visual_quality、video_action_sync）→ `duplicate`（duplicate_check）；VLM 块 `vlm`（eef_video_consistency、task_success，camera_defects 骑在
 task_success 的请求上；没有任务标注的条目不判成败、只发一次画面缺陷请求，D72 / D73；每条恰好一次模型请求，没有复核、仲裁和判废护栏）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
-本块下一段；`dedup` 是全量步骤，块内前面的段跑完才启动。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
+本块下一段。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。**重复检测只报告**（D87，设计 26）：动作与各路画面字节相同的一组条目，每一条都得到
+一条 SET-1 的 info 发现、写明同组其余几条；不判废、不留第一条、不能复议（精确去重已删）。控制台把段**按组显示**（D88）：数据完整性、CPU 检查
+（numeric、frame、duplicate、vlm_prep）、模型检查（vlm）、生成报告；后台的段、计划与日志仍用段 id，前端负责归组（`frontend/src/lib/taskView.ts` 的 `STAGE_GROUPS`）。
 **判决是策略判决**（F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），两块都结束后 `aggregate` 用任务的策略
 （`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info，再判
 keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 blocking 发现即拒，否则任一所选模块出错或没有记录即待补跑。
@@ -97,6 +99,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 23 | EEF 与任务成败的 CPU 半段挪进 CPU 块、源数据按块读只下载一次、完整性缺省只做 L1（`23-model-prep-and-source-cache.md`，D76–D79 提议；S1 已落地：L2 缺省关，`vlm` 段内 EEF 与任务成败共用按块读的缓存） |
 | 24 | EEF 的轨迹由平台生成，用户不上传 trajectory.json（`24-eef-trajectory-generated.md`；注册表 4.3；原始手持夹爪 mcap 由设计 22 §5.4 逐条推出） |
 | 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22–F5.26 已落地：注册表 5.4、C4 5.3.1，§9.1–§9.6 是落地记录） |
+| 26 | 重复检测取代精确去重；进度按三组显示（`26-duplicate-check-and-progress-groups.md`，D87–D88；首节是开工指引：不留兼容，注册表 6.0、C4 6.0.0） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

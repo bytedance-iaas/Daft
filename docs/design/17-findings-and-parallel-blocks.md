@@ -39,8 +39,8 @@
 | # | 决策 |
 |---|---|
 | D56 | **发现与覆盖**：每个模块对一条 episode 的结果是一组发现，每条发现 = 平台细码 + 分类表检测项编号 + 严重度 + 范围 + 读数（可选帧 / 秒区间与证据）；分类表（设计 16 §3，1.1 起）升格为契约，注册表写明绑定的版本与每个细码对应的项；记录另带「评估了哪些项」与「哪些项评估不了、为什么」，分得清「没发现」和「没查」；判定线一律是模块参数，不再写在评估工具里；综合质量分退役，各子项各自出发现 |
-| D57 | **两块并行、不过滤**：CPU 块（完整性 → 数值 → 帧 → 去重）与 VLM 块（补描述 → 模型判定 → 画像）并行执行，块内分段只为共享解码与各段的并发宽度，段之间传全部条目，不传幸存者；某模块出错不影响别的模块跑这一条。取代 D18 的「分档与顺序照搬 v1 漏斗」、P10 的「出错的 episode 不进后面的档」，以及 D49、D50 里「只跑前面没被判废的条目」「排在漏斗最前」的执行语义。去重与技能画像依赖全集，是各自块的「全量步骤」，等本块前面的段跑完全集才启动 |
-| D58 | **策略判决**：拒不拒由策略表在 `aggregate` 时按发现算，模块不知道策略。默认策略复刻今天的硬门（P18）；拒绝理由列出全部 blocking 发现，不只第一个；held 的口径同 D35：有 blocking 发现直接拒，否则任一已勾选模块出错才待补跑；裁决线（D43）绑定在细码上；复议按发现：一条被拒时全部 blocking 发现都可复议才能恢复；去重组里留「未因别的原因被拒的第一条」，由 aggregate 选；画像同时给全集与交付集两份分布；另有预设「只报不拒」，换策略只重跑 aggregate |
+| D57 | **两块并行、不过滤**：CPU 块（完整性 → 数值 → 帧 → 去重）与 VLM 块（补描述 → 模型判定 → 画像）并行执行，块内分段只为共享解码与各段的并发宽度，段之间传全部条目，不传幸存者；某模块出错不影响别的模块跑这一条。取代 D18 的「分档与顺序照搬 v1 漏斗」、P10 的「出错的 episode 不进后面的档」，以及 D49、D50 里「只跑前面没被判废的条目」「排在漏斗最前」的执行语义。去重与技能画像依赖全集，是各自块的「全量步骤」，等本块前面的段跑完全集才启动（D70 起去重逐条流式；D87 起由只报告的重复检测取代，见设计 26） |
+| D58 | **策略判决**：拒不拒由策略表在 `aggregate` 时按发现算，模块不知道策略。默认策略复刻今天的硬门（P18）；拒绝理由列出全部 blocking 发现，不只第一个；held 的口径同 D35：有 blocking 发现直接拒，否则任一已勾选模块出错才待补跑；裁决线（D43）绑定在细码上；复议按发现：一条被拒时全部 blocking 发现都可复议才能恢复；去重组里留「未因别的原因被拒的第一条」，由 aggregate 选（D87 起重复只报告，没有这一步）；画像同时给全集与交付集两份分布；另有预设「只报不拒」，换策略只重跑 aggregate |
 | D59 | **只对新任务生效**：注册表 2.0 与 C2 2.0 之后建的任务用新格式；旧任务的报告与明细按旧格式只读打开，做不到就在旧任务页标「旧版本生成，新界面不支持」；不做迁移，旧任务可以删 |
 
 需求方同日确认的取值，与上表同等效力：
@@ -179,7 +179,7 @@ class ModuleSpec:
     level: Literal["episode", "dataset"]
     needs: frozenset[str]
     block: Literal["cpu", "vlm"]                 # 在哪个块（§3.1）
-    stage: str                                   # 块内的段：integrity / numeric / frame / dedup；vlm（autolabel、profile 已下线）
+    stage: str                                   # 块内的段：integrity / numeric / frame / duplicate / vlm_prep；vlm（autolabel、profile 已下线；duplicate 在 D87 前是 dedup）
     depends_on: tuple[str, ...]                  # 只留数据依赖的位置（3.2 起为空）；不再有 numeric_gates / frame_gates / funnel_verdict
     codes: tuple[FindingCode, ...]               # 细码目录
     covers: tuple[str, ...]                      # 声明覆盖的检测项（codes 的 item 的并集，可以多）
@@ -192,8 +192,9 @@ class ModuleSpec:
 模块级 `appealable`（挪到细码）。`REVIEW_LINES` 目录不变（D43）。`STAGE_ORDER` 换成：
 
 ```python
-BLOCKS = {"cpu": ("integrity", "numeric", "frame", "dedup"),
+BLOCKS = {"cpu": ("integrity", "numeric", "frame", "duplicate", "vlm_prep"),
           "vlm": ("vlm",)}                       # profile 随技能画像下线（D68），autolabel 随补描述下线（D72）
+                                                 # duplicate 是重复检测的段（D87，原 dedup）；vlm_prep 是第二个根（设计 23）
 FULL_SET_STAGES = ()                             # D70 起没有全量步骤（§3.2）
 ```
 
@@ -226,7 +227,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `stream_missing` | STRM-1 | medium | review（integrity_check） | 多数比较 |
 | `rate_outlier` | STRM-3 | medium | review（integrity_check） | 多数比较 |
 | `cut_off` | FILE-3 | low | review（integrity_check） | 录制中断但读得出 |
-| `duplicate_content` | SET-1 | medium | review（integrity_check） | 数据集级比较，记在条目上 |
+| ~~`duplicate_content`~~ | ~~SET-1~~ | ~~medium~~ | ~~review（integrity_check）~~ | D87 起删掉，SET-1 只由重复检测报（设计 26） |
 | `orphan_files`（数据集级） | — | low | info | 平台自有项 |
 | `dark_camera`（数据集级） | STRM-1 | low | info | v1 的先验 |
 | `table_overlap`（数据集级） | FILE-10 | medium | info | 条目表重叠或空缺 |
@@ -314,11 +315,11 @@ A 类算法不动，壳里读 `details` 生成。
 | `contamination` | IMG-7 | 同上 | info | 带时间段与种类 |
 | unknown | — | — | unassessable `model_no_answer` | 模型没答 |
 
-**精确去重**
+**重复检测**（`duplicate_check`，D87 起取代精确去重 `dedup`，设计 26）
 
 | 细码 | 项 | 严重度 | 默认级别 | 来源 |
 |---|---|---|---|---|
-| `duplicate` | SET-1 | high | blocking，可复议 | 重复组；哪条留下由 aggregate 定（§4.5），模块只报组 |
+| `duplicate` | SET-1 | low | info | 一组重复的每一条都有；`readings.same_as` 是同组的其他条、`group_id` 是组里最小的编号（§3.2）。D87 前是 `dedup.duplicate`：high、blocking、可复议，哪条留下由 aggregate 定 |
 
 **技能画像**（整节随技能画像下线，D68。LABEL-4 由任务成败判定的判废护栏报，细码 `label_conflict_suspect`，问在
 `task_verdict` 那一条线上；LABEL-1 暂时没有模块覆盖；SET-3 随分类表 1.3 删除）
@@ -352,7 +353,7 @@ A 类算法不动，壳里读 `details` 生成。
       │       │ 传全部条目                                 │
       │   frame       视觉质量 · 视频-动作同步               │
       │       │ 传全部条目                                 │
-      │   dedup       精确去重（逐条，D70）                  │
+      │   duplicate   重复检测（逐条，D70；只报告，D87）   │
       │                                                   │
       └──────────────────┬────────────────────────────────┘
                          ▼
@@ -367,32 +368,33 @@ A 类算法不动，壳里读 `details` 生成。
 - **坏文件上的模型调用**：VLM 块裁片失败在发请求之前，照 D33 记 `error`，不发模型请求、不烧重试；这一条若有完整性的 blocking 发现，
   照 D35 直接拒。不加「完整性判坏就跳过 VLM」的门，块之间保持独立。
 
-### 3.2 去重也是逐条的（D70，2026-10-07 改）
+### 3.2 重复检测也是逐条的（D70，2026-10-07 改；D87 起只报告）
 
-去重**看起来**要全集：它判的是「这一条和别的某一条完全相同」。但做法可以是流式的，所以 2026-10-07 起它不再是全量步骤，
-而是 CPU 块的最后一个逐条段：
+> D87（2026-10-11，设计 26 §1）：精确去重（`dedup` 模块与段）删掉，换成只报告的重复检测（`duplicate_check`，`duplicate` 段）。
+> 流式的走法与指纹留下；不再留第一条、不判废、不复议。下文按现在的写法，改前的「组内留下标最小的那条」见 §4.5 的删除线。
 
-- 一条 episode 从帧档出来就进去重，立刻算 action 哈希（`action_hash`，A 类不动），和前面的段交叠执行；
+重复检测**看起来**要全集：它判的是「这一条和别的某一条完全相同」。但做法可以是流式的，所以 2026-10-07 起它不再是全量步骤，
+而是 CPU 块 `integrity → numeric → frame → duplicate` 这条链的最后一个逐条段：
+
+- 一条 episode 从帧档出来就进 `duplicate` 段，立刻算 action 哈希（`action_hash`，A 类不动），和前面的段交叠执行；
 - 段内保着「哈希 → 先看到的那条」的表。哈希撞车才算内容指纹（`episode_fingerprint`：action 字节 + 每路视频的内容身份与时间窗），
   只读撞上的那两条，远端视频用对象的 ETag + size，不下载；
-- 后来的那条拿到 `duplicate` 发现（细码 SET-1），`readings.group_id` 是留下的那条。**只报组**，哪条留下仍由 aggregate
-  在人工决定之后选（§4.5），口径不变。
-- **组内留下标最小的那条，和改前一致**，而且不依赖到达顺序：
-  1. 段把条目看完之后再把每组定一次（`_dedup_settle`）——说法不对的那条补一条记录（最小的那条改回干净、其余指向它）。
-     只有真撞车才会发生，绝大多数任务这一步什么都不写；暂停、停止时也做，续跑、重试时和读回来的记录一起算。
-  2. **判决不依赖这一步**：`aggregate` 把组看成一个整体（`duplicate_of` 指针的连通分量），选下标最小、没因别的原因
-     被拒的那条留下，组里本来会留下的其余成员一律按副本判 —— 哪条记录带着指针都一样。所以进程被杀掉、没来得及定组，
-     判决也不会变（这正是 F12.4 那两条「被打断的任务与没被打断的结果一致」用例盯的事）。
-- 每条记录的 `details` 多一个 `action_hash`（撞车的还多 `fingerprint`）：续跑、重试时这一段先读回已有记录重建那张表，
-  再接着判剩下的条目。
-- `groups.json`（遍历顺序、撞车组、指纹、剔除清单）在这一段结束时写，报告的「重复组 N 组、剔除 M 条」照旧读它。
+- 一组重复的**每一条**都拿到 `duplicate` 发现（SET-1，info），`readings.same_as` 是同组的其他条、`readings.group_id` 是组里最小的编号；
+  记录的 `details` 是 `{action_hash, same_as, group_id, reason}`（没有重复的只有 `action_hash`）。不判废、不转人工、不能复议，
+  策略「默认」与「只报不拒」一样。读不了动作、撞了哈希却读不了画面的照常记 `error`、待补跑。
+- **每个成员都写明全组**，不依赖到达顺序：后到的成员写记录时已经知道先到的；先到的成员在这次调用结束（或暂停、停止）时补写一条新记录
+  （`_dup_settle`），把后来的成员加进 `same_as`。只有真撞车才会发生，绝大多数任务这一步什么都不写；续跑、重试时和读回来的记录一起算。
+  判决不依赖这一步（重复只报告），进程被杀掉、没来得及补写，判决也不会变。
+- 续跑、重试时这一段先从已有记录（`details.action_hash`、`same_as`）与 `groups.json` 重建状态，再接着判剩下的条目。
+- `checks/duplicate_check/groups.json`（`order` 遍历顺序、`action_collisions` 动作哈希撞车组、`fingerprints` 算过的指纹、`groups` 确认的组）
+  在这一段结束时写，对账工具读它；报告的「重复 K 组、涉及 M 条」从记录的发现算。
 
 **原来的「全量步骤」机制不再有人用**（`FULL_SET_STAGES` 空了）：新计划不写 `full_set`，`StageProgress` 不再有「全量步骤」那一行。
-`blocks.py` 里「整段跑完全集」那条路径只为 D70 之前排好计划的任务保留（它们还要能续跑、重试）；
+`blocks.py` 里「整段跑完全集」那条路径留着、今天没有段用它（D70 之前的计划里标 `full_set` 的是 `dedup`，D87 起这类旧任务不再续跑）；
 将来真需要一个只能看全集的模块，往 `FULL_SET_STAGES` 里加回来就行。
-去重不 `depends_on` 判决，上游判决变了也不 `stale`。（VLM 块原来的全量步骤是技能画像，D68 起下线。）
+重复检测不 `depends_on` 判决，上游判决变了也不 `stale`。（VLM 块原来的全量步骤是技能画像，D68 起下线。）
 
-**为什么改**：去重也要和前面的段交叠（需求方 2026-10-07 定）。不勾模型模块的任务（「快速质检」）里，去重这一段是串在关键路径末尾的，
+**为什么改**（D70）：去重也要和前面的段交叠（需求方 2026-10-07 定）。不勾模型模块的任务（「快速质检」）里，去重这一段是串在关键路径末尾的，
 条数越多越明显；改成逐条之后，整条流水线没有栅栏了 —— 最后一条 episode 判完就能出报告。
 
 ### 3.3 Daemon 派发与 planner
@@ -460,11 +462,11 @@ overrides:
 3. 否则**任一已勾选模块对它出错或没有记录 → held**（D24、D33、P11），`reasons` 是出错的模块与原因。
 4. 否则 **keep**。review 级发现按各自的裁决线进 `review.json`；held 的条目解决前不问人（今天的规则）。
 5. 人工决定（§4.4）作为覆盖再算一遍；`discard` 压过一切。
-6. 去重（§4.5）在人工决定之后、写清单之前定留哪条。
+6. ~~去重（§4.5）在人工决定之后、写清单之前定留哪条。~~ D87 起重复只报告，没有这一步（§4.5）。
 
 `verdicts.jsonl` 2.0 每行：`{episode_index, verdict: keep|drop|held, blocking: [{module, code, item}], review: [{module, code, item, line}],
 info_count, error_modules, reason}`。`passed / reject / held / review` 四份清单的结构不变，`reasons[]` 的条目多 `code`、`item`，`kind` 取
-`finding | human | execution_error | duplicate`。`keep.txt` 保留为交付名单（报告里交付集的分布用）。
+`finding | human | execution_error`（D87 前还有 `duplicate`，带 `duplicate_of`）。`keep.txt` 保留为交付名单（报告里交付集的分布用）。
 
 ### 4.4 人工复核与复议
 
@@ -473,16 +475,18 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
   `eef_check` 的 inconsistent / consistent 同理；`task_verdict` 的 failure → blocking（human）、success → 撤销 `failure` 发现；
   `label` 线的改标重判照 D39；`unsure` 不改任何东西、仍计待裁；`discard` 压过一切。
 - **复议按发现**（D42 的推广）：一条被拒的 episode 可复议，当且仅当它的全部 blocking 发现都来自 `appealable` 的细码（第一版：
-  `task_success.failure`、`eef_video_consistency.inconsistent`（注册表 5.0 前的任务）、`dedup.duplicate`）、且没有人工已定的结论；「恢复为可用」撤销这些发现的 blocking
+  `task_success.failure`、`eef_video_consistency.inconsistent`（注册表 5.0 前的任务）；`dedup.duplicate` 随 D87 删掉）、且没有人工已定的结论；「恢复为可用」撤销这些发现的 blocking
   级别，再按 §4.3 重算（别的模块出错的仍 held，P11）。物理与结构硬门的拒绝仍是终局。
 - 已被拒的条目不再出 review 卡片（D42 延伸到所有裁决线）。
 
-### 4.5 去重（原「去重与画像」）
+### 4.5 重复（原「去重与画像」）
 
-- 去重模块报重复组（`group_id`、组内成员、`duplicate_of` 留作读数）。aggregate 在人工决定之后，对每个组选 canonical =
+- **D87 起重复只报告**（设计 26 §1）：重复检测给一组重复的每一条一条 `duplicate_check.duplicate`（SET-1，info），aggregate 不选
+  canonical、不加 blocking 发现；重复本身不进裁决、不能复议，重复的条目照其余模块的发现判。复议只剩任务成败判定的拒绝（§4.4）。
+- ~~去重模块报重复组（`group_id`、组内成员、`duplicate_of` 留作读数）。aggregate 在人工决定之后，对每个组选 canonical =
   组内第一条「没有因别的原因被拒」的（下标升序）；其余成员得到 `dedup.duplicate` 的 blocking 发现（可复议）——
   包括记录里没带这条发现的那个成员（§3.2：段可能是先看到它才指向它的），但**已经因别的原因被拒的成员不会因此多一条重复理由**。
-  人工恢复过的条目不再被去重（v1 的规则）。
+  人工恢复过的条目不再被去重（v1 的规则）。~~（D87 前的做法；段内另把每组定一次（`_dedup_settle`），组内留下标最小的那条。）
 - ~~画像的归类对全集算；报告给两份分布：全集与交付集。~~ 技能画像下线（D68）；标注分歧改由判废护栏报，已被拒的条目仍不出卡片。
 
 ### 4.6 与今天不同的地方
@@ -492,7 +496,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 | 拒绝理由 | 第一个失败的硬门 | 全部 blocking 发现 |
 | 软分 | 加权均值 < 0.5 拒 | 退役；子项 info（P18） |
 | 复议 | 按归因模块 | 按发现 |
-| 去重的输入 | 通过集合 | 全集；留「未因别的原因被拒的第一条」（D70 起逐条流式地找组，判决口径不变） |
+| 去重的输入 | 通过集合 | 全集，D70 起逐条流式地找组；D87 起只报告：同组每一条一条 info 发现，不留、不拒（原来留「未因别的原因被拒的第一条」） |
 | 弃权 | `passed=None` | review 级发现 |
 | 判决能否不重跑而改 | 不能 | 换预设只重跑 aggregate |
 
@@ -518,6 +522,8 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 - 模块表换成**模块统计卡**（每行一个模块，可展开）：状态、评估 / 选中条数、出错条数，一条「检出项」条图（同 §5.2 的通用图，取自同一份 `summary.items`），
   有读数的给分数分布；「去报告」跳到小节。数据来自 `GET /tasks/{id}/report`，运行中每次结果版本刷新；运行中没有报告时显示即时结果（§3.3）的发现数。
 - 分档进度卡改成**两块**：CPU 块与 VLM 块两张并排卡片，每张里按段一根进度条；运行时间线按块画。
+  （D88 起按组显示，后台的段不变：数据完整性一根横条，CPU 检查（数值、帧、重复检测、模型准备）与模型检查两张卡片与运行时间线，
+  生成报告一根条；凡显示档名处都写组名，见设计 26 §2。）
   「进度条从 50/50 变成 49/49」的说明去掉——段之间不再减少条目。
 - 页头、Token、执行时间线、人工裁决入口不变。
 
@@ -530,7 +536,8 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.5 进度与 SSE
 
-- C3 的 stage id：`integrity`、`numeric`、`frame`、`dedup`、`vlm`（`post_verdict`、`profile_vlm` 退役；`profile` 随 D68、`autolabel` 随 D72 只在旧任务的进度里出现）；进度行多一个可选的 `block`。
+- C3 的 stage id：`integrity`、`numeric`、`frame`、`duplicate`（D87 前是 `dedup`）、`vlm_prep`、`vlm`（`post_verdict`、`profile_vlm` 退役；`profile` 随 D68、`autolabel` 随 D72 只在旧任务的进度里出现）；进度行多一个可选的 `block`。
+  接口与日志用段 id，控制台按 D88 的组（数据完整性 / CPU 检查 / 模型检查 / 生成报告）归并显示；`GET /tasks/{id}/logs?stage=` 可以逗号分隔传几个段（C4 6.0.0）。
 - C4 的 `StageProgress` 多 `block`、`full_set`；`PipelineEpisode` 的 `last_stage` / `next_stage` 改成 `stages: {stage: done|error|running|waiting}`
   与 `provisional`（临时判决）。
 
@@ -629,6 +636,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
   受理判断与 aggregate 同一套（`Decided.admissible`）。
 - **去重组留哪条**：aggregate 在人工决定之后选组内「第一条没因别的原因被拒的」，其余成员才按副本拒；人恢复进交付的不再去重。
   与改前不同的一处：原件被人判失败时，副本顶上进交付（改前副本仍按副本拒）。画像的成员同样按这个口径剔副本。
+  （D87 起由重复检测取代：只报告、不判废，没有要留的那条，见设计 26。）
 - **画像双分布**：画像小节在全体归类的 `family_distribution` 之外多 `delivered_family_distribution`（按本结果版本的 `passed` 算）；
   F12.4 之前画像只对漏斗留下的条目跑，「全体」即这些条目。
 - **报告 2.0**：`score_hist` 改成「读数 → 十格」（运动质量的综合分与五个子项分、视觉质量的综合分，`findings.SCORE_READINGS`），
@@ -660,7 +668,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
   （`records.two_blocks` 看 `plan.json`）。`--plan-stage` 接受「计划某档模块的子集」（重试只跑出错的模块）。
 - **aggregate**：一条要全部所选模块（骑乘模块除外）的判断，缺一个就待补跑（D58 的口径，不再按漏斗逐档走）。
 - **重试**：每档只带「出错或没有记录」的模块与条目（整体失败的模块对全部所选），`check --modules <这些> --resume`；dedup、画像
-  出错、过期或被点名时整段重跑；然后 `final`。**执行裁决**：去掉漏斗判决档，画像对全部所选增量同步。
+  出错、过期或被点名时整段重跑；然后 `final`。（D87 起重复检测和别的逐条段一样，只补出错或没有记录的条目，按已有的组接着比。）**执行裁决**：去掉漏斗判决档，画像对全部所选增量同步。
 - **即时结果**（C4 2.2.0）：两块的运行每条给 `stages`（各逐条段 done / error / waiting）与 `provisional: true` 的临时判决
   （已有记录上的策略：有 blocking 发现即拒，已出错的模块即待补跑，还没有记录的模块不算）；`last_stage` / `next_stage` 只留给旧任务。
   `StageProgress` 带 `block` / `full_set`。
@@ -678,7 +686,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **逐条的发现与级别由 aggregate 写进清单**：`passed` / `reject` / `held` 的每条多 `findings`（`module`、`code`、`item`、`level`，review 级的
   `line`，`appealable`；`index` 指向模块记录里那条发现，人的结论是 `human` 加它的一句话）。级别是**这一版的**：任务策略加上已应用的人工裁决——
   人判失败、判数据有问题、判 EEF 不一致是它自己的 blocking 发现，复议恢复的可复议发现降为 info，已了结的 review 发现不再列出，去重组留下的那条
-  没有重复发现。这样 Daemon 读清单就能给 episode 列表的 `items` / `levels`、按级别与检测项筛选、Episode 明细的全部发现，不必按条扫全部记录。
+  没有重复发现（D87 起重复只报告：同组每一条都有一条 info 的 `duplicate`）。这样 Daemon 读清单就能给 episode 列表的 `items` / `levels`、按级别与检测项筛选、Episode 明细的全部发现，不必按条扫全部记录。
   报告的小节统计（`items`、`levels`）仍是策略对模块记录的定级（模块报了什么），两处口径不同是有意的：报告看模块，明细看这一条现在的状态。
   `verdicts.jsonl` 的含义不变（逐条段的机器判决）。
 - **契约增补都是可选字段**（不升 `schema_version`）：C2 清单条目的 `findings`；报告的 `overview.reject_items`（被拒条目按检测项计，一条每项一次，
@@ -689,12 +697,12 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **覆盖矩阵的分母是 64**（分类表 1.2 起是 66）：分类表 1.1 的 71 项里 7 项是对照项（`kind: control`，不是检测项），报告的 `coverage` 本来就不算它们，
   页面写「本次覆盖分类表 N / 64 项」，按维度一行，每项一个标签（覆盖 / 部分条目评估不了 / 未覆盖，悬停写原因与检出条数），点覆盖的项跳到报它的模块小节。
 - **报告页**：总览的判废原因按检测项画（`reject_items`；没有它的旧 2.0 报告按 `reject_reasons` 逐项相加），多一格「判决策略」；
-  「本次质检范围」的「判决方式」一列换成「所在块」（块 · 段 + 可判废 / 可转人工 / 只报告；只报不拒的任务一律只报告）与「检出 / 评估」；
+  「本次质检范围」的「判决方式」一列换成「所在块」（块 · 段 + 可判废 / 可转人工 / 只报告；只报不拒的任务一律只报告；D88 起只写组名）与「检出 / 评估」；
   每个小节先放通用的发现统计（评估条数、检出条数、按级别条数、检出项条图按级别着色并写占比与相机、读数分布、评估不了的原因、数据集级发现），
   有专用视图的模块接着放专用视图，综合分的分布只画一次（专用视图画）。
 - **任务详情**：两块的运行有 CPU 块、VLM 块两张卡片（逐条段沿用流水线小卡片与时间线，全量步骤单独一行，VLM 块的补任务描述在最上面），
   结尾几档放在「判决与交付」卡片里、与 Token 并排（2026-10-04 需求方改回一张「分档进度」：两块的逐条段画在同一个流水线视图里，
-  补任务描述、去重、生成报告 & 产物交付各一根进度条，与 Token 并排，见设计 07 §4.2）；模块表换成每模块一行的统计卡（所在块、状态、评估 / 选中、检出与按级别条数、待补跑可展开、
+  补任务描述、去重、生成报告 & 产物交付各一根进度条，与 Token 并排，见设计 07 §4.2；D88 起按组：数据完整性 / CPU 检查 / 模型检查 / 生成报告，设计 26 §2）；模块表换成每模块一行的统计卡（所在块、状态、评估 / 选中、检出与按级别条数、待补跑可展开、
   重试、「去报告」到 `?section=<模块>`），展开是同一份通用统计；运行中没有报告时显示即时结果的计数。旧任务（报告是 1.0，或计划里有
   `verdict` / `profile_vlm`）照旧是模块表和分档进度（D59）。
 - **Episode 明细**：判决概要列出全部发现（按级别分组，每条写模块、细码名、项、一句话、范围、区间），区间是秒的可以点，所有机位从这一刻一起播；
@@ -723,7 +731,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
   结果与 gap 报告在设计 16 §3.11，要点：
   - 不用模型、两边都有检查的检测项逐项与基线相同。
   - 有意的变化有两类：模块写明评估不了的不再记 TN（ACT-2 2 条、ACT-5 104 条）；AV-3、TASK-1 有了覆盖。
-  - episode 级 TP 33 → 27：少的 7 条是软分拒绝退役（P18），这 7 条都是拒对了、理由错了；多的 1 条是去重进了 CPU 块。
+  - episode 级 TP 33 → 27：少的 7 条是软分拒绝退役（P18），这 7 条都是拒对了、理由错了；多的 1 条是去重进了 CPU 块（D87 起重复只报告，不再拒）。
 - **没做的**：带模型模块的一轮（补描述、任务成败与画面缺陷、技能画像）。工作区没有模型服务，要需求方定用哪个：在工作区配一个模型端点，
   或在集群上经 Daemon 跑。定之前，F12.6 的验收只完成了不用模型的部分。
 - **顺带发现的平台问题**：`curation plan --episodes` 不认子集保留的源编号（设计 16 §11 第 13 条），只影响直接用命令行的人。

@@ -237,7 +237,8 @@ EOF
 
    预期：第一条返回 `done`、`episode 18 too short` 两行，`has_more: true`；带上返回的 `next_cursor`（`&cursor=...`）再请求一次，
    得到 `start`，`has_more: false`。`progress` 行不算日志；加 `&level=warn` 只剩警告及以上。
-   第二条是启动对账写下的两行系统日志（系统暂停、自动恢复）。不带 `stage` 时两个文件按时间合在一起，最新的在前。
+   第二条是启动对账写下的两行系统日志（系统暂停、自动恢复）。不带 `stage` 时两个文件按时间合在一起，最新的在前；
+   `stage` 也可以写几段、用逗号隔开（C4 6.0.0，控制台按组筛日志用它，D88），`?stage=numeric,system` 同样是这两个文件合在一起。
 
 9. **改名与 If-Match**
 

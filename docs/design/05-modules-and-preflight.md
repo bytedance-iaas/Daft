@@ -3,7 +3,7 @@
 ## 1. 模块注册表
 
 > **注册表 2.0（2026-10-01，设计 17，D56–D58，F12.1 已落地）**：模块不再按漏斗的「门」描述，改成三件事——
-> **在哪跑**：`block`（`cpu` / `vlm`）与块内的段 `stage`（CPU 块 `integrity → numeric → frame → dedup`，VLM 块
+> **在哪跑**：`block`（`cpu` / `vlm`）与块内的段 `stage`（CPU 块 `integrity → numeric → frame → duplicate`（D87 起 `dedup` 段改名，模块换成只报告的重复检测，设计 26），VLM 块
 > `vlm`；D70 起每段都是逐条的，没有全量步骤；D72 起没有补描述段），两块并行、互不过滤，`depends_on` 只留数据依赖的位置
 > （3.2 起为空）；**能报什么**：`codes`，每个细码对应分类表（C6，`docs/contracts/taxonomy.json` 1.1）的一项，带缺省严重度、
 > 默认策略下的级别（blocking / review / info，P18）、review 级的裁决线、blocking 级可否复议；**覆盖什么**：`covers`
@@ -45,7 +45,7 @@ class ModuleSpec:
 | `video_action_sync` | 视频-动作同步 | episode | hard | `video`,`action` | frame | 硬门① | 否 |
 | `task_success` | 任务成败判定 | episode | hard | `video`,`vlm` | vlm | 硬门②；无标注条目不判（D72） | **是** |
 | `camera_defects` | 镜头画面缺陷 | episode | none | `video`,`vlm` | vlm | 随 `task_success` | 否（建议项） |
-| `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 可复议（D42） |
+| `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 可复议（D42）；D87 起删掉，由重复检测 `duplicate_check` 取代 |
 
 几点要说明，都来自 v1 代码：
 
@@ -58,6 +58,8 @@ class ModuleSpec:
   留下的是**遍历顺序里最先出现的那一条**，所以这一步**不许并发**：v1 注释写明，并发会让同一份数据
   两次跑出不同的 `duplicate_of`。planner 给它的并发恒为 1，站点配置和任务上限都改不了。
   由此有两个集合要分清：检查通过集合（keep）和去重后的交付集合，报告里的交付统计吃的是后者。
+  （D87 起由重复检测 `duplicate_check` 取代：只报告、不判废，一组重复的每一条都得一条 SET-1 发现、写明同组的其他条，
+  不留第一条、不转人工、不复议；指纹与两遍走法不变，并发仍恒为 1，见设计 26 §1。）
 - `timestamp_check` 里包含「残段」规则（时长低于 `min_duration_s`），不是单独的模块。
   `task_success` 的取证仲裁子链 D71 起、判废护栏 D73 起不再触发（代码留给 v1 的 `rejudge`）：每条恰好一次模型请求。
 - **没有任务标注的条目不补描述**（D72）：`task_success` 对它写一条「没判」记录（`no_task_text`，只报告），其余检查照常；预检只在 notes 里说有多少条会这样。
@@ -77,7 +79,7 @@ class ModuleSpec:
 | 种类 | 标题 | 条目在 | 算待裁 | 判断 | 由谁产生 |
 |---|---|---|---|---|---|
 | `task_verdict` | 任务成败弃权 | passed | 是 | 判成功 / 判失败 / 拿不准 / 整条弃用；答案可带 `new_label`（人改写的任务描述，D68） | `task_success`（弃权，以及判废护栏拦下的「标注与画面疑似不符」） |
-| `reject_appeal` | 被拒复议 | reject | 否（可以复议，不是必须） | 恢复为可用 / 维持拒绝 / 拿不准 | `appealable` 的模块：`task_success`（只归因于它的拒绝）、`dedup` |
+| `reject_appeal` | 被拒复议 | reject | 否（可以复议，不是必须） | 恢复为可用 / 维持拒绝 / 拿不准 | `appealable` 的模块：`task_success`（只归因于它的拒绝；去重的拒绝随 D87 取消） |
 
 物理与结构硬门（时间戳、运动学、同步）和软分拒绝不可复议，是终局。
 **一张卡片一个问题**（D68，注册表 3.0）：一条 episode 的每条问题线只问一次，答案也只有一个。改写标注不是独立的一问 ——

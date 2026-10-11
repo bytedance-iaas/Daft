@@ -215,7 +215,7 @@ flowchart LR
 |---|---|
 | visual_quality、camera_defects、data_integrity（视频类） | 范围里的相机 + 另一路相机（1 × 2） |
 | video_action_sync、eef_video_consistency、motion_quality、kinematic_limits、timestamp_check | 范围里的相机 + 该臂的关节曲线（1 × 2）；有任务产出的同步曲线时可加第三格（第二期）。eef_video_consistency 有轨迹叠加时改为所有带叠加的相机（至多 3 路，范围里的那路在前；设计 22 §3.3） |
-| task_success、dedup、标注类 | 全部相机（1 × N，N ≤ 3；更多的收进「更换」） |
+| task_success、duplicate_check（D87 前是 dedup）、标注类 | 全部相机（1 × N，N ≤ 3；更多的收进「更换」） |
 
 ### 4.7 与现有部件的关系
 

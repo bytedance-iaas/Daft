@@ -31,7 +31,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `delivery.py` | 交付目录：TOS（输出密钥）或本地替身；批次名分配、增量同步、`latest`、每个交付目录一把发布锁 |
 | `workdir.py` | 任务工作目录 `CURATOR_WORK_DIR/<task_id>/` 与编排自己的 `.orchestr/`（启动标记、各次运行的日志本、同步记录、清理 / 取回 / 清理交付产物的标记） |
 | `janitor.py` / `backfill.py` | 终态 7 天后清理本地工作目录；子任务或读结果时从交付目录取回（大文件不取回） |
-| `resources.py` | 帧档按内存准入；Daemon 自己的 `oom_score_adj` 尽力降到 −500（没有 CAP_SYS_RESOURCE 时只记一行日志） |
+| `resources.py` | `frame` 段（解码画面）按内存准入，日志写「等内存降下来再开始解码画面」/「开始这一步」；Daemon 自己的 `oom_score_adj` 尽力降到 −500（没有 CAP_SYS_RESOURCE 时只记一行日志） |
 | `../uploads.py`、`../routes/uploads.py` | 模块参数的输入文件（F5.5）：`POST /uploads` 上传即校验、按属主存在 `<data>/uploads/`；任务只认 `upload:` 句柄，建任务时带文件做模块预检（`service.module_preflight`），开始时复制进 `inputs/`（`service.materialize_uploads`） |
 | `../routes/runs.py`、`../routes/datasets_exec.py` | 路由 |
 
@@ -51,9 +51,11 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `created → queued` 入队。第一次运行时 `run.json` 还冻结结果格式 `c2: "2.0"`、注册表版本和完整的判决策略（`params.policy`，缺省
   `default`；设计 17 §4.1），aggregate 按它判，每个结果版本另存一份 `policy.json`。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
-- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → dedup）与 VLM 块（vlm）各一个线程同时跑，互不过滤。
+- **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → duplicate）与 VLM 块（vlm）各一个线程同时跑，互不过滤。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
-  没有任务标注的条目 vlm 段不判成败（D72；D72 之前排好的计划还带一个 autolabel 段，直接记 skipped）；dedup 是 CPU 块最后一个逐条段，和前面的段交叠（D70）。
+  没有任务标注的条目 vlm 段不判成败（D72；D72 之前排好的计划还带一个 autolabel 段，直接记 skipped）；重复检测的 `duplicate` 段（D87，只报告）是 CPU 块最后一个逐条段，和前面的段交叠（D70），并发恒为 1。
+  这些段 id 是后台的；控制台按组显示进度（D88，设计 26 §2）：数据完整性（`integrity`）、CPU 检查（`numeric`、`frame`、`duplicate`、`vlm_prep`）、
+  模型检查（`vlm`）、生成报告（`final`、`report`、`verify`），SSE、日志与接口仍用段 id，前端负责归组。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
   注册表 5.3 起（设计 23 §1、§4.3，设计 25 F5.24b）派发的单位是**链**：计划里按 `after` 连起来的段。CPU 块的第二个起点 `vlm_prep`（EEF 的 CPU 半段）
   自成一条链，`after: vlm_prep` 的 vlm 段接在它后面——一条 episode 的 CPU 半段做完就进模型半段，跨块的只有这一条边。链按最后一段所在的块命名
@@ -64,7 +66,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
   numeric/frame 共用 CPU 总预算，逐条释放额度；预算为 1 时交替推进，也不持有整批锁。任务的 `limits.cpu_concurrency` 是上限，实际值见 plan 的 `value` 和 `bound_by`。
-  plan 里 CPU 档的并发是这个任务最多用多少（核数 − 2 与任务上限取小）；派发一条 CPU episode 前还要从全局 CPU 名额池拿一个名额（帧档先过内存准入），
+  plan 里 CPU 档的并发是这个任务最多用多少（核数 − 2 与任务上限取小）；派发一条 CPU episode 前还要从全局 CPU 名额池拿一个名额（`frame` 段先过内存准入），
   做完归还，几个任务同时跑时在途的 CPU episode 总数不超过池的大小（D54，设计 04 §2.3）。数据完整性档只在开了逐帧解码时拿名额。
   自定义 `CURATOR_CLI` 仍按批次调用，以保留包装脚本的执行语义。
   实时进度的 `pipeline` 字段给出实际在途数、等待数和最近五次派发，UI 可同时观察三层重叠与新条目进入。
@@ -91,11 +93,11 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：只补跑出错或没有记录的（模块 × 条目）（设计 17 §3.4）：每一档只带要补的模块与条目，整体失败的模块对全部所选重跑，
-    没有后段依赖它，不再「从出错的那一档往后跑」；去重和别的段一样只补出错或缺记录的条目（状态从已有记录里重建）；新版本，终态按当前结果重算。
+    没有后段依赖它，不再「从出错的那一档往后跑」；重复检测和别的段一样只补出错或缺记录的条目（状态从已有记录与 `groups.json` 重建）；新版本，终态按当前结果重算。
   - `resume`（「继续运行」）：已停止或失败的任务接着主流程的日志本往下做，两块各自从未完成处继续，不重做完成的（模块 × 条目）。
   - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（一条 episode 的同一条线上只认最新的那一行，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
     用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改了描述的条目按新描述重跑任务成败判定，
-    去重不重跑（每组留哪条由终判在人工决定之后选）；新版本，执行完标记这些裁决已应用。
+    重复检测不重跑（只报告，裁决不涉及它，D87）；新版本，执行完标记这些裁决已应用。
 - **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去，
   再删掉工作目录里除 `.orchestr/` 之外的一切。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
   目录留着，下一轮（每小时）再试；只有被清理过交付产物（D28）的任务不上传、直接删。
@@ -122,7 +124,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `CURATOR_CLI` | 当前解释器 `-m curation.cli` | CLI 的命令行 |
 | `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency` 里的 VLM 并行度、`vlm` 段），缺省就是 Chart 写的 site.yaml；旧文件里的 `concurrency.cpu` / `cpuMax` 忽略并告警（D54） |
 | `CURATOR_CPU_CORES` | 容器的 CPU 配额（cgroup v2 / v1），没有配额时是本机核数 | 核数：减 2 是全局 CPU 名额池的大小，也是一个任务最多用的 CPU worker 数（P4、D54） |
-| `CURATOR_MEMORY_ADMISSION` | 0.8 | 内存占用高于这个比例时帧档等待（0 = 不管） |
+| `CURATOR_MEMORY_ADMISSION` | 0.8 | 内存占用高于这个比例时 `frame` 段（解码画面）等待（0 = 不管） |
 | `CURATOR_TERM_GRACE_S` / `CURATOR_INT_GRACE_S` | 90 / 10 | SIGTERM、SIGINT 之后多久 SIGKILL；Pod 的 `terminationGracePeriodSeconds` 要不小于 preStop + 前者 + 约 20 秒 |
 | `CURATOR_VERIFY_VISIBILITY_S` | 60 | `curation verify --visibility-timeout` |
 | `CURATOR_WORK_RETENTION_DAYS` | 7 | 终态之后多久清理本地工作目录（0 = 不清理） |
@@ -155,13 +157,15 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
    c -X POST $B/tasks -d "{\"name\":\"mini\",\"input\":{\"source\":\"local\",\"uri\":\"$D/inputs/mini\"},
      \"output\":{\"uri\":\"tos://deliveries/mini\",\"credential\":\"out-key\"},\"preflight_id\":\"$P\",
      \"episodes\":{\"mode\":\"all\"},\"modules\":[\"timestamp_check\",\"kinematic_limits\",\"motion_quality\",
-     \"visual_quality\",\"video_action_sync\",\"dedup\"]}"
+     \"visual_quality\",\"video_action_sync\",\"duplicate_check\"]}"
    ```
 
    201，`state` 是 `queued`。记下 `T=<id>`；`c $B/tasks/$T` 里的 `dataset_id` 说明数据集顺带登记了。
 3. **看它跑**：`curl -N -u demo:demo-pass localhost:18080/curation/events/tasks/$T` 能看到 `state`、`progress`（CPU 块的 numeric → frame →
-   dedup，没有判决档；两块都做完后 final → report → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志；
-   `c $B/tasks/$T/plan` 是执行计划。十几秒后 `c $B/tasks/$T` 是 `succeeded`，`result_rev` 1，`summary.total` 8。
+   duplicate，没有判决档；两块都做完后 final → report → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志，
+   `c "$B/tasks/$T/logs?stage=numeric,frame,duplicate"` 是控制台「CPU 检查」一组的日志（几段用逗号隔开，C4 6.0.0）；
+   `c $B/tasks/$T/plan` 是执行计划（`duplicate` 段并发 1）。十几秒后 `c $B/tasks/$T` 是 `succeeded`，`result_rev` 1，
+   `summary` 为 `total 8, passed 6, rejected 2, held 0`（2、5 被时间戳检查拒；3 与 7 字节级相同，各带一条 SET-1 发现、照常通过，D87）。
 4. **交付**：`ls $D/tos/deliveries/mini/*/` 有 `_COMPLETE`、`revisions/r0001/commit.json`、`revisions/r0001/report.json`（没有
    `export/`：D69 起不交付数据集）；`cat $D/tos/deliveries/mini/latest` 是这个任务的 `run_id`。
 5. **非法迁移**：`c -X POST $B/tasks/$T/actions/pause` 是 409 `task_state_conflict`，`details.state` 是 `succeeded`。
@@ -189,7 +193,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
     然后按第 1、2 步各建一个任务（`uri` 换成 `$D/inputs/mini_mcap` / `$D/inputs/mini_lance`，交付目录换成
     `tos://deliveries/mini_mcap` / `tos://deliveries/mini_lance`，模块同第 2 步）。预检的 `format` 分别是
     `{"kind": "mcap", "version": null, …}` 与 `{"kind": "lance", "version": "v3", …}`。十几秒后两个任务都是 `succeeded`，
-    `summary` 为 `total 8, passed 2, rejected 6, held 0`，和 LeRobot 版本相同；两个交付目录里都只有报告与结果清单
+    `summary` 为 `total 8, passed 6, rejected 2, held 0`，和 LeRobot 版本相同；两个交付目录里都只有报告与结果清单
     （`ls $D/tos/deliveries/mini_mcap/*/` 有 `_COMPLETE`、`revisions/`，没有 `export/`）。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
     跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 
