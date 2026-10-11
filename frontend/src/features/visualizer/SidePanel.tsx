@@ -72,7 +72,8 @@ export interface OverlaySide {
 }
 
 /** The EEF marks over the focused camera (design doc 22 §3.3): which bundle camera, the hands, the sample frame of
- * the moment; for a handheld gripper the longest pose gap bridged for the drawing (§5.2). */
+ * the moment; for a handheld gripper the longest pose gap bridged for the drawing (§5.2). A registration's marks
+ * (the full player) say nothing more: the 「轨迹」 menu carries the wrist camera's note (requester 2026-10-10). */
 function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock }) {
   const { cam, interpolation, choice, onChoice } = side;
   const tl = useMemo(() => overlayTimeline(cam.times_s), [cam]);
@@ -109,7 +110,7 @@ function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock })
             }
           />
           <div className="note">
-            {S.gapHint(hint.defaultMs, hint.lo, hint.hi, hint.fps)}
+            {S.gapHint(hint.defaultMs, hint.lo, hint.hi)}
             {S.gapFilled(filled)}
             {choice.maxGapMs !== null ? (
               <Button size="mini" type="text" onClick={() => onChoice({ ...choice, maxGapMs: null })}>
@@ -119,8 +120,12 @@ function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock })
           </div>
         </>
       ) : null}
-      {cam.mount === 'wrist' ? <div className="note">{zh.viz.overlay.wristNote}</div> : null}
-      <div className="note">{side.dataset ? S.noteDataset : S.note}</div>
+      {side.dataset ? null : (
+        <>
+          {cam.mount === 'wrist' ? <div className="note">{zh.viz.overlay.wristNote}</div> : null}
+          <div className="note">{S.note}</div>
+        </>
+      )}
     </>
   );
 }
@@ -175,7 +180,6 @@ export function SidePanel({
     const e: VizEpisodeCamera | undefined = ep.cameras.find((c) => c.key === focused.key);
     if (cam) {
       title = zh.viz.side.camera(cam.name);
-      const openable = e?.url && (e.access === 'direct' || e.access === 'local' || e.access === 'remux' || e.access === 'blob');
       body = (
         <>
           <div className="sec">{zh.viz.side.stream}</div>
@@ -192,13 +196,6 @@ export function SidePanel({
           <div className="sec">{zh.viz.side.current}</div>
           <Now clock={clock} ep={ep} />
           {overlay ? <OverlayInfo side={overlay} clock={clock} /> : null}
-          {openable ? (
-            <div style={{ marginTop: 14 }}>
-              <Button size="small" onClick={() => window.open(e?.url as string, '_blank', 'noopener')}>
-                {zh.viz.side.openSource}
-              </Button>
-            </div>
-          ) : null}
         </>
       );
     }

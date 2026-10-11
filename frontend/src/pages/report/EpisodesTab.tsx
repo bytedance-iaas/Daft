@@ -466,8 +466,9 @@ export function EpisodesTab({
       <div className="card-gap" data-testid="episode-view">
         <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} onOpen={(i) => setMini({ focus: i })} onOpenAll={() => setMini({ focus: null })} />
         {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} seek={mini.seek ?? null} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
-        <Card title={E().evidence} size="small">
-          {evidence.length ? (
+        {/* no card when the episode kept no frame (requester 2026-10-10) */}
+        {evidence.length ? (
+          <Card title={E().evidence} size="small" data-testid="episode-evidence">
             <div className="evidence-grid">
               {evidence.map((e) => (
                 <figure key={e.path} style={{ margin: 0 }}>
@@ -478,10 +479,8 @@ export function EpisodesTab({
                 </figure>
               ))}
             </div>
-          ) : (
-            <Typography.Text type="secondary">{zh.report.evidenceNone}</Typography.Text>
-          )}
-        </Card>
+          </Card>
+        ) : null}
         <MiniPlayerOpen.Provider value={openSeek}>
           <ModuleBlocks taskId={taskId} rev={rev} view={v} report={report} v2={v2} onSelect={onSelect} />
         </MiniPlayerOpen.Provider>

@@ -15,7 +15,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
   it('the overview counts the rejects by taxonomy item and names the policy', async () => {
     renderApp(REPORT);
     await screen.findByTestId('report-equation');
-    expect(screen.getByTestId('report-policy')).toHaveTextContent('默认（今天的判废规则）');
+    expect(screen.getByTestId('report-policy')).toHaveTextContent(/^判决策略默认$/);
     expect(screen.getByText('判废原因分布（按检测项）')).toBeInTheDocument();
     await waitFor(() => {
       const charts = screen.getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
@@ -134,7 +134,7 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
 });
 
 describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
-  it('one 分档进度 beside the tokens: both blocks in one chart, autolabel first, the full-set steps and 生成报告 & 产物交付 below (2026-10-04)', async () => {
+  it('one 详细进度 beside the tokens: both blocks in one chart, autolabel first, the full-set steps and 生成报告 & 产物交付 below (2026-10-04)', async () => {
     renderApp(`/tasks/${FINDINGS_TASK}`);
     const stages = await screen.findByTestId('stages');
     // both blocks' per-episode stages in the one chart: a card each and a row of the run timeline

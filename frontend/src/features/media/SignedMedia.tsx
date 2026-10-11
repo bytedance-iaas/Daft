@@ -1,6 +1,7 @@
 // Evidence frames are read straight from TOS through presigned URLs (D16, 03 §7): the Daemon signs,
 // the browser fetches. A URL that fails (403, expired) is signed again and the image retried (07 §6).
 // Camera videos are the visualizer's (features/visualizer), which signs through its own endpoints.
+import { Image } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -38,7 +39,8 @@ export function useSignedUrl(target: MediaTarget | null, enabled: boolean) {
   };
 }
 
-/** An evidence frame, signed when it scrolls into view; a failed load is signed again once. */
+/** An evidence frame, signed when it scrolls into view; a failed load is signed again once. A click shows it
+ * large, over the page (requester 2026-10-10). */
 export function SignedImage({ task, scope, path, alt }: { task: string; scope: MediaScope; path: string; alt: string }) {
   return (
     <LazyVisible placeholder={<div className="evidence-frame" />}>
@@ -51,6 +53,7 @@ function SignedImageInner({ task, scope, path, alt }: { task: string; scope: Med
   const sign = useSignedUrl({ task, scope, path }, true);
   const failures = useRef(0);
   const [failed, setFailed] = useState(false);
+  const [large, setLarge] = useState(false);
   if (failed || (sign.error && !sign.data)) {
     return (
       <div className="evidence-frame muted" role="alert">
@@ -60,18 +63,23 @@ function SignedImageInner({ task, scope, path, alt }: { task: string; scope: Med
   }
   if (!sign.data) return <div className="evidence-frame" />;
   return (
-    <img
-      className="evidence-frame"
-      src={sign.data.url}
-      alt={alt}
-      loading="lazy"
-      onError={() => {
-        if (failures.current >= MEDIA_CONFIG.maxResign) setFailed(true);
-        else {
-          failures.current += 1;
-          void sign.resign();
-        }
-      }}
-    />
+    <>
+      <button type="button" className="evidence-zoom" title={zh.report.imageZoom} aria-label={`${alt} · ${zh.report.imageZoom}`} onClick={() => setLarge(true)}>
+        <img
+          className="evidence-frame"
+          src={sign.data.url}
+          alt={alt}
+          loading="lazy"
+          onError={() => {
+            if (failures.current >= MEDIA_CONFIG.maxResign) setFailed(true);
+            else {
+              failures.current += 1;
+              void sign.resign();
+            }
+          }}
+        />
+      </button>
+      {large ? <Image.Preview src={sign.data.url} visible onVisibleChange={setLarge} imgAttributes={{ alt }} /> : null}
+    </>
   );
 }

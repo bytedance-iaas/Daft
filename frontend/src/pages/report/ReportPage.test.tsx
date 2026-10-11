@@ -233,7 +233,11 @@ describe('质检报告 (07 §5)', () => {
     expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('sync-badge')).toHaveTextContent('同步正常');
     expect(screen.getByTestId('episode-module-skill_profile')).toHaveTextContent('技能族放置');
     expect(screen.getByTestId('episode-module-dedup')).toHaveTextContent('无重复');
-    expect(await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/)).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
+    const frame = await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/);
+    expect(frame).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
+    // a click shows it large (requester 2026-10-10)
+    fireEvent.click(within(screen.getByTestId('episode-evidence')).getByRole('button', { name: /任务成败判定 · ep000029_0\.jpg · 点击看大图/ }));
+    await waitFor(() => expect(document.querySelector('.arco-image-preview img')).toHaveAttribute('src', frame.getAttribute('src')));
     for (const b of document.querySelectorAll('[data-testid^="episode-module-"]')) expect(b.textContent).not.toMatch(/[{}"]/);
     // Nothing about the cameras is read until 可视化 opens the mini player (design doc 18 §4.6).
     expect(seen.filter((r) => r.path.includes('/viz') || (r.path === '/media/sign' && r.query.get('path')?.includes('videos')))).toHaveLength(0);
@@ -277,8 +281,10 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('eef-window-ext-1')).toHaveTextContent('模型超时');
     await waitFor(() => expect(within(cand).getAllByAltText(/ext · aaaabbbbcccc_frame_0001[25]0\.jpg/)).toHaveLength(2));
     expect(await within(block).findByAltText('12_ext.jpg')).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
-    // Shown in the block, not again among the episode's evidence frames.
+    // Shown in the block, not again among the episode's evidence frames - and with no other frame, no such card (2026-10-10)
     expect(screen.queryAllByAltText(/^EEF–视频一致性 · /)).toHaveLength(0);
+    expect(screen.queryByTestId('episode-evidence')).toBeNull();
+    expect(screen.queryByText(zh.episodeTab.evidence)).toBeNull();
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 

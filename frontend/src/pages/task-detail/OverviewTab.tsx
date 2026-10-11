@@ -101,7 +101,7 @@ function SubtaskTag({ task, subtasks }: { task: Task; subtasks: readonly Subtask
 }
 
 /**
- * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
+ * 详细进度 (07 §4.2; 分档进度 until 2026-10-10): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
  * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
  * runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the
  * per-episode stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart
@@ -203,12 +203,13 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   ];
   return (
     <Card title={zh.taskDetail.tokens}>
-      <div className="stat-grid" data-testid="token-totals">
+      {/* one row, 请求数 first (requester 2026-10-10) */}
+      <div className="stat-grid one-row" data-testid="token-totals">
+        <Stat label={zh.taskDetail.tokenRequests} value={u.requests.toLocaleString('en-US')} foot={u.requests_unknown_usage ? zh.taskDetail.tokenUnknown(u.requests_unknown_usage) : undefined} />
         <Stat label={zh.taskDetail.tokenInput} value={compactNumber(u.prompt_tokens)} foot={zh.taskDetail.tokenInputFoot} />
         <Stat label={zh.taskDetail.tokenOutput} value={compactNumber(u.completion_tokens)} foot={zh.taskDetail.tokenOutputFoot} />
         <Stat label={zh.taskDetail.tokenReasoning} value={compactNumber(u.reasoning_tokens)} foot={u.completion_tokens ? zh.taskDetail.tokenShareOf(zh.taskDetail.tokenOutput, percent(u.reasoning_tokens / u.completion_tokens, 0)) : undefined} />
         <Stat label={zh.taskDetail.tokenCached} value={compactNumber(u.cached_tokens)} foot={u.prompt_tokens ? zh.taskDetail.tokenShareOf(zh.taskDetail.tokenInput, percent(u.cached_tokens / u.prompt_tokens, 0)) : undefined} />
-        <Stat label={zh.taskDetail.tokenRequests} value={u.requests.toLocaleString('en-US')} foot={u.requests_unknown_usage ? zh.taskDetail.tokenUnknown(u.requests_unknown_usage) : undefined} />
       </div>
       <Collapse className="token-fold" bordered={false} defaultActiveKey={['detail']}>
         <Collapse.Item
@@ -525,15 +526,8 @@ function MoreInfo({ task }: { task: Task }) {
         header={<b>{zh.taskDetail.more}</b>}
       >
         <Typography.Title heading={6}>{zh.taskDetail.config}</Typography.Title>
-        {/* the name and its value kept apart, and the value from the next column (fourth round) */}
-        <Descriptions
-          column={2}
-          data={data}
-          style={{ marginTop: 8 }}
-          labelStyle={{ paddingRight: 24, whiteSpace: 'nowrap' }}
-          valueStyle={{ paddingRight: 40 }}
-          data-testid="task-config"
-        />
+        {/* the name and its value kept apart, and the value from the next column (fourth round; styles.css since 2026-10-10) */}
+        <Descriptions column={2} data={data} style={{ marginTop: 8 }} data-testid="task-config" />
         <Typography.Title heading={6} style={{ marginTop: 16 }}>
           {zh.taskDetail.plan}
         </Typography.Title>

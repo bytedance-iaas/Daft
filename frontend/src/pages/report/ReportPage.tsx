@@ -128,7 +128,7 @@ function OverviewCard({ task, report, v2, readOnly, runs, onRetryHeld }: { task:
           <Stat label={zh.report.duration} value={zh.reportPage.durationParts(runs.map((r) => zh.time.duration(r.seconds)))} foot={zh.reportPage.durationParts(runs.map((r) => r.label))} testId="report-duration" />
         ) : null}
         <Stat label={zh.report.tokens} value={compactNumber(t.prompt + t.completion)} foot={zh.report.tokensFoot(compactNumber(t.prompt), compactNumber(t.completion))} />
-        {preset ? <Stat label={zh.findings.policy} value={zh.findings.policyName[preset] ?? preset} foot={zh.findings.policyHint[preset]} testId="report-policy" /> : null}
+        {preset ? <Stat label={zh.findings.policy} value={zh.findings.policyName[preset] ?? preset} testId="report-policy" /> : null}
       </div>
       {skipped ? (
         // D40: not part of the equation above, not in any list, and no retry - the source is frozen.

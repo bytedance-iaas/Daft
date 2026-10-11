@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { StrictMode, useState } from 'react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, unwrap } from '../../api/client';
 import type { EpisodeView } from '../../api/types';
 import { readPrefs } from '../../lib/prefs';
@@ -53,6 +53,31 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
     chips[chips.length - 1].click();
     await waitFor(() => expect(within(screen.getByTestId('vz-mini')).getAllByTestId('vz-chip')[chips.length - 1]).toHaveClass('on'));
     expect(within(screen.getByTestId('vz-mini')).getAllByTestId('vz-chip')[0]).not.toHaveClass('on');
+  });
+
+  it('opens a camera\'s source file from an icon beside 详细信息 and fills the window; Esc leaves the fill, not the modal (2026-10-10)', async () => {
+    const view = await episode(6);
+    const closed = vi.fn();
+    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={null} onFocus={() => undefined} onClose={closed} />);
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    const open = await within(player).findByTestId('vz-open-source');
+    expect(open.tagName).toBe('A');
+    expect(open).toHaveAttribute('target', '_blank');
+    expect(open.getAttribute('href')).toBeTruthy();
+    expect(open.getAttribute('title')).toMatch(/^在新标签打开源文件（.+）$/);
+    // it sits right after 详细信息, and the side panel no longer offers it
+    expect(open.previousElementSibling).toHaveTextContent(zh.viz.info);
+    fireEvent.click(within(player).getByRole('button', { name: zh.viz.info }));
+    fireEvent.pointerDown(player.querySelector('.vz-cell.kind-video') as HTMLElement);
+    expect(within(await screen.findByTestId('vz-side')).queryByText(/在新标签打开源文件/)).toBeNull();
+    // 全屏 fills the browser window, Esc leaves it and the modal stays
+    fireEvent.click(within(player).getByTestId('vz-fill'));
+    expect(player).toHaveClass('is-fill');
+    expect(within(player).getByTestId('vz-fill')).toHaveAttribute('aria-label', zh.viz.fillExit);
+    fireEvent.keyDown(player, { key: 'Escape' });
+    expect(player).not.toHaveClass('is-fill');
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByTestId('vz-mini')).toBeInTheDocument();
   });
 
   it('says plainly when the episode of the task input cannot be read (an old task whose data is gone)', async () => {

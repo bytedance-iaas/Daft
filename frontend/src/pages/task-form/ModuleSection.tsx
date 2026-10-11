@@ -183,9 +183,6 @@ export function ModuleSection({
           <Radio value="report_only">{zh.findings.policyName.report_only}</Radio>
         </Radio.Group>
       </Space>
-      <div className="muted" style={{ marginTop: 6, fontSize: 12 }} data-testid="policy-hint">
-        {zh.findings.policyHint[v.policy]}
-      </div>
       <Modal visible={Boolean(details)} title={details ? zh.taskForm.detailsTitle(details.m.name_zh) : ''} onCancel={() => setDetails(null)} footer={null} unmountOnExit>
         {details ? (
           <div>

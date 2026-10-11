@@ -1,5 +1,5 @@
 import { Button, Select, Switch } from '@arco-design/web-react';
-import { IconPause, IconPlayArrowFill, IconSkipNextFill, IconSkipPreviousFill } from '@arco-design/web-react/icon';
+import { IconFullscreen, IconFullscreenExit, IconPause, IconPlayArrowFill, IconSkipNextFill, IconSkipPreviousFill } from '@arco-design/web-react/icon';
 import { useRef, useState } from 'react';
 import type { VizEvent, VizTimeline, VizTrack } from '../../api/types';
 import { clamp, fmtClock, frameAt, segmentAt, stepFrom, timeOfFrame } from '../../lib/vizTime';
@@ -195,6 +195,8 @@ export function Transport({
   onPrevEpisode,
   onNextEpisode,
   playBlocked = null,
+  fill = false,
+  onFill,
 }: {
   clock: PlayerClock;
   tl: TimelineInfo;
@@ -203,6 +205,9 @@ export function Transport({
   onNextEpisode?: () => void;
   /** why 播放 cannot start now (a camera being transcoded); pausing stays possible */
   playBlocked?: string | null;
+  /** the player fills the browser window (requester 2026-10-10); the button toggles it */
+  fill?: boolean;
+  onFill?: () => void;
 }) {
   const playing = useClockValue(clock, (s) => s.playing);
   const blocked = Boolean(playBlocked) && !playing;
@@ -249,6 +254,11 @@ export function Transport({
         <kbd>␣</kbd> <kbd>←</kbd>
         <kbd>→</kbd>
       </span>
+      {onFill ? (
+        <button type="button" className="tb fill" title={fill ? zh.viz.fillExit : zh.viz.fillTitle} aria-label={fill ? zh.viz.fillExit : zh.viz.fill} aria-pressed={fill} onClick={onFill} data-testid="vz-fill">
+          {fill ? <IconFullscreenExit /> : <IconFullscreen />}
+        </button>
+      ) : null}
     </div>
   );
 }

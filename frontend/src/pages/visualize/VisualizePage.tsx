@@ -106,9 +106,6 @@ export function VisualizePage() {
             <Button disabled={!datasetId || !model.data || pending} onClick={() => setDisplay(true)}>
               {zh.displayCfg.entry}
             </Button>
-            <Button disabled={!datasetId} onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId ?? '')}`)}>
-              {zh.vizPage.detail}
-            </Button>
           </Space>
         }
       />

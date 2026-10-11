@@ -107,9 +107,9 @@ describe('任务详情 (07 §4.2)', () => {
     // D46: the header says 运行中 and names the retry (the second one of this task) …
     await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/));
     expect(await screen.findByText('子任务「重试 #2」排队中，完成前不能再建子任务')).toBeInTheDocument();
-    // … and 分档进度 is the retry's, which has not started yet.
+    // … and 详细进度 is the retry's, which has not started yet.
     expect(screen.getByTestId('stages-subtask')).toHaveTextContent('子任务 · 重试 #2');
-    expect(screen.getByText('子任务还没开始，开始后这里显示它的分档进度')).toBeInTheDocument();
+    expect(screen.getByText('子任务还没开始，开始后这里显示它的详细进度')).toBeInTheDocument();
     expect(gets).toBeGreaterThan(1);
     release();
   });
@@ -260,11 +260,15 @@ describe('任务详情 (07 §4.2)', () => {
     expect(await screen.findByText('Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条。不是用户操作，不需要处理。', { selector: '.htl-popover' })).toBeInTheDocument();
   });
 
-  it('分档进度 and Token 消耗 sit side by side; Token 明细 by module or by subtask with a 合计 row, and no money (D12)', async () => {
+  it('详细进度 and Token 消耗 sit side by side; Token 明细 by module or by subtask with a 合计 row, and no money (D12)', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     const tokens = await screen.findByTestId('token-totals');
     expect(tokens).toHaveTextContent('2.01M');
     expect(tokens).not.toHaveTextContent('¥');
+    // the five totals in one row, 请求数 first (2026-10-10)
+    expect(tokens).toHaveClass('one-row');
+    expect([...tokens.querySelectorAll('.stat-label')].map((l) => l.textContent)).toEqual(['请求数', '输入', '输出', '思维链', '缓存命中']);
+    expect(screen.getByText('详细进度')).toBeInTheDocument();
     const pair = screen.getByTestId('stages').closest('.grid-2') as HTMLElement;
     expect(pair).not.toBeNull();
     expect(within(pair).getByTestId('token-totals')).toBeInTheDocument();
@@ -391,7 +395,7 @@ describe('任务详情 (07 §4.2)', () => {
   it('the running task shows the header actions by state', async () => {
     const { user } = renderApp(`/tasks/${RUNNING}`);
     await screen.findByRole('heading', { name: /umi_640 全量质检/ });
-    // 分档进度 gives counts and time used, never an estimate (requester item 20).
+    // 详细进度 gives counts and time used, never an estimate (requester item 20).
     expect(screen.getByTestId('stage-autolabel')).toHaveTextContent('640 / 640 · 用时 10 分 12 秒');
     expect(screen.getByTestId('stages')).not.toHaveTextContent('预计');
     // The streaming layers are drawn as the pipeline activity: in flight, queued, done.

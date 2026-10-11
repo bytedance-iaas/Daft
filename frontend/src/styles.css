@@ -11,6 +11,8 @@
   --c-text-4: #c9cdd4;
   --c-border: #e5e6eb;
   --c-bg: #f7f8fa;
+  /* between a key and its value, everywhere (.kv below) */
+  --kv-gap: 24px;
   color-scheme: light;
 }
 
@@ -137,7 +139,7 @@ body {
   margin-top: 16px;
 }
 
-/* Two cards side by side, as tall as each other (task detail: 分档进度 and Token 消耗). */
+/* Two cards side by side, as tall as each other (task detail: 详细进度 and Token 消耗). */
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -352,6 +354,34 @@ body {
   grid-column: span 2;
 }
 
+/* Token 消耗 (requester 2026-10-10): the five totals in one row, half a page wide */
+.stat-grid.one-row {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stat-grid.one-row > .stat-cell {
+  padding: 10px;
+  min-width: 0;
+}
+
+.stat-grid.one-row > .stat-cell.wide {
+  grid-column: auto;
+}
+
+/* smaller as the window narrows: half a 1280 px page still shows 「124.94K」 whole */
+.stat-grid.one-row .stat-value {
+  font-size: clamp(15px, 1.25vw, 18px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+  .stat-grid.one-row {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  }
+}
+
 /* a phone has one column: the long value wraps instead */
 @media (max-width: 600px) {
   .stat-grid > .stat-cell.wide {
@@ -485,6 +515,12 @@ body {
 }
 
 /* Episode 流水线 (requester 2026-10-05): the time columns only as wide as their heads */
+/* Episode 流水线 (requester 2026-10-10): as wide as the card when the window allows, 当前结果 taking the rest;
+   narrower, the columns keep their widths and the table scrolls */
+.pipeline-table table {
+  min-width: 100%;
+}
+
 .pipeline-table .pipeline-num .arco-table-th-item,
 .pipeline-table td.pipeline-num {
   padding-left: 12px;
@@ -495,6 +531,21 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
+}
+
+/* an evidence frame is a button: a click shows it large (requester 2026-10-10) */
+.evidence-zoom {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.evidence-zoom:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
 }
 
 .evidence-frame {
@@ -617,10 +668,21 @@ body {
   opacity: 0.6;
 }
 
+/* Key / value pairs (requester 2026-10-10): one gap between a key and its value everywhere - the Descriptions
+   of 基本信息 and the task's 配置, these lists, 数据包完整性, the coverage matrix, the visualizer's panels */
+.arco-descriptions:not(.arco-descriptions-border) .arco-descriptions-item-label {
+  padding-right: var(--kv-gap);
+}
+
+/* two pairs a row: the next key well clear of a value */
+.arco-descriptions:not(.arco-descriptions-border) .arco-descriptions-item-value {
+  padding-right: 40px;
+}
+
 .kv {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
+  gap: 6px var(--kv-gap);
 }
 
 .kv dt {
@@ -1050,7 +1112,7 @@ body {
 
 .desc-grid .desc-item {
   display: flex;
-  gap: 12px;
+  gap: var(--kv-gap);
   font-size: 13px;
   line-height: 1.6;
   min-width: 0;
@@ -1230,7 +1292,7 @@ body {
 .coverage-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 8px 16px;
+  gap: 8px var(--kv-gap);
   margin: 12px 0 0;
 }
 

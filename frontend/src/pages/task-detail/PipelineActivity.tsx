@@ -13,7 +13,7 @@ const COLORS: Record<string, string> = {
 };
 
 /**
- * 分档进度 of the streaming funnel (07 §4.2): the data integrity layer as a low strip on top
+ * 详细进度 of the streaming funnel (07 §4.2): the data integrity layer as a low strip on top
  * (progress and time per episode, sixth round), the other layers as cards (in flight, or waiting
  * for the next layer when that one's queue is full; queued, done, the latest batch), and their
  * timeline: solid while episodes were out, hatched while the layer waited (C4 1.18 `busy`).

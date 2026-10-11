@@ -234,17 +234,12 @@ export function drawFrame(ctx: CanvasRenderingContext2D, cam: EefOverlayCamera, 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const widen = emphasis === 'strong' ? 1.6 : 1;
-  let drew = false;
+  // no frame number: the player's own stamp already says which frame (requester 2026-10-10)
   for (const layer of cam.layers) {
     const v = layer.frames[f];
     if (!v || !layerOn(opts.choice, layer)) continue;
     const tag = layer.id === 'finger_axis' && opts.opening ? opts.opening(f) : null;
     drawLayer(ctx, layer, v, fit, layerColor(opts.choice, layer), widen, opts.choice.labels, tag);
-    drew = true;
-  }
-  if (drew && opts.choice.labels) {
-    ctx.fillStyle = '#ffffff';
-    label(ctx, `frame ${f + 1}`, fit.x + 8, fit.y + cam.image_size_wh[1] * fit.scale - 30);
   }
   ctx.restore();
 }

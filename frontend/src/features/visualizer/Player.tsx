@@ -1,5 +1,5 @@
 import { Button, Dropdown, Menu, Message, Modal, Select } from '@arco-design/web-react';
-import { IconClose, IconExpand, IconInfoCircle, IconLayout, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
+import { IconClose, IconExpand, IconInfoCircle, IconLaunch, IconLayout, IconPlus, IconSettings, IconShrink, IconSwap } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EefOverlay, EefOverlayCamera, VizCamera, VizDataset, VizEpisode, VizEpisodeCamera, VizStream } from '../../api/types';
@@ -90,9 +90,12 @@ export interface PlayerProps {
   lead?: React.ReactNode;
   /** the episode to prepare once this one is on screen (the visualize page's next one) */
   prefetch?: number | null;
-  /** the EEF marks over the cameras, with the 「叠加」 menu (the mini player, design doc 22 §3) */
+  /** the EEF marks over the cameras, with the 「轨迹」 menu (design doc 22 §3, design doc 25 §5.1) */
   overlays?: PlayerOverlays | null;
 }
+
+/** A camera's own file the browser can open as it is (the mini player's 「在新标签打开源文件」). */
+const OPENABLE = new Set(['direct', 'local', 'remux', 'blob']);
 
 /** The player: loads the model and the episode, keeps the last episode on screen while the next loads. */
 export function Player(props: PlayerProps) {
@@ -173,6 +176,21 @@ function PlayerView({
   overlays = null,
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
+  // filling the browser window (requester 2026-10-10: 浏览器内全屏, not the screen's); Esc leaves it, caught
+  // before anything else sees it - the mini player's modal would close on it
+  const [fill, setFill] = useState(false);
+  useEffect(() => {
+    if (!fill) return undefined;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setFill(false);
+    };
+    window.addEventListener('keydown', esc, true);
+    return () => window.removeEventListener('keydown', esc, true);
+  }, [fill]);
+  // the head and the transport bar start again when it toggles: a menu left open (Esc) does not hang where they were
+  const chrome = fill ? 'fill' : 'page';
   // the EEF marks and what the viewer chose to see of them (kept by the mini player around)
   const choice = overlays?.choice ?? DEFAULT_CHOICE;
   const overlayCams = useMemo(() => (overlays ? Object.values(overlays.cameras) : []), [overlays]);
@@ -218,10 +236,14 @@ function PlayerView({
   // -- the grid
   const wrap = useRef<HTMLDivElement>(null);
   const [gridW, setGridW] = useState(0);
+  const [gridH, setGridH] = useState(0);
   useEffect(() => {
     const el = wrap.current;
     if (!el) return undefined;
-    const measure = () => setGridW(Math.max(0, el.clientWidth - 24));
+    const measure = () => {
+      setGridW(Math.max(0, el.clientWidth - 24));
+      setGridH(Math.max(0, el.clientHeight - 24));
+    };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
     const ro = new ResizeObserver(measure);
@@ -372,11 +394,24 @@ function PlayerView({
     if (!cam || !e || e.access === 'unsupported') return zh.viz.depth.noPair;
     return overlayFits(stream.depth ?? { width: null, height: null }, cam) ? null : zh.viz.depth.aspect;
   };
-  const rowH = cellHeight(gridW || 1200, max !== null ? 1 : shape.cols);
+  // filling the window, the rows share its height (all of them fit: nothing scrolls); otherwise a row is as tall
+  // as its width makes it
+  const rowH =
+    fill && gridH > 0
+      ? Math.max(60, Math.floor((gridH - CELL_GAP_PX * (shape.rows - 1)) / shape.rows))
+      : cellHeight(gridW || 1200, max !== null ? 1 : shape.cols);
   const narrow = max === null && cellWidth(gridW || 1200, shape.cols) < NARROW_CELL_PX;
   const overflow = template !== 'custom' ? (layout?.overflow ?? 0) : 0;
   const focusedCell = focus !== null && focus < cells.length ? cells[focus] : null;
   const focusedStream = focusedCell?.kind === 'curve' ? focusedCell.key : null;
+  // the mini player's 「在新标签打开源文件」 (requester 2026-10-10): the focused camera's, else the first one shown
+  const sourceOf = (c: CellContent | null | undefined) => {
+    if (c?.kind !== 'video') return null;
+    const e = ep.cameras.find((x) => x.key === c.key);
+    const cam = model.cameras.find((x) => x.key === c.key);
+    return e?.url && cam && OPENABLE.has(e.access) ? { url: e.url, name: cam.name } : null;
+  };
+  const openable = full ? null : (sourceOf(focusedCell) ?? cells.map(sourceOf).find(Boolean) ?? null);
 
   // -- the dataset's default layout (design doc 21 §6.4): saved for everyone, or taken away
   const canSave = full && source.scope === 'dataset';
@@ -432,7 +467,7 @@ function PlayerView({
 
   return (
     <div
-      className={`vz${full ? '' : ' is-mini'}`}
+      className={`vz${full ? '' : ' is-mini'}${fill ? ' is-fill' : ''}`}
       tabIndex={0}
       onKeyDown={onKey}
       onPointerDown={(e) => {
@@ -440,7 +475,7 @@ function PlayerView({
       }}
       data-testid="vz-player"
     >
-      <Head model={model} ep={ep} clock={clock} loadingNext={loadingNext} full={full} lead={lead}>
+      <Head key={`head-${chrome}`} model={model} ep={ep} clock={clock} loadingNext={loadingNext} full={full} lead={lead}>
         {full ? (
           <>
             <Select size="small" style={{ width: 132 }} value={template} onChange={(v: LayoutTemplate) => setTemplate(v)} aria-label={zh.viz.layoutTitle}>
@@ -492,6 +527,17 @@ function PlayerView({
         <Button size="small" className={sideOpen ? 'on' : ''} title={zh.viz.infoTitle} icon={<IconInfoCircle />} onClick={() => setSideOpen((v) => !v)}>
           {zh.viz.info}
         </Button>
+        {openable ? (
+          <Button
+            size="small"
+            icon={<IconLaunch />}
+            title={zh.viz.openSource(openable.name)}
+            aria-label={zh.viz.openSource(openable.name)}
+            href={openable.url}
+            anchorProps={{ target: '_blank', rel: 'noopener noreferrer' }}
+            data-testid="vz-open-source"
+          />
+        ) : null}
       </Head>
       {!full && evidence.length ? (
         <div className="vz-evlist">
@@ -745,11 +791,14 @@ function PlayerView({
         ) : null}
       </div>
       <Transport
+        key={`transport-${chrome}`}
         clock={clock}
         tl={tl}
         onPrevEpisode={full ? onPrevEpisode : undefined}
         onNextEpisode={full ? onNextEpisode : undefined}
         playBlocked={playBlocked}
+        fill={fill}
+        onFill={() => setFill((v) => !v)}
         progress={
           <Progress
             clock={clock}

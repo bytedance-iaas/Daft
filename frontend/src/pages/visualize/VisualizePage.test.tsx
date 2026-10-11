@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
@@ -29,6 +29,18 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     await user.click(within(screen.getByTestId('vz-player')).getByRole('button', { name: zh.viz.nextEpisode }));
     await waitFor(() => expect(currentLocation()).toBe('/visualize?dataset=ds_droid200&ep=4'));
     expect(document.title).toContain('droid-200');
+  });
+
+  it('fills the browser window from the transport bar and leaves it on Esc; no 数据集详情, no source-file link (2026-10-10)', async () => {
+    const { user } = renderApp('/visualize?dataset=ds_droid200&ep=0');
+    const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: '数据集详情' })).toBeNull();
+    expect(within(player).queryByTestId('vz-open-source')).toBeNull();
+    await user.click(within(player).getByRole('button', { name: zh.viz.fill }));
+    expect(player).toHaveClass('is-fill');
+    await user.keyboard('{Escape}');
+    expect(player).not.toHaveClass('is-fill');
+    expect(currentLocation()).toBe('/visualize?dataset=ds_droid200&ep=0');
   });
 
   it('prepares the next episode in the background once this one is on screen (an mcap one is scanned once)', async () => {
@@ -145,7 +157,9 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     });
     const { user } = renderApp('/visualize?dataset=ds_droid100&ep=0');
     expect(await screen.findByTestId('vz-overlay-making')).toHaveTextContent('轨迹生成中 40%');       // 202 first: being made
-    await user.click(await screen.findByTestId('vz-overlay', {}, { timeout: 8000 }));
+    const button = await screen.findByTestId('vz-overlay', {}, { timeout: 8000 });
+    expect(button).toHaveTextContent(/^轨迹$/);                                                         // 「叠加」 until 2026-10-10
+    await user.click(button);
     const menu = await screen.findByTestId('vz-overlay-menu');
     expect(within(menu).queryByRole('button', { name: zh.viz.overlay.presets.model })).toBeNull();   // nothing a model saw
     const off = within(menu).getByTestId('vz-overlay-unavailable');
@@ -157,6 +171,15 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     const { user } = renderApp('/visualize?dataset=ds_umi&ep=0');
     await user.click(await screen.findByTestId('vz-overlay', {}, { timeout: 8000 }));
     expect(await screen.findByTestId('vz-overlay-wrist-note')).toHaveTextContent(zh.viz.overlay.wristNote);
+    // the menu says it; the 轨迹 section of 详细信息 does not again, nor how the marks are timed (2026-10-10)
+    await user.click(screen.getByRole('button', { name: zh.viz.info }));
+    const cell = (await screen.findAllByTestId(/^vz-eef-/))[0].closest('.vz-cell') as HTMLElement;
+    fireEvent.pointerDown(cell);
+    const side = await screen.findByTestId('vz-side');
+    await waitFor(() => expect(side).toHaveTextContent(zh.viz.overlay.side.camera));
+    expect(side).not.toHaveTextContent(zh.viz.overlay.wristNote);
+    expect(side).not.toHaveTextContent('标记画在配对的那一帧画面上');
+    expect(side).not.toHaveTextContent('轨迹由平台从数据集的记录与声明生成');
   });
 
   it('a dataset with a pose record but an unfinished declaration says so, and leads to the declaration (design doc 25 §5.1)', async () => {

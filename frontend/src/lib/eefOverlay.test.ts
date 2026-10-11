@@ -114,7 +114,7 @@ describe('eefOverlay: drawing', () => {
     expect(calls).toContain('arc(10,20,6,0,6)');                            // P
     expect(calls.filter((c) => c.startsWith('moveTo(4,14)'))).toHaveLength(1);   // the observed cross
     expect(calls.some((c) => c.startsWith('fillText(P'))).toBe(true);
-    expect(calls.some((c) => c.startsWith('fillText(frame 1'))).toBe(true);
+    expect(calls.some((c) => c.startsWith('fillText(frame'))).toBe(false);  // the player's stamp says the frame
     expect(calls).not.toContain('strokeStyle=#b26bff');                   // A is off by default
   });
 
