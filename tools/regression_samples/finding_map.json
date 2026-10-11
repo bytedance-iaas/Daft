@@ -20,7 +20,6 @@
   {"id": "integrity.rows_metadata", "module": "data_integrity", "match": {"finding_codes": ["row_invalid"], "message_regex": "fps 非法|时间边界非法"}, "items": ["FILE-8"]},
   {"id": "integrity.rows_no_action", "module": "data_integrity", "match": {"finding_codes": ["row_invalid"], "message_regex": "action 缺失"}, "items": ["STRM-1"]},
   {"id": "integrity.rate", "module": "data_integrity", "match": {"finding_codes": ["rate_outlier"]}, "items": ["STRM-3"]},
-  {"id": "integrity.duplicate", "module": "data_integrity", "match": {"finding_codes": ["duplicate_content"]}, "items": ["SET-1"]},
   {"id": "timestamp.gap", "module": "timestamp_check", "match": {"timestamp_fail_kinds": ["gap", "jitter"]}, "items": ["STRM-3"]},
   {"id": "timestamp.order", "module": "timestamp_check", "match": {"timestamp_fail_kinds": ["out_of_order"]}, "items": ["STRM-4"]},
   {"id": "timestamp.fragment", "module": "timestamp_check", "match": {"timestamp_fail_kinds": ["fragment"]}, "items": ["STRM-5"]},
@@ -45,7 +44,7 @@
   {"id": "camera_defects.glitch", "module": "camera_defects", "match": {"camera_levels": {"key": "glitch", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.glitch", "values": ["unknown"]}, "items": ["IMG-5"]},
   {"id": "camera_defects.shake", "module": "camera_defects", "match": {"camera_levels": {"key": "shake", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.shake", "values": ["unknown"]}, "items": ["IMG-6"]},
   {"id": "camera_defects.contamination", "module": "camera_defects", "match": {"camera_levels": {"key": "contamination", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.contamination", "values": ["unknown"]}, "items": ["IMG-7"]},
-  {"id": "dedup.duplicate", "module": "dedup", "match": {"passed": [false]}, "items": ["SET-1"]}
+  {"id": "duplicate.same_as", "module": "duplicate_check", "match": {"passed": [false]}, "items": ["SET-1"]}
  ],
  "controls": {
   "about": "A control item marks a legitimate situation; the platform passes it when it reports none of not_items (the taxonomy's guards) on the episode and, with not_drop, does not drop the episode unless the episode carries an episode-level defect of its own.",

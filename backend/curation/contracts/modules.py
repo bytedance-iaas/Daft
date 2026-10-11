@@ -7,7 +7,7 @@ where a module runs, its finding codes and tunable parameters from here (the fro
 Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 
 * **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
-  (integrity -> numeric -> frame -> dedup) and the VLM block (vlm). Stages
+  (integrity -> numeric -> frame -> duplicate) and the VLM block (vlm). Stages
   inside a block exist to share a decode and to size their own concurrency; every stage gets every
   selected episode, one at a time (no stage waits for the whole selection: ``FULL_SET_STAGES`` is
   empty). ``depends_on`` names data dependencies only; since 3.2 no module has one.
@@ -45,7 +45,7 @@ EEF modules); a ``rides_on`` module is answered inside the model requests of the
 (the camera defects ride on task_success): it is never selected on its own and runs whenever its
 host runs. Neither is part of the JSON export's semantics beyond ``rides_on``.
 
-History: 1.x described modules by their funnel gate (``gate``: hard veto, soft score, dedup removal
+History: 1.x described modules by their funnel gate (``gate``: hard veto, soft score, duplicate removal
 or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
 whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel: the task's
 policy grades a module's findings (design doc 17 §4) and the two blocks hand every episode on (§3).
@@ -78,6 +78,10 @@ task still runs.
 its model half in ``vlm`` only asks and merges. Without a model the CPU half writes the module's records itself.
 5.4 (design doc 25 §7.4, D86): the EEF module's dataset-level ``calibration_suspect`` - one camera whose position is off
 the same way on most episodes, more likely its calibration than the episodes (info).
+6.0 (design doc 26 §1, D87): ``duplicate_check`` (stage ``duplicate``) replaces the exact-dedup module and its stage -
+every episode of a group of byte-identical ones gets an info ``duplicate`` (SET-1) naming the others; nothing is
+rejected, kept first or appealed. The data integrity module's ``duplicate_content`` is gone (the check covers it).
+No reader is kept for tasks that selected the old module.
 """
 from __future__ import annotations
 
@@ -85,18 +89,18 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "5.4"
+REGISTRY_VERSION = "6.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
-Stage = Literal["integrity", "numeric", "frame", "dedup", "vlm_prep", "vlm"]
+Stage = Literal["integrity", "numeric", "frame", "duplicate", "vlm_prep", "vlm"]
 
 #: The two blocks and their stages in order (design doc 17 §3.1). The VLM block is one stage since
 #: 3.2: the caption pass before it (``autolabel``) is gone. Since 5.3 the CPU block has a second root,
-#: ``vlm_prep`` (design doc 23 §1): the CPU halves of model modules, beside integrity -> ... -> dedup.
-BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup", "vlm_prep"),
+#: ``vlm_prep`` (design doc 23 §1): the CPU halves of model modules, beside integrity -> ... -> duplicate.
+BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "duplicate", "vlm_prep"),
                                       "vlm": ("vlm",)}
 #: Stages that start a chain of their own in their block rather than following the stage before (5.3).
 ROOT_STAGES: tuple[str, ...] = ("vlm_prep",)
@@ -105,7 +109,7 @@ ROOT_STAGES: tuple[str, ...] = ("vlm_prep",)
 PREP_STAGES: dict[str, str] = {"vlm_prep": "vlm"}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
 #: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
-#: No stage needs the whole selection at once since D70 (dedup streams like the others);
+#: No stage needs the whole selection at once since D70 (the duplicate check streams like the others);
 #: the tuple stays so a future whole-set module has a place to say so.
 FULL_SET_STAGES: tuple[str, ...] = ()
 #: Every stage, the CPU block's first.
@@ -534,7 +538,6 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("action_missing", "STRM-1", "缺少动作数据"),
                _review("stream_missing", "STRM-1", "缺一路其他条都有的流", "integrity_check"),
                _review("rate_outlier", "STRM-3", "某路流的频率明显偏低", "integrity_check"),
-               _review("duplicate_content", "SET-1", "与另一条的文件完全相同", "integrity_check"),
                _info("orphan_files", None, "不属于任何 episode 的文件", scope_kind="dataset"),
                _info("dark_camera", "STRM-1", "近乎全黑的相机", scope_kind="dataset"),
                _info("table_overlap", "FILE-10", "episode 表的帧区间重叠或不连续", "medium",
@@ -679,12 +682,13 @@ MODULES: tuple[ModuleSpec, ...] = (
                           ("episode_index", "camera", "glitch", "shake", "contamination")),),
         rides_on="task_success"),
     ModuleSpec(
-        id="dedup", name_zh="精确去重",
-        summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
-        level="dataset", needs=frozenset({"raw_bytes"}), block="cpu", stage="dedup", depends_on=(),
-        codes=(_blocking("duplicate", "SET-1", "与另一条完全重复", appealable=True),),
+        id="duplicate_check", name_zh="重复检测",
+        summary_zh="找出动作与各路画面完全相同的条目，每一条都写明和哪几条相同；只报告，不判废",
+        level="dataset", needs=frozenset({"raw_bytes"}), block="cpu", stage="duplicate", depends_on=(),
+        codes=(_info("duplicate", "SET-1", "与另一条完全相同"),),
         param_schema=_no_params(),
-        tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
+        tables=(TableSpec("duplicate_groups", "重复组", ("episode_index", "same_as")),),
+        native=True),
 
 )
 

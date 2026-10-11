@@ -35,10 +35,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],
@@ -456,10 +456,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],
@@ -639,10 +639,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],
@@ -801,10 +801,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],
@@ -1175,10 +1175,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],
@@ -1280,10 +1280,10 @@
       "count": 1
      },
      {
-      "module": "dedup",
-      "kind": "duplicate",
-      "code": "duplicate",
-      "item": "SET-1",
+      "module": "timestamp_check",
+      "kind": "finding",
+      "code": "fragment",
+      "item": "STRM-5",
       "count": 1
      }
     ],

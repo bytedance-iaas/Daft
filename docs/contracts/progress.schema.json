@@ -31,7 +31,7 @@
     },
     "stage": {
       "type": "string",
-      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel. 1.2 (design doc 17 §5.5): the stages of a two-block plan are the registry's - integrity, numeric, frame, dedup; autolabel, vlm, profile - and post_verdict / profile_vlm retire with the funnel"
+      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel. 1.2 (design doc 17 §5.5): the stages of a two-block plan are the registry's - integrity, numeric, frame, duplicate, vlm_prep; vlm (autolabel and profile in plans made before they retired) - and post_verdict / profile_vlm retire with the funnel"
     },
     "block": {
       "enum": ["cpu", "vlm"],

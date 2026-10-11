@@ -2,9 +2,9 @@
 
 On the fixture, task_success is made to reject episodes 0 (annotated) and 6
 (captioned) alone - the fake model never rejects - so the first revision rejects
-them; dedup judged them all the same, as every episode (design doc
+them; the CPU checks judged them all the same, as every episode (design doc
 17 §3, D57). A person restores both; the Daemon's adjudication sequence then runs
-without dedup:
+without the CPU checks:
 
     -> aggregate final -> report -> verify
 
@@ -81,21 +81,21 @@ def flow(tmp_path_factory, mini_dataset):
 
 
 def test_the_first_revision_rejects_them_and_every_module_saw_them(flow):
-    assert _eps(flow.rd, 1, "passed") == [3, 4]                    # 4: no task text, not judged (D72)
-    assert _eps(flow.rd, 1, "reject") == [0, 1, 2, 5, 6, 7]
+    assert _eps(flow.rd, 1, "passed") == [3, 4, 7]                 # 4: no task text, not judged (D72)
+    assert _eps(flow.rd, 1, "reject") == [0, 1, 2, 5, 6]
     assert _eps(flow.rd, 1, "held") == []
-    assert sorted(records.latest_results(flow.rd, "dedup")) == list(range(8))           # the whole selection
+    assert sorted(records.latest_results(flow.rd, "duplicate_check")) == list(range(8))   # the whole selection
 
 
-def test_restored_appeals_come_back_without_dedup_and_without_a_model_call(flow):
+def test_restored_appeals_come_back_without_the_cpu_checks_and_without_a_model_call(flow):
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == ["0", "3", "4", "6", "7"]
-    assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
+    assert sorted(os.listdir(flow.path("checks", "duplicate_check", "parts"))) == ["0001.jsonl"]
 
 
 def test_the_second_revision_delivers_them_again(flow):
-    assert _eps(flow.rd, 2, "passed") == [0, 3, 4, 6]
-    assert _eps(flow.rd, 2, "reject") == [1, 2, 5, 7]
+    assert _eps(flow.rd, 2, "passed") == [0, 3, 4, 6, 7]
+    assert _eps(flow.rd, 2, "reject") == [1, 2, 5]
     assert _eps(flow.rd, 2, "held") == []
     assert flow.steps["verify"].doc["failed"] == []
     assert flow.steps["verify"].doc["complete_marker"] is True

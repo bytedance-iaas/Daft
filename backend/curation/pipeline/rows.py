@@ -83,7 +83,7 @@ def _readers(fmt: str) -> tuple[Callable, Callable]:
 
 
 def read_rows(input_dir: str, **kw) -> list[dict]:
-    """v1's eager rows for the input's format (dedup reads its chunks through this)."""
+    """v1's eager rows for the input's format (the duplicate check reads an earlier episode through this)."""
     return _readers(input_format(input_dir))[0](input_dir, **kw)
 
 

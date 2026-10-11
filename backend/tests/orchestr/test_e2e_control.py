@@ -19,7 +19,7 @@ from .conftest import comparable, read_jsonl, results
 pytestmark = pytest.mark.slow
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup"]
+           "video_action_sync", "task_success", "duplicate_check"]
 
 
 def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:
@@ -154,7 +154,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert r.json()["subtask"]["kind"] == "resume"
     task = d.wait(task_id)
     assert task["state"] == "succeeded", task
-    assert task["summary"]["total"] == 8 and task["summary"]["passed"] == 4
+    assert task["summary"]["total"] == 8 and task["summary"]["passed"] == 5
     run_dir = d.run_dir(task_id)
     for module in ("timestamp_check", "visual_quality"):     # finished stages were not re-run
         assert set(os.listdir(os.path.join(run_dir, "checks", module, "parts"))) == \

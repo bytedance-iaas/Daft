@@ -14,16 +14,17 @@ from daemon.orchestr import blocks
 from daemon.orchestr import episode_pipeline as ep
 from daemon.orchestr.workdir import WorkDir
 
-#: A plan from before D70, so that the whole-set path (``full_set``: dedup as one command over the
-#: selection) stays covered - tasks planned then can still be resumed and retried. Dedup as a streaming
-#: segment is covered by ``tests/cli/test_dedup_stream.py`` and the end-to-end runs.
+#: A plan with a whole-set stage (``full_set``: one command over the selection - no planned stage is one
+#: since D70, the block runner still takes it) and the autolabel stage D72 retired, so that both paths stay
+#: covered. The duplicate check as the streaming segment it is planned as is covered by
+#: ``tests/cli/test_duplicate_stream.py`` and the end-to-end runs.
 PLAN = {"schema_version": "2.0", "stages": [
     {"id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 4,
      "modules": ["timestamp_check"], "episodes": "selected"},
     {"id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric", "concurrency": 4,
      "modules": ["visual_quality"], "episodes": "selected"},
-    {"id": "dedup", "kind": "cpu", "command": "check", "block": "cpu", "after": "frame", "full_set": True,
-     "concurrency": 1, "modules": ["dedup"], "episodes": "selected"},
+    {"id": "duplicate", "kind": "cpu", "command": "check", "block": "cpu", "after": "frame", "full_set": True,
+     "concurrency": 1, "modules": ["duplicate_check"], "episodes": "selected"},
     {"id": "autolabel", "kind": "vlm", "command": "autolabel", "block": "vlm", "episodes": "unlabeled",
      "gates": {"caption": 2}},
     {"id": "vlm", "kind": "vlm", "command": "check", "block": "vlm", "after": "autolabel",
@@ -181,11 +182,11 @@ def test_the_blocks_run_side_by_side_and_never_filter_each_other(tmp_path, monke
     last_vlm = max(at(events, "vlm", "done", e) for e in selection)
     last_frame = max(at(events, "frame", "done", e) for e in selection)
     assert last_vlm < last_frame
-    # this plan is from before D70 / D72: its autolabel stage is skipped (the caption pass is gone),
-    # its dedup is a whole-set step after the block's checks
+    # its autolabel stage is skipped (the caption pass is gone, D72); its whole-set stage runs after the
+    # block's checks
     assert ("autolabel", "start", None) not in events
-    assert at(events, "dedup", "start", tuple(selection)) > last_frame
-    assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "dedup": "succeeded",
+    assert at(events, "duplicate", "start", tuple(selection)) > last_frame
+    assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "duplicate": "succeeded",
                           "autolabel": "skipped", "vlm": "succeeded"}
     # the store knows where every episode is in each block
     store = EpisodeState(state_path(run.wd.root))
@@ -239,4 +240,4 @@ def test_a_failing_block_stops_the_other(tmp_path, monkeypatch):
     else:
         raise AssertionError("the failure was not raised")
     assert run._pipeline_abort is None
-    assert ("dedup", "start", (0, 1, 2, 3)) not in events
+    assert ("duplicate", "start", (0, 1, 2, 3)) not in events

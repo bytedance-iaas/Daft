@@ -7,7 +7,7 @@ from daemon.results import live
 
 from .conftest import World
 
-VERDICTS = {0: "keep", 1: "drop", 2: "drop", 3: "keep", 4: "keep", 5: "keep", 6: "held", 7: "drop", 8: "keep"}
+VERDICTS = {0: "keep", 1: "drop", 2: "drop", 3: "keep", 4: "keep", 5: "keep", 6: "held", 7: "keep", 8: "keep"}
 
 
 def test_a_finished_task_reads_its_verdicts_from_the_current_revision(world: World):

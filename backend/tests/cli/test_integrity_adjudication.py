@@ -21,19 +21,19 @@ from .test_eef_adjudication import _asked
 
 MOD = "data_integrity"
 MODULES = ",".join((MOD, *ALL))
-WHY = "exterior 相机的视频与 ep 7 的内容完全相同"
+WHY = "缺 exterior 相机这一路，其他条都有"
 
 
 TRUNCATED = "文件被截断：exterior 相机的视频在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失"
 
 
 def integrity(rd: RunDir, ep: int, verdict: str) -> RunDir:
-    """The module's record of an intact episode, a truncated video (a reject) or a video that is a byte
-    copy of another episode's (a suspect), written from its details as ``check`` does."""
+    """The module's record of an intact episode, a truncated video (a reject) or a camera the other
+    episodes have and this one lacks (a suspect), written from its details as ``check`` does."""
     passed = {"pass": True, "fail": False}.get(verdict)
     reason = {"pass": "", "fail": TRUNCATED, "abstain": "需要人工裁决：" + WHY}[verdict]
     found = {"fail": [{"level": "reject", "code": "file_truncated", "camera": "exterior", "message": TRUNCATED}],
-             "abstain": [{"level": "suspect", "code": "duplicate_content", "camera": "exterior", "message": WHY}]}
+             "abstain": [{"level": "suspect", "code": "stream_missing", "camera": "exterior", "message": WHY}]}
     details = {"outcome": {"pass": "pass", "fail": "reject", "abstain": "suspect"}[verdict], "reason": reason,
                "tiers": {"L1": True, "L2": True, "L3": False}, "findings": found.get(verdict, []), "files": []}
     rd.parts[MOD]["0001"].append(record_v2(MOD, ep, passed, None, details, error=None, evidence=[],
@@ -110,8 +110,8 @@ def test_the_answers_act_as_the_gates_result(tmp_path):
                              (4, "integrity_check", "unsure", None)))
     after = final(run_dir, "0-4", revision=2)
     assert sorted(after["passed"]) == [0, 2, 4] and sorted(after["reject"]) == [1, 3]
-    assert after["reject"][3]["reasons"] == [{"module": MOD, "kind": "human", "code": "duplicate_content",
-                                              "item": "SET-1", "appealable": False,
+    assert after["reject"][3]["reasons"] == [{"module": MOD, "kind": "human", "code": "stream_missing",
+                                              "item": "STRM-1", "appealable": False,
                                               "text": "人工裁决判为数据确有问题"}]
     assert _asked(after) == {4: [("task_verdict", "task_verdict", "task_success"),
                                  ("integrity_check", "integrity_suspect", MOD)]}   # unsure: still asked

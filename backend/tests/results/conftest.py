@@ -6,7 +6,7 @@ files (the ``check`` record format, records 2.0 written from the module's answer
 ``curation report`` then run in process - the real W3 commands, every ``--json``
 checked against C2 - so the readers are tested against the files the CLI writes.
 
-The story of the main task (nine episodes, all eight modules):
+The story of the main task (nine episodes, v1's six checks and the duplicate check):
 
 ====  =====================================================  ==========================
 ep    what happens                                            where it ends (r1)
@@ -18,7 +18,7 @@ ep    what happens                                            where it ends (r1)
 4     label conflict (the kill guard)                         passed + review (verdict)
 5     label conflict, a second one                            passed + review (verdict)
 6     task_success execution error                            held
-7     byte-for-byte duplicate of ep 0                         reject - appealable (D42)
+7     byte-for-byte duplicate of ep 0                         passed (both get SET-1, D87)
 8     motion_quality cannot score it                          passed (no review item, C2 1.4)
 ====  =====================================================  ==========================
 """
@@ -50,7 +50,9 @@ from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by impor
 
 API = "/curation/api/v1"
 JSON = {"Content-Type": "application/json"}
-MODULES = tuple(m.id for m in registry.MODULES if not m.rides_on and m.id not in registry.native_ids())   # v1's eight
+#: v1's six checks and the duplicate check (D87)
+MODULES = tuple(m.id for m in registry.MODULES
+                if not m.rides_on and (m.id not in registry.native_ids() or m.id == "duplicate_check"))
 CAMERAS = ("observation.images.wrist", "observation.images.exterior_1")
 SHORT = ("wrist", "exterior_1")
 EPISODES = range(9)
@@ -150,11 +152,11 @@ def story(rd: RunDir) -> None:
             if verdict in ("fail", "abstain") else []
         rd.put("task_success", ep, verdict, details=task_details(ep, verdict)
                if verdict != "error" else {}, evidence=evidence)
-    for ep in (0, 3, 4, 5, 7, 8):                      # a hand-made subset: the readers need no more
-        if ep == 7:
-            rd.put("dedup", ep, "fail", details={"duplicate_of": 0})
-        else:
-            rd.put("dedup", ep, "pass", details={})
+    for ep in EPISODES:                                # ep 0 and ep 7 are one group (D87)
+        same = {0: [7], 7: [0]}.get(ep)
+        rd.put("duplicate_check", ep, "fail" if same else "pass",
+               details={"action_hash": f"h{ep}", "same_as": same, "group_id": 0} if same
+               else {"action_hash": f"h{ep}"})
 
 
 def preflight_doc() -> dict:
@@ -232,15 +234,15 @@ def main_latency() -> list[tuple]:
             ("arbitration", 60.0, False, t + 200, "c5", 0, "timeout")]
 
 
-#: the modules whose rejects can be appealed (C2 1.4; dedup since D42), and the reason kind
-APPEALABLE = {"task_success": "hard_gate", "dedup": "duplicate"}
+#: the modules whose rejects can be appealed (C2 1.4), and the reason kind
+APPEALABLE = {"task_success": "hard_gate"}
 
 
 def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
     """Make revision ``n``'s ``review.json`` what the C2 1.4 CLI writes (``final-list``, and
     D42): ``task_verdict`` items only for task_success abstentions of episodes that are not
     rejected, and a ``reject_appeal`` item for every reject attributed to one appealable
-    module alone (task_success, or dedup since D42) that has no effective appeal and was
+    module alone (task_success) that has no effective appeal and was
     not discarded (an ``unsure`` appeal keeps it). W3's fix for this is on its way; once
     it lands this is a no-op. Runs before ``report``, so the commit covers it."""
     rev = run_dir / "revisions" / f"r{n:04d}"
@@ -274,9 +276,6 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
             if not any(i["kind"] == "reject_appeal" for i in item["review"]):
                 appeal = {"source_module": module, "kind": "reject_appeal",
                           "line": "reject_appeal", "reason": "被拒的条目可以复议"}
-                dup = next((r["duplicate_of"] for r in deciding if "duplicate_of" in r), None)
-                if dup is not None:
-                    appeal["duplicate_of"] = dup
                 item["review"].append(appeal)
     review["episodes"] = [by_ep[ep] for ep in sorted(by_ep)]
     review["count"] = len(review["episodes"])

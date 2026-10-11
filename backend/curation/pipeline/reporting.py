@@ -179,10 +179,12 @@ def _summary(rev: Revision, m: str) -> dict:
                 why = str((r.get("details") or {}).get("reason") or "未注明")[:80]
                 reasons[why] = reasons.get(why, 0) + 1
         out["abstain_reasons"] = dict(sorted(reasons.items(), key=lambda kv: -kv[1])[:5])
-    if m == "dedup":
-        groups = _read(os.path.join(module_dir(rev.run_dir, "dedup"), "groups.json"), {}) or {}
-        out["collision_groups"] = len(groups.get("action_collisions") or [])
-        out["removed"] = len(groups.get("dropped") or [])
+    if m == "duplicate_check":                             # design doc 26 §1: reported, nothing removed
+        from . import report_stats as S
+
+        groups = S.duplicate_groups(res.values())
+        out["groups"] = len(groups)
+        out["duplicated"] = sum(len(g) for g in groups)
     if m == "data_integrity":                               # design doc 14 §5.1
         from ..extensions.integrity import report as integrity_report
 
@@ -304,9 +306,8 @@ def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> di
         out.update(S.sync_stats(records, sync_tolerance(rev.run_dir)))
     elif m == "task_success":
         out.update(S.task_stats(records))
-    elif m == "dedup":
-        out.update(S.dedup_stats(_read(os.path.join(module_dir(rev.run_dir, "dedup"),
-                                                    "groups.json"), {}) or {}))
+    elif m == "duplicate_check":
+        out.update(S.duplicate_stats(records))
     return out
 
 
@@ -410,9 +411,10 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
                         "rules": ",".join(d.get("rules") or []),
                         "task_desc_source": str(d.get("task_desc_source") or ""),
                         "reason": str(d.get("reason") or "")})
-        elif table == "dedup_groups":
-            if legacy_verdict(r) == "fail":
-                out.append({**base, "duplicate_of": d.get("duplicate_of")})
+        elif table == "duplicate_groups":
+            same = d.get("same_as") or []
+            if same:
+                out.append({**base, "same_as": ",".join(str(int(e)) for e in same)})
     return out
 
 
@@ -739,9 +741,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                      f" · 打分 {cnt['scored']} · 出错 {cnt['error']}")
         if "mean_score" in sec["summary"]:
             lines.append(f"- 平均分:{sec['summary']['mean_score']}")
-        if sec["id"] == "dedup":
-            lines.append(f"- 重复组 {sec['summary']['collision_groups']} 组,"
-                         f"剔除 {sec['summary']['removed']} 条")
+        if sec["id"] == "duplicate_check":
+            lines.append(f"- 重复组 {sec['summary']['groups']} 组,"
+                         f"涉及 {sec['summary']['duplicated']} 条(只报告)")
         if sec["id"] == "task_success":
             arb = sec["summary"].get("arbitration") or {}
             if arb.get("triggered"):

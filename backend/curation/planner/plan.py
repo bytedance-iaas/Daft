@@ -12,7 +12,7 @@ takes the whole selection, a stage without modules is left out:
     cpu block   integrity  the data integrity module            cpu (mostly I/O)
                 numeric    parquet-only checks                  cpu
                 frame      checks sharing one full-rate decode  cpu
-                dedup      exact duplicates                     cpu, concurrency always 1
+                duplicate  identical episodes (reported only)   cpu, concurrency always 1
     vlm block   vlm        the VLM checks                       vlm gates, merge proposal
     final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
@@ -252,7 +252,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             elif previous:
                 stage["after"] = previous
             if kind == "cpu":
-                stage["concurrency"] = 1 if stage_id == "dedup" else cpu.value
+                stage["concurrency"] = 1 if stage_id == "duplicate" else cpu.value
             stage["modules"] = [s.id for s in members]
             stage["episodes"] = "selected"
             if kind == "vlm":

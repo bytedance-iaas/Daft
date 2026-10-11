@@ -1,5 +1,5 @@
 {
- "registry_version": "5.4",
+ "registry_version": "6.0",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -9,7 +9,7 @@
     "integrity",
     "numeric",
     "frame",
-    "dedup",
+    "duplicate",
     "vlm_prep"
    ]
   },
@@ -25,7 +25,7 @@
   "integrity",
   "numeric",
   "frame",
-  "dedup",
+  "duplicate",
   "vlm_prep",
   "vlm"
  ],
@@ -955,16 +955,6 @@
      "review_line": "integrity_check"
     },
     {
-     "code": "duplicate_content",
-     "item": "SET-1",
-     "name_zh": "与另一条的文件完全相同",
-     "severity": "medium",
-     "level": "review",
-     "scope_kind": "episode",
-     "appealable": false,
-     "review_line": "integrity_check"
-    },
-    {
      "code": "orphan_files",
      "item": null,
      "name_zh": "不属于任何 episode 的文件",
@@ -1003,8 +993,7 @@
     "FILE-10",
     "STRM-4",
     "STRM-1",
-    "STRM-3",
-    "SET-1"
+    "STRM-3"
    ],
    "param_schema": {
     "type": "object",
@@ -2178,25 +2167,25 @@
    "rides_on": "task_success"
   },
   {
-   "id": "dedup",
-   "name_zh": "精确去重",
-   "summary_zh": "找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
+   "id": "duplicate_check",
+   "name_zh": "重复检测",
+   "summary_zh": "找出动作与各路画面完全相同的条目，每一条都写明和哪几条相同；只报告，不判废",
    "level": "dataset",
    "needs": [
     "raw_bytes"
    ],
    "block": "cpu",
-   "stage": "dedup",
+   "stage": "duplicate",
    "depends_on": [],
    "codes": [
     {
      "code": "duplicate",
      "item": "SET-1",
-     "name_zh": "与另一条完全重复",
-     "severity": "high",
-     "level": "blocking",
+     "name_zh": "与另一条完全相同",
+     "severity": "low",
+     "level": "info",
      "scope_kind": "episode",
-     "appealable": true
+     "appealable": false
     }
    ],
    "covers": [
@@ -2209,11 +2198,11 @@
    },
    "tables": [
     {
-     "id": "dedup_groups",
+     "id": "duplicate_groups",
      "title_zh": "重复组",
      "sortable": [
       "episode_index",
-      "duplicate_of"
+      "same_as"
      ],
      "default_sort": "episode_index"
     }

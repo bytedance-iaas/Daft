@@ -102,7 +102,6 @@ class IntegrityJudge:
             self._lerobot(scope)
         elif kind == "mcap":
             self._mcap(scope)
-        self._duplicates(scope)
         self._write_dataset_file(scope)
 
     def _all_episodes(self, fallback: list[int]) -> list[int]:
@@ -246,52 +245,6 @@ class IntegrityJudge:
                                           "peers", file=num[ep],
                                           args={"topic": t, "rate_hz": round(rate, 3),
                                                 "median_hz": round(median, 3)}))
-
-    def _duplicates(self, scope: list[int]) -> None:
-        """Byte-equal video or mcap files of different episodes (LeRobot v2, mcap)."""
-        listing = self.src.listing
-        by_id: dict[str, list[tuple[int, FileRef]]] = {}
-        for ep in scope:
-            for ref in self.plan.get(ep, []):
-                if ref.shared or ref.kind == "parquet":
-                    continue                    # v3 files are shared; parquet copies are dedup's
-                ident = self._identity(ref.key, listing.get(ref.key))
-                if ident is not None:
-                    by_id.setdefault(ident, []).append((ep, ref))
-        for group in by_id.values():
-            if len(group) < 2:
-                continue
-            for ep, ref in group:
-                others = [(e, r) for e, r in group if r is not ref]
-                what = f"{ref.camera} 相机的视频" if ref.camera else "文件"
-                whom = "、".join(f"ep {e}" + (f"（{r.camera}）" if r.camera and r.camera != ref.camera else "")
-                                for e, r in others[:3])
-                self._add(ep, Finding("duplicate_content", f"{what}与 {whom} 的内容完全相同",
-                                      "dataset", file=ref.key, camera=ref.camera,
-                                      args={"same_as": [r.key for _, r in others]}))
-
-    def _identity(self, key: str, obj) -> str | None:
-        if obj is None or int(obj.size) == 0:
-            return None
-        crc = getattr(obj, "crc64", None)
-        if crc:
-            return f"crc64:{crc}:{obj.size}"
-        etag = str(obj.etag or "").strip('"')
-        if etag and "-" not in etag:            # a single-part upload: the MD5 of the bytes
-            return f"md5:{etag}:{obj.size}"
-        if self.src.remote:
-            return None
-        path = F.local_path(self.src.storage.root, key)
-        h = hashlib.sha256()
-        try:
-            with open(path, "rb") as fh:
-                h.update(fh.read(65536))
-                if obj.size > 131072:
-                    fh.seek(-65536, os.SEEK_END)
-                    h.update(fh.read(65536))
-        except OSError:
-            return None
-        return f"head-tail:{h.hexdigest()}:{obj.size}"
 
     def _write_dataset_file(self, scope: list[int]) -> None:
         from ...pipeline.records import module_dir, write_json_atomic

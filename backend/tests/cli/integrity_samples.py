@@ -149,11 +149,11 @@ def damage_lerobot_v2(root: str) -> dict[int, str]:
     damage = {0: "reject file_empty (wrist video emptied)",
               1: "reject file_truncated (exterior video cut at 60%, moov lost)",
               2: "reject file_truncated (parquet footer cut)",
-              3: "reject row_invalid (timestamps reversed) + suspect duplicate_content",
+              3: "reject row_invalid (timestamps reversed)",
               4: "reject zero_filled (exterior video head zeroed)",
               5: "pass",
               6: "reject row_invalid (NaN in the action)",
-              7: "suspect duplicate_content (byte copy of 3)"}
+              7: "pass (a byte copy of 3: the duplicate check reports it, D87)"}
     _write_truth(root, damage)
     return damage
 
@@ -188,9 +188,9 @@ def damage_mcap(root: str) -> dict[int, str]:
     flip_byte(path, os.path.getsize(path) // 3)
     thin_topic(os.path.join(root, "episode_1.mcap"), "/observation.images.exterior")
     damage = {0: "pass", 1: "suspect rate_outlier (exterior camera at half rate)",
-              2: "reject structure_invalid (summary CRC)", 3: "suspect duplicate_content",
+              2: "reject structure_invalid (summary CRC)", 3: "pass",
               4: "reject file_truncated or suspect cut_off (recording cut at 60%)", 5: "pass",
-              6: "reject crc_mismatch (a chunk's byte flipped)", 7: "suspect duplicate_content"}
+              6: "reject crc_mismatch (a chunk's byte flipped)", 7: "pass"}
     _write_truth(root, damage)
     return damage
 

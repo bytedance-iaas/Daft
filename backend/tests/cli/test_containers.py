@@ -3,7 +3,7 @@
 The synthetic datasets are the LeRobot fixture's eight episodes in the two formats
 (``parity.fixtures.make_mini_mcap`` / ``make_mini_lance``), so the verdicts must be the
 LeRobot chain's: ep 2 (timestamp jump) and ep 5 (fragment) fail the numeric gate, ep 7 is
-ep 3's byte copy (dedup), eps 4 and 6 have no task text (not judged, D72). v1 itself on the same
+ep 3's byte copy (both reported by the duplicate check, nothing rejected - D87), eps 4 and 6 have no task text (not judged, D72). v1 itself on the same
 data is checked bit for bit by ``tools/parity/tests/test_containers_parity.py``.
 
 Local datasets run the whole Daemon order; datasets on a fake TOS check what is read
@@ -30,7 +30,7 @@ from .fakevlm_server import FakeVlmServer  # noqa: E402
 from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
-PASSED, REJECT = [0, 3, 4, 6], [1, 2, 5, 7]       # the one judgement (D71): 1 5 fail; 4 6 have no task text (D72)
+PASSED, REJECT = [0, 3, 4, 6, 7], [1, 2, 5]       # the one judgement (D71): 1 5 fail; 4 6 have no task text (D72)
 
 
 @pytest.fixture(scope="session")
@@ -74,7 +74,7 @@ def test_preflight_reads_the_format(cli, mini_mcap, mini_lance, fmt):
     assert ds["total_frames"] == 516
     by = {m["id"]: m for m in doc["modules"]}
     for m in ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-              "video_action_sync", "task_success", "dedup"):
+              "video_action_sync", "task_success", "duplicate_check"):
         assert by[m]["availability"] == "available", by[m]
     eef = by["eef_video_consistency"]
     if fmt == "mcap":         # F5.13: it reads mcap image topics; nothing to compute the trajectory from: asked for
@@ -219,7 +219,8 @@ def test_chain_verdicts_are_the_lerobot_fixtures(chain):
     assert _list(chain.rd, "held") == []
     ts = results(chain.rd, "timestamp_check")
     assert sorted(e for e, r in ts.items() if verdict_of(r) == "fail") == [2, 5]
-    assert verdict_of(results(chain.rd, "dedup")[7]) == "fail"
+    dup = results(chain.rd, "duplicate_check")
+    assert {e: r["details"].get("same_as") for e, r in dup.items() if r["findings"]} == {3: [7], 7: [3]}
     task = results(chain.rd, "task_success")
     assert {e for e, r in task.items() if r["details"].get("skipped") == "no_task_text"} == {4, 6}
     assert all(r["status"] != "error" for m in ("timestamp_check", "kinematic_limits",

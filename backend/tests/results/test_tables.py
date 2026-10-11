@@ -78,11 +78,11 @@ def test_a_registry_table_the_revision_does_not_have(world):
     rev = world.run_dir / "revisions" / "r0001" / "report.json"
     doc = json.loads(rev.read_text(encoding="utf-8"))
     for sec in doc["modules"]:
-        if sec["id"] == "dedup":
+        if sec["id"] == "duplicate_check":
             sec["tables"] = []
     rev.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
-    body = assert_error(world.get("/report/tables/dedup_groups"), "not_found")
-    assert body["error"]["details"] == {"table": "dedup_groups", "revision": 1}
+    body = assert_error(world.get("/report/tables/duplicate_groups"), "not_found")
+    assert body["error"]["details"] == {"table": "duplicate_groups", "revision": 1}
 
 
 def test_empty_and_small_tables(world):
@@ -91,8 +91,9 @@ def test_empty_and_small_tables(world):
     body = r.json()
     assert_schema(TABLE, body)
     assert [i["episode_index"] for i in body["items"]] == [0]
-    r = world.get("/report/tables/dedup_groups")
-    assert r.json()["items"] == [{"episode_index": 7, "verdict": "fail", "duplicate_of": 0}]
+    r = world.get("/report/tables/duplicate_groups")
+    assert r.json()["items"] == [{"episode_index": 0, "verdict": "pass", "same_as": "7"},
+                                 {"episode_index": 7, "verdict": "pass", "same_as": "0"}]
 
 
 def test_cursor_is_bound_to_the_revision_the_table_and_the_sort(world):

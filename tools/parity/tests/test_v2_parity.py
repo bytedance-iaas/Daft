@@ -28,7 +28,7 @@ pytestmark = pytest.mark.e2e
 
 #: the Daemon's two blocks one after the other, every stage on the whole selection (design doc 17 §3)
 STEPS = ["preflight", "plan", "snapshot", "check numeric", "check frame",
-         "check vlm", "check dedup",
+         "check vlm", "check duplicate",
          "aggregate final", "report", "verify"]
 
 
@@ -80,7 +80,7 @@ def test_v2_replays_its_own_tape_exactly(v2_golden, mini_dataset, tmp_path_facto
         m: "pass" for m in report["modules"] if m != "autolabel"}
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup"}
+                                      "duplicate_check"}
     assert report["replay"]["misses"] == 0
 
 
@@ -205,7 +205,7 @@ def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_d
     """design doc 14: v2's own first gate recorded into a golden of its own (``--modules``) and replayed;
     on the clean fixture it changes no list: passed / reject / held equal the default golden's."""
     modules = "data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality," \
-              "video_action_sync,task_success,dedup"
+              "video_action_sync,task_success,duplicate_check"
     tmp = tmp_path_factory.mktemp("integrity")
     golden, proc, doc = run_v2(tmp, "golden", mini_dataset, "--fake-vlm", "--modules", modules)
     assert proc.returncode == 0, proc.stderr[-4000:]

@@ -5,7 +5,7 @@ from .conftest import T0, all_pages, assert_error, assert_schema
 
 PAGE = "TaskEpisodePage"
 LISTS = {0: "passed", 1: "reject", 2: "reject", 3: "passed", 4: "passed", 5: "passed",
-         6: "held", 7: "reject", 8: "passed"}
+         6: "held", 7: "passed", 8: "passed"}
 
 
 def _page(world, **q) -> dict:
@@ -24,15 +24,15 @@ def test_every_episode_in_order_with_its_list_and_reasons(world):
     body = _page(world)
     assert _eps(body) == list(range(9)) and body["total"] == 9 and body["revision"] == 1
     assert body["has_more"] is False and body["next_cursor"] is None
-    assert body["counts"] == {"all": 9, "passed": 5, "reject": 3, "held": 1, "review": 3}
+    assert body["counts"] == {"all": 9, "passed": 6, "reject": 2, "held": 1, "review": 3}
     by_ep = {i["episode_index"]: i for i in body["items"]}
     assert {ep: i["list"] for ep, i in by_ep.items()} == LISTS
     assert by_ep[1]["reason_modules"] == ["timestamp_check"]
     assert by_ep[2]["reason_modules"] == ["task_success"]
-    assert by_ep[7]["reason_modules"] == ["dedup"]
+    assert by_ep[7]["reason_modules"] == []                            # a duplicate is reported only (D87)
     assert by_ep[6]["reason_modules"] == ["task_success"]               # held: the failed module
     assert by_ep[0]["reason_modules"] == [] and by_ep[0]["review"] is False
-    # 待裁: the cards still to decide (the appeal candidates ep 2 and ep 7 are optional)
+    # 待裁: the cards still to decide (the appeal candidate ep 2 is optional)
     assert [ep for ep, i in by_ep.items() if i["review"]] == [3, 4, 5]
     assert by_ep[3]["review_modules"] == ["task_success"]
     assert by_ep[4]["review_modules"] == ["task_success"]
@@ -40,7 +40,7 @@ def test_every_episode_in_order_with_its_list_and_reasons(world):
 
 
 def test_filters_by_list_and_open_questions(world):
-    assert _eps(_page(world, list="reject")) == [1, 2, 7]
+    assert _eps(_page(world, list="reject")) == [1, 2]
     assert _eps(_page(world, list="held")) == [6]
     assert _eps(_page(world, review="true")) == [3, 4, 5]
     assert _eps(_page(world, review="false")) == [0, 1, 2, 6, 7, 8]
@@ -85,7 +85,7 @@ def test_cursor_pages_cover_the_filtered_set_once(world):
     assert [i["episode_index"] for i in items] == list(range(9)) and len(bodies) == 5
     assert all(b["total"] == 9 for b in bodies)
     items, _ = all_pages(lambda **q: world.get("/episodes", list="reject", **q), limit=1)
-    assert [i["episode_index"] for i in items] == [1, 2, 7]
+    assert [i["episode_index"] for i in items] == [1, 2]
     first = _page(world, limit=2)
     # the cursor is bound to the filters it was issued under
     assert_error(world.get("/episodes", cursor=first["next_cursor"], list="reject"),
@@ -130,12 +130,13 @@ def test_the_items_and_levels_of_its_findings(world):
     by_ep = {i["episode_index"]: i for i in _page(world)["items"]}
     assert by_ep[1]["items"] == ["STRM-5", "IMG-2"] and by_ep[1]["levels"] == ["blocking", "info"]
     assert by_ep[5]["items"] == ["IMG-2", "TASK-4", "LABEL-4"] and by_ep[5]["levels"] == ["review", "info"]
-    assert by_ep[7]["items"] == ["IMG-2", "SET-1"] and by_ep[7]["levels"] == ["blocking", "info"]
+    assert by_ep[7]["items"] == ["IMG-2", "SET-1"] and by_ep[7]["levels"] == ["info"]   # D87: reported only
     assert by_ep[6]["items"] == ["IMG-2"] and by_ep[6]["levels"] == ["info"]   # held: what the others found
-    assert _eps(_page(world, level="blocking")) == [1, 2, 7]
+    assert _eps(_page(world, level="blocking")) == [1, 2]
     assert _eps(_page(world, level="review")) == [3, 4, 5]
     assert _eps(_page(world, level="info")) == list(range(9))
     assert _eps(_page(world, item="TASK-4")) == [2, 3, 4, 5]
+    assert _eps(_page(world, item="SET-1")) == [0, 7]                     # both members of the group
     assert _eps(_page(world, item="TASK-4", level="review")) == [3, 4, 5]
     assert _eps(_page(world, item="LABEL-4", list="passed", review="true")) == [4, 5]
     body = _page(world, item="ACT-4")

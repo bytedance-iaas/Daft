@@ -427,12 +427,24 @@ def task_stats(records: list[dict]) -> dict:
             "text_sources": series(sources), "layers": series(layers, TASK_LAYERS, keep_zero=True)}
 
 
-# ---------------------------------------------------------------- dedup
+# ---------------------------------------------------------------- duplicate check
 
-def dedup_stats(groups: dict) -> dict:
-    """Duplicate groups by size (``"2"``: pairs)."""
-    sizes = Counter(str(len(g)) for g in (groups or {}).get("action_collisions") or []
-                    if isinstance(g, (list, tuple)) and g)
+def duplicate_groups(records) -> list[list[int]]:
+    """The confirmed groups of identical episodes (D87), from the records' ``duplicate`` findings: each member
+    names its group by the lowest member (``group_id``)."""
+    groups: dict[int, set[int]] = {}
+    for rec in records:
+        for f in (rec or {}).get("findings") or []:
+            if f.get("code") == "duplicate":
+                ep = int(rec.get("episode_index"))
+                gid = int((f.get("readings") or {}).get("group_id", ep))
+                groups.setdefault(gid, {gid}).add(ep)
+    return [sorted(g) for _, g in sorted(groups.items())]
+
+
+def duplicate_stats(records) -> dict:
+    """Groups of identical episodes by size (``"2"``: pairs)."""
+    sizes = Counter(str(len(g)) for g in duplicate_groups(records))
     return {"group_sizes": series(sizes, sorted(sizes, key=int))}
 
 

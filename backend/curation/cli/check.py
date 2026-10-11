@@ -3,10 +3,10 @@
 The most important command. One call runs the modules of **one** stage (D18):
 ``timestamp_check,kinematic_limits,motion_quality`` (numeric),
 ``visual_quality,video_action_sync`` (frame: one shared decode per camera),
-``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or one
-dataset-level module, ``dedup`` or
-the whole kept set in one call. Mixing stages is a usage
-error. The modules v2 runs itself (``data_integrity``, ``eef_video_consistency``)
+``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or
+``duplicate_check`` (duplicate: identical episodes, one episode at a time, reported only;
+design doc 26). Mixing stages is a usage error. The modules v2 runs itself
+(``data_integrity``, ``eef_video_consistency``, ``duplicate_check``)
 take their parameters as ``--param``.
 Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
 episode as soon as it is done; the highest part wins, ``results.jsonl`` is the
@@ -27,8 +27,6 @@ import sys
 from . import modparams, runctx
 from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
-
-DATASET_MODULES = ("dedup",)
 
 
 def add_parser(sub, parents) -> None:
@@ -55,7 +53,7 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--pipeline-state", metavar="SQLITE",
                    help=argparse.SUPPRESS)
     p.add_argument("--pipeline-next", metavar="STAGE",
-                   choices=("numeric", "frame", "vlm", "dedup", "done"), default="done",
+                   choices=("numeric", "frame", "vlm", "duplicate", "done"), default="done",
                    help=argparse.SUPPRESS)
     halves = p.add_mutually_exclusive_group()
     halves.add_argument("--prep", action="store_true",
@@ -111,7 +109,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                                         stage_id=stage if getattr(args, "prep", False) or getattr(args, "prepared", False)
                                         else None)
     runctx.apply_thread_limit()
-    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm_prep", "vlm", "dedup"):
+    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate"):
         raise UsageError("--pipeline-state is only valid for a block's segments")
     src = runctx.open_source(ctx, args)
     storage = src.storage
@@ -134,7 +132,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if stage == "integrity":
         payload, survivors = _integrity(ctx, args, modules, run_dir, src, episodes, part,
                                         plan_stage, guard)
-    elif stage in ("numeric", "frame", "dedup"):
+    elif stage in ("numeric", "frame", "duplicate"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
     else:
@@ -203,9 +201,9 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
-                        # dedup keeps its streaming state in one process, so it judges one at a
-                        # time (D70); its cost is the read, which overlaps the other segments
-                        concurrency=1 if "dedup" in modules else runctx.cpu_workers(args, plan_stage),
+                        # the duplicate check keeps its streaming state in one process, so it judges one at
+                        # a time (D87); its cost is the read, which overlaps the other segments
+                        concurrency=1 if "duplicate_check" in modules else runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
                         verify_source=guard, pipeline_state=args.pipeline_state,
                         pipeline_next=args.pipeline_next,

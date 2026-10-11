@@ -14,7 +14,7 @@ GATE_UTILISATION = 0.67       # the same run used 67 % of the probe gate
 INTEGRITY_S_PER_EPISODE = 0.5  # L1 + L2: ranged reads and one whole read (design doc 14 §6)
 NUMERIC_S_PER_EPISODE = 0.05  # parquet-only checks, seconds per episode
 FRAME_S_PER_EPISODE = 3.0     # 640 episodes took ~31 min serially (04 §2.1)
-DEDUP_S_PER_EPISODE = 0.02    # action hashes; video hashes only for collisions
+DUPLICATE_S_PER_EPISODE = 0.02  # action hashes; video hashes only for collisions
 AGGREGATE_S = 1.0
 
 #: the call graph per episode (04 §4.1, D71) for the two existing VLM modules.
@@ -75,8 +75,8 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     uncounted.append(module)
         elif sid == "final":
             seconds += AGGREGATE_S
-        elif sid == "dedup":
-            seconds += selected * DEDUP_S_PER_EPISODE
+        elif sid == "duplicate":
+            seconds += selected * DUPLICATE_S_PER_EPISODE
         block = stage.get("block") or "final"
         per_block[block] = per_block.get(block, 0.0) + seconds
     blocks = [t for b, t in per_block.items() if b != "final"]

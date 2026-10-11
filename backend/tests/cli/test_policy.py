@@ -82,10 +82,10 @@ def test_a_task_keeps_the_default_levels_it_started_with(tmp_path):
     levels keeps them whatever a later registry says, and a run frozen before 5.0 (no defaults in run.json) keeps
     4.x's - an older task's next revision does not quietly bring its EEF rejects back."""
     eef = {"code": "inconsistent", "item": "MV-4", "severity": "high"}
-    now = P.Policy.of().with_defaults(["eef_video_consistency", "dedup"])
+    now = P.Policy.of().with_defaults(["eef_video_consistency", "duplicate_check"])
     table = now.to_json()["defaults"]
     assert table["eef_video_consistency"]["inconsistent"] == "info" and table["eef_video_consistency"]["conflict"] == "review"
-    assert set(table) == {"eef_video_consistency", "dedup"} and now.level("eef_video_consistency", eef) == "info"
+    assert set(table) == {"eef_video_consistency", "duplicate_check"} and now.level("eef_video_consistency", eef) == "info"
     # what was frozen wins over the registry, even where they differ
     frozen = {**now.to_json(), "defaults": {"eef_video_consistency": {"inconsistent": "blocking"}}}
     assert P.Policy.from_json(frozen, "5.0").level("eef_video_consistency", eef) == "blocking"

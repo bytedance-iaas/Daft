@@ -67,13 +67,12 @@
      "episode_index": 7,
      "reasons": [
       {
-       "module": "dedup",
-       "kind": "duplicate",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "fragment",
+       "item": "STRM-5",
        "appealable": true,
-       "duplicate_of": 2,
-       "text": "与 episode 2 完全重复"
+       "text": "残段：短于最短时长"
       },
       {
        "module": "task_success",
@@ -86,9 +85,9 @@
      ],
      "findings": [
       {
-       "module": "dedup",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "code": "fragment",
+       "item": "STRM-5",
        "level": "blocking",
        "index": 0,
        "appealable": true
@@ -266,13 +265,12 @@
      "episode_index": 7,
      "reasons": [
       {
-       "module": "dedup",
-       "kind": "duplicate",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "fragment",
+       "item": "STRM-5",
        "appealable": true,
-       "duplicate_of": 2,
-       "text": "与 episode 2 完全重复"
+       "text": "残段：短于最短时长"
       }
      ]
     }
@@ -319,13 +317,12 @@
      "episode_index": 7,
      "reasons": [
       {
-       "module": "dedup",
-       "kind": "duplicate",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "fragment",
+       "item": "STRM-5",
        "appealable": true,
-       "duplicate_of": 2,
-       "text": "与 episode 2 完全重复"
+       "text": "残段：短于最短时长"
       }
      ]
     }
@@ -371,13 +368,12 @@
      "episode_index": 7,
      "reasons": [
       {
-       "module": "dedup",
-       "kind": "duplicate",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "fragment",
+       "item": "STRM-5",
        "appealable": true,
-       "duplicate_of": 2,
-       "text": "与 episode 2 完全重复"
+       "text": "残段：短于最短时长"
       }
      ]
     }
@@ -499,20 +495,19 @@
      "episode_index": 7,
      "reasons": [
       {
-       "module": "dedup",
-       "kind": "duplicate",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "fragment",
+       "item": "STRM-5",
        "appealable": true,
-       "duplicate_of": 2,
-       "text": "与 episode 2 完全重复"
+       "text": "残段：短于最短时长"
       }
      ],
      "findings": [
       {
-       "module": "dedup",
-       "code": "duplicate",
-       "item": "SET-1",
+       "module": "timestamp_check",
+       "code": "fragment",
+       "item": "STRM-5",
        "level": "blocking",
        "index": 0,
        "appealable": true

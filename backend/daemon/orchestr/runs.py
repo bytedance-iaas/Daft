@@ -1,7 +1,7 @@
 """The main run and the four subtasks (design doc 00 §4 and §4.1, 17 §3).
 
 Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's two blocks side by side
-(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame -> dedup and the VLM block's vlm, every
+(:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame -> duplicate and the VLM block's vlm, every
 stage on the episode pipeline (an episode without a task text is not judged by task_success, D72; plans
 from before carry an autolabel stage, now skipped) - no stage filters another (D57). Then ``final``
 (aggregate: the policy verdicts into
@@ -13,12 +13,10 @@ runs with ``--resume``: after a pause or a crash nothing finished is done twice.
 * ``resume`` continues the main run from its journal (stopped / failed tasks, D20): each block goes on
   from where its episodes are.
 * ``retry`` re-runs the (module, episode) pairs that erred or have no record - a module that failed as a
-  whole on every episode - then dedup / the skill profile when they erred or were asked for, into a new
-  revision (design doc 17 §3.4; D35).
+  whole on every episode, into a new revision (design doc 17 §3.4; D35).
 * ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
   relabelled episodes without a human verdict
-  -> aggregate final -> report -> verify. dedup is not run again (its groups stand; aggregate picks
-  each group's keeper after the decisions).
+  -> aggregate final -> report -> verify. The duplicate check is not run again (its groups stand).
 """
 from __future__ import annotations
 
@@ -34,8 +32,8 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
-#: the stages the episode pipeline runs, dedup included since D70 (design doc 17 §3.2)
-EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "dedup")
+#: the stages the episode pipeline runs (design doc 17 §3.2), the duplicate check's included (D87)
+EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"

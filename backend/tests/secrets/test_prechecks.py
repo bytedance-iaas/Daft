@@ -92,7 +92,7 @@ def test_the_output_check_is_a_write_probe(secret_client, fake_tos):
 
 def test_the_vlm_check_runs_only_when_a_vlm_module_is_selected(secret_client, vlm_stub):
     c = secret_client()
-    task, _, _ = _setup(c, vlm_stub, selected=("timestamp_check", "dedup"))
+    task, _, _ = _setup(c, vlm_stub, selected=("timestamp_check", "duplicate_check"))
     assert not task_needs_vlm(runtime(c).repo, task.id)
     chats = len(vlm_stub.chats())
     report = prechecks_for_task(service(c), task)

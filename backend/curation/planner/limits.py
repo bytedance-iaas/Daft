@@ -16,7 +16,7 @@ which layer won (``plan.json`` ``limits.*.bound_by``):
     N    = N // running tasks                        (P1, when more than one runs)
 
 ``cpu`` is what one task may use at most; the Daemon hands out the cores themselves from
-one pool shared by every running task (04 §2.3, D54). ``dedup`` is not covered here: its
+one pool shared by every running task (04 §2.3, D54). ``duplicate`` is not covered here: its
 concurrency is always 1 (doc 05, section 1).
 """
 from __future__ import annotations

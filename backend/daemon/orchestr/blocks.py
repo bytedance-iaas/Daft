@@ -1,12 +1,12 @@
 """The two blocks of a plan 2.0 run, side by side (design doc 17 §3, D57).
 
-The CPU block (integrity -> numeric -> frame -> dedup) and the VLM block (vlm)
+The CPU block (integrity -> numeric -> frame -> duplicate) and the VLM block (vlm)
 run in two threads and never filter each other. Inside a block the stages run in the plan's order:
 
 * the per-episode stages - one chain of the episode pipeline (:func:`.pipeline.run_funnel`):
   every episode with a record of a stage goes on to the next one, findings and errors stop nothing.
-  Since D70 that is every stage of a block, dedup included; a plan from before it marks dedup
-  ``full_set`` and that stage then runs as one command over the whole selection;
+  Since D70 that is every stage of a block; a stage marked ``full_set`` (none today) would run as one
+  command over the whole selection;
 * ``autolabel`` - the caption pass plans from before D72 carry before the VLM block's checks: it is
   gone (an episode without a task text is not judged), so such a stage is marked skipped.
 

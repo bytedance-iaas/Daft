@@ -80,11 +80,10 @@ def test_report_only_keeps_what_was_judged_and_asks_nobody(chain):
     s = chain.steps
     # nothing blocks: every stage sees all eight
     for stage, module in (("numeric", "timestamp_check"), ("frame", "visual_quality"), ("vlm", "task_success"),
-                          ("dedup", "dedup")):
+                          ("duplicate", "duplicate_check")):
         assert s[stage].doc["modules"][module]["episodes"]["total"] == 8, stage
     assert s["numeric"].doc["modules"]["timestamp_check"]["findings"] == {"gap": 1, "fragment": 1}
-    # every module judged every episode here: all eight are kept - 7, the byte copy of 3, too, and the
-    # profile files it (a duplicate the policy does not reject is no copy to leave out)
+    # every module judged every episode here: all eight are kept - 7, the byte copy of 3, too
     assert sorted(_list(chain.rd, 1, "passed")) == list(range(8))
     assert _list(chain.rd, 1, "reject") == _list(chain.rd, 1, "held") == _list(chain.rd, 1, "review") == {}
     lines = {ln["episode_index"]: ln for ln in
@@ -102,10 +101,9 @@ def test_switching_to_the_default_reruns_aggregate_only(chain):
     assert _records(chain.rd) == chain.digest            # the module records stay as they were
     assert _list(chain.rd, 2, "held") == {}
     reject = _list(chain.rd, 2, "reject")
-    assert sorted(reject) == [1, 2, 5, 7]                 # 4 and 6 have no task text: not judged (D72)
+    assert sorted(reject) == [1, 2, 5]                    # 4 and 6 have no task text: not judged (D72)
     assert [r["code"] for r in reject[2]["reasons"]][:1] == ["gap"]
     assert [r["code"] for r in reject[5]["reasons"]][:1] == ["fragment"]
-    assert reject[7]["reasons"][0]["kind"] == "duplicate" and reject[7]["reasons"][0]["duplicate_of"] == 3
-    assert sorted(_list(chain.rd, 2, "passed")) == [0, 3, 4, 6]
+    assert sorted(_list(chain.rd, 2, "passed")) == [0, 3, 4, 6, 7]   # the byte copy is reported, not rejected (D87)
     assert sorted(_list(chain.rd, 2, "review")) == [0, 1, 3, 7]
     assert (_policy(chain.rd, 1), _policy(chain.rd, 2)) == ("report_only", "default")

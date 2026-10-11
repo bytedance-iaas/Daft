@@ -61,10 +61,10 @@ def test_ids_are_epoch_and_a_growing_sequence():
     hub = EventHub(7)
     a = hub.publish_state("task_a", "running", at=T0)
     b = hub.publish_state("task_b", "queued", at=T0)
-    c = hub.publish_done("task_a", "succeeded", failed_modules=["dedup", "dedup"])
+    c = hub.publish_done("task_a", "succeeded", failed_modules=["duplicate_check", "duplicate_check"])
     assert [parse_event_id(x) for x in (a, b, c)] == [(7, 1), (7, 2), (7, 3)]
     assert [e.event for e in hub.buffered("task_a")] == ["state", "done"]
-    assert hub.buffered("task_a")[1].data == {"state": "succeeded", "failed_modules": ["dedup"],
+    assert hub.buffered("task_a")[1].data == {"state": "succeeded", "failed_modules": ["duplicate_check"],
                                               "subtask_id": None, "reason": None}
     assert hub.buffered("task_a")[0].data == {"state": "running", "pause_reason": None,
                                               "subtask_id": None, "reason": None, "at": T0}

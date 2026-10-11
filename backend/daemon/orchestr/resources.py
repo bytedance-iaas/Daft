@@ -52,11 +52,11 @@ def admit_memory(run, stage: str, *, probe=memory_use, sleep=time.sleep) -> None
         use = probe()
         if use is None or use <= limit:
             if warned:
-                run.log(stage, "info", f"内存占用降到 {use:.0%}，开始这一档" if use is not None
-                        else "开始这一档")
+                run.log(stage, "info", f"内存占用降到 {use:.0%}，开始这一步" if use is not None
+                        else "开始这一步")
             return
         if not warned:
-            run.log(stage, "warn", f"内存占用 {use:.0%}，超过 {limit:.0%}：等内存降下来再开始帧档")
+            run.log(stage, "warn", f"内存占用 {use:.0%}，超过 {limit:.0%}：等内存降下来再开始解码画面")
             run.progress(stage, note="等内存降下来", force=True)
             warned = True
         run.check_intent()

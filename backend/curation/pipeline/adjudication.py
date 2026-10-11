@@ -16,8 +16,7 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
    model re-checks a person's conclusion);
 3. an appeal is only admitted for a reject whose blocking findings are all
    appealable (D42 by finding, design doc 17 §4.4: the registry's ``appealable``
-   codes - task_success's failure, dedup's duplicate, the EEF module's
-   inconsistency - and none of them a person's own conclusion;
+   codes - task_success's failure - and none of them a person's own conclusion;
    ``aggregate.Decided.admissible``); any other finding is final whatever the
    decision file says. "restore" lifts those findings;
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing

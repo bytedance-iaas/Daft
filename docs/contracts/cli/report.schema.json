@@ -160,7 +160,7 @@
         },
         "reject_reasons": {
           "type": "array",
-          "description": "rejected episodes per blocking reason: a finding (module, code, item), a person or a duplicate; an episode with several blocking findings counts under each",
+          "description": "rejected episodes per blocking reason: a finding (module, code, item) or a person; an episode with several blocking findings counts under each",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -176,8 +176,7 @@
               "kind": {
                 "enum": [
                   "finding",
-                  "human",
-                  "duplicate"
+                  "human"
                 ]
               },
               "code": {

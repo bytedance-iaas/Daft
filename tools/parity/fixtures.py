@@ -5,7 +5,7 @@ the paths the parity tools must see:
 
 * ep 2 has a 0.6 s timestamp jump      -> the timestamp hard gate drops it;
 * ep 5 is a 0.4 s fragment             -> dropped as a fragment;
-* ep 7 is a byte-for-byte copy of ep 3 -> removed by dedup;
+* ep 7 is a byte-for-byte copy of ep 3 -> both reported by the duplicate check (v1's dedup removed 7);
 * eps 4 and 6 have no task text        -> captioned by the model first.
 
 Videos are real H.264 files, so decoding, optical flow and frame sampling run

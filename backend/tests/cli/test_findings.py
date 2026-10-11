@@ -184,7 +184,6 @@ INTEG_CASES = [
     ({"level": "suspect", "code": "decode_concealed", "tier": "L3", "message": "解码器掩盖了错误"}, "decode_concealed"),
     ({"level": "suspect", "code": "count_mismatch", "tier": "L1", "message": "帧数 280，记录 300"}, "count_mismatch"),
     ({"level": "suspect", "code": "cut_off", "tier": "L1", "message": "录制中断：文件尾没有 mcap 结束标识"}, "cut_off"),
-    ({"level": "suspect", "code": "duplicate_content", "tier": "dataset", "message": "与 ep 7 的内容完全相同"}, "duplicate_content"),
     ({"level": "suspect", "code": "stream_missing", "tier": "peers", "message": "缺 /cam topic", "args": {"topic": "/cam"}}, "stream_missing"),
     ({"level": "suspect", "code": "rate_outlier", "tier": "peers", "message": "频率减半"}, "rate_outlier"),
     ({"level": "suspect", "code": "table_inconsistent", "tier": "dataset", "message": "episode 表前后不一致"}, "table_inconsistent"),
@@ -236,8 +235,8 @@ CASES = [
     ("eef_video_consistency", True, None, EEF_CONFLICT, {"conflict"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_OPINIONS, {"inconsistent"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_CANNOT, set(), {"MV-4", "AV-1"}),
-    ("dedup", False, None, {"duplicate_of": 43, "reason": "与 ep000043 字节级完全重复"}, {"duplicate"}, set()),
-    ("dedup", True, None, {}, set(), set()),
+    ("duplicate_check", False, None, {"same_as": [43, 50], "group_id": 12}, {"duplicate"}, set()),
+    ("duplicate_check", True, None, {"action_hash": "abc"}, set(), set()),
 
 ] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
      for f, code in INTEG_CASES]
@@ -261,8 +260,9 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
         spec = registry.finding_code(module, f["code"])
         assert f["item"] == spec.item and f["message_zh"]
     # the default policy keeps today's gates: a failed episode stops the funnel, nothing else does - but the EEF
-    # module rejects nothing since 5.0 (D81; a run from before keeps its rejects through its frozen defaults)
-    assert passes_funnel(rec) == (passed is not False or module == "eef_video_consistency")
+    # module rejects nothing since 5.0 (D81; a run from before keeps its rejects through its frozen defaults), and
+    # the duplicate check only reports (D87)
+    assert passes_funnel(rec) == (passed is not False or module in ("eef_video_consistency", "duplicate_check"))
 
 
 #: codes no answer can raise yet; every module's codes have a fixture since the skill profile left
@@ -339,8 +339,9 @@ def test_intervals_scopes_and_readings():
     assert "time_s" not in trunc and trunc["readings"] == {"from_s": 2.6}          # a truncation runs to the end
     zero = _record("data_integrity", False, None, _integ(INTEG_CASES[3][0], files=[{"file": "v.mp4", "window_s": [0.5, 9.0]}]))
     assert zero["findings"][0]["time_s"] == [0.5, 1.5]                              # a shared file's window is subtracted
-    dup = _record("dedup", False, None, {"duplicate_of": 43})["findings"][0]
-    assert dup["readings"] == {"group_id": 43, "duplicate_of": 43}
+    dup = _record("duplicate_check", False, None, {"same_as": [50, 43], "group_id": 12})["findings"][0]
+    assert dup["readings"] == {"group_id": 12, "same_as": [43, 50]}
+    assert dup["message_zh"] == "与 ep000043、ep000050 完全相同（动作与各路画面字节一致）"
 
 
 def test_thresholds_are_module_parameters():
@@ -383,6 +384,8 @@ def test_the_compatibility_verdict_matches_1_0():
         if module == "camera_defects" or details is SYNC_NONE:
             continue
         if module == "eef_video_consistency":      # 1.0's EEF verdicts used 4.x's levels (D81 changed them)
+            continue
+        if module == "duplicate_check":            # registry 6.0 (D87): no 1.0 record of it was ever written
             continue
         assert legacy_verdict(new) == old["verdict"], (module, details)
 

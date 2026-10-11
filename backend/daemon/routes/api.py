@@ -278,7 +278,7 @@ def get_logs(request: Request, task_id: str, stage: str | None = None,
     if level is not None and level not in LEVEL_RANK:
         raise ApiError("validation_failed", "level 只能是 error、warn、info、debug",
                        details={"errors": [{"field": "level", "problem": "unknown level"}]})
-    if stage is not None and not _STAGE_RE.match(stage):
+    if stage is not None and not all(_STAGE_RE.match(s) for s in stage.split(",")):
         raise ApiError("validation_failed", "stage 的写法不对",
                        details={"errors": [{"field": "stage", "problem": "invalid name"}]})
     if subtask:

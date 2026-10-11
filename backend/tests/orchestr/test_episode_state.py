@@ -13,11 +13,13 @@ def test_episode_processing_time_counts_shared_layer_once():
         "visual_quality": {"elapsed_s": 4.5},
         "video_action_sync": {"elapsed_s": 4.5},
         "task_success": {"elapsed_s": 12.0},
-        "dedup": {"elapsed_s": 99.0},
+        "duplicate_check": {"elapsed_s": 0.02},
     })
-    assert times == {"numeric": 0.3, "frame": 4.5, "vlm": 12.0}
-    assert round(sum(times.values()), 3) == 16.8
+    assert times == {"numeric": 0.3, "frame": 4.5, "duplicate": 0.02, "vlm": 12.0}
+    assert round(sum(times.values()), 3) == 16.82
     assert processing_times({"task_success": {"elapsed_s": float("nan")}}) == {}
+    # a record of a module the registry no longer has is left out, not an error
+    assert processing_times({"dedup": {"elapsed_s": 3.0}, "timestamp_check": {"elapsed_s": 0.3}}) == {"numeric": 0.3}
 
 
 def test_episode_resume_state_is_durable_with_nonfinite_details(tmp_path):

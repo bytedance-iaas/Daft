@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "curation plan --json / plan.json (schema 2.0; 1.0 still read)",
-  "description": "The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); full-set stages (dedup, profile) start once the earlier stages of their block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).",
+  "description": "The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); a full-set stage (none today) would start once the earlier stages of its block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).",
   "oneOf": [
     {
       "$ref": "#/$defs/plan_2"
@@ -287,7 +287,7 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern"
+          "description": "1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, duplicate, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern"
         },
         "kind": {
           "enum": [
@@ -343,7 +343,7 @@
         },
         "full_set": {
           "type": "boolean",
-          "description": "2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired)"
+          "description": "2.0: needs the whole selection at once; plans made now never set it (every check streams)"
         }
       },
       "allOf": [

@@ -52,7 +52,7 @@ def test_v2_fixture_matches_the_contract(cli, dataset):
     # every registry module, in registry order
     assert [m["id"] for m in doc["modules"]] == list(registry_modules.ids())
     for mid in ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-                "video_action_sync", "dedup"):
+                "video_action_sync", "duplicate_check"):
         assert _mod(doc, mid) == {"id": mid, "availability": "available"}
     assert doc["meta_fingerprint"].startswith("sha256:")
     progress = [e for e in res.events if e["kind"] == "progress"]
@@ -168,8 +168,8 @@ def test_unreadable_robot_type_needs_input(cli, dataset, robot_type):
 def test_no_question_when_the_module_is_not_selected(cli, dataset):
     edit_info(dataset, robot_type=None)
     doc = _valid(cli("preflight", "--input", dataset, "--modules",
-                     "timestamp_check,visual_quality,dedup").doc)
-    assert [m["id"] for m in doc["modules"]] == ["timestamp_check", "visual_quality", "dedup"]
+                     "timestamp_check,visual_quality,duplicate_check").doc)
+    assert [m["id"] for m in doc["modules"]] == ["timestamp_check", "visual_quality", "duplicate_check"]
     assert all(m["availability"] == "available" for m in doc["modules"])
     # and no VLM question either when no VLM module is selected
     assert not any(m.get("input_hint") for m in doc["modules"])

@@ -13,7 +13,8 @@ from curation.planner import PlanError, build_plan, derive_gates, validate_plan
 from . import examples as X
 
 ALL = list(C1.ids())
-V1 = [m.id for m in C1.MODULES if not m.rides_on and m.id not in C1.native_ids()]   # v1's eight
+#: v1's six checks and the duplicate check (D87)
+V1 = [m.id for m in C1.MODULES if not m.rides_on and (m.id not in C1.native_ids() or m.id == "duplicate_check")]
 VLM_MODULES = [m.id for m in C1.MODULES if "vlm" in m.needs]
 
 
@@ -42,7 +43,7 @@ def test_example_preflight_is_valid():
 def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
     assert p["schema_version"] == "2.0"
-    assert ids(p) == ["numeric", "frame", "dedup", "vlm", "final"]
+    assert ids(p) == ["numeric", "frame", "duplicate", "vlm", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 30, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
@@ -52,9 +53,9 @@ def test_full_plan_matches_the_design_example():
     assert stage(p, "frame") == {
         "id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric",
         "concurrency": 30, "modules": ["visual_quality", "video_action_sync"], "episodes": "selected"}
-    assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check", "block": "cpu",
+    assert stage(p, "duplicate") == {"id": "duplicate", "kind": "cpu", "command": "check", "block": "cpu",
                                  "after": "frame", "concurrency": 1,
-                                 "modules": ["dedup"], "episodes": "selected"}
+                                 "modules": ["duplicate_check"], "episodes": "selected"}
     vlm = stage(p, "vlm")
     # D72: no caption stage before the checks - the 88 unlabeled episodes are simply not judged
     assert (vlm["block"], vlm["episodes"]) == ("vlm", "selected") and "after" not in vlm
@@ -68,7 +69,7 @@ def test_full_plan_matches_the_design_example():
 def test_blocks_never_chain_into_each_other():
     """design doc 17 §3.3: ``after`` names a stage of the same block - but a model half after its CPU half
     (registry 5.3, design doc 23 §4.2: vlm after vlm_prep); every stage takes the selection."""
-    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["dedup"]):
+    for chosen in (ALL, V1, ["timestamp_check", "task_success"], ["duplicate_check"]):
         p = plan(chosen, preflight=X.preflight(64, without_task=5))
         by_id = {s["id"]: s for s in p["stages"]}
         for s in p["stages"]:
@@ -86,7 +87,7 @@ def test_the_eef_module_is_in_the_vlm_block():
     stage it takes the whole selection (D57: nothing upstream filters it). Registry 5.3 (design doc 23 §1-§2.1):
     its CPU half runs first, in the CPU block's second root vlm_prep; the vlm stage comes after it."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["integrity", "numeric", "frame", "dedup", "vlm_prep", "vlm", "final"]
+    assert ids(p) == ["integrity", "numeric", "frame", "duplicate", "vlm_prep", "vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
         and vlm["episodes"] == "selected" and "hard_gates" not in vlm and vlm["after"] == "vlm_prep"
@@ -131,10 +132,10 @@ def test_unselected_modules_and_empty_stages_disappear():
 
 def test_after_skips_missing_stages():
     assert "after" not in stage(plan(["timestamp_check", "task_success"]), "vlm")
-    p = plan(["motion_quality", "video_action_sync", "dedup"])
-    assert stage(p, "frame")["after"] == "numeric" and stage(p, "dedup")["after"] == "frame"
-    assert stage(plan(["timestamp_check", "dedup"]), "dedup")["after"] == "numeric"
-    assert "after" not in stage(plan(["dedup"]), "dedup")
+    p = plan(["motion_quality", "video_action_sync", "duplicate_check"])
+    assert stage(p, "frame")["after"] == "numeric" and stage(p, "duplicate")["after"] == "frame"
+    assert stage(plan(["timestamp_check", "duplicate_check"]), "duplicate")["after"] == "numeric"
+    assert "after" not in stage(plan(["duplicate_check"]), "duplicate")
 
 
 def test_module_order_follows_the_registry_not_the_caller():
@@ -212,7 +213,7 @@ def test_no_stage_captions_and_task_success_skips_the_unlabeled():
         assert "autolabel" not in ids(plan(["task_success"], preflight=pf))
     assert _unlabeled_note(plan(["task_success"], preflight=labelled)) is None
     assert _unlabeled_note(plan(["task_success"], preflight=unlabelled)).startswith("10 selected episode(s)")
-    assert _unlabeled_note(plan(["dedup"], preflight=unlabelled)) is None
+    assert _unlabeled_note(plan(["duplicate_check"], preflight=unlabelled)) is None
     assert _unlabeled_note(plan(["timestamp_check", "visual_quality"], preflight=unlabelled)) is None
 
 
@@ -300,13 +301,13 @@ def test_caps_flow_into_the_plan():
     assert stage(p, "vlm")["gates"] == {**{k: g[k] for k in ("probe", "endstate", "arbitration")},
                                         "episode": g["probe"]}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
-    assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
+    assert stage(p, "duplicate")["concurrency"] == 1                 # never above 1 (05 §1)
 
 
-def test_dedup_ignores_every_concurrency_setting():
-    p = plan(["dedup"], limits={"cpu_cores": 256, "cpu_concurrency": 64},
+def test_the_duplicate_check_ignores_every_concurrency_setting():
+    p = plan(["duplicate_check"], limits={"cpu_cores": 256, "cpu_concurrency": 64},
              site_config={"concurrency": {"cpu": 32}})
-    assert stage(p, "dedup")["concurrency"] == 1
+    assert stage(p, "duplicate")["concurrency"] == 1
 
 
 def test_running_tasks_split_n():
@@ -319,13 +320,13 @@ def test_site_gate_overrides_reach_the_plan():
     assert stage(p, "vlm")["gates"]["probe"] == 96
 
 
-def test_dedup_is_a_streaming_segment_of_the_cpu_block():
-    """design doc 17 §3.2 (D70): it reads every selected episode, one at a time, after the frame
+def test_the_duplicate_check_is_a_streaming_segment_of_the_cpu_block():
+    """design doc 17 §3.2 (D70), design doc 26 §1 (D87): it reads every selected episode, one at a time, after the frame
     segment - no ``full_set``, so nothing in the block waits for the whole selection."""
-    alone = stage(plan(["dedup"]), "dedup")
+    alone = stage(plan(["duplicate_check"]), "duplicate")
     assert (alone["episodes"], alone["block"]) == ("selected", "cpu")
     assert "after" not in alone, "selected on its own it is the block's first segment"
-    with_frame = stage(plan(["visual_quality", "dedup"]), "dedup")
+    with_frame = stage(plan(["visual_quality", "duplicate_check"]), "duplicate")
     assert with_frame["after"] == "frame"
     assert alone["concurrency"] == with_frame["concurrency"] == 1
     assert "full_set" not in alone and "full_set" not in with_frame

@@ -5,7 +5,7 @@ commands run in this process in the order of the Daemon's two blocks (design doc
 one block after the other -
 
     preflight -> plan -> snapshot -> check (integrity) -> check numeric
-    -> check frame -> check vlm -> check dedup
+    -> check frame -> check vlm -> check duplicate
     -> aggregate final -> report -> verify
 
 - every stage on the whole selection (no stage filters another, D57; an episode without a
@@ -49,7 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 BACKEND = os.path.join(REPO, "backend")
 ALL_MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-               "video_action_sync", "task_success", "dedup")
+               "video_action_sync", "task_success", "duplicate_check")
 #: v2's own first gate (design doc 14); v1 has no such module, so the default chain leaves it out
 #: and ``--modules`` adds it to record a golden with it
 INTEGRITY = "data_integrity"
@@ -131,7 +131,7 @@ class Chain:
                  *common, "--episodes", episodes)
         self.run("check vlm", "check", "--modules", "task_success", *common,
                  "--episodes", episodes, *self.vlm)
-        self.run("check dedup", "check", "--modules", "dedup", *common, "--episodes", episodes)
+        self.run("check duplicate", "check", "--modules", "duplicate_check", *common, "--episodes", episodes)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")

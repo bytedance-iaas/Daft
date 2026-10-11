@@ -848,7 +848,7 @@ def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
     assert ids(modules=["task_success", "timestamp_check"]) == [all_three.id, both.id]
     assert ids(modules=["kinematic_limits", "task_success"]) == [all_three.id]  # every one of them
     assert ids(modules=["kinematic_limits", "kinematic_limits"]) == [all_three.id]
-    assert ids(modules=["dedup"]) == []                                 # no row at all
+    assert ids(modules=["duplicate_check"]) == []                                 # no row at all
     assert ids(modules=[]) == [all_three.id, ts_only.id, both.id]        # no filter
     assert ids(modules=["timestamp_check"], dataset_id=ds.id, q="both") == [both.id]
     assert repo.list_tasks(page=1, page_size=1, modules=["timestamp_check"]).total == 3
@@ -1112,7 +1112,7 @@ def test_modules_upsert_cas_and_stale(repo):
     repo.upsert_task_modules(t.id, [
         P.TaskModule(task_id=t.id, module_id="task_success", selected=True, availability="available",
                      params={"evidence_frames": "all"}),
-        P.TaskModule(task_id=t.id, module_id="dedup", selected=True, availability="available")])
+        P.TaskModule(task_id=t.id, module_id="duplicate_check", selected=True, availability="available")])
     mods = {m.module_id: m for m in repo.get_task_modules(t.id)}
     assert len(mods) == 4 and mods["task_success"].params == {"evidence_frames": "all"}
 
@@ -1121,14 +1121,14 @@ def test_modules_upsert_cas_and_stale(repo):
     assert repo.update_module_state(t.id, "task_success", {"running"}, "completed_with_errors",
                                     episodes_total=49, episodes_error=2, finished_at=T0 + 9,
                                     input_digest="sha256:keep")
-    assert repo.update_module_state(t.id, "dedup", {"pending"}, "succeeded")
-    repo.mark_modules_stale(t.id, ["task_success", "dedup", "timestamp_check"])
+    assert repo.update_module_state(t.id, "duplicate_check", {"pending"}, "succeeded")
+    repo.mark_modules_stale(t.id, ["task_success", "duplicate_check", "timestamp_check"])
     mods = {m.module_id: m for m in repo.get_task_modules(t.id)}
-    assert mods["task_success"].state == "stale" and mods["dedup"].state == "stale"
+    assert mods["task_success"].state == "stale" and mods["duplicate_check"].state == "stale"
     assert mods["timestamp_check"].state == "pending"                  # nothing to go stale
     assert (mods["task_success"].episodes_total, mods["task_success"].episodes_error) == (49, 2)
     with pytest.raises(ValueError):
-        repo.update_module_state(t.id, "dedup", {"stale"}, "running", state_reason="nope")
+        repo.update_module_state(t.id, "duplicate_check", {"stale"}, "running", state_reason="nope")
     with pytest.raises(P.NotFound):
         repo.upsert_task_modules("task_missing", [])
 

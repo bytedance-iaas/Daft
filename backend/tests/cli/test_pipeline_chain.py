@@ -19,7 +19,7 @@ from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, read_jsonl, results
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "camera_defects", "dedup"]
+           "video_action_sync", "task_success", "camera_defects", "duplicate_check"]
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +42,7 @@ def chain(tmp_path_factory, mini_dataset):
 
 def test_every_step_ran_and_fits_its_contract(chain):
     assert list(chain.steps) == ["preflight", "plan", "snapshot", "numeric",
-                                 "frame", "vlm", "dedup", "final", "report", "verify"]
+                                 "frame", "duplicate", "vlm", "final", "report", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
 
 
@@ -53,7 +53,7 @@ def test_by_default_one_model_request_at_a_time(chain):
 
 def test_every_stage_judges_every_episode(chain):
     """D57: no stage stops an episode - 2 and 5 are rejected on their timestamps and still judged by the
-    frame and the model checks; dedup and the profile take the whole selection."""
+    frame and the model checks; the duplicate check takes the whole selection."""
     s = chain.steps
     ts = s["numeric"].doc["modules"]["timestamp_check"]
     assert ts["episodes"] == {"total": 8, "ok": 8, "error": 0}
@@ -67,7 +67,7 @@ def test_every_stage_judges_every_episode(chain):
                if r["details"].get("skipped")}
     assert skipped == {4: "no_task_text", 6: "no_task_text"}
     assert not os.path.exists(os.path.join(chain.rd, "autolabel"))
-    assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
+    assert s["duplicate"].doc["modules"]["duplicate_check"]["findings"] == {"duplicate": 2}   # 3 and 7, each naming the other
 
 
 def test_files_fit_their_contracts(chain):
@@ -100,16 +100,16 @@ def test_final_lists_follow_the_one_judgement(chain):
 
     # 1 and 5 fail the judgement (D71); 4 and 6 have no task text and are not judged (D72), so
     # they pass on their other checks and are delivered without a task text
-    assert eps("passed") == [0, 3, 4, 6]
-    assert eps("reject") == [1, 2, 5, 7]
+    assert eps("passed") == [0, 3, 4, 6, 7]            # 7, 3's byte copy, is reported, not rejected (D87)
+    assert eps("reject") == [1, 2, 5]
     assert eps("held") == []
-    assert eps("review") == [0, 1, 3, 7]               # 0 and 3 abstained; 1 rejected by the judgement, 7 a copy: appealable
-    reject = json.load(open(os.path.join(rev, "reject.json"), encoding="utf-8"))
-    dup = [e for e in reject["episodes"] if e["episode_index"] == 7][0]
-    assert dup["reasons"][0]["kind"] == "duplicate" and dup["reasons"][0]["duplicate_of"] == 3
+    assert eps("review") == [0, 1, 3, 7]               # 0, 3 and 7 abstained; 1 rejected by the judgement: appealable
     passed = json.load(open(os.path.join(rev, "passed.json"), encoding="utf-8"))
+    dup = {e["episode_index"]: [f["item"] for f in e["findings"] if f["code"] == "duplicate"]
+           for e in passed["episodes"]}
+    assert {e: items for e, items in dup.items() if items} == {3: ["SET-1"], 7: ["SET-1"]}
     sources = {e["episode_index"]: (e.get("task_text") or {}).get("source") for e in passed["episodes"]}
-    assert sources == {0: "原始标注", 3: "原始标注", 4: None, 6: None}
+    assert sources == {0: "原始标注", 3: "原始标注", 4: None, 6: None, 7: "原始标注"}
 
 
 def test_the_delivery_holds_the_results_and_verify_writes_complete(chain):
@@ -152,12 +152,12 @@ def test_report_follows_the_registry(chain):
     assert [m["id"] for m in report["modules"]] == MODULES
     assert all(m["state"] == "succeeded" for m in report["modules"])
     by_id = {m["id"]: m for m in report["modules"]}
-    # 7 is a copy (D42): no task question; 1 was rejected by the judgement and can be appealed
-    # (5 is rejected on its timestamps too, so not); dedup's appeal candidate never counts as pending
-    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 1}   # D72: 4 and 6 not judged
-    assert by_id["dedup"]["adjudication"] == {"pending": 0, "appealable": 1}
+    # 0, 3 and 7 abstained; 1 was rejected by the judgement and can be appealed (5 is rejected on its
+    # timestamps too, so not); a duplicate is reported only (D87): nothing to adjudicate
+    assert by_id["task_success"]["adjudication"] == {"pending": 3, "appealable": 1}   # D72: 4 and 6 not judged
+    assert by_id["duplicate_check"]["adjudication"] is None
     assert by_id["timestamp_check"]["adjudication"] is None
-    assert report["overview"]["counts"] == {"total": 8, "passed": 4, "rejected": 4,
+    assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
                                             "held": 0, "review": 4, "skipped": 0}
     assert report["integrity"]["skipped_episodes"] == []
     for m in report["modules"]:
@@ -167,7 +167,7 @@ def test_report_follows_the_registry(chain):
     assert commit["parts"]["task_success"] == ["0001"]
     assert "report.json" in commit["files"] and "passed.json" in commit["files"]
     md = open(os.path.join(rev, "report.md"), encoding="utf-8").read()
-    assert "通过 4" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
+    assert "通过 5" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
     assert "- 评估 8 条;检出:丢帧跳变(STRM-3) 1 条(判废)、残段：短于最短时长(STRM-5) 1 条(判废)" in md
     assert "判决策略:默认" in md
 
@@ -203,8 +203,9 @@ def test_report_summaries_are_chart_ready(chain):
     assert sum(j["count"] for j in task["judgements"]) == task["counts"]["total"] - task["counts"]["error"]
     assert [x["name"] for x in task["layers"]] == ["probe", "endstate", "label_guard", "arbitration"]
     assert "arbitration" in task and "abstain_reasons" in task                # kept as in 1.0
-    assert s["dedup"]["group_sizes"] == [{"name": "2", "count": 1}]
-    assert (s["dedup"]["collision_groups"], s["dedup"]["removed"]) == (1, 1)
+    assert s["duplicate_check"]["group_sizes"] == [{"name": "2", "count": 1}]
+    assert (s["duplicate_check"]["groups"], s["duplicate_check"]["duplicated"]) == (1, 2)
+    assert "重复组 1 组,涉及 2 条(只报告)" in open(os.path.join(rev, "report.md"), encoding="utf-8").read()
 
 
 def test_a_committed_revision_is_never_rewritten(chain):

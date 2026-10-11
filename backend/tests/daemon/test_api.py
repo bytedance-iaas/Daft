@@ -149,11 +149,11 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     a = seed_task(rt.repo, "droid 抽检", delivery="tos://deliveries/droid")
     clock.advance(1)
     b = seed_task(rt.repo, "umi 全量", delivery="tos://deliveries/umi",
-                  selected=("timestamp_check", "dedup"))
+                  selected=("timestamp_check", "duplicate_check"))
     _finish(rt, b.id, "completed_with_errors")
     rt.repo.set_task_summary(b.id, {"total": 50, "passed": 41, "rejected": 7, "held": 2,
                                     "review": 10, "pass_rate": 0.82})
-    rt.repo.update_module_state(b.id, "dedup", {"pending"}, "failed")
+    rt.repo.update_module_state(b.id, "duplicate_check", {"pending"}, "failed")
     rt.repo.add_usage([P.UsageDelta(task_id=b.id, ledger="actual", module_id="task_success",
                                     call_kind="probe", model_name="m", prompt_tokens=100,
                                     requests=2)], at=T0)
@@ -173,16 +173,16 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert item["module_counts"] == {"selected": 2, "pending": 1, "failed": 1}
     assert item["usage"]["prompt_tokens"] == 100 and item["usage"]["requests"] == 2
     assert item["active_subtask"] is None and item["deleted_at"] is None
-    assert item["modules"] == [m for m in registry.ids() if m in ("timestamp_check", "dedup")]
+    assert item["modules"] == [m for m in registry.ids() if m in ("timestamp_check", "duplicate_check")]
     assert item["dataset_id"] is None
 
-    assert ids(module="dedup")[0] == [b.id]                          # C4 1.1: every listed module
-    assert ids(module="timestamp_check,dedup")[0] == [b.id]
+    assert ids(module="duplicate_check")[0] == [b.id]                          # C4 1.1: every listed module
+    assert ids(module="timestamp_check,duplicate_check")[0] == [b.id]
     assert ids(module=" timestamp_check ,")[0] == [b.id, a.id]
     assert ids(module="")[0] == [b.id, a.id]
-    assert ids(module="dedup", q="droid")[0] == []
+    assert ids(module="duplicate_check", q="droid")[0] == []
     assert ids(dataset_id="ds_unknown")[0] == []
-    body = assert_error(c.get("/curation/api/v1/tasks", params={"module": "dedup,nope"}),
+    body = assert_error(c.get("/curation/api/v1/tasks", params={"module": "duplicate_check,nope"}),
                         "validation_failed")
     assert "nope" in body["error"]["message"]
 

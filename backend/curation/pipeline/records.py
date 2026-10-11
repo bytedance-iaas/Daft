@@ -6,7 +6,7 @@ compacted ``checks/<module>/results.jsonl``
 v1's tri-state ``passed`` and ``score`` exactly as the parity tool derives it for
 v1's results (``tools/parity/records.py``), so the two sides compare line by line:
 
-* ``pass`` / ``fail`` - ``passed`` is True / False (hard gates, dedup);
+* ``pass`` / ``fail`` - ``passed`` is True / False (hard gates, the duplicate check);
 * ``abstain``        - ``passed`` is None and there is no score;
 * ``scored``         - ``passed`` is None with a score (soft modules never vote);
 * ``error``          - the module could not judge the episode properly (D33).

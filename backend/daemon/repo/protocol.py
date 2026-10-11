@@ -47,8 +47,7 @@ TERMINAL_STATES: frozenset[str] = frozenset({"stopped", "succeeded", "completed_
                                              "failed"})
 PauseReason = Literal["user", "system"]
 #: ``stale``: a data dependency of the module changed after it ran (registry 2.0 ``depends_on``: the
-#: captions, after a relabel). Since registry 2.0 a changed verdict makes no module stale: dedup and
-#: the skill profile work on the whole selection (design doc 17 §3.2).
+#: captions, after a relabel). Since registry 2.0 a changed verdict makes no module stale (design doc 17 §3.2).
 ModuleRunState = Literal["pending", "running", "succeeded", "completed_with_errors", "failed",
                          "skipped", "stale"]
 Availability = Literal["available", "needs_input", "unsupported"]

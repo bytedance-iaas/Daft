@@ -90,7 +90,7 @@ class TaskLogs:
                 continue
             for p in sorted(folder.glob("*.jsonl")):
                 name = p.name[: -len(".jsonl")]
-                if not _NAME_RE.match(name) or (stage is not None and name != stage):
+                if not _NAME_RE.match(name) or (stage is not None and name not in stage.split(",")):
                     continue
                 out.append((f"{run or ''}/{name}", run, p))
         return out
@@ -98,7 +98,8 @@ class TaskLogs:
     def page(self, task_id: str, *, stage: str | None = None, subtask=ALL_RUNS,
              min_level: str | None = None, cursor: str | None = None,
              limit: int = 50) -> CursorPage[dict]:
-        """C4 ``LogLine`` items, newest first. ``subtask``: ``ALL_RUNS``, ``""`` (main) or an id."""
+        """C4 ``LogLine`` items, newest first. ``stage``: one stage or several, comma-separated (C4 6.0.0: the
+        console filters by a group of stages). ``subtask``: ``ALL_RUNS``, ``""`` (main) or an id."""
         if limit < 1:
             raise ValueError("limit starts at 1")
         scope = {"task": task_id, "stage": stage,

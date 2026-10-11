@@ -64,7 +64,7 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     golden, doc = run_v2(tmp, "golden", dataset, "--fake-vlm")
     assert doc["tape"]["mode"] == "record"
     assert final_lists(golden) == lerobot_final
-    assert lerobot_final["passed"] == [0, 3, 4, 6] and lerobot_final["reject"] == [1, 2, 5, 7]   # D71, D72
+    assert lerobot_final["passed"] == [0, 3, 4, 6, 7] and lerobot_final["reject"] == [1, 2, 5]   # D71, D72, D87
 
     out, doc = run_v2(tmp, "v2", dataset, "--replay", os.path.join(golden, "vlm_tape.jsonl.gz"))
     assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
@@ -76,7 +76,7 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     assert report["conclusion"] == "pass"
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
-                                      "dedup"}
+                                      "duplicate_check"}
     # autolabel: neither side writes captions any more (D72), so that comparison has nothing to say
     assert {m: r["status"] for m, r in report["modules"].items() if m != "autolabel"} == {
         m: "pass" for m in report["modules"] if m != "autolabel"}

@@ -14,7 +14,7 @@ from curation.contracts import schemas
 def test_modules_in_block_and_stage_order():
     assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
                        "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
-                       "camera_defects", "dedup")
+                       "camera_defects", "duplicate_check")
     for block, stages in M.BLOCKS.items():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
@@ -107,13 +107,17 @@ def test_the_taxonomy_matches_the_sample_sets():
 
 
 def test_v1_facts():
-    """Design doc 05 section 1 / 17 §3: the funnel checks, then dedup on the whole set."""
-    assert {m.id for m in M.by_stage("dedup")} == {"dedup"}
+    """Design doc 05 section 1 / 17 §3: the funnel checks, then the duplicate check (D87: reported only)."""
+    assert {m.id for m in M.by_stage("duplicate")} == {"duplicate_check"}
+    assert "dedup" not in M.ids() and "dedup" not in M.STAGES, "exact dedup and its stage were removed (D87)"
     assert "profile" not in M.STAGES, "the skill profile and its stage were removed"
     assert {m.id for m in M.by_block("vlm")} == {"eef_video_consistency", "task_success",
                                                  "camera_defects"}
-    assert M.get("dedup").level == "dataset"
-    assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
+    assert M.get("duplicate_check").level == "dataset"
+    assert {c.level for c in M.get("duplicate_check").codes} == {"info"}
+    assert not M.get("duplicate_check").produces_adjudication and not M.get("duplicate_check").appealable
+    assert "duplicate_content" not in {c.code for c in M.get("data_integrity").codes}
+    assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success",
                                                                     "eef_video_consistency",
                                                                     "data_integrity"}
     assert not any(m.depends_on for m in M.MODULES), "3.2: no data dependency is left"
@@ -127,13 +131,13 @@ def test_the_default_policy_reproduces_todays_gates():
     the EEF module rejects nothing (D81): a person may, answering a conflict."""
     blocking = {m.id for m in M.MODULES if any(c.level == "blocking" for c in m.codes)}
     assert blocking == {"data_integrity", "timestamp_check", "kinematic_limits", "video_action_sync",
-                        "task_success", "dedup"}
+                        "task_success"}
     for soft in ("motion_quality", "visual_quality", "camera_defects"):
         assert {c.level for c in M.get(soft).codes} == {"info"}, soft
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
     assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {
-        ("task_success", "failure"), ("dedup", "duplicate")}
+        ("task_success", "failure")}
 
 
 def test_p20_items_have_codes():
@@ -150,7 +154,7 @@ def test_the_eef_module_gives_opinions():
     """D49: one module, CPU then model; 5.0 (design doc 25 §7.3, D81): opinions with a confidence - nothing it
     reports rejects, a conflict between its channels is asked on eef_check; the codes it no longer reports stay
     in the catalogue, retired, for older records."""
-    assert M.native_ids() == ("data_integrity", "eef_video_consistency")
+    assert M.native_ids() == ("data_integrity", "eef_video_consistency", "duplicate_check")
     spec = M.get("eef_video_consistency")
     assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video"} <= spec.needs
     assert spec.depends_on == () and "eef_video_review" not in M.ids()
@@ -250,7 +254,7 @@ def test_review_lines():
     assert M.get("eef_video_consistency").review_lines == ("eef_check",)
     raised = {x for m in M.MODULES for x in m.review_lines}
     assert raised <= {line.id for line in M.REVIEW_LINES}
-    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup"}     # EEF rejects nothing (D81)
+    assert {m.id for m in M.MODULES if m.appealable} == {"task_success"}     # EEF rejects nothing (D81), duplicates neither (D87)
     assert M.get("task_success").review_lines == ("task_verdict",)
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
@@ -275,7 +279,7 @@ def test_params_validate():
     with pytest.raises(jsonschema.ValidationError):
         M.validate_params("video_action_sync", {"sync_plots": "none"})   # v1 says off
     with pytest.raises(jsonschema.ValidationError):
-        M.validate_params("dedup", {"concurrency": 4})                   # dedup never runs in parallel
+        M.validate_params("duplicate_check", {"concurrency": 4})         # it never runs in parallel
 
 
 def test_modules_json_is_current_and_fits_the_api_schema():
@@ -297,9 +301,9 @@ def test_camera_defects_rides_on_task_success():
     assert spec.rides_on == "task_success" and (spec.block, spec.stage) == ("vlm", "vlm")
     assert {c.level for c in spec.codes} == {"info"} and not spec.produces_adjudication
     assert spec.covers == ("IMG-5", "IMG-6", "IMG-7")
-    assert M.riders_of("task_success") == ("camera_defects",) and M.riders_of("dedup") == ()
-    assert M.with_riders(["task_success", "dedup"]) == ["task_success", "camera_defects", "dedup"]
-    assert M.with_riders(["dedup"]) == ["dedup"]                     # no host, no rider
+    assert M.riders_of("task_success") == ("camera_defects",) and M.riders_of("duplicate_check") == ()
+    assert M.with_riders(["task_success", "duplicate_check"]) == ["task_success", "camera_defects", "duplicate_check"]
+    assert M.with_riders(["duplicate_check"]) == ["duplicate_check"]     # no host, no rider
     assert M.with_riders(["camera_defects", "task_success"]) == ["task_success", "camera_defects"]
     exported = {m["id"]: m for m in M.export()["modules"]}
     assert exported["camera_defects"]["rides_on"] == "task_success"

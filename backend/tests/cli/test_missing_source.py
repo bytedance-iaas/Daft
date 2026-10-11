@@ -26,7 +26,7 @@ WRIST = "observation.images.wrist"
 PARQUET_1 = "data/chunk-000/episode_000001.parquet"
 VIDEO_4 = f"videos/chunk-000/{WRIST}/episode_000004.mp4"
 MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup")
+           "video_action_sync", "task_success", "duplicate_check")
 
 
 def _json(*parts):
@@ -74,9 +74,9 @@ def test_snapshot_lists_them_and_no_command_reads_them(flow):
 
 def test_they_are_in_no_list_and_not_in_the_total(flow):
     lists = {n: _eps(flow.rd, n) for n in ("passed", "reject", "held", "review")}
-    # 0 and 3 abstained (task_verdict); 6 has no task text and is not judged (D72); 7 is a
-    # duplicate, which can be appealed
-    assert lists == {"passed": [0, 3, 6], "reject": [2, 5, 7], "held": [],
+    # 0, 3 and 7 abstained (task_verdict); 6 has no task text and is not judged (D72); 7, a
+    # duplicate of 3, is reported only (D87)
+    assert lists == {"passed": [0, 3, 6, 7], "reject": [2, 5], "held": [],
                      "review": [0, 3, 7]}
     assert flow.steps["final"].doc["counts"]["total"] == 6
     assert flow.steps["final"].doc["counts"]["skipped"] == 2
@@ -89,7 +89,7 @@ def test_they_are_in_no_list_and_not_in_the_total(flow):
         md = fh.read()
     assert "缺源文件未质检:2 条" in md and "ep000004:缺 " + VIDEO_4 in md
     delivered = _json(flow.rd, "revisions", "r0001", "passed.json")["episodes"]
-    assert [e["episode_index"] for e in delivered] == [0, 3, 6]        # 6: no task text, not judged (D72)
+    assert [e["episode_index"] for e in delivered] == [0, 3, 6, 7]     # 6: no task text, not judged (D72)
 
 
 def test_without_a_manifest_check_finds_them_when_it_reads(dataset, tmp_path):

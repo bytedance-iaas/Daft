@@ -74,6 +74,9 @@ def test_filters(store):
                                       "episode 18 too short"]
     assert msgs(min_level="error") == ["retry arbitration"]
     assert msgs(stage="nothing") == []
+    # several stages, comma-separated: the console's filter by a group of stages (C4 6.0.0)
+    assert msgs(stage="numeric,frame", subtask="") == ["done numeric", "start frame", "episode 18 too short",
+                                                       "start numeric"]
     assert TaskLogs(store.work_dir).page("task_other").items == []
 
 
@@ -199,4 +202,6 @@ def test_logs_endpoint_subtask_filter(client_for):
     assert get(subtask=sub.id) == [("retry vlm", sub.id)]
     assert get(subtask=sub.id, stage="system") == []
     assert get(stage="vlm") == [("retry vlm", sub.id), ("main vlm", None)]
+    assert get(stage="vlm,system", subtask="") == [("main system", None), ("main vlm", None)]
+    assert_error(c.get(f"/api/v1/tasks/{t.id}/logs", params={"stage": "vlm,../x"}), "validation_failed")
     assert_error(c.get(f"/api/v1/tasks/{other.id}/logs", params={"subtask": sub.id}), "not_found")

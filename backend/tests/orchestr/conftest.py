@@ -35,7 +35,7 @@ from ..secrets.fakes import AK, AK2, SK, SK2, FakeTos
 JSON = {"Content-Type": "application/json"}
 API = "/api/v1"
 ALL_MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-               "video_action_sync", "task_success", "dedup"]
+               "video_action_sync", "task_success", "duplicate_check"]
 TERMINAL = ("succeeded", "completed_with_errors", "failed", "stopped")
 
 

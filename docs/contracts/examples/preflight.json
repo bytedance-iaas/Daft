@@ -386,7 +386,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "available"
     },
     {
@@ -471,7 +471,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "available"
     },
     {
@@ -569,7 +569,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "unsupported",
      "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
      "reason_code": "format_disabled",
@@ -662,7 +662,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "available"
     },
     {
@@ -930,7 +930,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "available"
     },
     {
@@ -1418,7 +1418,7 @@
      }
     },
     {
-     "id": "dedup",
+     "id": "duplicate_check",
      "availability": "available"
     },
     {

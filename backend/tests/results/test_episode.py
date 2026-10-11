@@ -27,28 +27,27 @@ def _view(world, ep, **q):
 
 def test_every_episode_of_the_revision(world):
     lists = {0: "passed", 1: "reject", 2: "reject", 3: "passed", 4: "passed", 5: "passed",
-             6: "held", 7: "reject", 8: "passed"}
+             6: "held", 7: "passed", 8: "passed"}
     for ep in EPISODES:
         body = _view(world, ep)
         assert body["episode_index"] == ep and body["revision"] == 1
         assert body["list"] == lists[ep], ep
     ep1 = _view(world, 1)          # rejected on its timestamps; every module judged it all the same (D57)
-    assert sorted(ep1["modules"]) == ["kinematic_limits", "motion_quality", "task_success", "timestamp_check",
-                                      "video_action_sync", "visual_quality"]
+    assert sorted(ep1["modules"]) == ["duplicate_check", "kinematic_limits", "motion_quality", "task_success",
+                                      "timestamp_check", "video_action_sync", "visual_quality"]
     assert ep1["reasons"] == [{"module": "timestamp_check", "kind": "finding", "code": "fragment",
                                "item": "STRM-5", "appealable": False, "text": "fragment"}]
     ep0 = _view(world, 0)
     assert sorted(ep0["modules"]) == sorted(
         ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-         "video_action_sync", "task_success", "dedup"])
+         "video_action_sync", "task_success", "duplicate_check"])
     assert ep0["reasons"] == [] and ep0["review"] == [] and ep0["evidence"] == []
     assert (ep0["fps"], ep0["dataset_id"]) == (15.0, None)   # C4 2.4.0: the preflight's fps; no registration
     ep6 = _view(world, 6)
     assert ep6["modules"]["task_success"]["status"] == "error"
     assert ep6["reasons"][0]["kind"] == "execution_error"
-    ep7 = _view(world, 7)
-    assert ep7["reasons"][0] == {"module": "dedup", "kind": "duplicate", "code": "duplicate", "item": "SET-1",
-                                 "appealable": True, "text": "与 ep000000 字节级完全重复", "duplicate_of": 0}
+    ep7 = _view(world, 7)          # a duplicate of ep 0 is reported only (D87): no reason, nothing to appeal
+    assert ep7["reasons"] == [] and ep7["review"] == []
 
 
 def test_every_finding_with_the_level_it_has(world):
@@ -65,7 +64,8 @@ def test_every_finding_with_the_level_it_has(world):
         ("task_success", "uncertain", "TASK-4", "review", "task_verdict", False)]
     assert ep5["findings"][2]["finding"] == ep5["modules"]["task_success"]["findings"][0]   # the record's own
     ep7 = _view(world, 7)
-    assert rows(ep7)[-1] == ("dedup", "duplicate", "SET-1", "blocking", None, True)
+    assert rows(ep7)[-1] == ("duplicate_check", "duplicate", "SET-1", "info", None, False)
+    assert ep7["findings"][-1]["finding"]["readings"] == {"group_id": 0, "same_as": [0]}
     assert ("timestamp_check", "fragment", "STRM-5", "blocking", None, False) in rows(_view(world, 1))
     assert [f["finding"]["code"] for f in _view(world, 6)["findings"]] == ["exposure_low"] * 2   # failed: none
 
@@ -343,9 +343,9 @@ def test_records_are_the_revision_s_parts_not_the_latest(world):
 
 def test_an_index_fooled_by_a_nested_key_still_finds_the_record(world):
     """Records written without sorted keys can nest another episode_index after the real one."""
-    path = world.run_dir / "checks" / "dedup" / "parts" / "0001.jsonl"
+    path = world.run_dir / "checks" / "duplicate_check" / "parts" / "0001.jsonl"
     lines = path.read_text(encoding="utf-8").splitlines()
-    tricky = record("dedup", 5, "pass", details={})
+    tricky = record("duplicate_check", 5, "pass", details={})
     tricky["details"] = {"pair": {"episode_index": 3}}
     text = json.dumps({k: tricky[k] for k in ("episode_index", "module", "status", "findings", "assessed",
                                               "unassessable", "readings", "evidence", "elapsed_s", "error",
@@ -353,8 +353,8 @@ def test_an_index_fooled_by_a_nested_key_still_finds_the_record(world):
     path.write_text("\n".join([ln for ln in lines if '"episode_index": 5' not in ln] + [text]) + "\n",
                     encoding="utf-8")
     store_of(world.rt).derived.clear()
-    assert _view(world, 5)["modules"]["dedup"]["details"] == {"pair": {"episode_index": 3}}
-    assert _view(world, 3)["modules"]["dedup"]["details"] == {}
+    assert _view(world, 5)["modules"]["duplicate_check"]["details"] == {"pair": {"episode_index": 3}}
+    assert _view(world, 3)["modules"]["duplicate_check"]["details"] == {"action_hash": "h3"}
 
 
 @pytest.mark.parametrize("rev", [None, 1])

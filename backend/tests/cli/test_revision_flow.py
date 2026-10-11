@@ -7,9 +7,9 @@ after a complete first run:
     -> aggregate funnel
     -> aggregate final -> report -> verify
 
-all on revision 2, with revision 1 left as it was. Dedup is not run again: its
-groups stand, and aggregate picks each group's keeper after the human decisions (design
-doc 17 §4.5) - 3 judged failed, its byte copy 7 is delivered in its place.
+all on revision 2, with revision 1 left as it was. The CPU checks are not run again: the
+duplicate check's group {3, 7} stands, both members reported and passed (D87) until a
+person judges 3 failed.
 """
 from __future__ import annotations
 
@@ -86,24 +86,23 @@ def test_decisions_name_what_runs_next(flow):
     assert rec["details"]["task_desc_source"] == "人工改标"
 
 
-def test_the_first_dedup_stands_after_the_decisions(flow):
-    """keep.txt of revision 2 drops the episode a person judged failed; dedup is not
-    run again, its group {3, 7} stands and keeps 7 now that 3 is gone (D58); the
-    the kept set loses 3."""
+def test_the_duplicate_check_is_not_run_again_after_the_decisions(flow):
+    """keep.txt of revision 2 drops the episode a person judged failed; the duplicate check is not
+    run again and its byte copy 7 stays."""
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == ["0", "6", "7"]              # 6: no task text, not judged (D72)
     counts = flow.steps["funnel2"].doc["counts"]
     assert counts["decided_out"] == 1 and counts["decided_in"] == 0
-    assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
+    assert sorted(os.listdir(flow.path("checks", "duplicate_check", "parts"))) == ["0001.jsonl"]
 
 
 def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     r1, r2 = flow.path("revisions", "r0001"), flow.path("revisions", "r0002")
-    assert _eps(r1, "passed") == [0, 3, 4, 6]               # 4 and 6: no task text, not judged (D72)
+    assert _eps(r1, "passed") == [0, 3, 4, 6, 7]            # 4 and 6: no task text, not judged (D72)
     assert _eps(r2, "passed") == [0, 6, 7]
     assert _eps(r2, "reject") == [1, 2, 3, 4, 5] and _eps(r2, "held") == []
-    # 3 was decided; 0 is still asked, 7 - delivered in 3's place - is asked whether its
-    # task succeeded instead of whether its reject stands; 1 and 4 (judged for the first time,
+    # 3 was decided; 0 is still asked, and so is 7 (3's byte copy, passed all along) whether its
+    # task succeeded; 1 and 4 (judged for the first time,
     # with its new label) are rejected by the judgement and can be appealed; 6 still has no text
     assert _eps(r2, "review") == [0, 1, 4, 7]
     review = {e["episode_index"]: e for e in _json(r2, "review.json")["episodes"]}

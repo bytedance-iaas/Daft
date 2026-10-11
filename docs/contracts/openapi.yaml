@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.3.2
+  version: 6.0.0
   description: |
     ## Overview
 
@@ -219,6 +219,15 @@ info:
     While anything runs, rows stay provisional as before. A row's `stage_processing_s` may also hold `vlm_prep`, the
     time of the model-preparation stage.
 
+    **6.0.0** (2026-10-11): the exact-dedup module is gone. Its place is taken by the duplicate check
+    (`duplicate_check`, stage `duplicate`): every episode of a group of identical ones (same action data, same
+    picture on every camera) gets a finding `duplicate` naming the others (`readings.same_as`). It is reported only -
+    no episode is rejected, kept in preference to another or appealed for being a duplicate. The data integrity
+    module no longer reports identical files (`duplicate_content`); the duplicate check covers them. Gone with it:
+    the stage `dedup`, the reason kind `duplicate` and the field `duplicate_of` of episode reasons and adjudication
+    questions; appeals are for task success rejects alone. A row's `stage_processing_s` may hold `duplicate`.
+    `GET /tasks/{id}/logs` takes several stages in `stage`, separated by commas.
+
   x-description-zh: |
     ## 概览
 
@@ -353,6 +362,12 @@ info:
     **5.3.2**（2026-10-11）：`GET /tasks/{id}/pipeline/episodes`（及单条的接口）在任务跑完后给最终判决：任务已结束、已有结果、没有重试或执行裁决在跑时，
     每一行 `provisional` 为 false，判决与原因取当前结果（含人工裁决）。有运行在进行时仍是暂定判决，和以前一样。一行的 `stage_processing_s`
     还可能有 `vlm_prep`，即模型准备阶段的耗时。
+
+    **6.0.0**（2026-10-11）：精确去重模块去掉了，换成重复检测（`duplicate_check`，阶段 `duplicate`）：一组完全相同的条目（动作数据相同、每路
+    画面都相同）里的每一条都得到一条发现 `duplicate`，写明同组的其他条（`readings.same_as`）。只报告——不会因为重复而判废、保留其中某一条或复议。
+    数据完整性不再报告「与另一条的文件完全相同」（`duplicate_content`），由重复检测覆盖。随之去掉的还有阶段 `dedup`、原因类型 `duplicate`，
+    以及条目原因与裁决问题里的 `duplicate_of`；被拒复议只针对任务成败判定的拒绝。一行的 `stage_processing_s` 还可能有 `duplicate`。
+    `GET /tasks/{id}/logs` 的 `stage` 可以写几个阶段，用逗号隔开。
 
 servers:
   - url: "{base}/api/v1"
@@ -1551,7 +1566,7 @@ paths:
                           reason_code: vlm_backend_missing
                           input_hint: {field: vlm}
                           notes: []
-                        - {id: dedup, availability: available}
+                        - {id: duplicate_check, availability: available}
                       meta_fingerprint: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                       warnings: []
         default: {$ref: "#/components/responses/Error"}
@@ -1810,7 +1825,7 @@ paths:
                               note: 数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条
                             - {id: vlm, state: running, done: 410, total: 631, elapsed_s: 1102, eta_s: 1440}
                             - {id: verdict, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: dedup, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: duplicate, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: verify, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
@@ -1818,7 +1833,7 @@ paths:
                         pending_adjudication: 0
                         active_subtask: null
                         modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
-                          dedup]
+                          duplicate_check]
                         module_counts: {succeeded: 5, running: 1, pending: 1}
                         usage:
                           prompt_tokens: 1700000
@@ -1854,7 +1869,7 @@ paths:
                               eta_s: null
                               note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
                             - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                            - {id: dedup, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
+                            - {id: duplicate, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
                             - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                             - {id: verify, state: skipped, done: 0, total: 0, elapsed_s: null, eta_s: null}
@@ -1862,7 +1877,7 @@ paths:
                         pending_adjudication: 10
                         active_subtask: null
                         modules: [data_integrity, timestamp_check, motion_quality, visual_quality, video_action_sync, task_success,
-                          dedup]
+                          duplicate_check]
                         module_counts: {succeeded: 6, completed_with_errors: 1}
                         usage:
                           prompt_tokens: 2010000
@@ -1915,7 +1930,7 @@ paths:
                       params: {sync_plots: all}
                     - visual_quality
                     - task_success
-                    - dedup
+                    - duplicate_check
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
@@ -1950,7 +1965,7 @@ paths:
                       params: {sync_plots: all}
                     - visual_quality
                     - task_success
-                    - dedup
+                    - duplicate_check
                   embodiment_id: franka
                   vlm: {backend: ark-prod, model: doubao-seed-2-0-pro-260215, reasoning_effort: null}
                   params:
@@ -2061,14 +2076,13 @@ paths:
                           elapsed_s: 146
                           eta_s: null
                           block: cpu
-                        - id: dedup
+                        - id: duplicate
                           state: succeeded
                           done: 50
                           total: 50
                           elapsed_s: 12
                           eta_s: null
                           block: cpu
-                          full_set: true
                         - id: autolabel
                           state: succeeded
                           done: 22
@@ -2143,8 +2157,8 @@ paths:
                         episodes_error: 2
                         elapsed_s: 560
                         error: null
-                      - id: dedup
-                        name: 精确去重
+                      - id: duplicate_check
+                        name: 重复检测
                         selected: true
                         availability: available
                         unavailable_reason: null
@@ -2428,6 +2442,7 @@ paths:
       parameters:
         - name: stage
           in: query
+          description: one stage, or several separated by commas (6.0.0)
           schema: {type: string}
         - name: subtask
           in: query
@@ -2506,14 +2521,14 @@ paths:
                         run:
                           run_dir: 20260920-130514
                           revision: 1
-                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, dedup]
+                          modules: [timestamp_check, motion_quality, visual_quality, video_action_sync, task_success, duplicate_check]
                           adjudications_applied: 0
                         counts: {total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0}
                         pass_rate: 0.82
                         reject_reasons:
                           - {module: task_success, kind: finding, code: failure, item: TASK-4, count: 5}
                           - {module: timestamp_check, kind: finding, code: fragment, item: STRM-5, count: 1}
-                          - {module: dedup, kind: duplicate, code: duplicate, item: SET-1, count: 1}
+                          - {module: video_action_sync, kind: finding, code: misaligned_all, item: AV-1, count: 1}
                         token_usage:
                           prompt: 2010000
                           completion: 67500
@@ -2524,7 +2539,7 @@ paths:
                         duration_s: null
                         reject_items:
                           - {item: TASK-4, count: 5}
-                          - {item: SET-1, count: 1}
+                          - {item: AV-1, count: 1}
                           - {item: STRM-5, count: 1}
                         policy: {preset: default, version: '1'}
                         coverage:
@@ -2540,12 +2555,12 @@ paths:
                           - {item: STRM-5, episodes: 1, blocking: 1, review: 0, info: 0}
                           - {item: IMG-2, episodes: 7, blocking: 0, review: 0, info: 7}
                           - {item: ACT-8, episodes: 4, blocking: 0, review: 0, info: 4}
-                          - {item: AV-1, episodes: 2, blocking: 0, review: 0, info: 2}
+                          - {item: AV-1, episodes: 2, blocking: 1, review: 0, info: 1}
                           - {item: AV-3, episodes: 4, blocking: 0, review: 0, info: 4}
                           - {item: TASK-1, episodes: 17, blocking: 0, review: 0, info: 17}
                           - {item: TASK-4, episodes: 11, blocking: 5, review: 6, info: 0}
                           - {item: LABEL-4, episodes: 5, blocking: 0, review: 5, info: 0}
-                          - {item: SET-1, episodes: 1, blocking: 1, review: 0, info: 0}
+                          - {item: SET-1, episodes: 2, blocking: 0, review: 0, info: 2}
                       modules:
                         - id: timestamp_check
                           state: succeeded
@@ -3192,7 +3207,7 @@ paths:
           in: query
           description: >-
             appeals lists rejects attributed to an appealable module (registry `appealable`;
-            today task_success alone and dedup); physical and structural gates and soft scores
+            today task_success alone); physical and structural gates and soft scores
             are final
           schema: {enum: [review, appeals], default: review}
         - $ref: "#/components/parameters/Cursor"
@@ -3928,7 +3943,7 @@ components:
         full_set_stages:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
-          description: "stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it"
+          description: "stages that need the whole selection at once; empty (every check streams), kept for a future module that needs it"
         root_stages:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
@@ -4052,7 +4067,7 @@ components:
                   present on a module that runs in two parts (5.2.0): the stage of its CPU part; its records come
                   from its stage when a model is asked, from this one when not
     RegistryStage:
-      enum: [integrity, numeric, frame, dedup, vlm_prep, autolabel, vlm, profile]
+      enum: [integrity, numeric, frame, duplicate, vlm_prep, autolabel, vlm, profile]
       description: a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
     FindingLevel:
       enum: [blocking, review, info]
@@ -4628,9 +4643,9 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, dedup, vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, duplicate (6.0.0, the duplicate check), vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
         block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
-        full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it"}
+        full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one today"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
         done: {type: integer, minimum: 0}
         total: {type: integer, minimum: 0}
@@ -4919,6 +4934,7 @@ components:
             integrity: {type: number, minimum: 0}
             numeric: {type: number, minimum: 0}
             frame: {type: number, minimum: 0}
+            duplicate: {type: number, minimum: 0, description: "6.0.0: the duplicate check"}
             vlm_prep: {type: number, minimum: 0, description: "5.3.2: a model module's CPU half (the stage since 5.2.0)"}
             vlm: {type: number, minimum: 0}
         modules:
@@ -5085,14 +5101,13 @@ components:
       required: [module, text]
       description: >-
         one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list
-        (2.0: finding, human, execution_error, duplicate; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a
+        (2.0: finding, human, execution_error; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a
         review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed
       properties:
         module: {$ref: "#/components/schemas/ModuleId"}
         kind: {type: string}
         text: {type: string}
         priority: {type: string}
-        duplicate_of: {type: integer, minimum: 0}
         code: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "2.0: the finding code (registry 2.x)"}
         item: {type: [string, "null"], description: "2.0: the taxonomy item of the code (C6), null for a code without one"}
         appealable: {type: boolean, description: "2.0: the code may be appealed (D42)"}
@@ -5150,7 +5165,6 @@ components:
         line: {$ref: "#/components/schemas/ReviewLineId"}
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
-        duplicate_of: {type: [integer, "null"], minimum: 0, description: "an appeal of a dedup reject: the episode it duplicates"}
         annotation: {type: [string, "null"]}
         caption: {type: [string, "null"]}
         suggestion: {type: [string, "null"], description: "a task text the model read off the video: what a person may send back as new_label"}

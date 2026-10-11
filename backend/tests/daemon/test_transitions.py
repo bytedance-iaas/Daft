@@ -32,13 +32,13 @@ def test_task_transition_writes_audit_and_sse(repo):
 
 def test_terminal_state_publishes_done_with_failed_modules(repo):
     hub = EventHub(1)
-    t = seed_task(repo, selected=("timestamp_check", "dedup"))
-    repo.update_module_state(t.id, "dedup", {"pending"}, "failed")
+    t = seed_task(repo, selected=("timestamp_check", "duplicate_check"))
+    repo.update_module_state(t.id, "duplicate_check", {"pending"}, "failed")
     change_task_state(repo, hub, t.id, {"queued"}, "running", at=T0)
     change_task_state(repo, hub, t.id, {"running"}, "completed_with_errors", at=T0)
     last = hub.buffered(t.id)[-1]
     assert (last.event, last.data) == ("done", {"state": "completed_with_errors",
-                                                "failed_modules": ["dedup"], "subtask_id": None,
+                                                "failed_modules": ["duplicate_check"], "subtask_id": None,
                                                 "reason": None})
     change_task_state(repo, None, t.id, {"completed_with_errors"}, "succeeded", at=T0)   # no hub
 

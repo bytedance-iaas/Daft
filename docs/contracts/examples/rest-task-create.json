@@ -34,7 +34,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",
@@ -100,7 +100,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",
@@ -153,7 +153,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",
@@ -206,7 +206,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",
@@ -257,7 +257,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",
@@ -306,7 +306,7 @@
     },
     "visual_quality",
     "task_success",
-    "dedup",
+    "duplicate_check",
     "skill_profile"
    ],
    "embodiment_id": "franka",

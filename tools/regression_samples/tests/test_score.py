@@ -203,8 +203,8 @@ def test_a_drop_for_an_item_nobody_checked_is_not_a_false_alarm(tmp_path):
 def test_a_dataset_level_item_counts_once_per_subset(tmp_path):
     exp = expectation(*[episode(i, problems=["SET-1"]) for i in range(3)], episode(3, problems=[]),
                       *[episode(i, problems=[{"item": "LABEL-2", "unit": "subset"}]) for i in (4, 5)])
-    dup = record(1, "data_integrity", "fail", False, {"findings": [{"code": "duplicate_content", "message": "与另一条重复"}]})
-    recs = [record(0, "data_integrity"), dup, record(2, "data_integrity")]
+    dup = record(1, "duplicate_check", "fail", False, {"same_as": [0], "group_id": 0})
+    recs = [record(0, "duplicate_check"), dup, record(2, "duplicate_check")]
     items = run_score(tmp_path, exp, recs)["items"]
     assert (items["SET-1"]["present"], items["SET-1"]["tp"], items["SET-1"]["fn"]) == (1, 1, 0)
     assert items["SET-1"]["unit"] == "subset"
@@ -536,7 +536,7 @@ def test_the_episode_level_reads_the_final_lists(tmp_path):
     lists = {"reject": [{"episode_index": 0, "reasons": [reason("data_integrity")]},
                         {"episode_index": 1, "reasons": [reason("data_integrity")]},
                         {"episode_index": 2, "reasons": [reason("task_success")]}],
-             "held": [{"episode_index": 3, "reasons": [{"module": "dedup", "kind": "execution_error", "text": "x"}]}]}
+             "held": [{"episode_index": 3, "reasons": [{"module": "duplicate_check", "kind": "execution_error", "text": "x"}]}]}
     el = score2(tmp_path, exp, recs, lists=lists)["episode_level"]
     assert (el["tp"], el["fp"], el["dropped_outside_checked"], el["held_clean"]) == (1, 1, 1, 1)
 

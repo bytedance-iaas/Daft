@@ -54,14 +54,13 @@
      "concurrency": 8
     },
     {
-     "id": "dedup",
+     "id": "duplicate",
      "block": "cpu",
      "after": "frame",
-     "full_set": true,
      "kind": "cpu",
      "command": "check",
      "modules": [
-      "dedup"
+      "duplicate_check"
      ],
      "episodes": "selected",
      "concurrency": 1
@@ -303,14 +302,13 @@
      "concurrency": 8
     },
     {
-     "id": "dedup",
+     "id": "duplicate",
      "block": "cpu",
      "after": "frame",
-     "full_set": true,
      "kind": "cpu",
      "command": "check",
      "modules": [
-      "dedup"
+      "duplicate_check"
      ],
      "episodes": "selected",
      "concurrency": 1
@@ -431,14 +429,13 @@
      "concurrency": 8
     },
     {
-     "id": "dedup",
+     "id": "duplicate",
      "block": "cpu",
      "after": "frame",
-     "full_set": true,
      "kind": "cpu",
      "command": "check",
      "modules": [
-      "dedup"
+      "duplicate_check"
      ],
      "episodes": "selected",
      "concurrency": 1
@@ -559,13 +556,12 @@
      "concurrency": 8
     },
     {
-     "id": "dedup",
+     "id": "duplicate",
      "after": "frame",
-     "full_set": true,
      "kind": "cpu",
      "command": "check",
      "modules": [
-      "dedup"
+      "duplicate_check"
      ],
      "episodes": "selected",
      "concurrency": 1

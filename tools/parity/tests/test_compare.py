@@ -8,7 +8,7 @@ from parity import compare as C
 from parity import records as R
 
 
-def _dump(root, *, records=None, autolabel=None, skill=None, final=None, dedup=None,
+def _dump(root, *, records=None, autolabel=None, skill=None, final=None, duplicates=None,
           tape_mode="record", misses=0):
     os.makedirs(os.path.join(root, "records"), exist_ok=True)
     with open(os.path.join(root, "dump.json"), "w") as fh:
@@ -19,7 +19,7 @@ def _dump(root, *, records=None, autolabel=None, skill=None, final=None, dedup=N
     if autolabel is not None:
         R.write_jsonl(os.path.join(root, "autolabel.jsonl"), autolabel)
     for name, obj in (("skill_profile.json", skill), ("final.json", final),
-                      ("dedup.json", dedup)):
+                      ("dedup.json", duplicates)):
         if obj is not None:
             with open(os.path.join(root, name), "w") as fh:
                 json.dump(obj, fh)
@@ -106,7 +106,7 @@ def test_final_lists_leave_out_error_episodes(tmp_path):
 
 
 def test_a_reject_v1_still_asks_about_is_left_out_of_review_and_listed(tmp_path):
-    """v1 queues the abstention of a copy dedup removed (7); in v2 a rejected episode
+    """v1 queues the abstention of a copy its dedup removed (7); in v2 a rejected episode
     has no task question (D42): v1's review leaves out its own rejects."""
     g = _dump(tmp_path / "g", final={"passed": [0, 3], "reject": [2, 7],
                                      "review": [3, 7], "held": []})
@@ -161,12 +161,15 @@ def test_replay_misses_fail(tmp_path):
     assert res["conclusion"] == "fail"
 
 
-def test_dedup_pairs_must_match(tmp_path):
-    g = _dump(tmp_path / "g", dedup={"dropped": [{"episode_index": 7, "duplicate_of": 3}],
-                                     "action_collisions": [[3, 7]]})
-    c = _dump(tmp_path / "c", dedup={"dropped": [{"episode_index": 3, "duplicate_of": 7}],
-                                     "action_collisions": [[3, 7]]})
-    assert C.run_compare(_args(g, c))["modules"]["dedup"]["status"] == "fail"
+def test_duplicate_groups_must_match(tmp_path):
+    """v2's groups (D87); a v1 dump's dedup pairs read as the groups they make."""
+    g = _dump(tmp_path / "g", duplicates={"groups": [[3, 7]], "action_collisions": [[3, 7]]})
+    v1 = _dump(tmp_path / "v1", duplicates={"dropped": [{"episode_index": 7, "duplicate_of": 3}],
+                                            "action_collisions": [[3, 7]]})
+    assert C.run_compare(_args(g, v1))["modules"]["duplicate_check"]["status"] == "pass"
+    c = _dump(tmp_path / "c", duplicates={"groups": [[3, 5, 7]], "action_collisions": [[3, 5, 7]]})
+    res = C.run_compare(_args(g, c))["modules"]["duplicate_check"]
+    assert res["status"] == "fail" and (res["golden_groups"], res["candidate_groups"]) == (1, 1)
 
 
 def test_render_mentions_every_check(tmp_path):

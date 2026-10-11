@@ -18,17 +18,17 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
     # the fixture under the one judgement (D71): 2 rejected on their timestamps, 2 the judgement
-    # rejects (1 5), 7 a copy of 3, 4 and 6 have no task text and are not judged (D72) -> 4 / 4 / 0;
-    # 0 and 3 abstain, 1 and 7 can be appealed
-    assert task["summary"] == {"total": 8, "passed": 4, "rejected": 4, "held": 0, "review": 4,
-                               "pass_rate": 0.5}
+    # rejects (1 5), 7 a copy of 3 is reported only (D87), 4 and 6 have no task text and are not judged
+    # (D72) -> 5 / 3 / 0; 0, 3 and 7 abstain, 1 can be appealed
+    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 4,
+                               "pass_rate": 0.625}
     assert task["result_rev"] == 1
     # the two blocks (design doc 17 §3), each stage naming its block, then the steps after both
     stages = task["progress"]["stages"]
     assert [s["id"] for s in stages] == [
-        "numeric", "frame", "dedup", "vlm", "final", "report", "verify"]     # D72: no caption stage
+        "numeric", "frame", "duplicate", "vlm", "final", "report", "verify"]     # D72: no caption stage
     assert {s["id"]: s.get("block") for s in stages if s.get("block")} == {
-        "numeric": "cpu", "frame": "cpu", "dedup": "cpu", "vlm": "vlm"}
+        "numeric": "cpu", "frame": "cpu", "duplicate": "cpu", "vlm": "vlm"}
     assert not [s["id"] for s in stages if s.get("full_set")], "D70: no stage waits for the whole set"
     assert all(s["state"] in ("succeeded", "completed_with_errors") for s in stages), task["progress"]
     mods = {m["id"]: m for m in task["modules"]}
@@ -36,7 +36,7 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert mods["timestamp_check"]["episodes_total"] == 8
     # every module judges every episode (D57): task_success too on the two rejected on their timestamps
     assert mods["task_success"]["episodes_total"] == 8 and mods["task_success"]["episodes_error"] == 0
-    assert mods["dedup"]["episodes_total"] == 8
+    assert mods["duplicate_check"]["episodes_total"] == 8
     assert task["usage"]["requests"] > 0 and task["usage"]["prompt_tokens"] > 0
     run_id = task["run_id"]
     batch = d.delivery(run_id)
@@ -62,9 +62,9 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert set(results(rd, "task_success")) == set(range(8))
     page = d.api("GET", f"/tasks/{task['id']}/pipeline/episodes").json()
     assert page["started"] == page["finished"] == 8
-    # dedup is a segment of the CPU block like the others since D70, so it has a per-episode position too;
+    # the duplicate check is a segment of the CPU block like the others (D70, D87), so it has a per-episode position too;
     # the run is over, so every row has the revision's final verdict (C4 5.3.2)
-    assert all(set(r["stages"]) == {"numeric", "frame", "dedup", "vlm"}
+    assert all(set(r["stages"]) == {"numeric", "frame", "duplicate", "vlm"}
                and set(r["stages"].values()) == {"done"}
                and not r["provisional"] for r in page["items"])
     lists = {name: {e["episode_index"] for e in json.load(open(os.path.join(rd, "revisions", "r0001", f"{name}.json"),

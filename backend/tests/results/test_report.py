@@ -19,11 +19,11 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
     assert_schema("cli/report.schema.json", body["report"])
     assert body["revision"] == 1 and body["report"]["revision"] == 1
     counts = body["report"]["overview"]["counts"]
-    assert counts == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5,
+    assert counts == {"total": 9, "passed": 6, "rejected": 2, "held": 1, "review": 4,
                       "skipped": 0}                  # D40: the CLI always writes it
     assert [m["id"] for m in body["report"]["modules"]] == [
         "timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-        "video_action_sync", "task_success", "camera_defects", "dedup"]
+        "video_action_sync", "task_success", "camera_defects", "duplicate_check"]
     links = {(ln["rel"], ln["url"]) for ln in body["links"]}
     tid = world.task_id
     assert ("task", f"/curation/tasks/{tid}") in links
@@ -54,7 +54,8 @@ def test_module_summaries_carry_chart_ready_statistics(world):
         "success": 4, "review_conflict": 1, "label_conflict_suspect": 2, "failure": 1}
     assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
     assert task["text_sources"] == [{"name": "原始标注", "count": 8}]
-    assert s["dedup"]["counts"]["fail"] == 1 and s["dedup"]["group_sizes"] == []   # no groups.json here
+    dup = s["duplicate_check"]                         # one group of two (ep 0 and ep 7), reported only (D87)
+    assert (dup["groups"], dup["duplicated"]) == (1, 2) and dup["group_sizes"] == [{"name": "2", "count": 1}]
     for m, summary in s.items():
         assert "ep0000" not in json.dumps(summary, ensure_ascii=False), m
 
@@ -70,8 +71,8 @@ def test_findings_per_module_and_rejects_per_item(world):
     assert s["task_success"]["levels"] == {"blocking": 1, "review": 3, "info": 0}
     assert s["visual_quality"]["levels"] == {"blocking": 0, "review": 0, "info": 9}
     assert s["kinematic_limits"]["flagged_episodes"] == 0
-    assert report["overview"]["reject_items"] == [{"item": "SET-1", "count": 1}, {"item": "STRM-5", "count": 1},
-                                                  {"item": "TASK-4", "count": 1}]
+    assert report["overview"]["reject_items"] == [{"item": "STRM-5", "count": 1}, {"item": "TASK-4", "count": 1}]
+    assert s["duplicate_check"]["levels"] == {"blocking": 0, "review": 0, "info": 2}
 
 
 def test_links_are_absolute_with_a_public_base_url(client_for, tmp_path):
@@ -107,7 +108,7 @@ def test_old_revisions_stay_readable_and_newer_ones_are_404(world):
     assert old.status_code == 200
     body = old.json()
     assert_schema(REPORT, body)
-    assert body["revision"] == 1 and body["report"]["overview"]["counts"]["review"] == 5
+    assert body["revision"] == 1 and body["report"]["overview"]["counts"]["review"] == 4
     report_links = [ln for ln in body["links"] if ln["rel"] == "report"]
     assert report_links[0]["url"].endswith("/report?rev=1")
     assert not [ln for ln in body["links"] if ln["rel"] == "adjudication"]   # not adjudicable

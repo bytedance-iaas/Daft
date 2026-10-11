@@ -284,13 +284,13 @@ def test_an_eef_task_without_a_model_runs_on_the_cpu(daemon):
         assert not [u for u in usage if u.get("module") == EEF]
 
 
-def test_a_module_that_only_orders_its_stage_after_dedup_is_accepted(daemon):
+def test_a_module_that_only_orders_its_stage_after_another_is_accepted(daemon):
     """Regression (F5.6 read every module id in depends_on as "re-examines"): a module may list
     another in depends_on only to order the stages, and never needs it selected."""
     d = daemon()
-    created = d.create(modules=[m for m in ALL_MODULES if m != "dedup"], start_now=False)
+    created = d.create(modules=[m for m in ALL_MODULES if m != "duplicate_check"], start_now=False)
     rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
-    assert rows["task_success"]["selected"] and not rows["dedup"]["selected"]
+    assert rows["task_success"]["selected"] and not rows["duplicate_check"]["selected"]
 
 
 @pytest.mark.slow

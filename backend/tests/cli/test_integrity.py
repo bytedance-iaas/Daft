@@ -2,9 +2,9 @@
 
 Every sample is a copy of a clean fixture with one kind of damage per episode, so each
 episode's expected finding is known: LeRobot v2 (``parity.fixtures``), LeRobot v3 with
-shared files (``tests/cli/v3_fixture``) and mcap. The clean fixtures pass, except the
-two byte-equal episodes the dedup fixture carries on purpose (3 and 7), which are
-suspects.
+shared files (``tests/cli/v3_fixture``) and mcap. The clean fixtures pass - the two
+byte-equal episodes the fixture carries on purpose (3 and 7) included: identical
+episodes are the duplicate check's to report (D87).
 """
 from __future__ import annotations
 
@@ -51,22 +51,20 @@ def verdicts(recs: dict[int, dict]) -> dict[int, str]:
 # ---------------------------------------------------------------- LeRobot v2
 
 
-def test_a_clean_dataset_passes_but_its_byte_copies(cli, dataset, tmp_path):
+def test_a_clean_dataset_passes_its_byte_copies_included(cli, dataset, tmp_path):
     rd = str(tmp_path / "run")
     doc = check(cli, dataset, rd)
     assert doc["episodes"] == {"total": 8, "ok": 8, "error": 0}
-    assert doc["findings"] == {"duplicate_content": 2}
+    assert doc["findings"] == {}
     recs = results(rd)
-    assert verdicts(recs) == {0: "pass", 1: "pass", 2: "pass", 3: "abstain", 4: "pass", 5: "pass",
-                              6: "pass", 7: "abstain"}
-    assert codes(recs[3]) == codes(recs[7]) == [("suspect", "duplicate_content")] * 2
-    assert recs[3]["details"]["reason"].startswith("需要人工裁决：exterior 相机的视频与 ep 7 的内容完全相同")
+    assert set(verdicts(recs).values()) == {"pass"}
+    assert codes(recs[3]) == codes(recs[7]) == []                      # the duplicate check's to report (D87)
     d = recs[0]["details"]
     assert d["outcome"] == "pass" and d["tiers"] == {"L1": True, "L2": False, "L3": False}
     by_kind = {f["file"].rsplit(".", 1)[1]: f for f in d["files"]}
     assert by_kind["parquet"]["rows"] == 75 and by_kind["mp4"]["frames"] == 75     # episode 0: 75 frames
     dataset_doc = json.load(open(os.path.join(rd, "checks", MOD, "dataset.json")))
-    assert dataset_doc["findings"] == [] and sorted(dataset_doc["episode_findings"]) == ["3", "7"]
+    assert dataset_doc["findings"] == [] and not dataset_doc["episode_findings"]
     assert doc["input_digest"].startswith("sha256:")
 
 
@@ -77,9 +75,9 @@ def test_each_kind_of_damage_rejects_its_episode(cli, dataset, tmp_path):
     check(cli, dataset, rd, "0-7", "--survivors-out", survivors)
     recs = results(rd)
     with open(survivors, encoding="utf-8") as fh:                   # what goes on to the numeric stage
-        assert fh.read().split() == ["5", "7"]                      # rejects stop here, suspects go on
+        assert fh.read().split() == ["5", "7"]                      # rejects stop here
     assert verdicts(recs) == {0: "fail", 1: "fail", 2: "fail", 3: "fail", 4: "fail", 5: "pass",
-                              6: "fail", 7: "abstain"}
+                              6: "fail", 7: "pass"}
     first = {e: codes(r)[0] for e, r in recs.items() if verdict_of(r) == "fail"}
     assert first == {0: ("reject", "file_empty"), 1: ("reject", "file_truncated"),
                      2: ("reject", "file_truncated"), 3: ("reject", "row_invalid"),
@@ -89,7 +87,6 @@ def test_each_kind_of_damage_rejects_its_episode(cli, dataset, tmp_path):
     assert "时间戳非严格递增" in recs[3]["details"]["reason"]            # v1's message, verbatim
     assert "NaN/Inf" in recs[6]["details"]["reason"]
     assert recs[1]["details"]["findings"][0]["camera"] == "exterior"
-    assert ("suspect", "duplicate_content") in codes(recs[3])              # still said, below the reject
 
 
 def test_without_the_module_a_bad_row_is_still_an_error(cli, dataset, tmp_path):
@@ -228,8 +225,7 @@ def test_mcap_damage(cli, mini_mcap, tmp_path):
     shutil.copytree(mini_mcap, ds)
     rd = str(tmp_path / "clean")
     check(cli, ds, rd, "0-7", "--param", f"{MOD}.full_read=true")
-    assert verdicts(results(rd)) == {0: "pass", 1: "pass", 2: "pass", 3: "abstain", 4: "pass", 5: "pass",
-                                     6: "pass", 7: "abstain"}
+    assert set(verdicts(results(rd)).values()) == {"pass"}
     assert results(rd)[0]["details"]["files"][0]["crc"] == "mcap_chunk"
     S.damage_mcap(ds)
     rd = str(tmp_path / "damaged")
@@ -302,11 +298,13 @@ def test_mcap_chunk_crc(tmp_path):
 
 def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
     """design doc 14 §8 ①: the chain with the module selected (as tasks select it by default) gives
-    the same passed / reject / held lists as without it; review only gains its suspects' cards."""
+    the same lists as without it - review included: the clean fixture has no suspects (its byte copies are
+    the duplicate check's to report, D87)."""
     from .fakevlm_server import FakeVlmServer
     from .pipeline import Chain
 
-    v1 = "timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup"
+    v1 = ("timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,"
+          "duplicate_check")
 
     def lists(rd: str) -> dict[str, list]:
         # the verdicts; each entry's findings (C2 final-list 2.0) also list the module's own suspicions
@@ -331,22 +329,14 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
         c.funnel("@" + c.path("stages", "integrity.txt"))
         c.post()
     with open(c.path("stages", "integrity.txt"), encoding="utf-8") as fh:
-        assert fh.read().split() == [str(e) for e in range(8)]          # suspects go on
+        assert fh.read().split() == [str(e) for e in range(8)]
     a, b = lists(plain.rd), lists(c.rd)
-    for name in ("passed", "reject", "held"):
+    for name in ("passed", "reject", "held", "review"):
         assert b[name] == a[name], name
-    theirs = []
-    for entry in b["review"]:
-        items = [i for i in entry["review"] if i["kind"] != "integrity_suspect"]
-        if items:
-            theirs.append({**entry, "review": items})
-    assert theirs == a["review"]
-    added = {e["episode_index"] for e in b["review"] for i in e["review"] if i["kind"] == "integrity_suspect"}
-    assert added == {3}                                  # 7, its byte copy, is dedup's reject: not asked
     with open(c.path("revisions", "r0001", "report.json"), encoding="utf-8") as fh:
         report = json.load(fh)
     [sec] = [s for s in report["modules"] if s["id"] == MOD]
-    assert sec["summary"]["integrity_outcomes"] == {"pass": 6, "reject": 0, "suspect": 2}
+    assert sec["summary"]["integrity_outcomes"] == {"pass": 8, "reject": 0, "suspect": 0}
     assert sec["summary"]["integrity_files"]["files"] == 24
     with open(c.path("revisions", "r0001", "report.md"), encoding="utf-8") as fh:
         assert "### 数据完整性" in fh.read()

@@ -114,7 +114,7 @@ def comparable(rec: dict) -> dict:
 
 class Chain:
     """The commands of the Daemon's main run on one run directory (plan 2.0, design doc 17 §3): the two blocks
-    one after the other - the CPU checks, the VLM check, dedup - every stage on the whole selection,
+    one after the other - the CPU block's checks (the duplicate check last), the VLM check - every stage on the whole selection,
     then the final verdicts. The Daemon runs the blocks side by side; the records do not depend on it."""
 
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
@@ -146,7 +146,7 @@ class Chain:
             json.dump(pf.doc, fh)
         self.step("plan", "plan", "--preflight", self.path("preflight.json"), "--modules",
                   "timestamp_check,kinematic_limits,motion_quality,visual_quality,"
-                  "video_action_sync,task_success,dedup",
+                  "video_action_sync,task_success,duplicate_check",
                   "--episodes", episodes, "--out", self.path("plan.json"))
         self.step("snapshot", "snapshot", "--input", self.ds, "--episodes", episodes,
                   "--out", self.path("source_manifest.json"))
@@ -156,12 +156,13 @@ class Chain:
                 "--source-manifest", self.path("source_manifest.json"), *self.extra_source]
 
     def before_vlm(self, episodes: str = "0-7") -> None:
-        """check numeric, check frame: every stage on the whole selection."""
+        """check numeric, check frame, the duplicate check: every stage on the whole selection."""
         os.makedirs(self.path("stages"), exist_ok=True)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
                   "--episodes", episodes, "--survivors-out", self.path("stages", "numeric.txt"))
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),
                   "--episodes", episodes, "--survivors-out", self.path("stages", "frame.txt"))
+        self.step("duplicate", "check", "--modules", "duplicate_check", *self.common(), "--episodes", episodes)
 
     def funnel(self, episodes: str = "0-7") -> None:
         """The per-episode checks of both blocks."""
@@ -170,9 +171,8 @@ class Chain:
                   "--episodes", episodes, *self.vlm)
 
     def post(self, revision: int = 1, episodes: str = "0-7") -> None:
-        """The full-set steps on the whole selection, the final verdicts and the report."""
+        """The final verdicts and the report."""
         r = str(revision)
-        self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes", episodes)
         self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)

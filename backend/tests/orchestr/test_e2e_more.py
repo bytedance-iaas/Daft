@@ -46,7 +46,7 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert r.json()["subtask"]["scope"] == {"relabel_rerun": "v1"}
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
-    # 3 judged failed; its byte copy 7 is delivered in its place (design doc 17 §4.5); 4, judged for
+    # 3 judged failed (its byte copy 7 was passed all along, D87); 4, judged for
     # the first time with its new label, is rejected; 6 still has no text and stays (D72)
     assert (done["summary"]["passed"], done["summary"]["rejected"]) == (3, 5)
     assert d.rt.repo.latest_adjudications(task_id, unapplied_only=True) == []
@@ -66,7 +66,7 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert decisions["relabel_rerun"] == "v1" and len(decisions["decisions"]) == 2
     part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))
     assert [r["episode_index"] for r in part2] == [4]       # the relabelled one, re-judged
-    assert os.listdir(os.path.join(rd, "checks", "dedup", "parts")) == ["0001.jsonl"]
+    assert os.listdir(os.path.join(rd, "checks", "duplicate_check", "parts")) == ["0001.jsonl"]
     # the new revision reached the delivery: its report is there, read back, marked complete
     batch = d.delivery(done["run_id"])
     assert os.path.isfile(os.path.join(batch, "revisions", "r0002", "report.json"))

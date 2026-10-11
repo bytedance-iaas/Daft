@@ -26,11 +26,11 @@ def test_the_terminal_state_rule():
                                                            errors=2)]
     assert rules.terminal_state(ok, held=0) == "succeeded"          # D35: errors all rejected
     assert rules.terminal_state(ok, held=1) == "completed_with_errors"
-    failed = ok + [_module("dedup", "failed")]
+    failed = ok + [_module("duplicate_check", "failed")]
     assert rules.terminal_state(failed, held=0) == "completed_with_errors"
     unselected = ok + [_module("visual_quality", "failed", selected=False)]
     assert rules.terminal_state(unselected, held=0) == "succeeded"
-    assert rules.failed_modules(failed) == ["dedup"]
+    assert rules.failed_modules(failed) == ["duplicate_check"]
 
 
 def test_episode_selections():
@@ -183,7 +183,7 @@ def test_the_sync_sends_what_changed_and_never_work_in_progress(tmp_path):
 
 
 def test_what_a_restore_brings_back():
-    for rel in ("plan.json", "revisions/r0001/commit.json", "checks/dedup/groups.json",
+    for rel in ("plan.json", "revisions/r0001/commit.json", "checks/duplicate_check/groups.json",
                 "logs/numeric.jsonl", "human-decisions/task_verdicts.csv",
                 "details/vlm_latency.csv", "revisions/r0001/report.json"):
         assert D.restorable(rel), rel

@@ -9,8 +9,7 @@ on the review tab (one question: is this episode usable; its answer may carry a 
 task text, and for a suspected label conflict the original annotation and the model's
 description come from the revision's ``label_audit.json`` as the suggestion),
 ``reject_appeal`` on the appeals tab (rejects of an appealable
-module: task_success, and dedup since D42 with ``duplicate_of``; physical and
-structural gates are final - rule 2). A line the catalog does not know is not asked.
+module: task_success; physical and structural gates are final - rule 2). A line the catalog does not know is not asked.
 
 A question that was answered keeps its card after the answer was applied and the
 episode left the newer revision's review: the question is taken from the newest older
@@ -71,7 +70,6 @@ class Question:
     caption: str | None = None
     suggestion: str | None = None
     priority: str | None = None
-    duplicate_of: int | None = None
     revision: int = 0
     codes: tuple[str, ...] = ()         # C2 2.0: the finding codes the question is about
     items: tuple[str, ...] = ()         # ... and their taxonomy items
@@ -119,11 +117,8 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
                 ln = C.line(line_id)
                 first = items[0]
                 reasons = [str(i.get("reason") or "") for i in items]
-                dup = next((i["duplicate_of"] for i in items if isinstance(i.get("duplicate_of"), int)
-                            and not isinstance(i.get("duplicate_of"), bool)), None)
                 q = {"source_module": str(first.get("source_module") or ""),
                      "priority": _str(first.get("priority")), "annotation": _task_text(rev, ep),
-                     "duplicate_of": dup,
                      "codes": tuple(dict.fromkeys(str(c) for i in items for c in i.get("codes") or [])),
                      "items": tuple(dict.fromkeys(str(c) for i in items for c in i.get("items") or []))}
                 if line_id in relabel:                  # the annotation against the description
@@ -180,7 +175,6 @@ class Card:
         for q in self.questions:
             d = standing.get((q.episode, q.line))
             qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
-                       "duplicate_of": q.duplicate_of,
                        "annotation": q.annotation, "caption": q.caption,
                        "suggestion": q.suggestion, "priority": q.priority,
                        "latest_decision": decision_json(d) if d is not None else None})

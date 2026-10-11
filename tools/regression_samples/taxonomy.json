@@ -1981,11 +1981,10 @@
    "name": "同一数据集内的重复条目",
    "origin": "具",
    "samples": "合成（已有）",
-   "platform": "能判（实测）：注入的字节级副本和重编码副本都被完整性检查记为可疑 `duplicate_content`，不拒",
-   "platform_status": "能判",
+   "platform": "有读数：重复检测（D87）比对动作与各路画面的字节，同组每一条都写明其余几条，只报告、不判废；重编码的副本画面字节不同，查不出（原完整性的文件比对 `duplicate_content` 已并入重复检测）",
+   "platform_status": "有读数",
    "platform_codes": [
-    "data_integrity.duplicate_content",
-    "dedup.duplicate"
+    "duplicate_check.duplicate"
    ],
    "kind": "defect",
    "level": "dataset",

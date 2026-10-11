@@ -3,8 +3,8 @@
 Checks (all on by default):
 
 * **strict** modules - every normalized record must match exactly (floats by
-  ``repr``); for ``dedup`` the duplicate pairs and the action-hash collision
-  groups must match.
+  ``repr``); for ``duplicate_check`` the groups of identical episodes and the
+  action-hash collision groups must match (a v1 dump's dedup pairs read as groups).
 * **verdict-only** modules (model-driven, not reproducible):
     - ``autolabel``     : whether each unlabeled episode got a caption;
     - ``task_success``  : final verdict + the rules it went through.
@@ -13,7 +13,7 @@ Checks (all on by default):
   ``--noise-multiplier`` x v1's own difference rate.
 * **final** lists (passed / reject / review) - episodes that are ``error`` on
   either side are left out and listed separately (D24, D33). v1 still asks about
-  an episode it rejected (a copy dedup removed that also abstained); a rejected
+  an episode it rejected (a copy v1's dedup removed that also abstained); a rejected
   episode has no task or label question in v2 (D42), so a v1 side's review
   leaves out its own rejects, and they are listed.
 * **replay** - when the candidate was replayed, every request must have been on
@@ -38,7 +38,7 @@ import sys
 from . import records as R
 
 STRICT_DEFAULT = ("timestamp_check", "kinematic_limits", "motion_quality",
-                  "visual_quality", "video_action_sync", "dedup", "camera_defects")
+                  "visual_quality", "video_action_sync", "duplicate_check", "camera_defects")
 VERDICT_DEFAULT = ("autolabel", "task_success")
 
 
@@ -92,7 +92,8 @@ class Side:
         rows = R.read_jsonl(p) if os.path.isfile(p) else []
         return {r["episode_index"]: r for r in rows}
 
-    def dedup(self) -> dict:
+    def duplicates(self) -> dict:
+        """v1's dedup: ``dropped`` (each copy and the episode it kept) and ``action_collisions``."""
         return self._json("dedup.json", {})
 
     def final(self) -> dict:
@@ -120,7 +121,7 @@ class V2Side(Side):
     * ``records/<m>.jsonl``   <- ``checks/<m>/results.jsonl`` (same C2 record);
     * ``autolabel.jsonl``     <- ``autolabel/captions.jsonl`` (an ``unclear`` or failed
       caption is v1's empty caption);
-    * ``dedup.json``          <- ``checks/dedup/groups.json``;
+    * ``dedup.json``          <- ``checks/duplicate_check/groups.json`` (its ``groups``);
     * ``final.json``          <- the revision's ``passed`` / ``reject`` / ``held`` and the
       ``review`` view without pure appeal entries (v1 has no appeal queue in review.json);
     * ``dump.json`` ``tape``  <- ``parity.json`` written by ``python -m parity run-v2``.
@@ -166,8 +167,8 @@ class V2Side(Side):
                                           "caption": cap, "has_caption": bool(cap)}
         return out
 
-    def dedup(self) -> dict:
-        return self._json(os.path.join("checks", "dedup", "groups.json"), {})
+    def duplicates(self) -> dict:
+        return self._json(os.path.join("checks", "duplicate_check", "groups.json"), {})
 
     def final(self) -> dict:
         if not self.revision_dir:
@@ -225,25 +226,36 @@ def _strict_rows(side: Side, module: str) -> dict[int, dict] | None:
 
 
 def compare_strict_module(g: Side, c: Side, module: str, max_diffs: int) -> dict:
-    if module == "dedup":
-        return compare_dedup(g, c, max_diffs)
+    if module == "duplicate_check":
+        return compare_duplicates(g, c, max_diffs)
     grows, crows = _strict_rows(g, module), _strict_rows(c, module)
     if grows is None and crows is None:
         return {"mode": "strict", "status": "skipped", "note": "no output on either side"}
     return _strict_diff(grows or {}, crows or {}, max_diffs)
 
 
-def compare_dedup(g: Side, c: Side, max_diffs: int) -> dict:
-    gd, cd = g.dedup(), c.dedup()
+def duplicate_groups(doc: dict) -> list[list[int]]:
+    """The groups of identical episodes, each sorted: v2's ``groups`` (D87), or v1's dedup pairs
+    (``dropped``: a copy and the episode kept in its place) gathered by the episode kept."""
+    if "groups" in doc:
+        return sorted(sorted(int(e) for e in g) for g in doc.get("groups") or [])
+    by_keeper: dict[int, set[int]] = {}
+    for d in doc.get("dropped") or []:
+        keeper = int(d["duplicate_of"])
+        by_keeper.setdefault(keeper, {keeper}).add(int(d["episode_index"]))
+    return sorted(sorted(g) for g in by_keeper.values())
+
+
+def compare_duplicates(g: Side, c: Side, max_diffs: int) -> dict:
+    gd, cd = g.duplicates(), c.duplicates()
     if not gd and not cd:
-        return {"mode": "strict", "status": "skipped", "note": "no dedup on either side"}
-    problems = []
-    for key in ("dropped", "action_collisions"):
-        d = R.diff_values(gd.get(key), cd.get(key), path=key, limit=max_diffs)
-        problems += d
+        return {"mode": "strict", "status": "skipped", "note": "no duplicate check on either side"}
+    gg, cg = duplicate_groups(gd), duplicate_groups(cd)
+    problems = R.diff_values(gg, cg, path="groups", limit=max_diffs)
+    problems += R.diff_values(gd.get("action_collisions"), cd.get("action_collisions"),
+                              path="action_collisions", limit=max_diffs)
     return {"mode": "strict", "status": "fail" if problems else "pass",
-            "golden_dropped": len(gd.get("dropped") or []),
-            "candidate_dropped": len(cd.get("dropped") or []),
+            "golden_groups": len(gg), "candidate_groups": len(cg),
             "examples": problems[:max_diffs]}
 
 
@@ -389,7 +401,7 @@ def _review(side: Side, final: dict) -> tuple[set[int], list[int]]:
     """(the review list to compare, the rejects left out of it).
 
     v1 queues a task_success abstention even when it rejected the episode (a copy
-    that dedup removed); in v2 a rejected episode has no task or label question,
+    that its dedup removed); in v2 a rejected episode has no task or label question,
     only an appeal (D42), and the v2 side's review has no pure appeals.
     """
     review = set(final.get("review") or [])

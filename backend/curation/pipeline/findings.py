@@ -736,15 +736,16 @@ def _data_integrity(passed, score, d, p) -> Derived:
 
 # ---------------------------------------------------------------- dataset level
 
-@deriver("dedup", fail="duplicate")
-def _dedup(passed, score, d, p) -> Derived:
-    """An episode byte-identical to an earlier one: its group is the first member's index (every copy points at
-    it). Which member a group keeps is aggregate's call (design doc 17 §4.5)."""
+@deriver("duplicate_check", fail="duplicate")
+def _duplicate(passed, score, d, p) -> Derived:
+    """An episode identical to others of the dataset (D87, design doc 26 §1): every member of the group names the
+    others (``same_as``); the group is its lowest member. Reported only - nothing is kept first or dropped."""
     out = Derived()
-    if passed is False and d.get("duplicate_of") is not None:
-        first = int(d["duplicate_of"])
-        out.add("dedup", "duplicate", f"与 ep{first:06d} 字节级完全重复",
-                readings={"group_id": first, "duplicate_of": first})
+    same = sorted(int(e) for e in d.get("same_as") or [])
+    if passed is False and same:
+        names = "、".join(f"ep{e:06d}" for e in same)
+        out.add("duplicate_check", "duplicate", f"与 {names} 完全相同（动作与各路画面字节一致）",
+                readings={"group_id": int(d.get("group_id", min(same))), "same_as": same})
     return out
 
 
