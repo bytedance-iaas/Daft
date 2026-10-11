@@ -19,17 +19,17 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `instance.py` | 一个数据卷只跑一个 Daemon：启动时对 `curator.db.lock` 加排它锁，第二个进程等 10 秒拿不到锁就退出（退出码 2） |
 | `repo/sqlite.py`、`repo/migrations.py` | C5 的 SQLite 实现：WAL、单写线程、显式事务、CAS、迁移（`PRAGMA user_version`，现为第 2 步） |
 | `repo/extras.py` | C5 之外的几条只读查询（按地址找登记、概览的统计口径），拟并入 C5 1.3 |
-| `auth.py` | Basic 鉴权（搬自 v1 `ui/auth.py`）：htpasswd（bcrypt / apr1）优先，单用户环境变量兼容 |
+| `auth.py` | Basic 鉴权（搬自 v1 的 `ui/auth.py`，v1 代码在 `release_v1` 分支）：htpasswd（bcrypt / apr1）优先，单用户环境变量兼容 |
 | `events.py`、`routes/sse.py` | SSE 事件中心与 `GET {base}/events/tasks/{id}` |
 | `transitions.py`、`timeline.py`、`reconcile.py` | 状态迁移（CAS + 审计事件 + SSE 一处做完）、执行时间线、启动对账 |
 | `routes/api.py`、`routes/datasets.py`、`routes/overview.py` | 已实现的 `{base}/api/v1` 接口：任务、数据集登记、概览；未知路径统一由 `api.fallback` 兜底 |
 | `secrets/`、`routes/access_keys.py`、`routes/vlm.py`、`routes/media.py` | W8：密钥封存、访问密钥与 VLM 后端、交付目录写探针、媒体预签名，说明见 [`secrets/README.md`](secrets/README.md) |
 | `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
-| `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
+| `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、ReRun「质检」按钮用的旧深链 302（解析规则搬自 v1 的 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
 | `operations.py` | C4 全部操作的去向；F13.3 之后全部已实现，`PENDING` 为空 |
 | `viz/`、`routes/viz.py` | 阶段 13 数据可视化（设计 18）：数据源、LeRobot 与 mcap 读取器、展示模型、曲线、mcap 映射与模版库、帧包与重封装、转码与磁盘缓存，说明、配置与手动验证见 [`viz/README.md`](viz/README.md) |
-| `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 12 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
+| `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 11 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
 
 ## 已实现的接口
 

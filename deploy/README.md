@@ -103,7 +103,7 @@ docker run --rm -p 8080:8080 -v curator-data:/data -e CURATOR_BASE_PATH=/curatio
    同时运行 3 个任务，都不用在 Chart 里配。
 9. **临时盘够大**：`curator.persistence.scratch`（缺省 500Gi）放 TOS 上 mcap / Lance 数据集的本地副本
    （`CURATOR_SOURCE_CACHE_DIR=/scratch/source-cache`，D44）：mcap 读到哪条下载哪条，Lance 整表下载，任务跑完就删。
-   按要质检的最大数据集加上导出的余量来定。副本不放数据盘：数据盘写满会让 SQLite 写不进去。
+   按要质检的最大数据集来定，再给可视化的转码缓存（`CURATOR_VIZ_CACHE_GB`，缺省 20 GB，也在临时盘上）留出余量。副本不放数据盘：数据盘写满会让 SQLite 写不进去。
 10. **镜像能拉到**：`image.curator` 是完整引用，tag 是提交号（第 1 节）。
 
 ## 3. Secret 里质检台用到的键
@@ -143,7 +143,7 @@ image:
 curator:
   publicBaseUrl: https://<对外域名>
   siteConfig:                       # 站点配置 site.yaml，原样写入；只写和出厂默认不同的（CPU 不写，D54）
-    checks: {task_success: {vlm: {timeouts_s: {caption: 180}}}}
+    checks: {task_success: {vlm: {timeouts_s: {probe: 180}}}}   # 例：任务成败判定的超时下限，出厂 60 秒（第 9 节）
 vci:
   enabled: true                     # 跑在 VCI 上：Pod 注解，和给数据盘改属主的初始化容器
 ```
@@ -186,9 +186,11 @@ Daemon 不再接新任务，让运行中的 CLI 子进程收尾当前 episode（
   `updates to statefulset spec for fields other than ... are forbidden`。扩容直接改 PVC（存储类要允许扩容）：
   `kubectl -n $NS patch pvc data-$POD -p '{"spec":{"resources":{"requests":{"storage":"200Gi"}}}}'`。
 - 改站点配置（`curator.siteConfig`、`curator.publicDatasets`）也会滚动重启 Pod，同样走系统暂停再续跑。
-- **跨过结果格式 2.0 的升级**（设计 17 的策略判决，F12.3 起）：旧版本建的任务（`run.json` 里没有 `c2: "2.0"`）新版本只能查看、不能再运行（D59）。
-  升级时还在跑或被暂停的旧任务，续跑会以 `legacy_task` 失败，失败原因写「这个任务由旧版本生成（结果格式 1.0），新版本只能查看、不能再运行；请复制为新任务」；
-  重试、执行裁决同样不行。要么等它们跑完再升级，要么升级后复制为新任务重跑。
+- **升级到删掉旧格式的这一版**（设计 27，D89–D91）之后清掉旧任务。这一版只读结果格式 2.0 与两块的执行计划，不再认旧任务：
+  结果格式 1.0（`run.json` 里没有 `c2: "2.0"`）、逐档漏斗的执行计划、注册表 6.0 以前建的任务，打开详情、报告或裁决页可能报错，
+  继续运行、重试、执行裁决也不再支持。升级前等在跑的任务跑完；升级后在任务列表里删掉这些旧任务，要重跑就新建任务。
+  站点配置里 v1 的闸门名（`vlm.gates` 下的 `endstate`、`arbitration` 等）忽略并告警；`timeouts_s` 下的 `caption`、`endstate`、
+  `arbitration`、`llm` 不再有人读，要抬超时改写 `probe`（第 9 节）。
 - 节点排水（drain）、Pod 被驱逐都等同一次重启；块存储盘会跟着 Pod 挂到同一可用区的新节点上。
 - ReRun 的 Pod 和质检台互不影响：只改 `image.rerun` 时质检台不重启，反过来也一样。
 
@@ -313,7 +315,7 @@ Daemon 起来后照常迁移和对账：快照那一刻在跑的任务被置为�
 | PVC 一直 `Pending` | 存储类不存在或不是块存储；`WaitForFirstConsumer` 的类在 Pod 调度之前本来就是 Pending |
 | 所有请求都是 401，密码没错 | 账号表里没有可用的行（只认 bcrypt 和 apr1），日志有 `htpasswd configured but has no usable account`；改好 Secret 后重启 |
 | Pod 不 Ready，`/readyz` 503 | 看响应里的 `checks`：`db_writable`（盘满或写不进）、`workdir_writable`、`scratch_writable`、`reconciled`（启动对账还没做完，会自动重试）。VCI 上写不进多半是盘的属主不对：确认 dataverse 的 `vci.enabled=true`，它会加改属主的初始化容器 |
-| autolabel（caption）整批 `status: error`、`cause: timeout`，重试 4 次都超时 | 模型答得比分类型超时慢。出厂默认 caption / probe / 端态 / 仲裁 60 秒、纯文本 120 秒（`adapters/vlm_client.py` 的 `DEFAULT_TIMEOUTS_S`，A 类不改）。先换个快的模型试；确实要等，就用站点配置抬高（见下） |
+| 任务成败判定成批出错，`cause: timeout`，重试 3 次都超时 | 模型答得比超时慢。任务成败判定（`probe`）的超时出厂 60 秒，这是下限：视频请求按送出的帧数放宽（每帧 0.5 秒，封顶 600 秒），对冲补发也在这条线上触发；EEF 复核（`eef_review`）出厂 120 秒。先换个快的模型试；确实要等，就用站点配置抬高（见下），单个任务也可以在参数 `vlm_timeouts_s.probe` 里给 |
 | `helm upgrade` 报 `nil pointer evaluating …` | 用了 `--reuse-values` 跨 Chart 版本升级，模板读不到新版加的值（第 5 节） |
 
 分类型超时按站点配置覆盖（09 篇 §3 的深合并，D5 只允许调上限，不改算法），写进 dataverse 的 values：
@@ -325,7 +327,8 @@ curator:
       task_success:
         vlm:
           timeouts_s:
-            caption: 180        # 出厂 60；probe / endstate / arbitration 同理，llm 出厂 120
+            probe: 180          # 任务成败判定，出厂 60；是下限，视频请求按帧数放宽，封顶 600
+            eef_review: 240     # EEF 复核，出厂 120
 ```
 
 `helm upgrade` 之后 ConfigMap 就变了，Pod 随之滚动，新起的任务按新值跑。
@@ -383,8 +386,11 @@ D48（2026-09-23）起，galbot 的 v2 是单独装的 release `curator-v2`（�
     persistence:
       data: {existingClaim: data-curator-v2-0}
     siteConfig:
-      checks: {task_success: {vlm: {timeouts_s: {caption: 180}}}}
+      checks: {task_success: {vlm: {timeouts_s: {probe: 180}}}}
   ```
+
+  curator-v2 当时的站点配置抬的是 `timeouts_s.caption`（180），caption 随 v1 删掉（D89）之后这一项不再起作用，上面换成了 `probe`；
+  值按需要定。
 
   `publicDatasets`（`ai-infra`，地域跟 `tos.region`）、`resources`（16 / 128Gi，上限 32 / 256Gi）、VCI 的注解和改属主的初始化容器
   都是 dataverse 的缺省或由 `vci.enabled` 带出，和 curator-v2 现在的值一致，不用写。

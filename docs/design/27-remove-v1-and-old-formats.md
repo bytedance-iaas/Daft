@@ -73,3 +73,23 @@
 2. `curation ls`、`prune`、`fetch` 照手动验证步骤能跑；`prune` 能列、能删一份 v2 交付目录的旧跑批，`latest` 那次不删。
 3. 后端各套、契约、前端五项、对账回放、回归样本工具全过；CI 四项全绿。
 4. 本机真 Daemon 跑一个任务：详情、报告、Episode 明细、人工裁决、执行裁决照常。
+
+## 5. 落地记录（F17.1–F17.4，2026-10-11）
+
+照 §1–§3 删完之后，顺着删掉的东西又收了几处，记在这里：
+
+- **注册表 7.0**：任务成败判定不再覆盖 TASK-10（中途失误后又完成）和 LABEL-4（标注与画面不符）。前者在一次判定（D71）里没人报，后者随判废护栏
+  （D73）没了来源；两项在报告的「检测项覆盖」里标为未覆盖，回归样本工具的平台注记重新生成。
+- **闸门**：VLM 段只剩 `episode` 与 `probe`，`episode` 跟着 `probe` 走（一条一次请求）；站点配置里写旧闸门名会被忽略（`planner/limits.py` 的
+  `RETIRED_GATES`），04 篇 §2.2 随之改写。调用类型的显示名（`curation/vlm_call_kinds.py`）只剩 `probe`（任务成败判定）和 `eef_review`（EEF 复核），
+  C3 的说明去掉了 v1 的五类和 `autolabel`；超时只剩 `timeouts_s.probe`（EEF 复核另有 `timeouts_s.eef_review`）。
+- **EEF**：记录比对的来源全部来自数据集声明（`semantics.pose` / `semantics.joints`），预检的 `subitems.record_consistency` 也按声明核对列与 topic；
+  手持夹爪的标定只有声明里的 `calibration.handheld` 和内置的 DAS DEMO 两种来处（`derive_mcap.Derived` 去掉了上传标定的分支），控制台的轨迹来源
+  写「数据集声明里的夹爪标定」。报告 EEF 一节去掉了 4.x 的判过 / 判废 / 转人工计数，控制台去掉了 5.0 以前记录的结论块。
+- **`check --survivors-out`**：没有漏斗之后，写出的是本段每个所选模块都有记录的条（D57）。任务成败的报告统计 `layers` 只剩 `probe`、`endstate`。
+- **计划的 `bound_by: site` 留着**：§2 原想删，但站点上限照样能卡住 VLM 并行度（`planner/limits.py` 写的就是 `site`），删了会让合法的计划
+  过不了 Schema。预检里没人写的 `drafts`（F5.23 起记录映射不再起草）暂留在 C2 的 Schema 里，下次改预检契约时一起删。
+- **站点配置**：Daemon 读站点配置时把旧闸门名连同 D54 的 CPU 键一起忽略并告警（`orchestr/config.py`；原来只带 `vlm.gates` 的旧配置会让读取出错）。
+- **测试**：`tests/cli/test_relabel_rerun.py` 改名为 `test_relabel.py`；只测 1.0、漏斗、注册表 4.x 与 `relabel_rerun` 的用例删掉，共享的用例改用 2.0
+  记录与两块的计划（`EpisodeState.set_blocks`）。
+

@@ -1,6 +1,6 @@
 # 任务编排与 CLI 执行器（W5a）
 
-把任务交给 CLI 按 episode 批次流水执行：排队、执行、暂停恢复停止、崩溃恢复、四种子任务、发布到交付目录，
+把任务交给 CLI 按 episode 批次流水执行：排队、执行、暂停恢复停止、崩溃恢复、三种子任务、发布到交付目录，
 以及启动前的检查、数据集登记与核对、浏览与 episode 列表。F2.3，以及 F2.2、F2.6、F2.7 中属于编排的部分。
 
 设计依据：`docs/design/00-overview.md` §4、`01-data-model.md` §2–§3、`02-cli-and-files.md` §3–§4、`03-rest-api.md` §3、§12、
@@ -20,7 +20,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
-| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内是逐条交接的段（D70 起没有全量步骤；更早的计划里的 `full_set` 段仍按整段跑，`autolabel` 段记 skipped，D72）；一块失败另一块随之停下 |
+| `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内是逐条交接的段（D70 起没有全量步骤）；一块失败另一块随之停下 |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 一块的逐条段（一条链）：每段一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`（只在块内），每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与三种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`；任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径（F5.5）；续跑、重试开始前删掉快照留下的对象清单缓存（`.source_listing.json`），让源文件守卫重新列一遍 |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
@@ -53,13 +53,13 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   逐个开始失败的写进 `warnings`。
 - **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → duplicate）与 VLM 块（vlm）各一个线程同时跑，互不过滤。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
-  没有任务标注的条目 vlm 段不判成败（D72；D72 之前排好的计划还带一个 autolabel 段，直接记 skipped）；重复检测的 `duplicate` 段（D87，只报告）是 CPU 块最后一个逐条段，和前面的段交叠（D70），并发恒为 1。
+  没有任务标注的条目 vlm 段不判成败（D72）；重复检测的 `duplicate` 段（D87，只报告）是 CPU 块最后一个逐条段，和前面的段交叠（D70），并发恒为 1。
   这些段 id 是后台的；控制台按组显示进度（D88，设计 26 §2）：数据完整性（`integrity`）、CPU 检查（`numeric`、`frame`、`duplicate`、`vlm_prep`）、
   模型检查（`vlm`）、生成报告（`final`、`report`、`verify`），SSE、日志与接口仍用段 id，前端负责归组。
   一块失败，另一块随之停下；暂停 / 停止作用在两块的全部进程上。episode 状态库（`.orchestr/episodes.sqlite3`）里每条在每块各有一个位置，续跑时两块各自从原处继续。
   注册表 5.3 起（设计 23 §1、§4.3，设计 25 F5.24b）派发的单位是**链**：计划里按 `after` 连起来的段。CPU 块的第二个起点 `vlm_prep`（EEF 的 CPU 半段）
-  自成一条链，`after: vlm_prep` 的 vlm 段接在它后面——一条 episode 的 CPU 半段做完就进模型半段，跨块的只有这一条边。链按最后一段所在的块命名
-  （`cpu`、`vlm`，旧计划照旧是这两个名字），名字被占了就用第一段的 id（没有模型半段时的 `vlm_prep`）；每条链一个线程、一份 CPU 名额记账。
+  自成一条链，`after: vlm_prep` 的 vlm 段接在它后面：一条 episode 的 CPU 半段做完就进模型半段，跨块的只有这一条边。链按最后一段所在的块命名
+  （`cpu`、`vlm`），名字被占了就用第一段的 id（没有模型半段时的 `vlm_prep`）；每条链一个线程、一份 CPU 名额记账。
   `vlm_prep` 层每条在途占一个 CPU 名额（解码、画标记、编码），它的命令带 `--prep`，跟在后面的 vlm 段带 `--prepared`；模块的状态与条数只由它的
   最后一段发布（`Run.last_stage_of`）。模型半段在途上限按下游队列（两次派发量或 vlm 并发度取大）卡住 `vlm_prep`。每条 episode 的请求包
   （`scratch/vlm/`，D77）在记录落盘后删掉；暂停、停止保留，续跑直接用；运行结束（完成或失败）整个删掉，之后的重试、继续运行重做 CPU 半段。
@@ -89,29 +89,30 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   用户暂停的保持暂停，用户停止的不再运行。Daemon 被直接杀掉时留下的子进程，下次就绪后按 `.orchestr/proc.json` 收拾掉。
 - **崩溃**：worker 异常退出（段错误、OOM）时重新拉起，并按 SQLite 与在途记录恢复该批次；
   同一条连续两次出现在崩溃现场，CLI 把它记为出错并跳过（P14）。没有在处理的 episode 却反复崩溃，任务 `failed`。
-- **旧任务（D59）**：`run.json` 没有 `c2: "2.0"` 的任务由旧版本生成（结果格式 1.0），新版本只读：继续运行、重试、执行裁决
-  一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
+- **旧任务**：不再支持（设计 27，D90）。Daemon 不检查任务由哪个版本生成，一律按 C2 2.0 与两块的计划读；结果格式 1.0、
+  逐档漏斗计划的任务打开或再运行都可能报错。升级到这一版后清掉旧任务（deploy README 第 5 节）。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：只补跑出错或没有记录的（模块 × 条目）（设计 17 §3.4）：每一档只带要补的模块与条目，整体失败的模块对全部所选重跑，
     没有后段依赖它，不再「从出错的那一档往后跑」；重复检测和别的段一样只补出错或缺记录的条目（状态从已有记录与 `groups.json` 重建）；新版本，终态按当前结果重算。
   - `resume`（「继续运行」）：已停止或失败的任务接着主流程的日志本往下做，两块各自从未完成处继续，不重做完成的（模块 × 条目）。
-  - `apply_adjudication`：导出 W5b 的 `Queue.executable()`，即尚未执行、仍然成立的裁决（一条 episode 的同一条线上只认最新的那一行，作废的只记一行日志），`decisions.json` 顶层写 `relabel_rerun`（v1 / full，D39）；`curation adjudicate-apply` 之后
-    用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改了描述的条目按新描述重跑任务成败判定，
+  - `apply_adjudication`：把 W5b 的 `Queue.executable()`（尚未执行、仍然成立的裁决；一条 episode 的同一条线上只认最新的那一行，作废的只记一行日志）
+    写成 `decisions.json`（C2 2.0）交给 `curation adjudicate-apply`，之后用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；
+    改了标注、人又没判成败的条（`adjudicate-apply` 输出的 `rerun_task_success`）按新标注重跑任务成败判定，仍是每条一次请求（D39、D71）；
     重复检测不重跑（只报告，裁决不涉及它，D87）；新版本，执行完标记这些裁决已应用。
 - **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去，
   再删掉工作目录里除 `.orchestr/` 之外的一切。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
   目录留着，下一轮（每小时）再试；只有被清理过交付产物（D28）的任务不上传、直接删。
   之后来的子任务、W5b 读结果的接口（`ResultStore.backfill` 钩子）从交付目录取回：只取本地没有的文件，不覆盖本地的，
-  交付数据集、审片片段、证据帧、同步曲线不取回。取回算一次活动，保留期从取回时重新计。
+  证据帧、同步曲线这类大文件不取回（`delivery.RESTORE_SKIP`）。取回算一次活动，保留期从取回时重新计。
   数据库里已没有的任务（删除 30 天后被清掉的）的目录，旧于保留期就整个删除。
 - **数据集**：登记、核对、重新预检都跑 CLI（`preflight`、`snapshot`），清单按内容寻址保存，核对只比清单（D37）；
   浏览：公共数据集读目录、本地目录列子目录、TOS 列公共前缀并读 `info.json` 提示；episode 列表读 v2 `episodes.jsonl` 或 v3 的 parquet，
   游标分页，TOS 上的相机视频给预签名地址（v3 带 `from_ts` / `to_ts`）。
 - **mcap 与 Lance**（D44，C4 1.11）：登记、核对、浏览、建任务、D37 与 LeRobot 走同一条路，`Dataset.format` 是 `mcap` / `lance`。
   开始前的输入检查在没有 `meta/info.json` 时改读第一个 `.mcap` 文件（或 `meta.lance` 的一个版本文件）的开头几个字节。
-  浏览时没有 `info.json` 的目录按文件认 `mcap` / `lance` / `rrd`；episode 列表对 mcap 按 v1 的规则从文件名编号，这一页每个文件读一次摘要区
+  浏览时没有 `info.json` 的目录按文件认 `mcap` / `lance` / `rrd`；episode 列表对 mcap 从文件名编号（`cli/containers.py` 的 `mcap_episodes`），这一页每个文件读一次摘要区
   （几次按范围读）拿时长与元数据里的任务文本，任务文本只在 `/task` topic 里的给 `task_unread`；这两种格式都没有相机地址。
-  运行时，读源数据的命令多带 `--selection <任务的所选>`（数据集语义取它的前 100 条，与 v1 一致），环境里多 `CURATION_SOURCE_CACHE`
+  运行时，读源数据的命令多带 `--selection <任务的所选>`（数据集语义取它的前 100 条），环境里多 `CURATION_SOURCE_CACHE`
   （TOS 上的数据先拉到 `CURATOR_SOURCE_CACHE_DIR/<task_id>/`，同一次运行的各条命令复用）和指向它下面 `tmp/` 的 `TMPDIR`（读取器转出的视频）。
   运行结束（完成、失败、暂停、停止都算）就删掉这个目录，下次运行重新拉；崩溃留下的由清理线程在任务没有运行时删掉。
   这两种格式和 LeRobot 一样只交付报告（D69 起不写交付数据集）。
@@ -122,7 +123,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 |---|---|---|
 | `CURATOR_MAX_RUNNING_TASKS` | 3 | 同时运行的任务（主流程与子任务一起算，P1、D54） |
 | `CURATOR_CLI` | 当前解释器 `-m curation.cli` | CLI 的命令行 |
-| `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency` 里的 VLM 并行度、`vlm` 段），缺省就是 Chart 写的 site.yaml；旧文件里的 `concurrency.cpu` / `cpuMax` 忽略并告警（D54） |
+| `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency` 里的 VLM 并行度、`vlm` 段），缺省就是 Chart 写的 site.yaml；旧文件里的 `concurrency.cpu` / `cpuMax`（D54）和 `vlm.gates` 里 v1 的闸门名（`endstate`、`arbitration` 等，D89）忽略并告警 |
 | `CURATOR_CPU_CORES` | 容器的 CPU 配额（cgroup v2 / v1），没有配额时是本机核数 | 核数：减 2 是全局 CPU 名额池的大小，也是一个任务最多用的 CPU worker 数（P4、D54） |
 | `CURATOR_MEMORY_ADMISSION` | 0.8 | 内存占用高于这个比例时 `frame` 段（解码画面）等待（0 = 不管） |
 | `CURATOR_TERM_GRACE_S` / `CURATOR_INT_GRACE_S` | 90 / 10 | SIGTERM、SIGINT 之后多久 SIGKILL；Pod 的 `terminationGracePeriodSeconds` 要不小于 preStop + 前者 + 约 20 秒 |
@@ -169,19 +170,20 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
 4. **交付**：`ls $D/tos/deliveries/mini/*/` 有 `_COMPLETE`、`revisions/r0001/commit.json`、`revisions/r0001/report.json`（没有
    `export/`：D69 起不交付数据集）；`cat $D/tos/deliveries/mini/latest` 是这个任务的 `run_id`。
 5. **非法迁移**：`c -X POST $B/tasks/$T/actions/pause` 是 409 `task_state_conflict`，`details.state` 是 `succeeded`。
-7. **启动前的指纹核对（D37）**：用同一个 `preflight_id` 再建一个 `params: {"start_now": false}` 的任务（记为 `T2`，`created`），
+6. **启动前的指纹核对（D37）**：用同一个 `preflight_id` 再建一个 `params: {"start_now": false}` 的任务（记为 `T2`，`created`），
    然后 `touch $D/inputs/mini/meta/episodes.jsonl`，`c -X POST $B/tasks/$T2/actions/start` 是 409 `source_changed`，
    `details` 里 `meta_changed: true`、`modified: 1`；`c -X POST $B/tasks/$T2/repreflight` 返回 `compatible: true`，任务进入 `queued`。
-8. **浏览与 episode 列表**：`c "$B/datasets/browse?source=local&uri=$D/inputs"` 列出 `mini`；
+7. **浏览与 episode 列表**：`c "$B/datasets/browse?source=local&uri=$D/inputs"` 列出 `mini`；
    `c "$B/datasets/episodes?source=local&uri=$D/inputs/mini&limit=3"` 三条，`has_more: true`，带 `next_cursor` 接着翻。
-9. **清理与取回**：停掉 Daemon，加上 `CURATOR_WORK_RETENTION_DAYS=0.0001`（约 9 秒）重启，一分钟后 `ls -a $D/data/runs/$T`
+8. **清理与取回**：停掉 Daemon，加上 `CURATOR_WORK_RETENTION_DAYS=0.0001`（约 9 秒）重启，一分钟后 `ls -a $D/data/runs/$T`
    只剩 `.orchestr`，Daemon 日志里有 `janitor: task … cleaned`；`c $B/tasks/$T/report` 照样 200，工作目录从交付目录取回了，
-   但大文件不取回：`ls $D/data/runs/$T/details` 里没有 `evidence/`、`plots/`（证据帧与曲线图留在交付目录）。
+   但大文件不取回：`ls $D/data/runs/$T/checks/video_action_sync` 里没有 `curves/`，同步曲线还在交付目录
+   `$D/tos/deliveries/mini/*/checks/video_action_sync/curves/` 下（证据帧 `details/evidence/` 同样不取回）。
    **注意**：保留期对数据目录里所有已结束的任务都生效（交付目录接得住的就会被清理），别拿存着别的数据的目录做这一步。
-10. **停机**：再建一个任务，趁它在跑 `kill -TERM` Daemon：日志里 `shutdown: 1 running job(s) asked to pause`，
-    任务停在 `paused`（`pause_reason: system`，原因「Daemon 停机」）；重启 Daemon（去掉上一步的保留期）后启动对账把它放回队列，
-    它自己跑完。
-11. **mcap 与 Lance（D44）**：把同一份数据做成两种格式，放在本地数据根下：
+9. **停机**：再建一个任务，趁它在跑 `kill -TERM` Daemon：日志里 `shutdown: 1 running job(s) asked to pause`，
+   任务停在 `paused`（`pause_reason: system`，原因「Daemon 停机」）；重启 Daemon（去掉上一步的保留期）后启动对账把它放回队列，
+   它自己跑完。
+10. **mcap 与 Lance（D44）**：把同一份数据做成两种格式，放在本地数据根下：
 
     ```bash
     PYTHONPATH=../tools ../.venv/bin/python -m parity make-fixture --format mcap --out $D/inputs/mini_mcap
@@ -197,7 +199,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
     （`ls $D/tos/deliveries/mini_mcap/*/` 有 `_COMPLETE`、`revisions/`，没有 `export/`）。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
     跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 
-12. **CPU 名额池与同时运行的任务数（D54）**：停掉 Daemon，写一个早于 D54 的站点配置，按 4 核重启（池里 2 个名额）：
+11. **CPU 名额池与同时运行的任务数（D54）**：停掉 Daemon，写一个早于 D54 的站点配置，按 4 核重启（池里 2 个名额）：
 
     ```bash
     printf 'concurrency: {cpu: 8, cpuMax: 16}\n' > $D/site.yaml

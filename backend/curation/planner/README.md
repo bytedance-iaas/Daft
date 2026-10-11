@@ -1,10 +1,9 @@
 # planner：执行计划与 VLM 请求合并框架（W6 / F2.4）
 
-Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联网，不碰 v1 的编排代码。
+Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2），不联网。
 对应设计 04 篇全篇、05 篇 §7、01 篇 §2.6、10 篇 §3.4；决策 D5、D18、D23、D31，取值 P1、P2、P4。
 
-**本包只交付独立的库。** 把合并执行器、usage 采集、外层重试、自适应降并发接进 `check` 和
-`adapters/vlm_client.py`，要等两个黄金基线存档之后再做（接入点见文末）。现有两个 VLM 模块不声明
+`check` 已经用上其中的闸门、外层重试和用量两本账；合并执行器和自适应降并发还没接（见文末「接入现状」）。现有模块都不声明
 `merge_units`，计划里恒为 `"merge": {"strategy": "none"}`（D23），线上不会发生任何合并。
 
 ## 文件
@@ -12,18 +11,17 @@ Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联�
 | 文件 | 内容 |
 |---|---|
 | `limits.py` | 上限取交集（D31）：CPU 并发 = min(核数 − 2（至少 1），任务上限)，是一个任务最多用多少，核本身由 Daemon 的全局 CPU 池在任务之间分（P4、D54）；VLM 并行度 N = min(任务、模型、后端、站点上限，模型和后端都没配时再加站点默认或 64)，多任务同跑时按任务数均分（P1）；计划里记下是哪一层卡住的（`bound_by`） |
-| `gates.py` | 一个 N 推导八把闸门（04 §2.2）；endstate、arbitration、guard_caption 沿用 v1 在 `funnel.py` 里对 episode 闸门的耦合；站点可逐把覆盖，按 N 等比缩放；`v1_set_overrides()` 给出让 v1 代码用上这组闸门的 `--set` |
-| `plan.py` | `build_plan()`：两块的段、聚合档、重复检测的 `duplicate` 段（逐条段，并发恒为 1，D87）、合并提案、估算（无标注条目不计判定请求，D72）；输出符合 `docs/contracts/cli/plan.schema.json` |
+| `gates.py` | 一个 N 推导 VLM 段的两把闸门（04 §2.2）：`probe`（在飞的模型请求）是 N，`episode`（在飞的 episode）跟着 `probe` 走，一条一次请求（D71）；站点可逐把覆盖，按 N 等比缩放。v1 的 `endstate`、`arbitration`、`guard_caption`、`caption`、`llm`、`audit` 随 v1 删掉（D89），站点配置 `vlm.gates` 里还写着的读到后忽略并告警（`limits.py` 的 `RETIRED_GATES`） |
+| `plan.py` | `build_plan()`：两块的段、聚合档、重复检测的 `duplicate` 段（逐条段，并发恒为 1，D87）、合并提案、估算（没有任务标注的条目不判成败，只算一次画面缺陷请求，D72、D73）；输出符合 `docs/contracts/cli/plan.schema.json` |
 | `estimates.py` | 估算用的常数全部来自 v1 的实测与出厂配置，逐条注明出处 |
 | `merge.py` | `FramePolicy`、`MergeUnit`、`MergeGroup`、`MergeLimits`、`none` 与 `per_episode_multi_module` 两个策略、合并请求的拼装与按 key 拆回、`vlm.merge.enabled` 开关 |
-| `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块）；`chat_payload()` 把请求拼成 v1 形态的请求体 |
+| `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块）；`chat_payload()` 把请求拼成 OpenAI 兼容的请求体（只有 model / temperature / max_tokens / messages） |
 | `usage.py` | 解析 OpenAI 兼容的 `usage`；实际调用账与分摊账两本账，分摊账逐项等于实际账（最大余数法，整数精确）；拿不到 usage 的只计数不估算；产出 C3 的 `usage` 行（增量） |
 | `retry.py` | 外层 `vlm_retry`（04 §6）：只重试超时、连接错、5xx、429，间隔 1/2/4 秒，429 至少等 `Retry-After` |
-| `throttle.py` | 自适应降并发（04 §7）：30 秒窗口内 429/5xx 占比超过阈值，八把闸门一起减半，干净的窗口逐步加回；每次调整产出 C3 的 `throttle` 行；`ResizableGate` 是可在运行中改容量的信号量 |
+| `throttle.py` | 自适应降并发（04 §7）：30 秒窗口内 429/5xx 占比超过阈值，各闸门一起减半，干净的窗口逐步加回；每次调整产出 C3 的 `throttle` 行；`ResizableGate` 是可在运行中改容量的信号量 |
 | `consistency.py` | 合并与单发的判决一致性对账（10 §3.4），门槛 98% |
 
-测试在 `backend/tests/planner/`。两个「抽 8 帧、问一次」的示例模块和确定性的假模型只存在于测试里（`examples.py`），
-N=64 与 v1 出厂默认的对照直接从 v1 的 `default.yaml` 和代码里读（`v1_source.py`），不抄一份数字。
+测试在 `backend/tests/planner/`。两个「抽 8 帧、问一次」的示例模块和确定性的假模型只存在于测试里（`examples.py`）。
 
 ## 给调用方
 
@@ -45,17 +43,18 @@ plan = build_plan(preflight_json, task["modules"], episode_indices,
 **CLI（W3）**：`curation plan` 调同一个函数；建议 `--cpu-cores` → `cpu_cores`，`--vlm-parallelism` → `model_parallelism`
 （CLI 场景下它就是「所用后端的并行度」），任务上限另给参数。`check` 这边：
 
-- `--concurrency N`（VLM 模块）→ `derive_gates(N)`；拆 `funnel.py` 之前用 `v1_set_overrides(gates)` 经 v1 的 `--set` 生效；
+- `--concurrency N`（VLM 段）→ `derive_gates(N)`；带了 `--plan-stage` 时以那一段的 `gates` 为准，两样都没有时每把闸门都是 1
+  （`cli/runctx.py` 的 `vlm_gates`）；
 - `--retry N` → `RetryPolicy(max_retries=N)`，默认 0（CLI 默认不重试）；
-- `--plan-stage stage.json` → `strategy_for_stage(stage)`，交给 `MergeExecutor`；每条 episode 的回执累加进 `MergeReceipts`，
-  最终写进 `check --json` 的 `modules.<id>.merge`；
+- `--plan-stage stage.json` → `strategy_for_stage(stage)`；合并执行器接上之后交给 `MergeExecutor`，每条 episode 的回执累加进
+  `MergeReceipts`，最终写进 `check --json` 的 `modules.<id>.merge`；
 - usage：`UsageLedger(emit=写一行 JSON 到 stderr)`，每个请求产出一条实际账和对应的分摊账，都是增量。
 
 ## 手动验证步骤
 
 在 `backend/` 下执行（Python 用仓库根目录的 `.venv`，下同）。
 
-**1. 测试**（约 3 秒）：
+**1. 测试**（planner 约 4 秒，契约约 20 秒）：
 
 ```bash
 ../.venv/bin/python -m pytest -q tests/planner
@@ -82,10 +81,11 @@ print(plan["estimates"])
 EOF
 ```
 
-核对：五段依次是 numeric、frame、duplicate（CPU 块；重复检测，D87）、vlm（VLM 块）与收尾的 final（D72 起没有 autolabel 段）；CPU 两段并发 30（32 核留 2 核）；
-duplicate 并发 1；vlm 段闸门 `episode 64 / probe 64 / endstate 64 / arbitration 32`（`guard_caption` 随判废护栏下线，D73；episode = probe，一条一次请求），
+核对：五段依次是 numeric、frame、duplicate（CPU 块；重复检测，D87）、vlm（VLM 块）与收尾的 final；CPU 两段并发 30（32 核留 2 核）；
+duplicate 并发 1；vlm 段闸门 `{'episode': 64, 'probe': 64}`（一条一次请求，episode 跟着 probe 走，D71），
 合并是 `{"strategy": "none", "groups": []}`；上限 `cpu_concurrency 30 / vlm_parallelism 64`，都由 planner 定；
-估算 200 次请求（每条 1 次：有标注的判成败，88 条没标注的只看画面缺陷）；notes 里说明 88 条没有任务标注、运动学极限缺型号、哪些调用没计入。
+估算 200 次请求（每条 1 次：有标注的判成败，88 条没标注的不判成败、只看画面缺陷，D72、D73）；notes 里依次说明运动学极限缺型号、
+88 条没有任务标注、估算用的单次请求耗时。
 
 **3. 上限取交集与闸门推导**：
 
@@ -103,21 +103,25 @@ EOF
 ```
 
 核对：不给任何上限时 N=64（`planner`）；模型 100 → 100（`model`）；再给任务上限 16 → 16（`task`）；两个任务同跑 → 32
-（`running_tasks`）；任务上限 128 抬不高 N，仍是 64。CPU：32 核默认 30（`planner`，留 2 核给 Daemon），任务上限 2 → 2（`task`）。
+（`running_tasks`）；任务上限 128 抬不高 N，仍是 64。每一行的闸门都是 `episode = probe = N`。
+CPU：32 核默认 30（`planner`，留 2 核给 Daemon），任务上限 2 → 2（`task`）。
 
-**4. N=64 与 v1 出厂默认逐项对照**（v1 一侧从 `default.yaml` 和 `funnel.py` / `run.py` / `vlm_client.py` 的代码里现读）：
+**4. 站点逐把覆盖闸门，v1 的闸门名被忽略**：
 
 ```bash
 ../.venv/bin/python - <<'EOF'
-from curation.planner import derive_gates
-from tests.planner import v1_source
-v1, mine = v1_source.factory_gates(), derive_gates(64)
-for g in mine:
-    print(f"{g:14s} v1={v1[g]:3d} planner={mine[g]:3d}", "OK" if v1[g] == mine[g] else "DIFF")
+from curation.planner import SiteConfig, derive_gates, retired_site_keys
+raw = {"concurrency": {"vlmParallelism": 64}, "vlm": {"gates": {"probe": 48, "arbitration": 16, "caption": 8}}}
+site = SiteConfig.from_mapping(raw)
+print(site.gate_overrides, retired_site_keys(raw))
+for n in (64, 32, 8):
+    print(n, derive_gates(n, site.gate_overrides, reference=site.reference_parallelism))
+print(derive_gates(64, {"probe": 48, "episode": 16}))
 EOF
 ```
 
-应为八行 `OK`。
+核对：覆盖只剩 `{'probe': 48}`，`arbitration`、`caption` 列在要告警的旧键里（Daemon 与 `curation plan` 读站点配置时打这条告警）；
+覆盖值按 N 等比缩放，N 为 64、32、8 时 `probe` 是 48、24、6，`episode` 跟着它；单独覆盖了 `episode` 的，`episode` 不再跟着 `probe`（16 与 48）。
 
 **5. 合并与单发一致性对账**（示例模块、64 条，途中故意制造 3 处单项解析失败和 1 条整包不是 JSON）：
 
@@ -189,30 +193,30 @@ for i in range(20):
 EOF
 ```
 
-应打印一条 `kind=throttle` 的事件：`limit` 32，`reason` 为 `429/5xx rate 25% in last 30s`，八把闸门减半。
+应打印一条 `kind=throttle` 的事件：`limit` 32，`reason` 为 `429/5xx rate 25% in last 30s`，`gates` 为 `{'episode': 32, 'probe': 32}`，两把闸门都减半。
 
-## 接入点（基线存档之后）
+## 接入现状
 
-以下都不改判定逻辑，只加旁路；按 11 篇 §6 由 W3 与本包协调落地。行号以 `release_v1@45bdf9292` 搬来的文件为准。
+这些旁路都不改判定逻辑。
 
-| 能力 | 接在哪 | 怎么接 |
-|---|---|---|
-| usage 采集 | `vlm_client.py` 各工厂里 `raise_for_status()` 之后：`make_vlm_completion._post`（683 行）、`make_multiview_completion._post`（822）、`make_endstate_voter._ask`（924）、`_make_arb_post._post`（1080）、`make_llm_ask.llm_ask`（1209 成功分支），以及 `dataset_level/caption.py` 的 `captioner`（162） | `ledger.record_single(module=本进程所跑的模块, call_kind=tag, model=model, response=r.json())`；模块由进程决定（`check --modules task_success` 里仲裁用的 `llm` 标签也算 task_success，`autolabel` 进程记 `autolabel`） |
-| 拿不到 usage 的请求 | `hedged_request` 的 `_attempt`（321–352 行，`latency_record` 那个 `finally`） | 除了胜出的那一发，每一发都 `ledger.record(..., usage=None)`；执行器侧对应 `VlmResponse.unknown_usage_requests` |
-| 外层重试 | 各工厂里 `hedged_request(...)` 加 `raise_for_status()` 这一段；`llm_ask` 包在 4 次循环（1201–1224）外面 | `call_with_retry(..., RetryPolicy(max_retries=--retry))`；次数与挽回数 `RetryStats.to_json()` 进性能剖析 |
-| 自适应降并发 | 闸门在各工厂内部新建（`vlm_client.py` 675、814、913、1069、1186 行，`caption.py` 148 行，`funnel.py` 121 行）；每一发的结局在 `_attempt` 里 | 工厂改为接受注入的闸门，换成 `ResizableGate` 并 `AdaptiveThrottle.bind()`；`_attempt` 按状态码把 `ok / rate_limited / server_error / timeout / connect_error` 交给 `throttle.record()`；事件写 stderr |
-| 闸门 | `check --concurrency N` | 拆 `funnel.py` 之前：`v1_set_overrides(derive_gates(N))` 经 `config.apply_overrides` 生效（endstate、arbitration、guard_caption 由 v1 从 episode 闸门推出，单独覆盖要等拆分） |
-| 合并执行 | `check` 拆出来的 VLM 档，episode 闸门之内 | 每条 episode：`executor.run(merge_units_for(本档模块, ep, ctx))`；`send` 用 `chat_payload(request, model=..., image_url=vlm_client._frame_to_data_uri)` 拼出 v1 形态的请求体（只有 model / temperature / max_tokens / messages），经 `hedged_request` 发出，`raise_for_status()` 后返回 `r.json()`；`frames` 按 `FramePolicy` 解码一次 |
+| 能力 | 现状 |
+|---|---|
+| 闸门 | 已接。`check` 的 VLM 段取 `--plan-stage` 那一段的 `gates`，没有计划时用 `derive_gates(--concurrency)`，两样都没有时每把都是 1（`cli/runctx.py` 的 `vlm_gates`）。任务成败判定的请求在 `probe` 闸门下发（`adapters/video_vlm.py`），EEF 复核也用 `probe` 闸门（`cli/eef_check.py`） |
+| 外层重试 | 已接。`--retry N` → `RetryPolicy(max_retries=N)`，包在每次模型调用外面，只重试超时、连接错、5xx、429（`pipeline/vlm_policy.py`） |
+| usage 采集 | 已接。`vlm_client` 把发出的每个请求交给 `vlm_policy.UsageBooker`，按请求的标签（`probe`、`eef_review`）记到模块名下，写 C3 的 `usage` 行和运行目录的 `usage.jsonl`；拿不到 usage 的只计数 |
+| 合并策略 | 只读取。`check` 读计划段的合并提议（`cli/check.py` 的 `_merge_strategy`），现有模块都不声明合并单元，策略总是 `none` |
+| 合并执行 | 没接，等第一个声明 `merge_units` 的模块。每条 episode：`executor.run(merge_units_for(本段模块, ep, ctx))`；`send` 用 `chat_payload(request, model=..., image_url=...)` 拼请求体、发出后返回响应 JSON；`frames` 按 `FramePolicy` 解码一次 |
+| 自适应降并发 | 没接。闸门在 `adapters/video_vlm.py` 和 `cli/eef_check.py` 里按容量新建；接的时候换成 `ResizableGate` 并 `AdaptiveThrottle.bind()`，每次调用的结局（`ok` 或失败原因）从 `vlm_policy.TransportPolicy.on_outcome` 交给 `throttle.record()`，事件写 stderr |
 
 ## 已知限制
 
-- C3 的 `usage.call_kind` 只有 v1 的五个标签加 `merged`：新模块单发时只能借用这五个之一（示例模块用 `caption`），
-  `MergeUnit` 会拒绝别的值。第一个真实新模块接入时要扩这个枚举（契约变更）。
-- 实际账里合并请求的 `module` 记成参与模块排序后用 `+` 连接（如 `example_grasp+example_table`）；C3 对 `module` 只写了
-  「模块 id 或 autolabel」，这一条待写进契约说明。`requests` 只数拿到 usage 的请求，没拿到的只进 `requests_unknown_usage`。
+- 单发请求的 `call_kind` 是 `probe`、`eef_review`，或新模块自己的种类（写成模块 id 的样子，C3 1.1）；`merged` 只给合并请求。
+  示例模块单发时用的是 `caption` 这个名字，它只是一个合规的种类名，和 v1 的补描述无关。
+- 实际账里合并请求的 `module` 记成参与模块排序后用 `+` 连接（如 `example_grasp+example_table`，C3 里有说明）。
+  `requests` 只数拿到 usage 的请求，没拿到的只进 `requests_unknown_usage`。
 - `check --json` 的 `merge.requests` 按模块计：一个合并请求在它携带的每个模块里各记一次；任务级请求总数以实际账为准。
-- 合并请求的延迟行还没有标签：`vlm_latency.csv` 的五个标签是数据契约，加 `merged` 要单独定。
-- 计划里的八把闸门是 v1 的调用点；新模块的请求暂按 `probe` 估算，真正接入时要定它归哪把闸门。
-- 估算是建议值：假定所选条目全部过硬门；判废护栏的调用随数据变化，不计入。
+- 合并请求还没有延迟行：执行器没接进 `check`，`vlm_latency.csv` 里也就没有 `merged` 这一类，要加时单独定。
+- 新模块的请求按 `probe` 估算；真正接入时要定它在哪把闸门下发（EEF 复核用的是 `probe`）。
+- 估算是建议值：假定所选条目都走完两块；数据完整性的解码测试开着时不计入（notes 里写明）。
 - 10 篇 §3.4 要求示例模块走真实的方舟端点再跑一遍对账：`run_merge_consistency` 可以直接用，
   缺的是真实的 `send`（上表「合并执行」一行）和按 `FramePolicy` 解码的 `frames`，都属于接入步骤。

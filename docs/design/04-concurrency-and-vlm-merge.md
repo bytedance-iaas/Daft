@@ -86,25 +86,20 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
 各 episode 之间没有共享状态，并发和线程数都不改变任何一条的计算结果；这一点由黄金对账的逐位一致来验证
 （单线程下另跑过一遍回放，逐位一致）。
 
-### 2.2 VLM 档并发度：一个并行度 N，八把闸门
+### 2.2 VLM 档并发度：一个并行度 N，两把闸门
 
-v1 里 VLM 的在飞上限**不是一个数**，是八把各自独立的闸门（2026-09-07 吞吐诊断实锤）：
+v1 的 VLM 在飞上限是八把各自独立的闸门（打分、逐机位复核、取证仲裁、判废护栏的 caption、补描述、纯文本、配对判断，加上 episode 并发；
+2026-09-07 吞吐诊断实锤）。D71 起任务成败每条只发一次请求，D72、D73 去掉了补描述和判废护栏，技能画像随 D68 下线，那六把再没有请求可管；
+D90（设计 27）把它们从计划里删掉。现在 VLM 段只有两把：
 
-| 闸门 | 管什么 | v1 配置键 | v1 默认 | 由 N 推导 |
-|---|---|---|---|---|
-| episode 并发 | VLM 档同时处理几条 episode | `pipeline.vlm_episode_concurrency` | 32 | N/2（v1 一条 2–3 次请求）；**v2 的计划里 = N**：D71 起一条只发一次请求，在途的条数就是在途的请求数（2026-10-08） |
-| probe | 打分请求，进程级一把，所有 episode 共用 | `checks.task_success.vlm.max_concurrency` | 64 | N |
-| endstate | 逐机位复核（**D71 起 v2 不发这类请求**，闸门与配置键留给 v1 的 `rejudge`） | episode 并发 × 2 | 64 | N |
-| arbitration | 取证仲裁链（**同上，D71 起 v2 不发**） | = episode 并发 | 32 | N/2 |
-| 护栏 caption | 判废护栏里的 caption（**D73 起 v2 不发，闸门不再下发到 vlm 段**，名字留给 v1 配置） | = episode 并发 | 32 | N/2 |
-| caption | v1 的补描述打标（D72 起 v2 没有段用它，闸门名保留给 v1 配置） | `skill_profile.caption_concurrency` | 32 | N/2 |
-| llm | 纯文本调用（v1 的技能归纳；v2 没有模块用，闸门保留为参数位）| `skill_profile.llm_concurrency` | 16 | N/4 |
-| audit | 配对判断（同上）| `skill_profile.audit_concurrency` | 16 | N/4 |
+| 闸门 | 管什么 | 由 N 推导 |
+|---|---|---|
+| probe | 在飞的模型请求，进程级一把，所有 episode 共用（任务成败判定和随它的画面缺陷、EEF 的复核都在这里排队） | N |
+| episode | VLM 段同时处理几条 episode | = probe：一条一次请求，在途的条数就是在途的请求数 |
 
-> 技能画像下线后（D68）这三个配置键仍叫原名：v1 的流水线（`curation run`、对账用的 dump）还在读它们，改名会动 A 类之外的兼容面。
-
-产品上只让用户配**一个数**：模型（或后端）的并行度 N，默认 64。planner 按上表推导八把闸门，
-N=64 时与 v1 的出厂默认逐项相等。站点配置仍可以逐把覆盖（调优任务会用到）。
+产品上只让用户配**一个数**：模型（或后端）的并行度 N，默认 64，planner 按上表推导（`planner/gates.py`）。站点配置 `vlm.gates` 仍可以按
+参考 N 逐把覆盖（调优任务会用到），随 N 等比缩放；只覆盖 probe 时 episode 跟着它走。v1 的旧闸门名（`endstate`、`arbitration`、
+`guard_caption`、`caption`、`llm`、`audit`）写在站点配置里会被忽略（`planner/limits.py` 的 `RETIRED_GATES`）。
 
 N 的实际取值是一串上限里最小的那个（D31）：
 
@@ -118,13 +113,9 @@ N = min( 任务上限 params.limits.vlm_parallelism,   ← 用户在 API / CLI /
 
 两点要说清楚：
 
-- **N 不是硬上限。** 八把闸门互相独立，同一时刻的在飞请求可以超过 N（v1 在 N=64 的配置下实测到 117）。
-  本期不加全局硬上限 —— 那会改变 v1 已经验证过的吞吐形态；超出服务端配额的情况交给 §7 的自适应降并发。
-- ⚠️ 闸门必须是**自建信号量**，不能用 daft 的 `max_concurrency` —— 后者对 async 行级 UDF
-  静默失效（v1 `funnel.py` 里踩过，注释有记录）。搬运时这条纪律不得丢。
-  `funnel.py:867` 那句「总并发 = 两层相乘」的注释已经过时，搬运时一并改掉。
-- **有三把闸门跟着 episode 闸门走**（W6 按 v1 `funnel.py` 核实）：endstate = 2 × episode，arbitration、guard_caption
-  = episode。N 为偶数时它们就是上表的 N、N/2、N/2；N 为奇数时 endstate 比表里少 1。
+- **N 不是硬上限。** 对冲补发和重试在闸门之内排队，但一条 episode 之外的请求（EEF 的复核）和 probe 共用闸门，同一时刻的 episode 数仍以
+  episode 闸门为准。本期不加全局硬上限，超出服务端配额的情况交给 §7 的自适应降并发。
+- ⚠️ 闸门必须是**自建信号量**，不能用 daft 的 `max_concurrency`：后者对 async 行级 UDF 静默失效（v1 里踩过）。
 
 ### 2.3 多个任务同时跑
 
@@ -157,35 +148,34 @@ Daemon 用 subprocess 调 CLI，闸门是 CLI **进程内**的信号量，管不
 
 ## 3. 执行计划（Plan）
 
-planner 的输出，也是 `curation plan --json` 的 schema（下面是漏斗的 1.0 写法；2.0 见 §2 开头的说明与设计 17 §3.3，D87 起没有 `dedup` 段，
-CPU 块最后是重复检测的 `duplicate` 段）：
+planner 的输出，也是 `curation plan --json` 的 schema（C2 `cli/plan.schema.json`，2.0；两块的写法见设计 17 §3.3，完整示例在
+`docs/contracts/examples/plan.json`）：
 
 ```jsonc
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "vlm_parallelism": 64,
-  "limits": {"cpu_concurrency": {"value": 30, "bound_by": "planner"},    // 取了哪个上限、卡在哪一层（D31）
+  "limits": {"cpu_concurrency": {"value": 8, "bound_by": "planner"},     // 取了哪个上限、卡在哪一层（D31）
              "vlm_parallelism": {"value": 64, "bound_by": "model"}},
   "stages": [
-    {"id": "autolabel", "kind": "vlm", "command": "autolabel",
-     "episodes": "unlabeled", "gates": {"caption": 32}},
-    {"id": "numeric", "kind": "cpu", "command": "check", "concurrency": 30,
-     "modules": ["timestamp_check", "kinematic_limits", "motion_quality"],
-     "episodes": "selected", "hard_gates": ["timestamp_check", "kinematic_limits"]},
-    {"id": "frame", "kind": "cpu", "command": "check", "concurrency": 30,
-     "modules": ["visual_quality", "video_action_sync"],
-     "episodes": "survivors:numeric", "hard_gates": ["video_action_sync"]},
-    {"id": "vlm", "kind": "vlm", "command": "check",
-     "modules": ["task_success"], "episodes": "survivors:frame",
-     "gates": {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32},
-     "merge": {"strategy": "none", "groups": []}},
-    {"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"},
-    {"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1, "modules": ["dedup"], "episodes": "keep"},
+    {"id": "integrity", "block": "cpu", "kind": "cpu", "command": "check", "modules": ["data_integrity"],
+     "episodes": "selected", "concurrency": 8},
+    {"id": "numeric", "block": "cpu", "after": "integrity", "kind": "cpu", "command": "check",
+     "modules": ["timestamp_check", "kinematic_limits", "motion_quality"], "episodes": "selected", "concurrency": 8},
+    {"id": "frame", "block": "cpu", "after": "numeric", "kind": "cpu", "command": "check",
+     "modules": ["visual_quality", "video_action_sync"], "episodes": "selected", "concurrency": 8},
+    {"id": "duplicate", "block": "cpu", "after": "frame", "kind": "cpu", "command": "check",
+     "modules": ["duplicate_check"], "episodes": "selected", "concurrency": 1},
+    {"id": "vlm", "block": "vlm", "kind": "vlm", "command": "check", "modules": ["task_success", "camera_defects"],
+     "episodes": "selected", "gates": {"episode": 64, "probe": 64}, "merge": {"strategy": "none", "groups": []}},
     {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
   ],
-  "estimates": {"vlm_requests": 735, "wall_clock_s": 1100, "notes": ["..."]}
+  "estimates": {"vlm_requests": 50, "wall_clock_s": 300, "notes": ["..."]}
 }
 ```
+
+每一段都拿任务的全部所选条目（`episodes: "selected"`），段与段之间不过滤（D57）。选了 EEF–视频一致性时，CPU 块多一个起点 `vlm_prep`
+（它的 CPU 半段），VLM 段带上它的模型半段（注册表 5.3）。
 
 没勾选的模块不出现在计划里；某一档一个模块都没有，这一档就整个省掉。
 `kinematic_limits` 这类在预检时被判「不支持」的模块同样不进计划。
@@ -197,6 +187,9 @@ CPU 块最后是重复检测的 `duplicate` 段）：
 ## 4. VLM 请求合并
 
 ### 4.1 先看清 v1 到底怎么调 VLM
+
+> 本节记的是 v1 的调用图，是合并框架的出发点。D71 起 v2 的任务成败每条只发一次请求（`video-task/2`），调用类型只剩 `probe` 和 EEF 的
+> `eef_review`（`vlm_call_kinds.py`）；下面的 endstate、arbitration、caption、llm 都不再出现。
 
 合并设计必须建在真实的调用图上。v1 一共 3 个使用方、5 种调用标签
 （标签是 `details/vlm_latency.csv` 的数据契约，见 `vlm_call_kinds.py`）：
@@ -388,7 +381,7 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
 - **内存**：帧档监控 RSS，超过阈值暂停派发新 episode（不是杀进程）。
 - **CPU**：所有在跑任务的 CPU 档共用 Daemon 的全局 CPU 池（§2.3），在途的 CPU episode 总数不超过核数 − 2；子进程单线程。
 - **VLM 端点**：自适应降并发放在 **CLI 进程内的 VLM 客户端**里 —— 运行中的子进程的闸门，Daemon 够不着。
-  30 秒窗口内 429 或 5xx 的比例超过阈值，八把闸门按同一比例**减半**，恢复后逐步回升（加性增、乘性减），
+  30 秒窗口内 429 或 5xx 的比例超过阈值，各把闸门按同一比例**减半**，恢复后逐步回升（加性增、乘性减），
   每次调整发一条 `kind=throttle` 事件，Daemon 记入日志和指标并告警。这条保护 v1 没有，是线上产品必须有的。
 - **磁盘**：没有帧缓存（D18），本地占空间的只有两样 —— 任务工作目录（结果、证据帧、日志，MB 到 GB 级）
   和 mcap / Lance 源在临时卷上的本地副本（D44，09 篇 §2.1）。副本放临时卷，不去挤占工作目录；
@@ -403,7 +396,7 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
 |---|---|---|
 | 并行度 N | 64（v1 出厂默认的等价值） | 不同后端/模型的推荐值表 |
 | VLM 跨任务全局池 | 不做，开跑时按任务数均分（§2.3） | 是否像 CPU 一样由 Daemon 统一分 |
-| 八把闸门的配比 | §2.2 的推导表 | 是否需要偏离 v1 配比 |
+| 两把闸门的配比 | §2.2 的推导表（episode = probe = N） | 是否需要让 episode 少于 probe（给 EEF 的复核留名额） |
 | 合并粒度 | 现有模块不合并；新模块按帧策略自动合并 | 是否按 token 上限拆包的阈值；现有模块是否值得为合并改问法 |
 | 跨 episode 批大小 | 不启用 | 串扰率 vs 成本曲线 |
 | 前缀缓存 | 只记录 `cached_tokens` | 命中率，以及是否值得为它调整请求内容的顺序 |

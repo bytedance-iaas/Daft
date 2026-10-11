@@ -15,8 +15,8 @@ deliveries/<delivery-name>/
 │   │   ├── task_success/{parts/*.jsonl, results.jsonl}
 │   │   └── ...
 │   ├── revisions/r0001/           ★ 一个结果版本 = 一套判决清单 + 一份报告，不可变，旧版本保留
-│   │   ├── verdicts.jsonl  keep.txt                           漏斗判决（aggregate --phase funnel）
-│   │   ├── passed.json  reject.json  held.json  review.json   终判（aggregate --phase final）
+│   │   ├── verdicts.jsonl  keep.txt                           机器判决行与交付的条（aggregate）
+│   │   ├── passed.json  reject.json  held.json  review.json   终判清单（aggregate）
 │   │   ├── report.md  report.json  perf.json  tables/*.parquet
 │   │   └── commit.json            最后写：这一版用了每个模块的哪些 part、应用了哪些裁决、源数据指纹
 │   ├── passed.json  reject.json  report.md   当前版本的副本，方便离线翻看；切换版本后才覆盖
@@ -73,26 +73,12 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 
 ## 3. 判决聚合
 
-> **策略判决（2026-10-01，设计 17 §4，D58，F12.3 实现；契约 C2 2.0 已定稿）**：模块只出发现，拒不拒由策略表在 `aggregate` 时算。
-> 默认策略复刻下文的硬门（P18）：今天硬门判废的细码 blocking，可疑 / 弃权 / 转人工 / 标注分歧 review，其余 info，**软分拒绝消失**；
-> 拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都可复议才能恢复）；重复只报告（D87，设计 26）：
-> 一组重复的每一条都有一条 info 的 `duplicate` 发现（SET-1），没有要留的 canonical、也不判废；画像给全集与交付集两份分布。下文是漏斗判决的写法，F12.3 之前照旧生效，
-> 旧任务按它只读打开（D59）。F12.5 起 `passed` / `reject` / `held` 的每条多 `findings`：这一条的全部发现与它在这一版的级别
-> （任务策略加上已应用的人工裁决；指向模块记录里那条发现的位置，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项筛选读它。
-
-规则原样搬运 v1 `pipeline/verdict.py`，分两步，对应 `aggregate` 的两个阶段：
-
-**漏斗判决**（六项检查 → keep / drop）：
-
-- **硬门（hard）**：`passed=False` → drop，理由归因到具体模块。
-- **软分（soft）**：加权均值低于阈值（0.5）→ drop。
-- **弃权**：硬门 `passed=None`（证据不足）**不 drop**，只记入该条的未决项。
-  v1 的立场是保守放行：判废要有实据，拿不准的先留下，交给人看。
-
-**终判**（叠加判决之后的模块和人工裁决）：
-
-- `dedup` 找出的重复项改判拒绝，理由「与 X 字节级完全重复」（D87 起由重复检测取代：只报告、不判废，见设计 26）。
-- 已执行的人工裁决落到对应条目上（判失败、整条弃用 → 拒绝；恢复为可用 → 通过）。
+判决是策略判决（设计 17 §4，D58）：模块只出发现，拒不拒由策略表在 `aggregate` 时算。默认策略复刻硬门（P18）：硬门判废的细码 blocking，
+可疑 / 拿不准 / 转人工 review，其余 info，没有软分拒绝。拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都
+可复议才能恢复）；重复只报告（D87，设计 26）：一组重复的每一条都有一条 info 的 `duplicate` 发现（SET-1），没有要留的 canonical、也不判废。
+`passed` / `reject` / `held` 的每条带 `findings`：这一条的全部发现与它在这一版的级别（任务策略加上已应用的人工裁决；指向模块记录里那条发现的
+位置，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项筛选读它。漏斗判决（v1 `pipeline/verdict.py` 的硬门、软分、弃权）随 D90
+删掉了。
 
 三个维度分开表达，互不替代：
 
@@ -120,8 +106,8 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
   交付出去的每一条，报告里每个模块对它都有结论。某个模块整体失败（例如模型调用最终失败）时也一样：
   全部条目待补跑、一条都不交付，等「重试」成功。开始前的 VLM 检查（D30）会拦住
   大部分模型不可用的情况，跑到一半失败的点「重试」即可。
-- 例外（D35）：拒绝理由来自正常判完的模块时，直接拒绝，不进 `held`。「正常判完」指某个硬门确定失败，
-  或者所有已勾选的软分模块都给了分、加权分低于阈值。出错的模块照样记在这一条上，报告里写「另有某模块执行出错，
+- 例外（D35）：拒绝理由来自正常判完的模块时，直接拒绝，不进 `held`。「正常判完」指别的模块已经给出了 blocking 发现。
+  出错的模块照样记在这一条上，报告里写「另有某模块执行出错，
   不影响结论」。理由：出错的模块重跑出什么结果，这一条都已经够拒绝了；而解码失败、算法异常这类错误多半每次都复现，
   不这样处理的话，这种条目会一直卡在「待补跑」，报告里也看不到它真正的拒绝理由。
   「重试」只补跑 `held` 里的条目。
@@ -174,10 +160,8 @@ v2 自己的两条线另见设计 12（`eef_check`）与设计 14（`integrity_c
 3. **「拿不准」是合法答案**：只记一笔，条目保留在队列里，仍计为待裁，执行时不动它。
 4. **改写描述通常要重跑模型，但人已经给了成败结论的不重跑**：同一个答案既带了新描述、又判了成功/失败，
    就以人的结论为准，来源如实记为人工 —— 防的是机器自产自证，不是防人。只带新描述、成败答「拿不准」的按新描述重跑。
-5. **改标重判就是再判一次**（D39 → D71）：改了标的条目用新描述发一次判定请求（含逐机位结论），过判废护栏，
-   拿不准转人工 —— 和首轮一样。D39 时 v2 有两种口径（`v1`：v1 的 `rejudge`，只跑多视角打分和逐机位复核；
-   `full`：首轮的完整流程），单次判决之后两者没有区别了；`scope.relabel_rerun` 和每条改写上记的口径暂留，
-   对话框里的选项也暂留，行为合一。
+5. **改标重判就是再判一次**（D39 → D71）：改了标的条目用新描述发一次判定请求（含逐机位结论），拿不准转人工，和首轮一样。
+   D39 时的两种口径（`relabel_rerun` 的 `v1` / `full`）在单次判决之后没有区别，D90 把这个字段和对话框里的选项一起删了。
 6. **已被拒绝的条目不再问成败**（D42）：被任何模块拒掉的条目，问它任务成没成功已经没有意义，不进成败裁决。
    可复议的拒绝在「被拒复议」里恢复，恢复为可用就推翻那个模块的结论、回到 passed。
    恢复只推翻被复议的那个模块，另有模块对它执行出错的，恢复后进 `held` 等补跑（P11）。
@@ -262,12 +246,10 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 }
 ```
 
-### 6.1 性能剖析（原样搬运口径）
+### 6.1 性能剖析
 
-v1 已有的延迟分桶不能改口径，否则新旧不可比：
-
-- 五类调用各自的延迟分布（probe / endstate / arbitration / caption / llm），带 P50 / P90 / P99。
-  这五个标签是 `details/vlm_latency.csv` 的数据契约，一个字不许改。
+- 各类调用的延迟分布，带 P50 / P90 / P99。调用类型是 `details/vlm_latency.csv` 的 `call_type`：`probe`（任务成败判定，每条一次）、
+  `eef_review`（EEF 复核），模块自己的类型排在后面（`curation/vlm_call_kinds.py`）。v1 的 endstate / arbitration / caption / llm 随 D71–D73、D90 没有了。
 - 用的是哪个模型服务、流水线容器的 CPU / 内存配额（v1 的 `perf_backend` / `perf_env`）。
 - **墙钟口径**：第一次发出 → 最后一次返回的真实时长。
   ⚠️ 不能用「次数 × 均值」，并发下那个数会把 8 分钟说成 8 小时（v1 注释里的原话）。
@@ -295,20 +277,19 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 （`details` 原样）算出，只有计数、均值和按相机的小数组，**不含 episode 清单**；它们不回流到任何判决或清单，
 生成报告前后判决逐位一致（合成数据上的 v1 / v2 对账覆盖了这一点）。实现在 `backend/curation/pipeline/report_stats.py`。
 
-约定：序列是 `[{name, count}]`（画柱状图），`name` 是与语言无关的代码（页面翻成中文）或数据自己的名字（技能族、原因摘要）；
-按相机的行是 `[{camera, …}]`，相机用短名；其余是标量。1.0 就有的键（`counts`、`mean_score`、`fail_kinds`、`arbitration`、
-`abstain_reasons`、`collision_groups`、`removed`、`families`、`subskills`、`undersampled`，以及两个 EEF 模块的全部键）原样保留
-（`collision_groups`、`removed` 是精确去重的，随 D87 没有了），新键只加不改；老报告没有新键，页面照样显示已有的内容并注明。
+约定：序列是 `[{name, count}]`（画柱状图），`name` 是与语言无关的代码（页面翻成中文）或数据自己的名字（原因摘要）；
+按相机的行是 `[{camera, …}]`，相机用短名；其余是标量。每个模块都有 `counts`，有分数的有 `mean_score`，时间戳检查有 `fail_kinds`，
+任务成败判定有 `abstain_reasons`；EEF 模块的键见设计 25 §7。下表是各模块另有的汇总键。
 
 | 模块 | 新增的汇总键（1.0 的键之外） |
 |---|---|
-| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`；报告 2.0 按读数名各一份）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `arbitration` / `decode` / `read` …） |
+| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`；报告 2.0 按读数名各一份）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `decode` / `read` …） |
 | 时间戳检查 | `fail_reasons`（`out_of_order` 乱序 / `gap` 跳变 / `fragment` 残段 / `jitter` 抖动，另有 `other`）；`duration_total_s`、`duration_median_s`、`duration_min_s`、`duration_max_s`；`duration_hist`（按整齐的秒数分格，最多 12 格） |
 | 运动学极限 | `violation_episodes`；`violations_by_type`、`violations_by_joint`（按类型 / 关节数条目，一条在同一类型或关节上只算一次）；`limits_profile`（用的规格档） |
 | 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
 | 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
-| 任务成败判定 | `judgements`（判定代码分布，D71 起只出 `success`、`failure`、`uncertain`；更早的任务还有 `recovery`、`endstate_success`、`arbitration_success`、`arbitration_failure`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
+| 任务成败判定 | `judgements`（判定代码分布：`success`、`failure`、`uncertain`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `人工改标`）；`layers`（走到各层的条数：`probe` 整条的判定、`endstate` 逐机位的回答，都在同一次请求里） |
 | 重复检测（D87 起取代精确去重） | `groups`（确认的重复组数）、`duplicated`（涉及的条数）；`group_sizes`（按组大小数确认的重复组，不再数动作哈希撞车）（明细表另是 `duplicate_groups`：`episode_index`、`same_as`） |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），

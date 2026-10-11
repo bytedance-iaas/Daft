@@ -22,8 +22,8 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 |---|---|---|
 | 前端控制台 | `frontend/` | 概览、数据集（列表、详情、「可视化」页）、质检任务（新建 / 列表 / 详情）、质检报告、人工裁决、系统和资源配置，报告、裁决与任务详情里的迷你播放器；构建产物由 Daemon 托管 |
 | API Daemon | `backend/daemon/` | REST 与 SSE、SQLite 仓储、鉴权、任务编排（排队、逐档流水线、暂停 / 停止 / 继续、崩溃恢复、子任务、发布到交付目录）、密钥与 VLM 后端管理、结果读取、数据可视化（`viz/`：LeRobot / mcap / Lance 读取器 → 统一展示模型，曲线、帧包与样本包、转封装 / 转码，按区间读 TOS） |
-| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → check（逐档）→ aggregate → report → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
-| planner | `backend/curation/planner/` | 执行计划：分档、并发、八把 VLM 闸门、请求合并；`curation plan` 与 Daemon 共用 |
+| 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → check（逐档）→ aggregate → report → verify`，另有 `adjudicate-apply`、REST 薄客户端 `curation task …` 和运维命令 `ls`、`prune`、`fetch`；Daemon 是它最大的用户 |
+| planner | `backend/curation/planner/` | 执行计划：分段、并发、VLM 闸门（`episode`、`probe`）、请求合并；`curation plan` 与 Daemon 共用 |
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、报告生成（`export/`，数据集写出器随 D69 删掉）、编排壳、VLM 客户端与视频输入；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
@@ -54,16 +54,15 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 |---|---|
 | `backend/curation/` | 内核、编排壳 `pipeline/`、命令行 `cli/`、planner、C1 注册表与 Schema 校验 `contracts/`、扩展模块 `extensions/`、可视化的格式解析 `viz/`；内核单测在包内 `tests/` |
 | `backend/daemon/` | API Daemon：`routes/`（REST、SSE、静态资源）、`orchestr/`（编排）、`exec/`（CLI 执行器）、`repo/`（C5 与 SQLite 实现）、`results/`（结果读取）、`secrets/`（密钥封存）、`viz/`（数据可视化：数据源、读取器、缓存与转码池，说明见 `viz/README.md`）；`python -m daemon` 或 `curator-daemon` |
-| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`eef`、`optimizations`、`deploy`、`viz` |
+| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`eef`、`deploy`、`viz` |
 | `backend/scripts/` | 零散脚本：测试数据下载、标注工作台、规模压测、VLM 选型评测、环境安装；可视化的样例数据（`make_cams_dataset.py` 多路相机、`make_lance_dataset.py` Lance 三种布局）与样本集实测（`viz_sample_check.py`） |
-| `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`）；播放器在 `src/features/visualizer/`（完整版与迷你版共用），「可视化」页在 `src/pages/visualize/` |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考；可视化的三页由 `viz-src/` 生成：改 `viz-src/`，再在该目录跑 `python3 viz-src/build.py .`） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
-| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` 给平台结果打分（2.0 直接读发现，`finding_map.json` 只用于旧格式的运行目录），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
+| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` 给平台结果打分（只读 C2 2.0 的发现；`finding_map.json` 只剩对照项与预检项），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
 | `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |
-| `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
+| `docs/design/`、`docs/contracts/` | 设计、契约 |
 | `.github/` | CI：`workflows/ci.yml`、`scripts/pytest-summary.sh` |
 | `.claude/launch.json` | 本机预览配置：Daemon、前端开发服务器、静态稿 |
 
@@ -100,6 +99,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 24 | EEF 的轨迹由平台生成，用户不上传 trajectory.json（`24-eef-trajectory-generated.md`；注册表 4.3；原始手持夹爪 mcap 由设计 22 §5.4 逐条推出） |
 | 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22–F5.26 已落地：注册表 5.4、C4 5.3.1，§9.1–§9.6 是落地记录） |
 | 26 | 重复检测取代精确去重；进度按三组显示（`26-duplicate-check-and-progress-groups.md`，D87–D88；首节是开工指引：不留兼容，注册表 6.0、C4 6.0.0） |
+| 27 | 删掉 v1 与旧格式（`27-remove-v1-and-old-formats.md`，D89–D91）：v1 代码删掉、`ls` / `prune` / `fetch` 留作运维命令；C2 只有 2.0，漏斗、`relabel_rerun`、旧任务兼容都删；对账与回归打分只认 2.0（注册表 7.0、C4 7.0.0） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：
@@ -176,11 +176,11 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 
 | 套件 | 命令（仓库根目录起） | 说明 |
 |---|---|---|
-| 内核单测 | `cd backend && ../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py` | 要在 `backend/` 下跑（有一条起子进程的用例靠工作目录找包）；`test_environment` 要 GPU |
+| 内核单测 | `cd backend && ../.venv/bin/python -m pytest -q curation/tests` | 要在 `backend/` 下跑（有一条起子进程的用例靠工作目录找包）；用真数据集的用例在本机缺数据时跳过 |
 | 契约 | `cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check` | 契约与锁不一致就失败 |
 | v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起 CLI 的用例）和 `cli`（约 6 分钟） |
 | 对账工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests` | 约一分半；`-m "not e2e"` 只跑单元部分 |
-| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级；含对照表与平台问题码、模块 id 的一致性检查——平台改了问题码或细节字段名，要同步改 `finding_map.json`；注册表改了细码或覆盖，要重新生成 `taxonomy.json` 的平台注记（`coverage_from_registry`） |
+| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级；注册表改了细码或覆盖，要重新生成 `taxonomy.json` 的平台注记（`coverage_from_registry`） |
 | 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
 写端到端用例别靠时序：流水线下各档交叠执行，模型的快慢用假端点的 `delay_s`、`hold(needle)`、`fail` 控制，等条件满足再动作。
@@ -193,7 +193,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 
 | 任务 | 内容 | 时长 |
 |---|---|---|
-| `tests` | Python 3.10 下串行跑 14 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
+| `tests` | Python 3.10 下串行跑 13 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、镜像与部署约定、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
 | `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` | 几分钟 |
 | `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记新哈希和理由，或在 PR 描述里写 `parity-change:` | 秒级 |
 | `image` | 用公网源构建镜像，确认 Daemon 和 CLI 能在镜像里启动 | 几分钟 |
@@ -212,6 +212,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 ## 历史与遗留
 
 - 仓库原是 daft 的 fork，上游 daft 源码已在 2026-09-20 删除（F1.2）；开发分支是 `feat/curator-v2`。
-- 在运的 v1 代码在 `release_v1` 分支。v1 的子命令（`curation run`、`rejudge` 等）原样转交给 `cli/legacy.py`。
-- 对账工具的 `dump-v1`、`v1_manifest.json` 留作工具自身与 v1 行为的离线回归；设计 13 起判定基线改为 v2 自录（`run-v2 --fake-vlm` 录，`--replay` 回放）。
+- v1 的代码在 `release_v1` 分支，本分支已删掉（设计 27，D89）：`curation run`、`rejudge`、`review-page`、`backends`、`public` 都没有了；
+  `ls`、`prune`、`fetch` 留作 v2 的运维命令（`cli/ops.py`，给人在终端里用，输出中文文字）。对账工具也只剩 v2 自录的基线
+  （`run-v2 --fake-vlm` 录，`--replay` 回放）；A 类守卫读自己的 `a_class_manifest.json`（D91）。
 - 「可视化」原先跳 ReRun（设计 15，D55）；内置播放器（设计 18、19，2026-10-04 合入）上线后，ReRun 入口暂留作「ReRun」（数据集列表与详情的「更多」里；2026-10-11 前叫「可视化（旧）」），下线列在第二期清单（设计 18 §10）。

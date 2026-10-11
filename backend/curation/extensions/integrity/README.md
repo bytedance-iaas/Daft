@@ -2,12 +2,14 @@
 
 设计：[`docs/design/14-data-integrity.md`](../../../../docs/design/14-data-integrity.md)，决策 D50–D52。
 
-质检漏斗最前面的一档 `integrity`，只有这一个模块：每条 episode 的文件是不是完整、可读。硬门，新建任务时默认勾选（「完整」「快速」两个预设都有），可以取消。
+CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文件是不是完整、可读。新建任务时默认勾选（「完整」「快速」两个预设都有），可以取消。
+它和别的模块一样只报发现，判决由 `aggregate` 按任务策略定（设计 17）：默认策略下判废的细码是 blocking，可疑的是 review。段与段之间不过滤，
+被判废的条照样跑完后面各段（D57）。
 
 | 结论 | 什么时候 | 去向 |
 |---|---|---|
-| 判废 | 文件为空或过小、被截断、有成块的零填充、结构读不出、mcap CRC 不符、v1 的逐条结构校验不过（NaN/Inf、时间戳不是严格递增……）、开了逐帧解码时解码失败 | reject，不进后面的档，**不可复议** |
-| 可疑 | 帧数或行数与 episode 表对不上、mcap 录制中断但读得出、mcap 某 topic 缺失或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 照常进后面的档、照常交付；人工裁决「完整性存疑」计入待裁 |
+| 判废 | 文件为空或过小、被截断、有成块的零填充、结构读不出、mcap CRC 不符、逐条结构校验（`validate_episode_row`）不过（NaN/Inf、时间戳不是严格递增……）、开了逐帧解码时解码失败 | reject，**不可复议** |
+| 可疑 | 帧数或行数与 episode 表对不上、mcap 录制中断但读得出、mcap 某 topic 缺失或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 留在 passed；人工裁决「完整性存疑」（`integrity_check`）计入待裁 |
 | 出错 | 存储读失败（超时、5xx、源缓存下载失败） | held，重试补跑（D33） |
 
 数据集级的发现（多余文件、近乎全黑的相机、episode 表的区间重叠）写在 `checks/data_integrity/dataset.json` 与报告里，不影响任何条目。
@@ -81,10 +83,18 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
 
 4. 逐帧解码：在第 1 步的目录上加 `--resume --param data_integrity.decode_test=true` 再跑，`skipped_existing` 是 0（换了参数全部重做），每条 `details.tiers.L3` 为 `true`。
 
-5. 判决与裁决：把第 2 步的结果接着 `aggregate`（见 CLI README 第 3 步）——判废的条目在 `reject.json`，理由是发现本身的那句中文（`kind` 为 `finding`，带细码与检测项，`appealable: false`）、不出现在「被拒复议」；转人工的发现留在 passed、出 `integrity_suspect` 卡片。裁决取值 `intact`（数据无误，保留）/ `broken`（确有问题，判废：人工的 blocking 发现）/ `unsure`。
+5. 判决与裁决：把第 2 步的结果接着算判决：
+
+   ```bash
+   $C aggregate --run-dir "$D/run_bad" --revision 1 --episodes 0-7 --modules data_integrity
+   ```
+
+   应看到 `policy default: 4 kept, 4 rejected, 0 held`：0、1、2、4 在 `revisions/r0001/reject.json`，理由是发现本身的那句中文（`kind` 为 `finding`，带细码与检测项，
+   `appealable: false`），不出现在「被拒复议」。转人工的发现留在 passed，出「完整性存疑」卡片（裁决线 `integrity_check`）。裁决取值 `intact`（数据无误，保留）/
+   `broken`（确有问题，判废：人工的 blocking 发现）/ `unsure`。
 
 6. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
 
 样本集：`PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"` 生成 `lerobot_v2/`、`lerobot_v3/`、`mcap/` 三份损坏样本，每份的 `damage.json` 写明每条动了什么、应得什么结论；测试用的就是这几个函数。
 
-自动化测试：`$PY -m pytest -q tests/cli/test_integrity.py tests/cli/test_integrity_adjudication.py tests/cli/test_preflight_integrity.py`（约半分钟）；Daemon 端到端（完整性层排在最前、实时面板、裁决队列）是 `tests/orchestr/test_pipeline_batches.py::test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`。
+自动化测试：`$PY -m pytest -q tests/cli/test_integrity.py tests/cli/test_integrity_adjudication.py tests/cli/test_preflight_integrity.py`（约半分钟）；Daemon 端到端（完整性段排在 CPU 块最前、实时面板、裁决队列）是 `tests/orchestr/test_pipeline_batches.py::test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`。

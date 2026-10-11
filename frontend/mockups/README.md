@@ -35,6 +35,8 @@ python3 -m http.server 4173 --directory frontend/mockups
 - Token：输入 2.01M · 输出 67.5K · 思维链 42.9K · 缓存命中 931.8K · 请求 886 次（主流程 794 + 重试 92）。
 - 数据集是 droid_100（LeRobot v3，robot_type 为 unknown），所以运动学极限没有跑，用来演示报告里「未运行」的模块。
 
+控制台的模拟世界（`frontend/src/mocks/world.ts`）里也有「droid 前 50 条质检」，那边已经改成两块并行、策略判决的故事（C2 2.0），数字和上面不同，以 `frontend/README.md` 的「手动验证」为准。这份静态稿不跟着改。
+
 ### 1. 任务列表 `tasks.html`
 
 1. 第 1 页摆出九种状态：待启动（蓝框）、排队中、运行中（蓝，呼吸点）、部分错误（橙）、已完成（绿）、已暂停 · 系统将自动恢复（灰，带循环图标）、已暂停、失败（红）、已停止。

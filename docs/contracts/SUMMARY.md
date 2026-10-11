@@ -1,20 +1,24 @@
 # 契约要点与冻结时的取舍（2026-09-22，1.5.2 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
+第一节的表按现状写（2026-10-11：注册表 7.0、C2 只有 2.0、C4 7.0.0）；第二节起按时间记各次修订，后来的修订常常改掉前面的做法，
+读历史小节时以最后一节（第二十二节）和契约文件为准。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
 
 ## 一、五份契约
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 注册表 6.0（D87，2026-10-11）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷；检测项编号按分类表 2.0；两块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep）与 vlm，全部逐条交接（没有全量段，也没有补描述段——无标注条目不判成败，无法评估原因 `no_task_text`）；`depends_on` 决定上游结果变了谁要作废重算（3.2 起为空）；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
-| C2 CLI 输出与中间文件 `cli/*.schema.json`（18 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一段跑、能报哪些细码、覆盖哪些检测项、有哪些参数 | 注册表 7.0（D90，2026-10-11）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷（随任务成败判定的请求作答）；细码与覆盖指向分类表 2.0；两块：CPU 块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep），VLM 块 vlm，全部逐条交接，没有全量段和补描述段（无标注条目不判成败，无法评估原因 `no_task_text`）；每个细码有缺省级别 blocking / review / info，review 级写明裁决线（`task_verdict`、`reject_appeal`、`eef_check`、`integrity_check`），blocking 级写明可否复议；`depends_on` 3.2 起为空；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
+| C2 CLI 输出与中间文件 `cli/*.schema.json`（17 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；记录只有 2.0（D90）：`status` 是 `ok / error`（`error` 必须带出错明细），加发现、评估过与评估不了的检测项；判决由 `aggregate` 按任务策略算：`keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，7.0.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
-防漂移：35 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
-`examples/` 里 25 组合法与不合法样例，契约测试双向校验。
+C6 分类表、C7 数据集声明是后来加的，见第十五、十六节与 `README.md` 的契约表。
+
+防漂移：36 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
+`examples/` 里 40 组合法与不合法样例，契约测试双向校验。
 
 ## 二、冻结时定下的细节（已按此落地，可否决）
 
@@ -248,6 +252,8 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F5.14（2026-09-27，设计 12 §10.5，D-E15）EEF 夹爪参考可选、模型意见**：C1 1.12——「夹爪参考」二选一分组 `required: false`，模块说明写明不给时只出模型意见。C2 新 Schema `eef/opinion_output.schema.json`（模型对一路相机一段视频的意见：`gripper_visible`、`segments[]`（帧、方面、不匹配置信度 0–1、1–5 个证据帧、中文观察）、`summary`；帧号在本段内、证据帧在片段内由执行方另查）；预检没有夹爪参考时 `available`（notes 写 `vlm_opinion`），不再报 `observation_seed_missing`；记录 `passed=true`、`details.assessment_mode="vlm_opinion"`、`details.opinion`，`decision.outcome="opinion"`；报告摘要加 `opinion_*` 键。C4 形状不变。
 - **F5.15（2026-09-28，设计 12 §8.7，D-E16）EEF 轨迹与数据集记录**：C1 1.13——EEF 模块加可选的上传参数 `record_mapping`（上传种类 `eef_record_mapping`，`.json`，≤ 8 MB）与明细表 `eef_record`（每条 × 每个来源一行，`episode_index`、`source`、`status`、`position_p95_mm`、`rotation_p95_deg`、`lag_frames` 可排序）。C4 1.19.0——`UploadKind` 加 `eef_record_mapping`：Daemon 到货即校验（`eef-mapping/1.1` 的 `record` 块；只有 1.0 映射的 `eef` 块时它就是位姿来源，带一条警告），摘要是 `sources`、`robot`、`columns`、`topics`、`declared_frames`，不合格 400 `validation_failed`（`code` 为 `robot_model_unknown` 或 `record_mapping_invalid`）。C2 预检的能力表多一个分项 `record_consistency`（`record_mapping_missing` / `record_mapping_invalid` / `robot_model_unknown` / `record_columns_missing` / `upload_pose_missing`），模块级可用性不看它；记录多 `details.record`（`status`、`reasons`、`sources.{pose,joints}`、`internal`、`evidence`）与 `details.summary.record_consistency`，只报告、不进 `overall` 与判决；报告摘要加 `record_*` 键（没给映射的任务没有）。`eef-mapping/1.1` 只多一个 `record` 块，1.0 文件照样有效。前端类型已重新生成。
 - **F5.16（2026-09-28，设计 12 §8.7，D-E17）记录映射由预检起草、表单里确认**：C2 预检的模块条目加可选的 `drafts`（按参数键：`document` 是草稿文件，`assumptions` 是推断的地方，`not_drafted` 是没起草的部分与原因，后两者每条 `{code, source?, args?}`）；EEF 模块在 LeRobot 数据集上起草 `record_mapping`，mcap 给 `format_not_drafted`；schema_version 仍是 1.0。C4 1.20.0（随 C2 扩充；顺带补上 1.19.0 的变更说明）。映射格式 `eef-mapping/1.1` 放宽两处：位姿的 `frame_id` 可以写 null（参考点未声明，恒定差只报告），`reference_frame` 可以写 `"@upload"`（与上传轨迹同一基座）；两个键仍须写出。确认草稿就是 `POST /uploads?kind=eef_record_mapping`，上传与校验不变。前端类型已重新生成。
+  （F5.15、F5.16 的上传后来由数据集声明取代：比对的来源写在声明的 `semantics.pose` / `semantics.joints` 里，注册表 7.0 / C4 7.0.0 删掉了
+  `record_mapping` 参数与上传种类 `eef_record_mapping`，预检不再起草 `drafts`，字段留在 Schema 里、没有模块再写，见第二十二节。）
 - **F10.2（2026-09-28，设计 15，D55）ReRun 经 Daemon 代签读登记的数据集**：C4 1.21.0——新接口 `POST /datasets/{id}/sign`（`signDataset`）：请求 `DatasetSignRequest`（`ttl` 60–3600、缺省 1800；`requests` 1–100 项，每项 `DatasetSignItem`：`{op: get, key}` 读一个对象，或 `{op: list, prefix, delimiter?, continuation_token?, max_keys?}` 列一页 ListObjectsV2），响应 `DatasetSignResponse`（`expires_at` 毫秒、`urls` 与请求一一对应）。只签私有 TOS 的登记（公开桶、本地路径 400），桶、地域、密钥取自登记，调用方指定不了；`key` / `prefix` 用桶内完整键，必须在数据集前缀加 `/` 之下，只校验不改写，一项不合格整个请求 400（`details.errors[].field` 为 `requests.<i>.key|prefix`）；地址是 TOS 的公网 S3 兼容端点 `<桶>.tos-s3-<地域>.volces.com` 上的 SigV4 查询串签名（只签 `host`，`Range` 不影响签名），响应 `Cache-Control: no-store`。绑定的密钥被删 404（`details.reason: credential_missing`），解不开 500（`secret_unreadable`），带自定义 endpoint 400。审计事件 `dataset.viewer_sign` 同一人同一数据集一小时一条。前端类型已重新生成。
 
 - **camera_defects（2026-09-29，设计 13「逐机位画面缺陷」）**：C1 1.14——`ModuleSpec` 加可选字段 `rides_on`（随附模块的宿主 id，导出进 JSON），
@@ -262,6 +268,8 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 
 契约先行：这一版把注册表、C2、C3、C4 改到设计 17 的终态，代码的切换按 F12.2（发现）→ F12.3（策略判决）→ F12.4（两块并行）→ F12.5（前端）
 逐步落地，每一步都能单独上线。
+
+> D90（第二十二节）起 C2 只剩 2.0：下面写的「2.0 | 1.0」两个变体、旧任务的 1.0 读法与 `legacy_task` 都删了。
 
 - **C6 分类表（新）** `taxonomy.json` + `taxonomy.schema.json`（1.1，71 项；1.2 加 IMG-13、IMG-14，73 项，2026-10-02，F11.11；1.3 删五项并去掉「读数」种类，68 项；2.0 各维度重新编号、去掉空号（新旧对照在 `renumbered`），2026-10-07，F11.18）：检测项的编号、名称、通俗解释、种类（问题 / 现象 / 对照）、
   逐条还是数据集级、对照项守的项。与回归样本集的分类表同一份条目（契约测试逐项比编号、名称、种类、级别、guards），平台侧的注记不在里面。
@@ -362,6 +370,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 ## 十八、去重改成流式，没有全量步骤了（2026-10-07，D70）
 
 > D87 起精确去重整个删掉，换成只报告的重复检测（见第二十一节）；这一节的流式走法原样留给重复检测。
+> 注册表 7.0 起 `full_set_stages` 与计划里的 `full_set` 都删了（第二十二节）。
 
 精确去重从 CPU 块的全量步骤改成块里最后一个逐条段，和前面的段交叠执行。
 
@@ -386,8 +395,9 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   `cam_votes`、`review`，不再有 `video_reviews` / `video_arbitration`；`camera_defects` 记录的 `protocol` 为 `camera-check/2`，
   `source` 为 `task_success.cameras`。计划的 `estimates.vlm_requests` 按每条 1 次算。旧协议的记录视为过期，重试会重判。
   契约文件本身没有改（这些都是开放的 details 字段）。
-- **C4 不变**：`relabel_rerun`（`v1` / `full`）仍在请求体里，两种口径行为合一；去掉字段与控制台里的选项另算一刀。
-- 配置：`checks.task_success.vlm.single_pass` 删除；`timeouts.endstate` / `arbitration`、相关闸门键仍在，v1 的 `rejudge` 在读。
+- **C4 不变**：`relabel_rerun`（`v1` / `full`）仍在请求体里，两种口径行为合一；去掉字段与控制台里的选项另算一刀（C4 7.0.0 去掉了，见第二十二节）。
+- 配置：`checks.task_success.vlm.single_pass` 删除；`timeouts.endstate` / `arbitration`、相关闸门键当时还在，v1 的 `rejudge` 在读
+  （D89 删掉 v1 时一起删了）。
 
 ## 二十、没有任务标注的条目不判成败，补描述下线（2026-10-08，D72）
 
@@ -396,15 +406,15 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **C1 3.2**：`blocks` 里 VLM 块只剩 `vlm`，`stages` 不再有 `autolabel`；每个模块的 `depends_on` 为空；`unassessable_reasons` 多 `no_task_text`；
   `task_success.task_text_missing` 的说明改为「没有任务标注，没有做任务成败判定」。
 - **C2**：`cli/autolabel.schema.json`、`cli/autolabel-line.schema.json` 与它们的示例删除；计划（`plan.schema.json` 2.0）不再生成 `autolabel` 段，
-  枚举里的 `autolabel` 保留给旧计划；`task_success` 对无标注条目的记录：`status: ok`、`details.skipped = "no_task_text"`、`task_desc_source = "无"`，
+  枚举里的 `autolabel` 当时保留给旧计划（D90 删了）；`task_success` 对无标注条目的记录：`status: ok`、`details.skipped = "no_task_text"`、`task_desc_source = "无"`，
   发现只有 `task_text_missing`，TASK-4 / LABEL-4 列在 `unassessable`（`no_task_text`）；交付清单里这种条目的 `task_text` 为 null。
-- **C3 / C4**：stage id 枚举不变（旧任务的进度里仍有 `autolabel`）；新任务的进度没有这一行；`usage` 的模块里不再出现 `autolabel`。
+- **C3 / C4**：stage id 枚举不变（旧任务的进度里仍有 `autolabel`，C4 7.0.0 删了）；新任务的进度没有这一行；`usage` 的模块里不再出现 `autolabel`。
 
 ### 补充（同日，D73）：判废护栏去掉，无标注条目只看画面缺陷
 
 - **C2**：无标注条目的 `task_success` 记录仍是 `skipped = "no_task_text"`，但带 `cams` / `video_inputs` / `cameras`（每路相机的 `camera_check`，
   `verdict` 为 `unavail`），`camera_defects` 的记录由此产生，和有标注的条目一样；计划里 vlm 段的 `gates` 不再有 `guard_caption`；
-  `estimates.vlm_requests` 每条 1 次。有标注条目的记录不再出现 `label_check`；`label_conflict_suspect` 只在 D73 之前的记录里。
+  `estimates.vlm_requests` 每条 1 次。有标注条目的记录不再出现 `label_check`；`label_conflict_suspect` 只在 D73 之前的记录里（注册表 7.0 删了这个细码）。
 - **C1 / C4 不变**。
 
 ### 合流（2026-10-08）：与分类表 2.0 那条线合并
@@ -433,7 +443,8 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **F5.19，C2（兼容扩充）**：EEF 意见记录多 `details.ego_motion`（每路腕部相机的状态、指标、时间差、片段与匹配不足的段落，整条的好 / 不好与一句话，
   `uncalibrated`、`assumed`）；预检的能力表多一个分项 `ego_motion`，原因码加 `ego_motion_wrist_only`、`camera_poses_missing`、`own_hand_camera`
   （手持夹爪腕部相机的位置 / 朝向）。schema_version 不变，C4 不变。
-- **F5.20，C1 4.4**：EEF 模块新增可选上传参数 `gripper_calibration`（上传种类 `eef_gripper_calibration`，`umi-calibration/2`，≤ 1 MB）。
+- **F5.20，C1 4.4**：EEF 模块新增可选上传参数 `gripper_calibration`（上传种类 `eef_gripper_calibration`，`umi-calibration/2`，≤ 1 MB；
+  5.1 起由数据集声明的 `calibration.handheld` 取代，7.0 删掉了参数与上传种类）。
   `trajectory_json` 在 4.3（设计 24）已不必填、由平台从数据集生成；原始手持夹爪的 mcap 没有可生成的来源，由平台逐条从录制推出轨迹
   （标定用这份或内置的 DAS DEMO 假设值，设计 22 §5.4）。
 - **F5.20，C2（兼容扩充）**：预检在手持夹爪的 mcap 上不给 trajectory.json 也判可用（说明里写轨迹从录制推出、用哪份标定），夹爪标定不能用时
@@ -455,6 +466,7 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
   报告的 EEF 小节多 `labels`、`p_bins`、`conflict_episodes`、`single_source_missing`、`cannot_tell_reasons`、`inconsistent_by_subitem`、
   `confidence_uncalibrated`；`run.json` 的 `policy` 多 `defaults`（所选模块各细码的缺省级别）与 `appealable`（可复议的细码），任务按开跑时的
   冻结判决，没有它们的旧运行按 `registry_version` 用旧表（4.x 的 EEF `inconsistent` 仍是 blocking、可复议）。
+  D90 删掉了这张旧表、`retired` 的两个细码和报告里 5.0 以前的 EEF 小节（第二十二节）。
 - **F5.22，C4 4.7.0**：模块目录里的发现码可带 `retired: true`；EEF 不再判废条目、`conflict` 是唯一请人看的；客户可见变更记录中英两版。
 
 ## 二十一、重复检测取代精确去重；进度按组显示（2026-10-11，D87 / D88，设计 26）
@@ -468,10 +480,33 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
   只报告——不判废、不留第一条、不转人工、不能复议；`aggregate` 不再选组里留哪条。记录的 `details` 是 `action_hash`、`same_as`、`group_id`、
   `reason`；`checks/duplicate_check/groups.json` 是 `order`、`action_collisions`、`fingerprints`、`groups`，续跑靠它与已有记录重建状态。
 - **C2**（`schema_version` 不升）：计划的段 id 是 `duplicate`；终判清单与复核项的 `kind: duplicate`、`duplicate_of` 去掉；报告小节的统计是
-  `groups`、`duplicated` 与「重复组大小」图，明细表 `duplicate_groups`。1.0 的部分（旧格式）原样留着。
+  `groups`、`duplicated` 与「重复组大小」图，明细表 `duplicate_groups`。1.0 的部分（旧格式）当时原样留着，D90 删了。
 - **C4 6.0.0**：`RegistryStage` 等枚举 `dedup` → `duplicate`，`stage_processing_s` 可有 `duplicate`；`EpisodeNote`、裁决问题去掉
   `duplicate_of`，复议只针对任务成败判定；`GET /tasks/{id}/logs` 的 `stage` 可以写几个段、逗号隔开（控制台按组筛日志）。中英变更记录。
 - **C3**：只改说明。
 - **进度按组显示（D88）**：后台的段、并发、续跑都不变，控制台把段归成数据完整性（`integrity`）、CPU 检查（`numeric`、`frame`、`duplicate`、
   `vlm_prep`）、模型检查（`vlm`）、生成报告（`final`、`report`、`verify`，旧任务还有 `export`）；组的完成数取各段最小值、在途相加、耗时取各段
   运行的并集。归组只在前端（`frontend/src/lib/taskView.ts` 的 `STAGE_GROUPS`）。
+
+## 二十二、删掉 v1 与旧格式（2026-10-11，D89–D91，设计 27）
+
+开发阶段，不留兼容：本机与集群上 C2 1.0、漏斗计划、注册表 6.0 以前的旧任务打开会报错，升级后清掉旧任务。
+
+- **v1（D89）**：`curation run`、`rejudge`、`review-page`、`backends`、`public` 和只有它们用的代码都删了；`ls`、`prune`、`fetch` 留作 v2 的运维命令
+  （`cli/ops.py`，输出中文文字，不进 C2，Daemon 不调用）。
+- **C1 → 7.0（D90）**：删掉 EEF 已退役的细码 `unsettled`、`opinion_mismatch` 与 `retired` 标记；删掉被数据集声明取代的两个 EEF 参数
+  `gripper_calibration`（手持夹爪的标定改写在声明的 `calibration.handheld`）和 `record_mapping`（记录比对的来源改写在声明的 `semantics.pose` /
+  `semantics.joints`）；删掉 `full_set_stages`；任务成败判定删掉 `recovery`（TASK-10）与 `label_conflict_suspect`（LABEL-4），一次请求（D71）与
+  去掉判废护栏（D73）之后它们已经没有产出，模块不再覆盖这两项。`modules.json` 重新导出，回归样本分类表 `tools/regression_samples/taxonomy.json` 的平台注记重新生成。
+- **C2 只有 2.0（D90）**：记录、`check` 输出、判决行、终判清单、报告、计划删掉 1.0 分支与 1.0 示例（`invalid` 里各留一份 1.0 写法，应被拒）；
+  计划没有 `hard_gates`、幸存者集合、`autolabel`、漏斗阶段与 `full_set`；`aggregate` 只有 `--phase final`（仍接受这个参数），一次写出四份清单、
+  `verdicts.jsonl` 与 `keep.txt`；`decisions.json` 2.0 只有 `task_verdict`、`reject_appeal`、`eef_check`、`integrity_check` 四条线，没有
+  `relabel_rerun`，`adjudicate-apply --json` 也不再带它。`aggregate --json`、`report --json`、预检等形状没变过的文档 `schema_version` 仍是 1.0。
+- **C3**：只改说明（stage 的例子去掉 `autolabel` 与漏斗，`module` 不再有 `autolabel`，`call_kind` 的说明换成 `probe`、`eef_review` 与 `merged`）。
+- **C4 → 7.0.0**：删掉流水线行的 `last_stage` / `next_stage`、`StageProgress.full_set`、`ModuleRegistry.full_set_stages`、阶段 `autolabel` 与 `profile`、
+  `FindingCode.retired`、上传种类 `eef_record_mapping` 与 `eef_gripper_calibration`、裁决问题与复核项的 `caption` / `suggestion` / `priority`、
+  执行裁决的 `relabel_rerun`（改了标注的条目按新标注、用同一次请求重判）、`params.vlm_timeouts_s` 里的 `endstate` / `arbitration` / `caption` / `llm`、
+  旧格式的条目原因种类。中英变更记录。
+- **C5**：只改注释（模块的条目数就是任务的所选）。
+- **工具（D91）**：对账工具只读 v2 运行目录，A 类守卫读自己的 `tools/parity/a_class_manifest.json`；回归样本的 `score.py` 只读 C2 2.0，
+  `finding_map.json` 只剩对照项与预检项，平台基线 `1b30fb224`（1.0）作废，2.0 基线之后在集群上重录。

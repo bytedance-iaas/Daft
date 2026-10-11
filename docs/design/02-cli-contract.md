@@ -174,7 +174,7 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 
 没有任务标注的条目不再由模型补描述：`check --modules task_success` 碰到这样的条目写一条「没判」的记录
 （`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-2 的 `task_text_missing` 仅报告），不发模型请求；
-这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。v1 的 `pipeline/run.py` 仍有漏斗前补 caption 的兜底，那是 v1 的事。
+这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。
 
 ### 3.5 `curation check` — 跑检查
 
@@ -202,32 +202,26 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
   `checks/duplicate_check/groups.json` 记顺序、动作哈希撞车、算过的指纹与各组成员。并发恒为 1（状态在一个进程里），`--resume` 跳过已有记录的条目，
   再从它们的记录与 `groups.json` 重建状态（设计 26 §1）。
 
-> **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
-> `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、
-> `assessed` / `unassessable`（查过哪些项、哪些项查不了与原因）、`readings` 与原样保留的 `details`；`verdict / passed / score / gate`
-> 去掉——弃权、可疑、转人工都是发现，拒不拒由策略在 `aggregate` 定。`--json` 的计数改成 `{total, ok, error}` 并多出按细码的
-> `findings` 计数。旧任务的 1.0 记录照旧可读（D59），两种写法都在 `result-record.schema.json` 里。下面是 1.0 的写法。
+每行是记录 2.0（设计 17 §1，D56；C2 `cli/result-record.schema.json`，D90 起只有 2.0）：
 
 ```jsonc
 // parts/*.jsonl 每行
-{"episode_index": 34, "verdict": "scored",        // pass | fail | abstain | scored | error
- "score": 0.82, "gate": "soft",
- "details": { /* 模块自定义，原样保留 v1 的字段名 */ },
+{"episode_index": 34, "module": "timestamp_check", "status": "ok",       // ok | error
+ "findings": [{"code": "gap", "item": "STRM-3", "severity": "high", "frames": [89, 90],
+               "message_zh": "第 90 帧前时间戳跳了 1.10 s", "readings": {"gaps": [{"frame": 89, "dt_s": 1.1}]}}],
+ "assessed": ["STRM-1", "STRM-3"], "unassessable": [],                  // 查过哪些项、哪些项查不了与原因
+ "readings": {"duration_s": 12.4},
+ "details": { /* 模块自定义，算法给出的留痕原样保留 */ },
  "evidence": ["details/evidence/ep000034/probe3_f0120.jpg"],
  "elapsed_s": 3.4, "error": null}
 ```
 
-- 行格式由 W0 先行定稿：`docs/contracts/cli/result-record.schema.json`（对账工具导出 v1 结果用的是同一份）。
-  `passed` / `score` 原样保留 v1 的三态与分数，`verdict` 由它们推出：硬门 `pass` / `fail`，无判无分为 `abstain`，打分项（视觉质量、运动质量这类不投票的）为 `scored`，执行出错为 `error`。
-- `abstain`（弃权）是一等公民：证据不足不判废，进人工裁决队列 —— 这是 v1 的核心纪律，
-  搬运时不得简化成二值。
-- **`error` 和 `abstain` 严格区分**（D24）。`abstain` 是模型或算法正常给出的「判不了」（证据灰区、两问矛盾），
-  维持 v1：照样交付，同时进人工复核。`error` 是执行层面的失败：解码失败、模型调用重试用尽、解析不了返回、内部异常。
-  v1 把后者也记成弃权（理由以「VLM 调用/解析失败」开头）；v2 把它单列出来，因为处理方式不同：
-  出错的这条**不再进入后面的档、暂不交付**，等「重试」补跑。
-- **口径取宽**（D33）：判这一条的过程中，任何一次模型调用在全部重试之后仍失败、或任一机位解码失败，
-  这一行就记 `error` —— 即使 v1 的降级逻辑还能给出结论（打分失败后复核救回、仲裁失败维持弃权、少一路机位照判）。
-  `details` 照常保留算法给出的留痕，`error` 字段列出失败的调用与机位：
+- 模块只报发现：细码、分类表的项、严重度、范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`。拒不拒由策略在 `aggregate` 定；
+  拿不准、可疑、要人看的都是发现（review 级），不是错。
+- **出错与拿不准严格区分**（D24）。拿不准是模型或算法正常给出的「判不了」（证据灰区），照样交付，同时进人工复核。出错是执行层面的失败：
+  解码失败、模型调用重试用尽、解析不了返回、内部异常；这一条暂不交付（held），等「重试」补跑。
+- **口径取宽**（D33）：判这一条的过程中，任何一次模型调用在全部重试之后仍失败、或任一机位解码失败，这一行就是 `status: error`，
+  `findings` 为空，`error` 字段列出失败的调用与机位：
 
 ```jsonc
 "error": {"kind": "execution",
@@ -235,17 +229,15 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
                         {"step": "decode", "camera": "wrist", "cause": "InvalidDataError"}]}
 ```
 
-  这份清单由编排壳记录：每条 episode 单独包一层模型调用与解码的封装，失败时记一笔再原样抛出，
-  A 类算法代码一行不动。模型正常给出的看不清、拿不准（如 caption 回 `unclear`）不是出错。
-- 单条 episode 出错不影响其他条：该行 `verdict=error`，命令整体仍返回 0；
-  只有「整个模块无法执行」（如 VLM 端点完全不可达）才非零退出。
-- **退出码 0 不等于「全部成功」**。`--json` 的最终输出必须带逐状态计数和输入集合的指纹，Daemon 据此给模块定
+  这份清单由编排壳记录：每条 episode 单独包一层模型调用与解码的封装，失败时记一笔再原样抛出，A 类算法代码一行不动。
+- 单条 episode 出错不影响其他条，命令整体仍返回 0；只有「整个模块无法执行」（如 VLM 端点完全不可达）才非零退出。
+- **退出码 0 不等于「全部成功」**。`--json` 的最终输出带逐状态计数、按细码的发现计数和输入集合的指纹，Daemon 据此给模块定
   `succeeded` 还是 `completed_with_errors`，不靠退出码猜：
 
 ```jsonc
-{"modules": {"task_success": {"part": "0001", "input_digest": "sha256:…",
-   "episodes": {"total": 49, "pass": 38, "fail": 6, "abstain": 3, "error": 2},
-   "error_episodes": [14, 31]}}}
+{"schema_version": "2.0", "modules": {"task_success": {"part": "0001", "input_digest": "sha256:…",
+   "episodes": {"total": 49, "ok": 47, "error": 2}, "error_episodes": [14, 31],
+   "findings": {"failure": 6, "uncertain": 3}}}}
 ```
 
 三个行为开关，默认全关：
@@ -254,17 +246,15 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 |---|---|
 | `--concurrency N` | CPU 模块：同时处理的 episode 数。VLM 模块：并行度 N，各闸门由它推导（04 篇 §2.2） |
 | `--retry N` | 外层逻辑重试：一次 VLM 调用最终失败后，隔 1s / 2s / 4s 再来，最多 N 次（04 篇 §6） |
-| `--hedge` | 启用 v1 的超时对冲补发。不开时一次请求就是一次请求 |
+| `--hedge` | 启用超时对冲补发。不开时一次请求就是一次请求 |
 
 `--plan-stage <file>` 传入 planner 为这一档生成的 VLM 请求合并分组；不传就逐模块单发。
 
 `--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，
-不给什么都不发 —— v1 从不发思考参数，对账固定不给。档位是否在模型的有效档位内，由 Daemon 建任务时校验（03 篇）。
+不给什么都不发，对账固定不给。档位是否在模型的有效档位内，由 Daemon 建任务时校验（03 篇）。
 
-**改了标的条目怎么重判**（D39）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用改标时记下的口径判：
-`v1`（缺省）照 v1 `rejudge._build_rerun`，只跑多视角打分和逐机位复核两层，结论与调用和 v1 一致；
-`full` 走首轮的完整判定（多了任务类型判定、机位提示、判废护栏和取证仲裁）。口径由 `adjudicate-apply` 从
-`decisions.json` 读进来、随每条改标记在批次目录里（§3.8），之后重试这几条沿用同一口径。
+**改了标的条目怎么重判**（D39、D71）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用新标注重判，
+和首轮一样每条一次请求；记录的 `details` 写明 `task_desc`（新标注）与 `task_desc_source`（`人工改标`）。
 
 没带 `--source-manifest` 时，读到才发现缺源文件的 episode 同样剔除（D40）：不写结果行，
 列在输出的 `skipped_missing_source` 里；带了清单的，清单的 `skipped_episodes` 已经把它们排除在外。
@@ -272,36 +262,29 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 ### 3.6 `curation aggregate` — 聚合判决
 
 ```bash
-curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
+curation aggregate --run-dir <dir> --revision N [--phase final] --json
 ```
 
-纯计算，秒级，**每次全量重算**。
+纯计算，秒级，**每次全量重算**。只有一个阶段：`--phase final` 仍然接受，不写也一样（漏斗的 `funnel` 阶段随 D90 删掉）。
 
-> **策略判决（2026-10-01，设计 17 §4，D58；C2 2.0 已定稿，F12.3 已实现）**：判决改为「发现 → 策略表 → 级别」：有 blocking 发现
-> 就 drop，`reasons` 列出全部 blocking 发现；否则任一已勾选模块出错或没有记录就 held；否则 keep，review 级发现按各自的裁决线进
-> `review.json`。默认策略复刻今天的硬门（P18），软分拒绝消失；预设 `report_only` 只报不拒（数据完整性的致命问题仍判废，策略版本 2）。`verdicts.jsonl` 2.0 每行是
-> `{episode_index, verdict, blocking, review, info_count, error_modules, reason}`；四份清单的 `reasons[]` 多 `code`、`item`，`kind` 取
-> `finding | human | execution_error`（D87 前还有 `duplicate`）。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
-> 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理）；重复检测只报告（D87），没有去重组要留哪条；1.0 的运行目录拒绝聚合
-> （退出码 2，D59）。细化见设计 17 §7「F12.3 落地时的细化」。F12.5 起 passed / reject / held 的每条多 `findings`：这一条的全部发现与它在
-> 这一版的级别（策略加已应用的人工裁决；`index` 指向模块记录里的那条，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项
-> 筛选读它（设计 17 §7「F12.5 落地时的细化」）。下文是漏斗判决（1.0）的写法。
+判决是策略判决（设计 17 §4，D58）：模块只报发现，策略表给每条发现定级 blocking / review / info。有 blocking 发现就拒，`reasons` 列出全部
+blocking 发现；否则任一已勾选模块出错或没有记录就 held（待补跑）；否则通过，review 级发现按各自的裁决线进 `review.json`。默认策略复刻硬门
+（P18），没有软分拒绝；预设 `report_only` 只报不拒（数据完整性的致命问题仍判废）。策略取 `run.json` 的 `policy`（开跑时冻结，连同各模块细码的
+缺省级别），每个结果版本写一份 `policy.json`。
 
-分两个阶段，对应 v1 `run.py` 里的两段：
+写进 `<run-dir>/revisions/r<NNNN>/`：
 
-| 阶段 | 读 | 写 |
-|---|---|---|
-| `funnel` | 六项漏斗检查的结果 | `verdicts.jsonl`（每条 keep / drop、硬门失败项、软分、弃权项）和 `keep.txt` |
-| `final` | 上一步 + `dedup` 的结果（D87 起没有，重复检测只报告）+ 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
+| 文件 | 内容 |
+|---|---|
+| `passed.json` / `reject.json` / `held.json` | 三份互斥，除缺源文件被剔除的条目（D40）外完备；每条带 `reasons`（`kind` 是 `finding`、`human` 或 `execution_error`，带 `code`、`item`）和 `findings`（这一条的全部发现与它在这一版的级别，`index` 指向模块记录里的那条，人的结论带它的一句话） |
+| `review.json` | 独立的复核视图，不和三份清单并列：多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选：blocking 发现全部可复议的拒绝，D42）。已被拒绝的条目不再问成败；`held` 里的条目在补跑出结论之前不进来 |
+| `verdicts.jsonl` | 机器判决行：`{episode_index, verdict, blocking, review, info_count, error_modules, reason}`，只看检查本身 |
+| `keep.txt` | 交付的条：机器判决加已应用的人工裁决（弃用的、人工判失败的移出，复议恢复的、对拒绝条目人工判成功的加入） |
+| `policy.json` | 这一版用的策略 |
 
-判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
-硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
-`passed` / `reject` / `held` 三份互斥，除缺源文件被剔除的条目（D40）外完备；`review` 是独立的复核视图，不和它们并列 ——
-里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选：归因于可复议模块的拒绝，
-现在只有只归因于任务成败判定的，D42；去重的拒绝随 D87 取消）。已被拒绝的条目不再问成败；`held` 里的条目在补跑出结论之前不进 `review`。
-任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
-例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
-就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。
+人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理）；重复检测只报告（D87），没有要留哪条的问题。
+任何一个已勾选的模块对某条 episode 出错，这一条进 `held`，既不算通过也不算拒绝，见 06 篇 §3。例外（D35）：别的模块的 blocking 发现已经足以拒绝它，
+就直接拒，出错的模块照样记在判决行的 `error_modules` 里。细化见设计 17 §7「F12.3 落地时的细化」「F12.5 落地时的细化」。
 
 ### 3.7 `curation report` — 生成报告
 
@@ -310,11 +293,11 @@ curation report --run-dir <dir> --revision N [--format md,json] --json
 ```
 
 产出 `report.md` + `report.json` + 性能剖析，写进 `--revision` 指定的结果版本目录
-`<run-dir>/revisions/r<NNNN>/`（`aggregate --phase final` 的清单也写在这里），不覆盖旧版本。
+`<run-dir>/revisions/r<NNNN>/`（`aggregate` 的清单也写在这里），不覆盖旧版本。
 目录里最后写 `commit.json`，列明这一版用了每个模块的哪些 part、应用了哪些裁决。
 哪个版本生效由 Daemon 在它完整上传并核验之后切换（D25）。报告结构见 06 篇。
 明细表一律写成 Parquet（按 episode 下标排序），供报告页分页读取，见 03 篇 §6。
-延迟明细是追加式的（v1 的 rejudge 已如此），子任务跑过之后重新生成，性能剖析自然包含历次调用。
+延迟明细是追加式的，子任务跑过之后重新生成，性能剖析自然包含历次调用。
 
 ### 3.8 `curation adjudicate-apply` — 执行人工裁决
 
@@ -322,18 +305,17 @@ curation report --run-dir <dir> --revision N [--format md,json] --json
 curation adjudicate-apply --run-dir <dir> --decisions decisions.json --json
 ```
 
-v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型**。
+把裁决落到判决上，**不调模型**。
 `decisions.json` 由 Daemon 从库里导出，只含**本任务**尚未执行的裁决；裁决不跨任务（D32）。三条裁决线的优先级规则原样保留
 （「整条弃用」压过成败裁决等，见 06 篇 §5）。输出里带两份名单，交给后续步骤：
 
 ```jsonc
 {"applied": 14, "skipped_already_applied": 0,
  "rerun_task_success": [17, 29],     // 改了标、且没有人工成败结论的条目，要按新标注重跑
- "relabel_rerun": "v1"}             // 这一批改标的重判口径（D39），照抄 decisions.json
+ "label_changes": [{"episode_index": 17, "new_label": "..."}]}
 ```
 
-`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体（D71 起两种口径行为相同，字段暂留），
-随本次应用的每条改标记在批次目录里；`check --modules task_success` 重判 `rerun_task_success` 时照它选流程（§3.5）。
+`decisions.json` 是 2.0：只有 `schema_version` 和 `decisions`。D90 起没有 `relabel_rerun`：改标的条用新标注重判，和首轮一样每条一次请求（D71）。
 
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
 `aggregate` → `report`。
@@ -367,22 +349,19 @@ curation verify --run-dir <dir> --output tos://... --json
 | `curation task report <id>` | `GET /api/v1/tasks/{id}/report` |
 | `curation task adjudication <id>` | 待裁决条数 + 裁决页链接；裁决本身要人看视频，只能在网页上做 |
 
-### 3.12 辅助命令
+### 3.12 运维命令（D89）
 
-| 命令 | 作用 | 来源 |
-|---|---|---|
-| `curation datasets list [--source public]` | 列数据集（私有 TOS 前缀 / HuggingFace 缓存桶） | 搬 v1 的 `public` + 目录扫描 |
-| `curation datasets episodes` | 分页列 episode：下标、时长、任务文本、各机位视频位置（mcap / Lance 的视频在文件或表里，没有位置） | 新增，供新建页的预览 |
-| `curation fetch` | 从数据来源站把公开数据集拉到自己的桶（调外部 `oniond`，长任务） | 原样搬运，CLI-only |
-| `curation backends probe` | VLM 端点探活 + 列模型（`GET /models` 能拉就拉；拉不出不算错，退回一次最小 chat 探活） | 搬 v1 的 `backends` |
-| `curation creds verify` | 校验 TOS 访问密钥 / VLM API Key | 新增 |
-| `curation clips` | 为裁决页生成视频片段（v3 源数据是多条拼接的 mp4 时需要） | 从 v1 `review-page` 拆出 |
-| `curation ls` | 列一层目录或 `tos://` 前缀 | 原样搬运 |
-| `curation prune` | 清理旧批次（默认只列不删，不碰裁决记录） | 原样搬运 |
+`ls`、`prune`、`fetch` 是给人在终端里用的：输出中文文字、不进 C2、Daemon 不调用；退出码 0 / 1（远端错误）/ 2（输入错误）。
+`curation --help` 里它们列在「运维」一组。
 
-**删除**：`curation ui`（Gradio 整体退役）、内嵌终端相关一切、`review-page` 的静态站生成部分。
-v1 的 `run` / `rejudge` 这两个「一口气跑完」的命令不再保留，它们的职责由 Daemon 编排原子命令承担；
-对账基线用 `release_v1` 分支上的原版来跑。
+| 命令 | 作用 |
+|---|---|
+| `curation ls <地址>` | 列本地目录或 `tos://桶/前缀` 下一层（先目录后文件，带大小） |
+| `curation prune <交付目录> [--keep-latest N] [--yes]` | 列一份交付目录下的历次跑批（`<run_id>/`：时间、最新结果版本的条数、占用），给了 `--keep-latest N --yes` 才删更早的；`latest` 指的那次永远留 |
+| `curation fetch --source --ref` | 从内网 HuggingFace 缓存桶把公开数据集拉进本站数据集根，逐文件校验 |
+
+v1 的 `run`、`rejudge`、`review-page`、`backends`、`public` 和 `ui` 都已删除（设计 27），它们的职责由 Daemon 编排原子命令承担；
+v1 的代码在 `release_v1` 分支。
 
 ## 4. 退出码与信号
 
@@ -422,7 +401,7 @@ Daemon 要把进度透传给前端 SSE，所以 CLI 的进度必须是结构化�
 {"ts": 1758300000456, "level": "warn", "kind": "log",
  "msg": "episode 18 too short (0.5s); marked as fragment"}
 {"ts": 1758300001000, "kind": "usage", "model": "doubao-seed-2-0-pro-260215",
- "module": "task_success", "call_kind": "endstate", "requests": 1,
+ "module": "task_success", "call_kind": "probe", "requests": 1,
  "prompt_tokens": 1820, "completion_tokens": 64, "reasoning_tokens": 40, "cached_tokens": 1536}
 {"ts": 1758300002000, "kind": "throttle", "backend": "ark-prod",
  "limit": 32, "reason": "429 rate 12% in last 30s"}

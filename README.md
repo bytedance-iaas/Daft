@@ -1,111 +1,259 @@
 # Curator v2 · 机器人数据质检平台
 
-Physical AI Kit 的数据质检平台（Curator）第二版。v1 是 Gradio 单体加 Python CLI，在 `release_v1` 分支上运行。
-v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中文前端，作为 rerun 仓库 dataverse Helm Chart 的一个组件交付，跑在 VKE 上。
-**质检算法一行不改**，本期做的是骨架、契约和产品化能力。
+Curator 是 Physical AI Kit 的数据质检平台，检查机器人操作数据集的质量。它读入 LeRobot（v2 / v3）、mcap 和 Lance 格式的数据集，
+对每条 episode 运行一组质检模块，给出「通过 / 拒绝 / 待补跑」的结论，把需要人确认的条目放进人工裁决；报告和结果清单写回你指定的
+TOS 交付目录。控制台还内置数据可视化，多路相机和运动曲线在同一条进度条上同步播放。
 
-**能质检的数据格式**：LeRobot v2 / v3、mcap（一个 `.mcap` 文件一条 episode）、Lance（lerobot-lance-convert 0.3.0 起的三表布局），
-本地目录和 `tos://` 都行（TOS 上的 mcap / Lance 先拉到本地再读，D44）；`.rrd` 暂不支持。
-交付的是质检报告与结果清单，三种格式一样（D69，不写交付数据集），见 [06 篇 §4](docs/design/06-delivery-and-report.md)。
+数据集可以在本地目录或 `tos://` 上（TOS 上的 mcap / Lance 先拉到本地再读，D44），`.rrd` 暂不支持。平台交付的是质检报告和结果清单，
+不写交付数据集（D69，见 [06 篇 §4](docs/design/06-delivery-and-report.md)）。
 
-- 设计：[docs/design/](docs/design/)（12 篇，入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
+产品是「网页控制台 + REST API + 命令行」三件套，打成一个镜像，作为 rerun 仓库 dataverse Helm Chart 的一个组件部署在火山引擎 VKE 上（D53）。
+前半篇写给使用平台的人，后半篇（[开发](#开发)起）写给开发者。
+
+## 平台由哪几部分组成
+
+左侧导航的每一项对应平台的一部分：
+
+| 页面 | 用来做什么 |
+|---|---|
+| 概览 | 看正在跑的任务，以及一段时间内的质检量、通过率和 Token 消耗 |
+| 质检任务 | 新建任务，看进度，暂停或继续，打开报告 |
+| 人工裁决 | 处理需要人确认的条目，执行裁决后重新出结果 |
+| 数据集列表 | 登记数据集，查看预检结果和在它上面跑过的任务 |
+| 可视化 | 在浏览器里同步播放多路相机和运动曲线 |
+| 系统和资源配置 | 管理 TOS 访问密钥和视觉语言模型（VLM）后端 |
+| API 文档 | 通过 REST API 把质检接进自己的流程 |
+
+## 开始前：登记访问密钥和数据集
+
+1. 在「系统和资源配置」添加 TOS 访问密钥（AK / SK），平台加密保存，任务读数据、写报告都用它。要用调用模型的模块（如任务成败判定），
+   还要在这里登记 VLM 后端和模型。
+2. 在「数据集列表」点「添加数据集」，选来源（私有 TOS 或 HuggingFace 缓存桶），填地址，选访问密钥。填好后平台自动预检，识别格式、
+   episode 数、相机和帧率。mcap 填放 `.mcap` 文件的那一层目录，Lance 填放 `frames.lance` 等三张表和 `meta/` 的那一层。
+3. mcap 数据集多一步：确认字段映射，告诉平台哪些 topic 是相机、哪些是关节状态和动作。映射确认后才能可视化，质检也按这份映射读数据。
+
+数据集里有末端位姿记录时，可以在数据集详情里补一份「数据集声明」（相机内外参、工具偏移等）。补好后，可视化能把末端轨迹画在画面上，
+EEF–视频一致性模块也按它生成轨迹。
+
+## 可视化：先看看数据
+
+从「数据集 › 可视化」进入，或在数据集列表某一行点「可视化」。左栏选数据集和 episode，右边的播放器把这条 episode 的多路相机和运动曲线
+放在同一条进度条上。
+
+- 布局：「智能布局」自动摆放相机和曲线；也可以选「仅展示视频」「仅展示运动曲线」，或在格子上点「更换」「放大」自己调。
+- 详细信息：右上角打开侧栏，点哪个格子就显示它的来源、编码和帧率；点曲线格可以勾选显示哪些线，并看到当前时刻的数值。
+- 轨迹：数据集有声明时，顶栏出现「轨迹」按钮，在画面上叠加末端位置、坐标轴和运动轨迹。
+- 操作：空格播放或暂停，← → 逐帧，Shift + ← → 跳 1 秒；进度条右端的图标把播放器铺满浏览器窗口，按 Esc 退出。
+- 保存布局：顶栏「布局 → 保存为缺省布局」，之后所有人打开这个数据集都是这个布局；页头的「展示配置」可以调相机顺序、显示名和曲线分组。
+
+## 质检逻辑
+
+### 一条 episode 怎么得出结论
+
+每个模块只报告它发现的问题，平台叫它「发现」。每条发现带一个检测项编号（如 ACT-4）和一个级别：
+
+| 级别 | 含义 | 默认策略下的结果 |
+|---|---|---|
+| 判废 | 这条数据不能用 | 拒绝 |
+| 待人工复核 | 模块拿不准，需要人确认 | 先算通过并交付，同时进入人工裁决 |
+| 仅报告 | 值得留意，不影响能不能用 | 只写进报告 |
+
+所有模块跑完后，平台按任务的判决策略汇总：有判废的发现就拒绝；没有判废，但有模块执行出错或没有结果，这条记为「待补跑」，
+在任务详情里点「重试」补跑；其余的通过。
+
+判决策略有两档。「默认」按上表执行。「只报不拒」把所有发现都只写进报告、不转人工；只有文件为空、截断、读不出来这类数据完整性的
+致命问题照样判废，因为后面的模块已经用不了这样的数据。
+
+### 能检出哪些问题
+
+平台把检测项整理成一张分类表，分 9 个维度、共 63 项（另有 5 项对照，标记合理的情形，平台不应报出），报告里会标出本次任务覆盖了其中哪些。分类表也收了平台还不检测的项，例如标注与画面不符、中途失误后又完成，报告里标为未覆盖。
+
+| 维度 | 编号 | 典型问题 |
+|---|---|---|
+| 文件与结构 | FILE | 文件为空、截断、结构损坏、视频解码失败、数值里有 NaN |
+| 传感器流与时间 | STRM | 丢帧跳变、时间戳倒序或重复、缺一路流、过短的残段 |
+| 单路画面质量 | IMG | 画面冻结、曝光不良、模糊、花屏、抖动、镜头污染 |
+| 多视角一致性 | MV | 各相机滞后不一致、末端投影与画面不符 |
+| 动作与本体信号 | ACT | 动作不平滑、尖刺、关节越限、执行器卡死、夹爪抖动 |
+| 动作与画面的一致性 | AV | 画面与动作的时间错位 |
+| 任务与步骤 | TASK | 任务失败、开头或结尾空转、操作不流畅 |
+| 标注与描述 | LABEL | 缺任务标注、标注与画面不符 |
+| 数据集级 | SET | 重复的条目 |
+
+### 每个模块查什么
+
+平台有 10 个质检模块，分两块同时运行：CPU 块依次做数据完整性、数值、画面和重复检测，每条 episode 做完一步就进入下一步；VLM 块
+调用视觉语言模型。两块互不等待；任务详情里的进度按「数据完整性」「CPU 检查」「模型检查」「生成报告」四组显示。下表的「最高级别」
+就是新建任务时模块卡片上的标签，表示这个模块最多能把一条 episode 判到哪一级。
+
+| 模块 | 查什么 | 最高级别 |
+|---|---|---|
+| 数据完整性 | 文件能不能读：空文件、截断、零填充、结构损坏、CRC 不符；帧数与数据长度、数值、时间戳是否合规；缺动作数据或少一路流。可选整读校验和逐帧解码测试 | 可判废 |
+| 时间戳检查 | 时间戳是否单调，有没有丢帧跳变、采样抖动、倒序或重复，是不是短于最短时长的残段；时长离群只报告 | 可判废 |
+| 运动学极限 | 对照机器人规格库，检查关节位置和速度、末端工作空间和速度是否越限；需要知道机器人型号 | 可判废 |
+| 运动质量 | 动作平滑度、尖刺、执行器饱和或卡死、夹爪抖动、操作流畅度、开头和结尾空转，给出打分 | 只报告 |
+| 视觉质量 | 逐路相机检查清晰度、曝光、画面冻结和无信号，给出打分 | 只报告 |
+| 视频-动作同步 | 比对画面运动和关节速度，找出画面与动作的时间错位；所有可信相机都错位才判废，单路错位只报告 | 可判废 |
+| EEF–视频一致性 | 把数据集记录的末端位姿投影到画面上，和画面里实际的夹爪比位置、朝向和时间。CPU 测量和模型复核各给一个结论与置信度，两边结论相反时才转人工。需要数据集声明或上传的轨迹 | 可转人工 |
+| 任务成败判定 | 模型看多机位视频判断任务是否完成：失败判废，拿不准的转人工；没有任务标注的条目不判 | 可判废 |
+| 镜头画面缺陷 | 随任务成败判定的同一次模型请求，报告花屏、画面抖动、镜头污染或遮挡 | 只报告 |
+| 重复检测 | 找出动作和各路画面完全相同的条目，同一组的每一条都写明和哪几条相同；只报告，不判废 | 只报告 |
+
+## 开启一个质检任务
+
+1. 点「新建任务」：概览和质检任务页右上角都有；从数据集列表某一行点「新建任务」，会带上这个数据集。
+2. 第一屏「基本配置」：填任务名称，选数据集，填交付目录（报告写到哪个 TOS 目录）。平台自动预检，按结果标出每个模块能不能用；
+   用不了的模块，点卡片上的「详细信息」看原因。
+3. 选要检的 episode：全部、前 N 条，或自选编号。
+4. 选质检范围：「完整质检」开启全部可用模块，包括调用模型的；「快速质检」只开不调用模型的模块，出结果最快；也可以自己勾选。
+   EEF–视频一致性不在预设里，需要时手动勾选。
+5. 选判决策略；勾了调用模型的模块时，再选 VLM 后端和模型。
+6. 第二屏「模块设置」是各模块的可选参数，不改就用缺省值。
+7. 点「创建并开始」，或者「保存为待启动」，以后再开始。
+
+任务开始后进入任务详情页：
+
+- 「Episode 流水线」列出每条 episode 在各组里走到了哪一步、各组耗时和当前结果，点编号可以直接看这条的画面。
+- 「详细进度」按数据完整性、CPU 检查、模型检查、生成报告四组给出完成数和耗时，「Token 消耗」统计模型用量。
+- 右上角可以暂停、继续或停止任务；有条目待补跑时，「更多」里有「重试」。任务跑完后出现「查看报告」。
+
+## 读懂质检报告
+
+报告有三个页签：「报告」看整体，「Episode 明细」看单条，「性能剖析」看耗时和模型调用。页头可以切换结果版本：每次重试或执行裁决都会
+生成一个新版本，旧版本保留可查。
+
+- **质检总览**：第一行是一个等式：输入 = 判废 + 交付 + 待补跑。交付里有待人工确认的条目时，卡片下方会注明条数。第二行是通过率、
+  耗时、Token 和判决策略。再往下是「判废原因分布（按检测项）」，一条 episode 有几个原因就各记一次。
+- **本次质检范围与检测项覆盖**：表格列出每个模块所在的块、检出 / 评估条数和一句结论，点模块名跳到它的小节。下面的「检测项覆盖」
+  把分类表的每一项标成覆盖、部分条目评估不了或未覆盖，项目旁的数字是检出条数。
+- **模块小节**：每个模块一节，开头是评估、检出和各级别的条数，再配一到三张图，例如时间戳的问题分布、视觉质量的逐相机得分、
+  同步的滞后分布。报告页只放统计，逐条的结果在「Episode 明细」。
+- **Episode 明细**：按编号搜索，或用「通过 / 拒绝 / 待补跑 / 待裁决」、级别和检测项筛选。选中一条后，「判决概要」按判废、
+  待人工复核、仅报告列出这条的全部发现，每条写明来自哪个模块、对应哪个检测项、发生在哪一段时间；下面是各模块的详细读数，
+  保存了证据帧的条目会附上证据帧，点开看大图。点「可视化」或发现旁的时间段，会弹出迷你播放器：发现标在进度条上，
+  点上方的发现标签就跳到那一段。
+
+## 人工裁决
+
+标为「待人工复核」的条目会进入「人工裁决」页，任务详情和报告页头都有入口。「待裁决」页签逐条给出模块的结论、依据和画面，按问题
+选择答案，例如判成功或判失败、一致或不一致，拿不准也可以先记下。「被拒复议」页签可以对任务成败判定判废的条目申请改判。裁完点
+「执行裁决」，平台重判受影响的条目，生成新的结果版本和报告。
+
+## 常见问题
+
+**结果写到了哪里？** 报告和结果清单写在新建任务时填的 TOS 交付目录下，每次跑批一个 `<run_id>/` 目录，里面的 `revisions/rNNNN/`
+是各个结果版本；全部写完后会放一个 `_COMPLETE` 标记文件，`latest` 指向最新的一次，下游程序可以据此判断交付完成。
+
+**有条目待补跑怎么办？** 待补跑表示某个模块在这条上出错或没有结果。在任务详情点「更多 → 重试」，只补跑这些条目，完成后生成新的
+结果版本。
+
+**想先快速看个大概？** 选「快速质检」，只跑不调用模型的模块；或者在 Episode 选择里选「前 N 条」先抽检一部分。
+
+**交付目录里旧的跑批怎么清理？** 在 Pod 里用运维命令 `curation prune <交付目录>` 列出历次跑批（时间、条数、占用），
+`--keep-latest N --yes` 删掉更早的；`latest` 指的那次不会删。用法见 [CLI README](backend/curation/cli/README.md) 的「运维命令」。
+
+---
+
+## 开发
+
+```
+前端控制台   React 18 + Arco，纯静态，所有状态都向 Daemon 要
+    │  HTTP/JSON（C4）+ SSE（进度、日志）
+API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo（SQLite）
+    │  子进程：argv 传参，stdout 出一份 --json（C2），stderr 出进度（C3）
+命令行       curation 原子命令，命令之间靠运行目录里的文件交接
+    │
+内核         质检算法、数据集读取、报告生成、VLM 客户端
+```
+
+Daemon 用子进程调命令行，不在进程内 import：原生库崩溃只带走子进程，暂停、停止就是给进程组发信号，命令行也因此一直能单独使用
+（设计 00 §2.1）。数据可视化是例外：它只读、不碰判决，Daemon 在进程内读数据集，只有转码在子进程里。
+
+- 设计：[docs/design/](docs/design/)（入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
+- 契约：[docs/contracts/](docs/contracts/)（一页导读 [SUMMARY.md](docs/contracts/SUMMARY.md)）；CLI、Daemon、前端之间只通过这些文件对话
 - 需求账本与进度：根目录的 `feature_list.md`、`claude-progress.txt`，只在开发机本地，不入库
-- v1 的使用文档与发布说明：[docs/v1/](docs/v1/)
+- v1（Gradio 单体加 Python CLI）在 `release_v1` 分支，本分支不再包含它的代码（设计 27，D89）
 
-## 目录
+### 目录
 
 | 路径 | 内容 |
 |---|---|
-| `backend/curation/` | 质检内核（从 v1 原样搬来）与 v1 的编排；v1 的测试在包内 `tests/` |
-| `backend/curation/cli/` | v2 命令行（W3）：`preflight`、`snapshot`、`verify`、`curation task …` 客户端；v1 的子命令经 `legacy.py` 原样转交。说明与手动验证见 [其 README](backend/curation/cli/README.md) |
-| `backend/curation/export/` | 交付产物：质检报告正文、证据帧、同步曲线图、明细表、裁决痕迹与安全写入（D69 起不写交付数据集，导出器在 `release_v1` 分支） |
-| `backend/curation/planner/` | 执行计划与 VLM 请求合并框架（W6）：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发。说明与手动验证见 [其 README](backend/curation/planner/README.md) |
-| `backend/daemon/secrets/` | 密钥与资源管理（W8）：AES-GCM 加密存储与主密钥轮换、访问密钥与模型服务的校验、开始前三项检查、命令行子进程的环境、预签名；说明与手动验证见 [其 README](backend/daemon/secrets/README.md) |
-| `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块；D49 起先 CPU 后模型，判过 / 判废 / 转人工，参与判决；读 LeRobot 与 mcap 数据集，F5.13）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹、P-A 独立观测、五项指标与诊断、离线报告；接入 v2 的 `preflight` / `plan` / `check --param` / `aggregate` / `report`；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md)，离线评估器在 `tools/eef_eval/` |
-| `backend/curation/extensions/integrity/` | 数据完整性（阶段 7，设计 14，D50–D52）：漏斗最前的硬门，默认勾选；文件结构、mcap CRC、零填充、v1 的逐条结构校验，可选逐帧解码；坏了判废、可疑的交人工（完整性存疑）。预检另有三条不多读数据的警告。说明与手动验证见 [其 README](backend/curation/extensions/integrity/README.md) |
-| `backend/curation/ui/` | 已下线的 v1 界面里待移植的逻辑（鉴权、深链解析、报告数据整形），移植完成后整包删除 |
+| `backend/curation/` | 内核：算法（`core/`）、数据集读取（`ingest/`）、报告生成（`export/`）、编排壳（`pipeline/`）、VLM 客户端与视频输入（`adapters/`）、可视化的格式解析（`viz/`）；内核单测在包内 `tests/` |
+| `backend/curation/cli/` | 命令行 `curation`：`preflight → plan → snapshot → check → aggregate → report → verify`、`adjudicate-apply`、REST 薄客户端 `curation task …`，以及运维命令 `ls`、`prune`、`fetch`；说明与手动验证见 [其 README](backend/curation/cli/README.md) |
+| `backend/curation/planner/` | 执行计划与 VLM 请求合并：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发；见 [其 README](backend/curation/planner/README.md) |
+| `backend/curation/extensions/` | 扩展模块：数据完整性（[README](backend/curation/extensions/integrity/README.md)，设计 14）、EEF–视频一致性（[README](backend/curation/extensions/eef_consistency/README.md)，设计 12、25）、镜头画面缺陷（[README](backend/curation/extensions/camera_defects/README.md)，设计 13） |
 | `backend/curation/contracts/` | C1 模块注册表与契约校验工具 |
-| `backend/daemon/` | API Daemon（W4 骨架：FastAPI、SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账）；用法与手动验证见 [其 README](backend/daemon/README.md) |
-| `backend/daemon/orchestr/`、`backend/daemon/exec/` | 任务编排与 CLI 执行器（W5a）：运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理；说明、配置与手动验证见 [其 README](backend/daemon/orchestr/README.md) |
-| `backend/daemon/results/` | 读结果（W5b、F6.2）：报告、明细表切片、episode 列表（按清单 / 待裁 / 编号筛选）、单条 episode 下钻与同步曲线、性能剖析、裁决队列与记录裁决；说明与手动验证见 [其 README](backend/daemon/results/README.md) |
-| `backend/tests/` | v2 的测试：`contracts/`、`daemon/`、`secrets/`、`results/`、`orchestr/`、`cli/`、`planner/`、`export/`、`deploy/`、`eef/` |
-| `frontend/` | 网页控制台（W10）：React 18 + TypeScript + Arco Design，按 C4 开发，接口类型由 `openapi.yaml` 生成；安装、运行、测试、构建与逐页手动验证见 [frontend/README.md](frontend/README.md) |
-| `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
-| `tools/parity/` | 对账工具与黄金基线流程（W0） |
-| `tools/eef_convert.py` | EEF 的 trajectory.json 在 LeRobot 与 mcap 两种数据集之间互转（只改每路相机的 `media`；`--check` 对着 mcap 数据集核对文件、topic、帧数与画面尺寸），用法见文件头 |
-| `deploy/` | 镜像（`deploy/Dockerfile`，多阶段：前端构建 + Daemon，构建上下文是仓库根）；Helm Chart 在 rerun 仓库的 `deploy/helm/dataverse`（D53）。构建、密钥、安装升级、主密钥轮换、备份恢复与部署前检查见 [deploy/README.md](deploy/README.md) |
-| `docs/design/`、`docs/contracts/` | 设计文档；冻结的契约（JSON Schema、OpenAPI、示例、锁文件，见 [docs/contracts/README.md](docs/contracts/README.md)；EEF 输入格式在 `docs/contracts/eef/`） |
+| `backend/daemon/` | API Daemon：REST 与 SSE、SQLite 仓储、鉴权、任务编排、密钥与 VLM 后端、结果读取、数据可视化；用法与手动验证见 [其 README](backend/daemon/README.md)，编排见 [orchestr/README.md](backend/daemon/orchestr/README.md)，结果读取见 [results/README.md](backend/daemon/results/README.md)，密钥见 [secrets/README.md](backend/daemon/secrets/README.md)，可视化见 [viz/README.md](backend/daemon/viz/README.md) |
+| `backend/tests/` | v2 的测试，按工作包分目录：`cli`、`contracts`、`daemon`、`orchestr`、`results`、`planner`、`secrets`、`eef`、`deploy`、`viz` |
+| `backend/scripts/` | 测试数据下载、环境安装、可视化样例数据与样本集实测 |
+| `frontend/` | 网页控制台：React 18 + TypeScript + Arco Design，接口类型由 `openapi.yaml` 生成；安装、运行、测试、构建与逐页手动验证见 [frontend/README.md](frontend/README.md) |
+| `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
+| `tools/parity/` | 对账工具：黄金基线的录制与回放、比对、假模型、A 类守卫；见 [其 README](tools/parity/README.md) |
+| `tools/regression_samples/` | 回归样本集的工具：合成注入、平台结果打分（设计 16）；见 [其 README](tools/regression_samples/README.md) |
+| `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
+| `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（[deploy/README.md](deploy/README.md)）；Chart 在 rerun 仓库的 `deploy/helm/dataverse`（D53） |
+| `docs/design/`、`docs/contracts/` | 设计文档；契约（JSON Schema、OpenAPI、示例、锁文件，见 [docs/contracts/README.md](docs/contracts/README.md)） |
 
-## 本地环境
+### 本地环境
 
-依赖装在仓库根目录的 `.venv`，配方见 [tools/parity/README.md](tools/parity/README.md) 的「本地环境」一节。
+Python 依赖装在仓库根目录的 `.venv`，配方见 [tools/parity/README.md](tools/parity/README.md) 的「本地环境」一节。镜像与 CI 用
+Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标准库。前端要 Node 20.19+ 或 22.13+，装依赖只用 `npm ci`。
 
-## 手动验证步骤
+本机起服务用 `.claude/launch.json` 里的配置：`curator-daemon-dev`（`/curation` 前缀、不鉴权、临时数据目录）、`curator-daemon-local`
+（再加本地数据根与本地交付替身）、`curator-fakevlm`（假模型）和 `curator-frontend-dev`（接模拟数据的前端开发服务器）。
+
+### 测试
 
 在仓库根目录执行：
 
-1. **对账工具离线自检**（约 1 分钟，不需要任何密钥）：按 [tools/parity/README.md](tools/parity/README.md) 的「手动验证步骤」执行，
-   最后一行应为 `conclusion: PASS`。
-2. **v1 单测**：`cd backend && ../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py`，
-   应全部通过（`test_environment` 检查的是 GPU 主机，本机和 CI 都跳过）。冻结点上就不过的三条测试已修正，
-   原因见 [docs/v1/test-fixes.md](docs/v1/test-fixes.md)。
-3. **对账工具测试**：`PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests`（约 40 秒）。
-4. **契约**：`cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check`，测试全部通过、`check` 无输出；故意改一处契约再跑 `check` 会报出是哪个文件变了（步骤见 [docs/contracts/README.md](docs/contracts/README.md)）。
-5. **静态预览稿**：`python3 -m http.server 4173 --directory frontend/mockups`，
-   浏览器打开 <http://localhost:4173/tasks.html>，逐页核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
-6. **v2 命令行（W3）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli`（约 10 秒），应全部通过；逐条手动核对见 [backend/curation/cli/README.md](backend/curation/cli/README.md) 的「手动验证步骤」。
-7. **planner 与 VLM 请求合并（W6）**：`cd backend && ../.venv/bin/python -m pytest -q tests/planner`（约 3 秒），应全部通过；逐项核对见 [backend/curation/planner/README.md](backend/curation/planner/README.md) 的「手动验证步骤」。
-8. **Daemon 骨架（W4）**：`cd backend && ../.venv/bin/python -m pytest -q tests/daemon`（约 40 秒），应全部通过；真起进程的 11 步手动验证见 [backend/daemon/README.md](backend/daemon/README.md)。
-9. **密钥与资源管理（W8）**：`cd backend && ../.venv/bin/python -m pytest -q tests/secrets`（约 30 秒），应全部通过；再按 [backend/daemon/secrets/README.md](backend/daemon/secrets/README.md) 的 6 步手动核对。
-10. **读结果（W5b）**：`cd backend && ../.venv/bin/python -m pytest -q tests/results`（约 30 秒），应全部通过；真起 Daemon 用 curl 逐个接口核对的步骤见 [backend/daemon/results/README.md](backend/daemon/results/README.md)。
-11. **镜像与部署约定（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 1 秒）；本机没有 docker，镜像构建看 CI；Chart 在 rerun 仓库，按 [deploy/README.md](deploy/README.md) 第 10 节 lint 与渲染；集群上的安装、升级续跑与网关挂载按第 4–6 节核对。
-12. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
-13. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
-14. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
-    再 `cd .. && PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests/test_containers_parity.py`（合成数据的 mcap / Lance 两份上 v1 对 v2 回放逐位一致），应全部通过；
-    用 `python -m parity make-fixture --format mcap|lance` 做两份 8 条的数据，命令行逐条跑一遍见 [CLI README](backend/curation/cli/README.md) 手动验证第 10 步
-    （判决与 LeRobot 版本相同：passed 2、reject 6），
-    真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
-15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py tests/cli/test_eef_record.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
-    校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
-    `tests/orchestr/test_eef_tasks.py`）、模型复核与判决（F5.9 / F5.10，固定 tape 下各分支与离线回放）、转人工进裁决（F5.11，
-    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决执行到新版本的一条）、
-    轨迹与数据集记录（F5.15，只报告：`tests/cli/test_eef_record.py`）
-    的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)；界面上的 EEF 裁决卡片见前端测试
-    `src/pages/adjudication/AdjudicationPage.test.tsx` 里「an EEF question」一条。
+| 套件 | 命令 | 说明 |
+|---|---|---|
+| 内核单测 | `cd backend && ../.venv/bin/python -m pytest -q curation/tests` | 要在 `backend/` 下跑；用真数据集的用例在本机缺数据时跳过 |
+| 契约 | `cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check` | 契约与锁不一致就失败；改契约的步骤见 [docs/contracts/README.md](docs/contracts/README.md) |
+| v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起命令行的用例）和 `cli`（几分钟） |
+| 对账工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests` | 约一分钟；`-m "not e2e"` 只跑单元部分 |
+| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级 |
+| 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
-## 跑通一次完整质检（真数据）
+任何可能影响判决的改动，先跑对账工具的黄金基线回放：`PYTHONPATH=tools .venv/bin/python -m pytest tools/parity/tests -m e2e`。
 
-上面第 1–15 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
-[frontend/README.md](frontend/README.md) 的「手动验证（模拟数据）」里有对应的模拟版本：
+### 手动验证步骤
 
-1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节补主密钥、装 dataverse，
-   经网关访问见第 6 节；只在本机跑就用 `.claude/launch.json` 里的 `curator-daemon-dev`，
+各组件的 README 都有「手动验证步骤」，行为变了要同步改。从仓库根目录起，按这个顺序走一遍：
+
+1. **对账工具**：按 [tools/parity/README.md](tools/parity/README.md) 的「手动验证步骤」录一份黄金基线再回放，最后一行应为 `conclusion: PASS`（不需要任何密钥）。
+2. **契约**：跑上表的契约测试；故意改一处契约再跑 `check`，会报出是哪个文件变了。
+3. **命令行**：按 [CLI README](backend/curation/cli/README.md) 的「手动验证步骤」在合成数据集上逐条跑原子命令，再试运维命令 `ls`、`prune`。
+4. **Daemon**：按 [Daemon README](backend/daemon/README.md) 真起进程核对；编排、结果读取、密钥、可视化各有自己的 README。
+5. **前端**：`npm run dev` 看模拟数据，逐页核对项见 [frontend/README.md](frontend/README.md)；接真 Daemon 用 `curator-daemon-local`（先 `npm run build`）。
+6. **静态预览稿**：`python3 -m http.server 4173 --directory frontend/mockups`，浏览器打开 <http://localhost:4173/tasks.html>，核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
+7. **镜像与部署**：本机没有 docker，镜像构建看 CI；集群上的安装、升级续跑与网关挂载按 [deploy/README.md](deploy/README.md) 核对。
+
+### 跑通一次完整质检（真数据）
+
+上面的步骤都不碰真数据和真密钥。真跑一次：
+
+1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 补主密钥、装 dataverse，经网关访问；只在本机跑就用 `curator-daemon-local`，
    打开 <http://localhost:8080/curation/>。
-2. **填密钥**（只能由使用者本人在界面里填，不写进仓库、不写进 CI、不进设计文档）：
-   「系统和资源配置」→「添加访问密钥」填对象存储的 AK/SK 与地域；「VLM 后端」页签添加模型服务
-   （火山方舟填 endpoint 与 API Key，自建 vLLM 填 endpoint），保存后状态应为「已验证」。
-   拉出模型列表后给常用的那个点「设为默认」，之后新建任务会预选它。
-3. **登记数据集**：「数据集」→「添加数据集」，填 `tos://<bucket>/<path>` 并选访问密钥，
-   等自动预检出条目数、缺失文件与模块可用性，保存进详情页。mcap / Lance 数据集同样填目录地址
-   （mcap 是放 `.mcap` 文件的那一层，Lance 是放 `frames.lance` 等三张表和 `meta/` 的那一层），格式一栏显示 mcap / Lance。
-4. **新建任务**：数据集详情点「新建质检任务」，第一屏选 episode 范围（先用「前 50 条」试）、
-   勾模块、填交付目录与它的访问密钥；第二屏按模块填参数（运动学极限要选机器人型号或跳过）。
-   点「创建并开始」。
-5. **看进度**：详情页的「详细进度」按数据完整性、CPU 检查、模型检查、生成报告四组显示（D88），另有执行时间线，页头写着实时通道是 SSE 还是 5 秒轮询；
-   运行中可暂停 / 继续 / 停止。滚动升级时运行中的任务会被系统暂停，升级完自动续跑（F4.1 验收②）。
-6. **看报告**：跑完打开任务的质检报告，核对总览的「输入 = 判废 + 交付 + 待补跑」、判废原因分布、
-   数据包完整性（中文、横向排版；缺源文件被跳过的条目列在这里）、各模块小节的统计与图（小节可以折叠）；
-   逐条的结论、各模块读数、同步曲线和视频在「Episode 明细」页签：搜 `12` 或 `ep12`，或按清单 / 待裁筛选后上一条、下一条地看，
-   「同时播放」会等各机位都缓冲好才一起开始，任一路卡住就全部暂停。
-7. **人工裁决**：报告里点「去裁决」（或侧栏「质检 → 人工裁决」列出有待裁条目的任务），逐条判完点「执行裁决」；
-   卡片每页 10 张，「来源模块」筛选在各页签里；被任务成败判定拒掉的条目在「被拒复议」页签里可以恢复（重复的条目只报告、不判废，D87）。
-8. **看交付**：裁决的子任务跑完后，交付目录这一批的 `<run_id>/` 下有新的结果版本（`revisions/rNNNN/` 的清单、报告与明细）、
-   裁决的 CSV 副本和 `_COMPLETE`，`latest` 指向它。平台交付的就是这些（D69，不写交付数据集）。
+2. **填密钥**：只能由使用者本人在界面里填，不写进仓库、不写进 CI、不进设计文档。「系统和资源配置」添加访问密钥与 VLM 后端，
+   保存后状态应为「已验证」，给常用的模型点「设为默认」。
+3. **照上面的[快速上手](#开始前登记访问密钥和数据集)走一遍**：登记数据集、新建任务（先用「前 50 条」试）、看进度、读报告、人工裁决。
+   滚动升级时运行中的任务会被系统暂停，升级完自动续跑。
+4. **看交付**：交付目录这一批的 `<run_id>/` 下有各个结果版本（`revisions/rNNNN/` 的清单、报告与明细）、裁决的 CSV 副本和 `_COMPLETE`，
+   `latest` 指向它。
 
-## CI
+### CI
 
-`.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、Daemon 测试、密钥与资源管理测试、读结果测试、任务编排测试（含真跑 CLI 的端到端）、镜像与部署约定检查、v2 命令行测试、planner 测试、EEF 模块测试、对账工具测试（含合成数据上的端到端回放对账），各组测试互不遮挡（前一组失败，后面照跑）；A 类算法文件保护检查、镜像构建（并在镜像里起一次 Daemon 与命令行）、前端（Node 20 与 22 各跑一遍 lint、类型、测试和构建）；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
+`.github/workflows/ci.yml`（工作流 `curator-ci`）：推送到 `feat/curator-v2` 和所有 PR 都会跑，四个任务都绿才算过：
+
+| 任务 | 内容 |
+|---|---|
+| `tests` | Python 3.10 下串行跑 13 套：内核单测、契约与锁、命令行、planner、Daemon、密钥、结果读取、编排、镜像与部署约定、EEF、数据可视化、对账工具、回归样本工具；前面失败不影响后面的步骤 |
+| `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` |
+| `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记，或在 PR 描述里写 `parity-change:` |
+| `image` | 用公网源构建镜像，确认 Daemon 和命令行能在镜像里启动 |
+
+失败时看运行页面上的注解和 Job summary；命令行用 `gh run list --branch feat/curator-v2` 和 `gh run view <id> --log-failed`。
 
 ## License
 

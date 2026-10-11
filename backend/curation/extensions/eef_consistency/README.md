@@ -1,14 +1,20 @@
 # EEF–视频一致性（DEMO 模块，阶段 5）
 
-接入 v2（D49，F5.9）：一个模块 `eef_video_consistency`（vlm 档）：每条先由 CPU 测量，再请模型复核（一点一轴的请求包）——没有夹爪参考时请模型对整段
-标记视频给意见、腕部相机看自运动；注册表 5.0 起（设计 25，D81、D82）只给**带置信度的意见、不判废**：`channels.py` 把每个渠道换成「结论 + 置信度」，
-`combine.py` 按分项 × 相机取大合并，冲突才出裁决卡（此前是 `decide.py` 按设计 12 附录 C.9 判过、判废或转人工）；命令行里它和任务成败判定同在 vlm 档，
-由 `pipeline/check_stage.py` 的 `StageRun` 逐条调用 `backend/curation/cli/eef_check.py` 的 `EefJudge`（流水线模式下同样逐条交接），
-模块参数 `--param` 在 `backend/curation/cli/modparams.py`；`aggregate` 在调用边界把它作为一票否决项加进 v1 的判决配置（A 类不动）。
-（F5.4–F5.8 期间是两个建议性模块 `eef_video_consistency` / `eef_video_review`，不影响判决。）
+一个模块 `eef_video_consistency`（D49，F5.9）：每条先由 CPU 测量，再请模型复核（一点一轴的请求包）；没有夹爪参考时请模型对整段
+标记视频给意见，腕部相机看自运动。注册表 5.0 起（设计 25，D81、D82）它只给**带置信度的意见、不判废**：`channels.py` 把每个渠道换成「结论 + 置信度」，
+`combine.py` 按分项 × 相机取大合并，两个渠道结论相反时出一条 `conflict`（review，裁决卡 `eef_check`），其余发现（`inconsistent`、`ego_motion_suspect`、
+`record_mismatch`、数据集级的 `calibration_suspect`）都是 info。
 
-设计：[docs/design/12-eef-video-consistency.md](../../../../docs/design/12-eef-video-consistency.md)；
-输入契约：[docs/contracts/eef/](../../../../docs/contracts/eef/)（`eef-video/1.0.0` / `1.1.0` 四段 + `trajectory-bundle/1.0` 单文件容器；1.1.0 只多手持夹爪的 `umi.world_frames`）。
+模块分两半跑（注册表 5.3，设计 23 §2.1）：CPU 半段在 CPU 块的 `vlm_prep` 段（`check --prep`），读轨迹、测量、画标记、拼好请求；模型半段在 VLM 块的
+`vlm` 段（`check --prepared`，与任务成败判定同一调用），发请求、合并、写记录。两半都由 `pipeline/check_stage.py` 的 `StageRun` 逐条调用
+`backend/curation/cli/eef_check.py` 的 `EefJudge`；不带 `--prep` / `--prepared` 的一次 `check` 两半一起做。模块参数 `--param` 在
+`backend/curation/cli/modparams.py`。判决由 `aggregate` 按任务策略对发现定级（设计 17），这个模块没有 blocking 级的细码；人在 `eef_check` 上判「不一致」
+才成为拒绝理由。
+
+设计：[docs/design/12-eef-video-consistency.md](../../../../docs/design/12-eef-video-consistency.md)，意见与数据集声明见
+[docs/design/25-eef-opinion-and-dataset-declaration.md](../../../../docs/design/25-eef-opinion-and-dataset-declaration.md)；
+输入契约：[docs/contracts/eef/](../../../../docs/contracts/eef/)（`eef-video/1.0.0` / `1.1.0` 四段 + `trajectory-bundle/1.0` 单文件容器；1.1.0 只多手持夹爪的 `umi.world_frames`），
+数据集声明是 C7 [`dataset-declaration/1.0`](../../../../docs/contracts/dataset-declaration.schema.json)（命令行 `--declaration FILE`）。
 本目录是 B 类新代码，不碰 A 类目录；检测器与观测 provider 只读白名单输入，真值只在仓库外的离线评估器里读。
 
 | 文件 | 内容 |
@@ -32,19 +38,23 @@
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍；`record` 段是记录比对的阈值 |
 | `robots.py` | 记录比对用的内置正向运动学（设计 12 §8.7）：Franka Panda / FR3 的改进 DH，链末是法兰 `panda_link8`，另有具名帧 `panda_hand`（法兰绕 z 转 −45°）与 `panda_hand_tcp`（再沿 z 0.1034 m）；dataset2 上与位姿列逐帧重合 |
-| `record_draft.py` | 记录映射的起草（设计 12 §8.7，D-E17）：按 LeRobot `info.json` 的分量名与 `robot_type` 起草位姿与关节角来源（只看 `observation.*` 的实测列，专用列优先于拼接列、拼接列写切片），逐条给出推断的地方（代码 + 参数），有歧义或认不出时不起草并说明原因；CLI 预检放进 EEF 条目的 `drafts.record_mapping` |
-| `record.py` | 轨迹与数据集记录（设计 12 §8.7，D-E16，只报告、不参与判决）：`eef-mapping/1.1` 的 `record` 块（1.0 映射的 `eef` 块就是位姿来源）；读 LeRobot 列或 mcap topic；逐帧对齐（`source_state_index` > 帧数相同按帧号 > 时间戳插值）；主指标是按声明关系算的原始残差；工具侧拟合恒定差并与声明比（`constant_mismatch`，推不出期望关系时只报告）；扣掉常量后迟滞分段（`record_deviation`）；时间差（正值 = 记录晚）；数据集内部位姿列与关节角正解互比；有标定时画叠加证据图 |
+| `record_draft.py` | 位姿与关节角来源的起草（设计 12 §8.7，D-E17）：按 LeRobot `info.json` 的分量名与 `robot_type` 起草（只看 `observation.*` 的实测列，专用列优先于拼接列、拼接列写切片），逐条给出推断的地方（代码 + 参数），有歧义或认不出时不起草并说明原因；数据集声明的起草（`curation/declaration/draft.py`）用它填 `semantics.pose` / `semantics.joints` |
+| `record.py` | 轨迹与数据集记录（设计 12 §8.7，D-E16，只报告、不参与判决）：比对的来源是数据集声明的 `semantics.pose` / `semantics.joints`（加 `semantics.frames`），由 `declared.record_block` 换成内部的 `eef-mapping/1.1` `record` 块再解析；读 LeRobot 列或 mcap topic；逐帧对齐（`source_state_index` > 帧数相同按帧号 > 时间戳插值）；主指标是按声明关系算的原始残差；工具侧拟合恒定差并与声明比（`constant_mismatch`，推不出期望关系时只报告）；扣掉常量后迟滞分段（`record_deviation`）；时间差（正值 = 记录晚）；数据集内部位姿列与关节角正解互比；有标定时画叠加证据图 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail`；`attach_record` 加上 `details.record`（没有夹爪参考的意见路径也调它） |
 | `channels.py` | 四个渠道（设计 25 §6）：CPU 测量（第三视角，读数超过开阈值的幅度 0 → 3 倍开阈值为 1，× 覆盖率）、自运动（腕部）、模型复核（CPU 可疑的分项看它的候选窗口，其余看别的窗口；按票差定结论，置信度 = \|票差\| / 有答复 × 有答复占比）、模型意见（片段里模型自己的不匹配置信度，按答复占比向 0.5 收）；结论 `issue` / `ok` / `cannot_tell` 换成不一致置信度 p = 0.5 ± 0.5 × 置信度 |
 | `combine.py` | 合并（设计 25 §7，D82）：按分项 × 相机取两边的最大 p；一边 ≥ 高档、另一边 < 低档即「冲突」；只有一边时封顶并写明缺的是哪边、为什么；模型多数认为跟错目标时作废 CPU；episode 取最差的格（不跨相机平均），给标签、p 与一句依据；档位与封顶在 profile 的 `merge` 一节（demo 未校准） |
 | `calibration.py` | 数据集级的标定可疑（设计 25 §7.4，D86，注册表 5.4）：在一个任务的全部记录上，同一路相机的位置分项被 CPU 判为可疑、恒定偏差（各点残差中位向量的中位，声明的投影减画面里的夹爪）方向在这些条目的平均方向 30° 以内、大小的变异系数 < 0.5，且这样的条目 ≥ 5 条、占这路相机测过的条目 ≥ 60% → 一条 `calibration_suspect`（`findings.dataset_level` 出、报告 EEF 小节的「数据集级发现」列出）：读数是相机、条目、方向与大小、这些条目上诊断拟合的 PnP 修正中位、标定里按假设值的项；不改逐条记录 |
-| `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件时由 `cli/preflight` 先按设计 24 生成（或按设计 22 §5.4 走手持夹爪 mcap 的推导）；算不出来时报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，控制台第二屏必填）——能算就可选、算不了就必选；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
-| `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；标记视频与证据帧都不落盘（设计 20），记录只留视频元数据与证据帧号；送模型的视频长边上限 448；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
+| `preflight.py` | `curation preflight` 里的模块条目：上传件的校验与逐分项能力表（`consistency_entry`），按声明生成轨迹时的条目（`declared_entry`），手持夹爪 mcap 逐条推出时的条目（`derived_entry`，标定取数据集声明的 `calibration.handheld`，没有就用内置的 DAS DEMO 标定），按 episode 计数；轨迹从哪来由 `cli/preflight` 按设计 25 §4.1 的顺序定，算不出来时报 `needs_input`（`trajectory_missing` 或 `declaration_incomplete`，`input_hint.field = trajectory_json`，控制台第二屏必填），能算就可选；`_record_check` 按声明里的位姿 / 关节角记录核对列或 topic 在不在（`subitems.record_consistency`）；没有模型后端时照常 `available`，`notes` 末尾提醒 `vlm_backend_missing` |
+| `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；标记视频与证据帧都不落盘（设计 20），记录只留视频元数据与证据帧号；送模型的视频长边上限 448；意见是合并时的一个渠道（`vlm_opinion`），本身不判废、不出卡；`summary()` 给报告的意见统计 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
-| `report.py` | 报告小节摘要：5.0 起 `merged_summary`——按标签与 p 分档的条数、冲突条数、单渠道缺的是什么、判断不了的原因、跟错目标作废的格数，明细表 `eef_opinions`（逐条 × 分项 × 相机）；5.0 以前的记录仍有判过 / 判废 / 转人工条数与原因；另有候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows`；`record_summary` / `record_rows` 是轨迹与数据集记录的摘要与明细表 `eef_record` |
-| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口）、`umi`（原始 UMI 会话 → LeRobot 与上传件，设计 20）、`umi_mcap`（DAS / GenRobot 手持夹爪 mcap + `umi-calibration/2` → 上传件与 `umi-export-report.json`，设计 22 §5.2） |
+| `report.py` | 报告小节摘要：`merged_summary` 是按标签与 p 分档的条数、冲突条数、单渠道缺的是什么、判断不了的原因、跟错目标作废的格数，明细表 `eef_opinions`（逐条 × 分项 × 相机）；另有候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows`；`record_summary` / `record_rows` 是轨迹与数据集记录的摘要与明细表 `eef_record` |
+| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；离线命令 `export` 和按声明生成的 `declared.py` 都用它）、`umi`（原始 UMI 会话 → LeRobot 与上传件，设计 20）、`umi_mcap`（DAS / GenRobot 手持夹爪 mcap + `umi-calibration/2` → 上传件与 `umi-export-report.json`，设计 22 §5.2） |
 | `umi.py` | 手持夹爪：`load_hands`（`shared` / `per_hand` 世界系、缺测）、`fill_gaps`（前后有效位姿相隔不超过插值最大间隔时补，缺省 3 个样本间隔、容半个间隔）、本手投影、提示词 |
-| `derive_mcap.py`、`calibrations/das_gripper_demo.json` | 原始手持夹爪 mcap 的轨迹（设计 22 §5.4，D80；设计 24 的生成之外）：逐条按需用 `umi_mcap.episode_bundle` 从录制推出（本地文件或流式读 TOS），缓存、线程安全；单条轨迹包与导出报告写进 `checks/eef_video_consistency/trajectory/`；标定用上传的或内置的 DAS DEMO 假设值（不带客户相机的内参） |
+| `derive_mcap.py`、`calibrations/das_gripper_demo.json` | 原始手持夹爪 mcap 的轨迹（设计 22 §5.4，D80；设计 24 的生成之外）：逐条按需用 `umi_mcap.episode_bundle` 从录制推出（本地文件或流式读 TOS），缓存、线程安全；单条轨迹包与导出报告写进 `checks/eef_video_consistency/trajectory/`；标定用数据集声明的 `calibration.handheld` 或内置的 DAS DEMO 假设值（不带客户相机的内参） |
+| `derive.py` | 轨迹从哪来（设计 24、设计 25 §4.1）：`plan_source` 按「上传的文件 → UMI 原始会话或手持夹爪的 LeRobot 导出（`meta/umi_calibration.json`）→ 手持夹爪的原始 mcap → 按数据集声明生成（机械臂）→ 数据集自带的 `trajectory.json`」定 `trajectory_source.kind`，都没有时是 `missing_declaration`（声明缺了什么）或 `missing_pose`；`generate` / `session` 从前两种数据算出轨迹包，用到的包拷进运行目录 `inputs/eef/trajectory.json` |
+| `declared.py` | 按数据集声明生成机械臂的轨迹（设计 25 §4.1，D83）：`readiness` 不读数据就说声明够不够（位姿、位姿描述的点、工具、每路相机的安装方式与内外参）；`Generated` / `GeneratedMcap` 逐条把位姿记录与声明拼成形态 B 的轨迹包，写进 `checks/eef_video_consistency/trajectory/episode_<N>.json`；`record_block` 把声明里的位姿 / 关节角记录换成记录比对用的 `eef-mapping/1.1` |
+| `package.py` | 两半之间的请求包（设计 23 §2.1、§2.3，D76、D77）：CPU 半段把每条的请求与部分记录写进 `scratch/vlm/<episode>/eef_video_consistency/`（`requests.json`、`prep.json` 与图、视频），模型半段读回、发请求、写记录后删掉；出错的留着等重试 |
+| `overlay.py` | 迷你播放器的叠加图层（设计 20、22 §3）：送模型的那几样标记（与请求同一套选择和投影），再加三根坐标轴、未来轨迹和 CPU 测量时的观测点；每层带 `id` / `group` / `default_on` / `in_model`，不解码视频 |
 | `egomotion.py` | 腕部相机自身的运动：画面（ORB、去畸变、本质矩阵）对位姿推出的相对运动，旋转差与平移方向差；`export-umi-mcap` 的报告用它抽查帧对（设计 22 §7 第 2 行）；意见模式下整条检查（F5.19）：每三分之一窗口一对帧、每张画面只提一次特征，逐对旋转差、错开位姿找时间差、滚动中位加迟滞分段，阈值在 profile 的 `ego_motion` 一节（未校准） |
 | `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`export-umi`、`export-umi-mcap`、`template-build`、`template-check` |
 
@@ -141,13 +151,18 @@ fx / fy，每只手的开口范围，抽查帧对的自运动（画面估计的�
    写成单位阵的标定重新导出再跑：片段全是「重」。报告 EEF 小节多「读过自运动」「与位姿不一致」两个数和两张片段图，有不一致时发现里多一条
    info 级的「腕部相机的运动与记录的位姿不一致」（不影响判决）。
 
-5. 不传 trajectory.json（设计 22 §5.4）：同一个数据集新建任务，勾 EEF–视频一致性，第二屏 trajectory.json 留空（现在是可选项），「夹爪标定」也留空，
-   选视频模型。预检通过；跑完后 Episode 明细的 EEF 区块第一行是「轨迹由平台从录制推出 · 内置的 DEMO 标定（das_gripper）· 按假设值：…」，
-   下面每只手一行配对率与内参来源；`00001(1).mcap` 的模型意见、自运动与传导出文件的任务一致；`umi_sample.mcap` 两路写「不支持（这一路没有
+5. 不传 trajectory.json（设计 22 §5.4）：同一个数据集新建任务，勾 EEF–视频一致性，第二屏 trajectory.json 留空（这时是可选项），选视频模型；
+   数据集声明的「手持夹爪」一页保持起草时的内置标定。预检通过；跑完后 Episode 明细的 EEF 区块第一行是「轨迹由平台从录制推出」、标定从哪来
+   （「内置的 DEMO 标定」或「数据集声明里的夹爪标定」，括号里是 das_gripper）与「按假设值：…」，下面每只手一行配对率与内参来源；
+   `00001(1).mcap` 的模型意见、自运动与传导出文件的任务一致；`umi_sample.mcap` 两路写「不支持（这一路没有
    camera_info，标定文件里也没有它的 intrinsics_fallback）」，这一条不问模型、不转人工（「模型意见」块写「没有问模型，也不转人工」，
-   记录的 `opinion.status` 是 `not_assessable`），任务的待裁决是 0。再建一个任务，「夹爪标定」传带 `intrinsics_fallback` 的那份（如本机的
-   `das_gripper_demo.json`）：`umi_sample` 两路可看。运行目录 `checks/eef_video_consistency/trajectory/` 里每条一个 `episode_<N>.json` 和
-   `.report.json`；迷你播放器的叠加照常。LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json 时预检是「需要上传」（平台算不出它的轨迹），模块照常可勾选，第二屏 trajectory.json 必填。
+   记录的 `opinion.status` 是 `not_assessable`），任务的待裁决是 0。在数据集声明的「手持夹爪」一页把标定换成带 `intrinsics_fallback` 的那份
+   （如本机的 `das_gripper_demo.json`，整份 JSON 贴进去），保存后再建一个任务：`umi_sample` 两路可看。运行目录
+   `checks/eef_video_consistency/trajectory/` 里每条一个 `episode_<N>.json` 和 `.report.json`；迷你播放器的叠加照常。
+   命令行上同样用声明传标定：`decl.json` 写成 `{"schema_version": "dataset-declaration/1.0", "calibration": {"handheld": {"calibration": <das_gripper_demo.json 的内容>, "builtin": null}}}`，
+   `preflight` / `check` 带 `--declaration decl.json`，预检的 notes 从 `with the built-in DAS DEMO calibration` 变成 `with the dataset declaration's calibration (das_gripper; …)`。
+   LeRobot 数据集（`eef_ds2_lr3`）不传 trajectory.json、也没有确认过的声明时，预检是 `needs_input: declaration_incomplete`（数据集记了位姿，声明还缺两路相机的内参，见下一节），
+   模块照常可勾选，第二屏 trajectory.json 必填。
 
 验证：`cd backend && ../.venv/bin/python -m pytest -q tests/eef/test_umi_mcap.py tests/eef/test_umi.py tests/eef/test_egomotion.py tests/eef/test_derive_mcap.py`
 （合成的仿 DAS 录制在 `tests/eef/das_mcap.py`，不依赖客户数据；`test_egomotion.py` 的真数据用例在本机有 DAS 录制与导出时才跑）。
@@ -183,7 +198,7 @@ jq -c '[.details.merged.episode.label, ([.details.merged.cells[] | select(.flags
   $R/checks/eef_video_consistency/results.jsonl
 ```
 
-预检：`available`，两路 `fixed_external`、都能画，`applicable_params` 里有 `observation_seeds` / `gripper_template`、没有停用的 `record_mapping`，
+预检：`available`，两路 `fixed_external`、都能画，`applicable_params` 里有 `observation_seeds` / `gripper_template`，
 `notes` 末尾一条 `vlm_backend_missing: …`（加 `--vlm-backend ark` 或 `--param eef_video_consistency.use_vlm=false` 时没有）。`check --no-vlm` 不发任何模型请求，
 两条照常出结论，单渠道的格写 `no_vlm_backend`；换成 `--param eef_video_consistency.use_vlm=false`（带不带 `--vlm-*` 都一样）写 `vlm_off`。
 `check --modules task_success … --no-vlm` 是用法错误（退出码 2）。DAS（`$D/umi_das`）的预检两路都是 `wrist`、归 `robot0` / `robot1`，`applicable_params` 里没有夹爪参考。
@@ -301,21 +316,24 @@ Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可�
    P="--param eef_video_consistency.trajectory_json=$G/trajectory.json"
    ../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --vlm-backend ark --modules timestamp_check,eef_video_consistency $P > $R/preflight.json
    ../.venv/bin/python -m curation.cli plan --preflight $R/preflight.json --modules timestamp_check,eef_video_consistency --episodes 0-6 --out $R/plan.json
-   ../.venv/bin/python -m curation.cli check --modules timestamp_check --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 --survivors-out $R/numeric.txt
-   ../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $G/eef_ds2_lr3 --run-dir $R --episodes @$R/numeric.txt $P --vlm-backend ark
-   ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase funnel --revision 1 --episodes 0-6
-   ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase final --revision 1 --episodes 0-6 --input $G/eef_ds2_lr3
+   ../.venv/bin/python -m curation.cli check --modules timestamp_check --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6
+   ../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 $P --vlm-backend ark
+   ../.venv/bin/python -m curation.cli aggregate --run-dir $R --revision 1 --episodes 0-6 --input $G/eef_ds2_lr3
    ../.venv/bin/python -m curation.cli report --run-dir $R --revision 1
    ```
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
-   `needs_input: trajectory_missing`——平台算不出这个数据集的轨迹，要传文件；给了文件但不给 `--vlm-backend` 时仍是 `available`，`notes` 末尾一条
-   `vlm_backend_missing: …` 提醒，注册表 5.2 起模块不再必须有模型）；`plan.json` 的 `vlm`
-   阶段是 `eef_video_consistency`；EEF 的 `check` 打印判完的条数与按细码的发现数（注册表 5.0：`inconsistent` 只报告、`conflict` 请人看），
+   `needs_input: declaration_incomplete`：数据集记了位姿，没有声明就缺两路相机的内参，要么补声明（见上文「按数据集声明生成机械臂的轨迹」），要么传文件；
+   给了文件但不给 `--vlm-backend` 时仍是 `available`，`notes` 末尾一条 `vlm_backend_missing: …` 提醒，注册表 5.2 起模块不再必须有模型）；
+   `plan.json` 里 EEF 出现在两段：CPU 块的 `vlm_prep` 和 VLM 块的 `vlm`（`after: vlm_prep`），上面那条不带 `--prep` / `--prepared` 的 `check` 两半一起做；
+   EEF 的 `check` 打印判完的条数与按细码的发现数（`inconsistent` 只报告、`conflict` 请人看），
    每条记录的 `details.merged` 写着每个分项 × 相机两边的结论与 p、合并后的标签与标记，`episode` 是整条的标签、p 与一句依据，`details.review` 是每个复核窗口
-   （问的点与轴、模型答复）；`revisions/r0001/verdicts.jsonl` 里没有一条因为它是 `drop`，有冲突的条在 `review` 里列着 `("conflict", "eef_check")`；
+   （问的点与轴、模型答复）；`revisions/r0001/verdicts.jsonl` 里没有一条因为 EEF 判成 `drop`，有冲突的条的 `review` 里有
+   `{"module": "eef_video_consistency", "code": "conflict", "item": "MV-4", "line": "eef_check"}`；
    `report.md` 的「EEF–视频一致性」一节写「结论(意见,不判废):不一致 … 可能不一致 … 一致 … 判断不了 …」、冲突条数、只有一个渠道的原因与判断不了的原因；
-   `tables/` 下有 `eef_camera_metrics`、`eef_segments`、`eef_diagnosis`、`eef_review_windows`、`eef_opinions` 等表。没有 VLM 后端时，第 10 步的测试用假模型走同一条路。
+   `tables/` 下有 `eef_camera_metrics`、`eef_segments`、`eef_diagnosis`、`eef_review_windows`、`eef_opinions` 等表。
+   没有 VLM 后端时把 `--vlm-backend ark` 换成 `--no-vlm`：不发模型请求，7 条照常出结论（`inconsistent 6`），单渠道的格写 `no_vlm_backend`，
+   aggregate 是 `passed 7, reject 0`；第 10 步的测试用假模型走带模型的那条路。
 9. 控制台上传与 Daemon 执行（F5.5 / F5.9）：先跑 `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -m "slow or not slow"`
    （约 45 秒，含一个真跑 CLI 的端到端任务），应全部通过。再真起 Daemon（仓库根的 `.claude/launch.json` 里的
    `curator-daemon-eef`：开发用主密钥、不鉴权、本地数据根是 `~/ws/ws_general/galbot/dataset2`），在 `backend/` 下：
@@ -355,8 +373,8 @@ Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可�
     `../.venv/bin/python -m pytest -q tests/cli/test_eef_adjudication.py tests/results/test_eef_queue.py`（约 15 秒）与
     `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -k settles -m "slow or not slow"`（约 30 秒），应全部通过：
     冲突的条留在 passed、进 review 并计入待裁；判「一致」保留，判「不一致」进拒绝（理由「人工裁决判为 EEF 与视频不一致」，人判的、不可复议），
-    「拿不准」照旧待裁；执行裁决后出新结果版本、交付标为过期，重新导出后交付里没有判废的那条。注册表 5.0 以前开跑的任务（`run.json` 的
-    `registry_version` 是 4.x）照旧口径：模块自己的判废照样判废、可复议（`test_eef_adjudication.py` 的旧世界与 `test_eef_queue.py` 的 4.4 任务）。
+    「拿不准」照旧待裁；执行裁决后出新结果版本，判「不一致」的那条在新版本的 `reject.json` 里、不在 `passed.json` 里，人工结论另记在
+    `human-decisions/eef_checks.csv`。
     界面上：第 9 步的任务跑完后打开「人工裁决」，冲突的条是一张卡片，写着「来源：EEF–视频一致性 · EEF 与画面核对」、先是逐格表（两边各自的结论与 p、
     合并后的标签、冲突的格底色标出），再是 CPU 分项读数（可疑的格子标橙）、模型逐窗口答复（位置 / 朝向 / 绿十字跟对了三张票、偏移、
     模型原话、与 CPU 冲突的窗口带橙框）和每个窗口的标记图，按钮是「一致，判过」「不一致，判废」「拿不准」；视频下面不再重复这些图。
@@ -443,18 +461,19 @@ Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可�
     相机移动时不应当直接连接过去帧的像素。证据 JPEG 应与同帧视频的标记一致。只有二维投影、没有时间或三维末端与声明 P 冲突时省略历史线。
     便携回归：`../.venv/bin/python -m pytest -q tests/eef/test_opinion.py tests/eef/test_umi.py`（没有 dataset2 时只跳过原有两项真实数据测试）。
     两类提示词共用「过去到当前」说明，保留各自标记定义；普通 EEF 的 `aspect=action` 表示轨迹运动时序与可见动作不符。
-    有模型时在控制台新建任务：勾 EEF，第二屏只传 `dataset2/trajectory.json`、夹爪参考留空；跑完后报告的 EEF 小节写「模型意见 7」、
-    有不匹配片段的条数与置信度分布，不列判过 / 判废 / 转人工；Episode 明细里每条列出片段（帧、秒、中心 / 朝向、不匹配置信度、
+    有模型时在控制台新建任务：勾 EEF，第二屏只传 `dataset2/trajectory.json`、夹爪参考留空；跑完后报告的 EEF 小节有一行
+    「模型意见（没有夹爪参考，不参与判决）:问过 7 条 · 有不匹配片段(置信度 ≥ 0.5) … 条 · 片段 … 个 · 没问成 … 条」，结论一行按标签计数，
+    没有一条被判废；Episode 明细里每条列出片段（帧、秒、中心 / 朝向、不匹配置信度、
     模型的话、标注证据帧）。对照 `dataset2/meta/corruptions.json`：ep0 原版应当干净，ep1–6 的片段应当落在注入的故障上。
     命令行等价：`check --modules eef_video_consistency --param eef_video_consistency.trajectory_json=<不带种子目录的副本>`
     （trajectory.json 旁边有 `observations_seed/` 或 `gripper_template.json` 时会被当作夹爪参考自动用上，要验证意见模式就复制到别处）。
-17. 轨迹与数据集记录（F5.15，设计 12 §8.7，D-E16；只报告，不参与判决，不要夹爪参考、不调模型）。
-    单测：`../.venv/bin/python -m pytest -q tests/cli/test_eef_record.py`（约 1 分钟），应全部通过。手动：先写映射——列名、布局、
-    单位、坐标系都由人写明，不猜：
+17. 轨迹与数据集记录（F5.15，设计 12 §8.7、设计 25 §6.1，D-E16；只报告，不参与判决，不要夹爪参考、不调模型）。
+    单测：`../.venv/bin/python -m pytest -q tests/cli/test_eef_record.py`（约 1 分钟），应全部通过。手动：比对的来源写在数据集声明的
+    `semantics.pose` / `semantics.joints` 里，列名、布局、单位、坐标系都由人写明，不猜：
 
     ```bash
-    cat > /tmp/ds2_record.json <<'JSON'
-    {"schema_version": "eef-mapping/1.1", "record": {
+    cat > /tmp/ds2_record_decl.json <<'JSON'
+    {"schema_version": "dataset-declaration/1.0", "semantics": {
       "pose": {"key": "observation.state.cartesian_position", "layout": "xyz_rpy_xyz_extrinsic",
                "units": {"position": "m", "angle": "rad"}, "frame_id": "panda_link8", "reference_frame": "robot_base"},
       "joints": {"key": "observation.state.joint_position", "units": "rad", "robot": "franka_panda",
@@ -462,33 +481,31 @@ Episode 明细里 7 条的 EEF 区块在结论下面多一行橙色「标定可�
     JSON
     G=~/ws/ws_general/galbot/dataset2
     ../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --vlm-backend ark --modules eef_video_consistency \
-      --param eef_video_consistency.trajectory_json=$G/trajectory.json --param eef_video_consistency.record_mapping=/tmp/ds2_record.json
+      --param eef_video_consistency.trajectory_json=$G/trajectory.json --declaration /tmp/ds2_record_decl.json
     ```
 
-    预检的 `subitems.record_consistency` 是 `available`（不给映射是 `unsupported: record_mapping_missing`；列名写错是
-    `record_columns_missing`，notes 里写着哪一列不在数据集里）。在第 8 步的 EEF `check` 后面加同一个
-    `--param eef_video_consistency.record_mapping=/tmp/ds2_record.json` 再跑：每条的 `details.record.sources` 有 `pose` 与 `joints`；
+    预检的 `subitems.record_consistency` 是 `available`，notes 里一条 `the declaration's records: joints, pose`（不给 `--declaration` 是
+    `unsupported: record_mapping_missing`；列名写错是 `record_columns_missing`，notes 里写着哪一列不在数据集里；`robot` 写成平台没有正解的机型时
+    声明本身不合格，退出码 2）。上传了 trajectory.json 时轨迹用上传的，声明在这里只提供比对的来源。在第 8 步的 EEF `check` 后面加同一个
+    `--declaration /tmp/ds2_record_decl.json` 再跑（换成 `--no-vlm` 也行，约 1 分钟）：每条的 `details.record.sources` 有 `pose` 与 `joints`；
     位姿列 7 条全 `ok`（trajectory.json 就是从这几列导出的）；关节角正解 ep1 `suspect`（`constant_mismatch` 与 `record_deviation`，
     按声明关系的残差 P95 约 38 mm），ep2 `constant_mismatch`（与声明相差转 30°），ep3 `record_deviation`，其余 `ok`；
-    `details.record.internal.consistent` 在 ep1–3 为 false；每条的判过 / 判废 / 转人工与不给映射时完全一样。
+    `details.record.internal.consistent` 在 ep1–3 为 false；ep1–3 各多一条 info 级的 `record_mismatch`，别的发现与不带声明时相同。
     `checks/eef_video_consistency/evidence/000001/record/` 下每路相机 3 张叠加图（帧 84、148、266，也列在 `details.record.evidence`）：
     红圈是上传的轨迹，橙圈是关节角正解，都带前后 15 帧的拖尾。`report.md` 的 EEF 一节多一行「轨迹与数据集记录(只报告,不参与判决)…」，
-    `tables/` 多一张 `eef_record`。mcap 数据集把 `key` 换成 `topic`（加 `fields`，如 `"topic": "/arm/joint_states", "fields": "position"`）。
-    不想手写（F5.16，D-E17）：LeRobot 数据集的预检已经起草好一份，
-    `../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --modules eef_video_consistency`
-    输出里 EEF 条目的 `drafts.record_mapping`：`document` 的位姿是 `observation.state.cartesian_position`（`frame_id: null`，参考点未声明）、
-    关节角是 `observation.state.joint_position`（`franka_panda`），基座都是 `"@upload"`；`assumptions` 逐条列出推断的地方（选实测不选指令、
-    外旋 xyz、单位 m / rad、参考点未声明、同一基座、型号对应、正解到法兰）。把 `document` 存成文件当映射传，比对结论与上面相同：关节角
-    ep1 / ep2 / ep3 照旧，位姿列 7 条一致、注明恒定差未检查（数据集内部互比也只到拟合常量为止，ep2 的 30° 在这里看不出）。mcap 数据集
-    给 `format_not_drafted`。
-    控制台：第二屏「数据集记录映射」上方是「从数据集元数据起草」一块（来源、推断的地方），「确认使用」即把草稿作为上传件提交，
-    「修改」给 JSON 编辑框（比如把位姿的 `frame_id` 填成 `panda_link8`，这一路的恒定差也会判），「撤销」清掉；也可以照旧上传上面的 JSON，
-    到货即校验，显示「比对来源 关节角、位姿列 · 机器人 franka_panda · 列 …」；
+    `tables/eef_record.parquet` 每条 × 每个来源一行。mcap 数据集在声明里用 `topic` 代替 `key`。
+    不想手写（D-E17、设计 25 §3）：没有声明时预检按元数据起草一份，只用来说缺什么，不拿它比对。`curation.declaration.draft.draft_lerobot`
+    给 dataset2 起草的 `semantics` 就是上面这两项（位姿描述的点按机型起草成 `panda_link8`，关节角 `franka_panda`），每项带 `assumptions`
+    列出推断的地方（选实测不选指令、外旋 xyz、按惯例的单位、按机型定的点、参考系是机器人基座、按 `robot_type` 定机型、专用列优先、正解到法兰），
+    用它比对的结论与上面相同。
+    控制台：数据集详情的「数据集声明」抽屉，「记录的含义」一页列出起草的末端位姿与关节角（列、布局、单位、位姿描述的点、参考系、机型），
+    逐项「确认这一项」后保存；之后新建的任务开跑时冻结这一版声明（`run.json` 的 `declaration`），比对就按它做。
     跑完后「Episode 明细」和裁决卡片的 EEF 区块末尾是「轨迹与数据集记录」：每个来源一块（读哪一列、怎么对齐、按声明 / 扣掉恒定差后
     两组残差、声明 / 拟合 / 相差的恒定差、时间差、随时间变化的差、位置与姿态两张残差曲线），然后是数据集内部一致与否和叠加图
     （不再出现在「CPU 证据帧」里）；报告的 EEF 小节多「与数据集记录比过」「与记录不一致」等数、一张原因图和一张按来源的状态表。
 
 ## 回退
 
-回退就是新建任务时不勾选这个模块（预设与「全选可用」本来就不勾）：不勾时计划里没有它，判决配置与接入前完全相同，旧流程逐字节不变。
-勾了以后它参与判决（D49）：判废的条目进拒绝清单，转人工的出裁决卡片（`eef_check`，人判后按判过 / 判废重算）；阈值仍是未校准的 demo。
+回退就是新建任务时不勾选这个模块（预设与「全选可用」本来就不勾）：不勾时计划里没有它，别的模块的发现与判决不受影响。
+勾了以后它也不判废（注册表 5.0 起）：发现大多只报告，只有两个渠道结论相反的条出裁决卡片（`eef_check`），人判「不一致」才进拒绝清单；
+阈值仍是未校准的 demo。

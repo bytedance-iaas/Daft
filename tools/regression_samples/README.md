@@ -8,9 +8,9 @@
 | `inject.py` | 在干净条目上注入故障，生成新的 LeRobot v2.x 数据集和 `injection.json` |
 | `inject_mcap.py` | mcap 的结构故障（FILE-3）与合法写法：截断、数据块 CRC、摘要区 CRC；无摘要区、CRC 全 0 |
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
-| `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；2.0 直接读发现，旧运行目录照旧用对照表，自动识别 |
-| `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
-| `taxonomy.json` | 检测项分类 1.3（68 项；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
+| `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；直接读记录里的发现（C2 2.0），更早的运行目录不收 |
+| `finding_map.json` | 记录里读不到的两样：对照项（controls，平台不应报出的合理情形）与预检项（ingestion，平台应当读得进的格式） |
+| `taxonomy.json` | 检测项分类 2.0（68 项；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），条目同平台契约 C6（`docs/contracts/taxonomy.json`）；样本集里的同名文件还是 1.3，打分时按 `renumbered` 改号；平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 | `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
 | `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
@@ -28,43 +28,35 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry -
 
 ## `score.py`
 
-score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果版本的 `report.json` 是 2.0、或记录带 `status` 的是新格式；预检拒收、什么都没有的运行目录跟随同一次打分里其他运行目录的格式）：
+score 2.0（设计 17 §6.1）读平台的运行目录（`checks/<模块>/`、`revisions/rNNNN/`、`preflight.json`）：
 
-- **新格式（C2 2.0，F12.2 起的平台）**：记录自己写着检测项——`findings[].item` 与 `scope`（相机）、模块评估过的 `assessed`、评估不了的
-  `unassessable`、执行出错的 `status: error`。一项由哪些模块评估取注册表（`docs/contracts/modules.json` 的 `covers`，`--registry` 可换）。
-  这条 episode 上没有模块评估过这一项（没跑、或写明评估不了）记 `not_assessed`，评估它的模块都出错记 `error`，不再靠「模块有没有记录」推断。
-  几个模块报同一项：总指标取并集，另给每个模块自己的 precision / recall（`by_module`，看该调谁）。数据集级发现取结果版本 `report.json`
-  各小节的 `dataset_findings`，只用于按子集计的项（见下），按子集只计一次；逐条的项只看逐条记录——完整性模块的表检查会在报告里另给一条
-  汇总的数据集级发现（`table_overlap`），它不铺到子集的每一条。episode 级取最终清单（拒绝 / 待补跑与拒绝理由的模块）。每项还数有区间
-  （`frames` / `time_s`）的发现占比（`intervals`，P19）。
-- **旧格式（C2 1.0，基线 `1b30fb224`）**：平台按「模块 + 原因码」出结果，`finding_map.json` 把它换成检测项，与 score 1.1 完全相同。
-
-两种格式的运行目录可以一起打分（输出的 `formats` 写明每个子集是哪种）。共同的规则：
-
+- 记录自己写着检测项：`findings[].item` 与 `scope`（相机）、模块评估过的 `assessed`、评估不了的 `unassessable`、执行出错的 `status: error`。
+  一项由哪些模块评估取注册表（`docs/contracts/modules.json` 的 `covers`，`--registry` 可换）。
 - 期望 present 且平台报了 = TP，没报 = FN；期望 absent（在 `clean` 里）而平台报了 = FP，没报 = TN；没有期望的项不算。
-- 相机限定的期望只和同一路相机的结果比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
-- 这条 episode 上能报这一项的模块都没跑（漏斗短路、没选、预检不支持）记 `not_assessed`，都执行出错记 `error`，两者都不进 precision / recall。
-- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-2 看预检能不能读进来。
-- `recall` 只算评估到的；`recall_end_to_end` 把没评估、执行出错、没有规则的都留在分母里。
-- 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。
-- episode 级：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
-- EEF–视频一致性（注册表 5.0 起）只给意见、不判废：它的发现带不一致置信度 p，p 达到 `--eef-min-p`（缺省 0.7，demo 档位的「不一致」）才算报了；
-  冲突（`conflict`）的 p 按定义不低于高档下限，缺省阈值下总算报了；旧格式或 5.0 以前的发现没有 p，照旧算（设计 25 §7）。
+- 相机限定的期望只和同一路相机的发现比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
+- 这条 episode 上没有模块评估过这一项（没跑、预检不支持、或写明评估不了）记 `not_assessed`，评估它的模块都出错记 `error`，两者都不进
+  precision / recall；`recall_end_to_end` 把它们和没有模块覆盖的都留在分母里。注册表里没有模块覆盖的项是平台的 gap，单列。
+- 几个模块报同一项：总指标取并集，另给每个模块自己的 precision / recall（`by_module`，看该调谁）。每项还数有区间（`frames` / `time_s`）
+  的发现占比（`intervals`，P19）。
+- 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。数据集级发现取结果版本 `report.json` 各小节的
+  `dataset_findings`，只用于这类项；逐条的项只看逐条记录（完整性模块的表检查在报告里另给一条汇总的 `table_overlap`，不铺到子集的每一条）。
+- episode 级取最终清单：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
+- 对照项看平台有没有报出它守着的检测项（不该报）；SET-2 看预检能不能读进来。
+- EEF–视频一致性只给意见、不判废：它的发现带不一致置信度 p，p 达到 `--eef-min-p`（缺省 0.7，demo 档位的「不一致」）才算报了；
+  冲突（`conflict`）的 p 按定义不低于高档下限，缺省阈值下总算报了（设计 25 §7）。
+- C2 2.0 以前（D59）的运行目录直接报错：重跑那个子集再打分。
 
 ```bash
-# 运行目录名 -> 子集的映射就是基线目录里的 runs.json；也可以用 --run 子集=目录 逐个给
+# 运行目录名 -> 子集的映射写在 runs.json 里；也可以用 --run 子集=目录 逐个给
 PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
     --expectation <样本集>/anchor/v1/expectation.json \
     --runs-root <运行目录的上一级> --runs-map <运行目录的上一级>/runs.json \
     --out score.json --markdown score.md
 ```
 
-CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --min-support 5`，任何一项的 precision、recall、control 通过率
+与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --min-support 5`，任何一项的 precision、recall、对照项通过率
 比基线掉超过 0.05（且这一项至少有 5 条计数）就以退出码 3 结束；`--require-all-runs` 让缺运行目录的子集以退出码 2 结束。
-平台 `1b30fb224` 上不用模型的 6 个模块的打分在 `tos://curation-robo-anchor/baseline/1b30fb224/score/`（2026-10-02 样本集按「质量优先」精简后重打，
-设计 16 §7.8、§8.4；精简前的留在 `score/archive-2026-10-02/`，10-01 的留在 `score/archive-2026-10-01/`，第一份留在 `score/archive-2026-09-30/`）。
-
-对照表要跟着平台走：平台改了问题码、细节字段名或模块 id，`tests/test_score.py` 的一致性检查会失败，同步改 `finding_map.json`。
+平台 `1b30fb224` 那份基线是旧格式（C2 1.0）的，已作废（设计 27 §3）；2.0 的基线要在集群上对样本集重跑一次再录。
 
 ## `inject.py`
 
@@ -138,9 +130,25 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 打分：
 
 1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests`，全部通过。
-2. 从 `tos://curation-robo-anchor/` 取 `anchor/v1/expectation.json` 与 `baseline/1b30fb224/`（含 `runs.json`），按上面的命令打分：
-   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.3, map 1.4)`，写明 475 条全部打分、63 个子集都有运行目录。
-3. 再加 `--baseline baseline/1b30fb224/score/anchor.json` 跑一遍：退出码 0，`score.md` 末尾写「Against the baseline: no regression」。
+2. 拿对账工具的合成数据集当一个子集：按 [对账工具 README](../parity/README.md) 手动验证的第 1、2 步录一份基线（`$W/golden`），
+   再写一份小期望值打分（不需要任何密钥）：
+
+   ```bash
+   cat > $W/expectation.json <<'EOF'
+   {"set": "mini", "set_version": "v1", "episodes": [
+    {"dataset": "mini", "episode_index": 2, "verdict": "defective", "problems": [{"item": "STRM-3"}], "clean": [{"item": "FILE-4"}]},
+    {"dataset": "mini", "episode_index": 5, "verdict": "defective", "problems": [{"item": "STRM-5"}], "clean": [{"item": "FILE-4"}]},
+    {"dataset": "mini", "episode_index": 3, "problems": [{"item": "SET-1"}], "clean": [{"item": "STRM-3"}]},
+    {"dataset": "mini", "episode_index": 7, "problems": [{"item": "SET-1"}], "clean": [{"item": "STRM-3"}]},
+    {"dataset": "mini", "episode_index": 0, "verdict": "clean_on_checked_items", "clean": [{"item": "STRM-3"}, {"item": "SET-1"}]}]}
+   EOF
+   PYTHONPATH=tools .venv/bin/python -m regression_samples.score --expectation $W/expectation.json --run mini=$W/golden \
+       --out $W/s.json --markdown $W/s.md
+   ```
+
+   退出码 0。`s.md` 第一行是 `# Score: mini v1 (taxonomy 2.0, map 2.0)`，episode 级 TP 2、TN 1；STRM-3、STRM-5 各 TP 1，
+   SET-1 按子集计、TP 1 TN 1；FILE-4 的两条记「not assessed」（默认链没有数据完整性模块）。
+3. 再加 `--baseline $W/s.json --min-support 1` 跑一遍：退出码 0，末尾写「Against the baseline: no regression」。
 
 注入：
 

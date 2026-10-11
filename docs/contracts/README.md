@@ -2,7 +2,8 @@
 
 并行开发的地基：CLI、Daemon、前端之间只通过这里的文件对话，谁都不直接 import 对方的内部模块（设计 11 篇 §1）。
 
-先读 [`SUMMARY.md`](SUMMARY.md)：一页讲清各份契约的要点、冻结时定下的细节和待拍板的事项（2.0 的改动在第十五节）。
+先读 [`SUMMARY.md`](SUMMARY.md)：一页讲清各份契约的要点、冻结时定下的细节和待拍板的事项（2.0 的改动在第十五节，删掉 1.0 与旧任务兼容的
+C1 7.0 / C4 7.0.0 在第二十二节）。
 
 | # | 契约 | 文件 | 谁读 |
 |---|---|---|---|
@@ -20,10 +21,10 @@ C2 各文件对应的命令与产物：
 | 文件 | 内容 |
 |---|---|
 | `preflight` / `plan` / `source-manifest` | 三条命令的 `--json`；`source-manifest` 也是 `snapshot` 写出的 `source_manifest.json` |
-| `autolabel`、`autolabel-line` | `autolabel --json` 与 `autolabel/captions.jsonl` 的每一行 |
-| `result-record` | `check` 写的每一行（`parts/*.jsonl`、`results.jsonl`）；对账工具导出 v1 结果也用它。2.0 是发现与覆盖，1.0 是漏斗的三态（旧任务仍可读） |
-| `check` | `check --json`：逐模块的计数（2.0：ok / error 与按细码的发现数；1.0：逐状态），Daemon 据此定模块状态 |
-| `verdict-line`、`final-list`、`aggregate` | 判决行（2.0：按策略的 blocking / review；1.0：漏斗）、四份终判清单、`aggregate --json` |
+| `stage-umi` | `stage-umi --json`（UMI 原始会话转成 LeRobot 数据集与 `trajectory.json`） |
+| `result-record` | `check` 写的每一行（`parts/*.jsonl`、`results.jsonl`）：发现、评估过与评估不了的检测项、读数；对账工具拿它校验记录 |
+| `check` | `check --json`：逐模块的计数（ok / error 与按细码的发现数），Daemon 据此定模块状态 |
+| `verdict-line`、`final-list`、`aggregate` | 判决行（按策略的 blocking / review）、四份终判清单、`aggregate --json`（只有 `final` 一种） |
 | `commit` | 结果版本的 `commit.json`，最后写 |
 | `report`、`report-output` | `report.json` 与 `report --json` |
 | `decisions`、`adjudicate-apply` | 裁决的输入与 `adjudicate-apply --json` |
@@ -31,6 +32,9 @@ C2 各文件对应的命令与产物：
 | `error` | 任何命令非零退出时 `--json` 打出的错误信封 |
 | `common` | 公共定义 |
 | `parity/vlm-tape-entry` | 对账工具的录制带格式（v2 的回放后端读同一种格式） |
+
+C2 只有一种写法（D90）：设计 17 改过形状的文档（记录、`check`、判决行、清单、报告、计划，以及 `decisions.json`）是 2.0，写成 1.0 的被拒；
+其余文档形状没变过，`schema_version` 仍是 1.0。
 
 ## 怎么用
 
@@ -67,7 +71,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 在 `backend/` 下执行：
 
 ```bash
-../.venv/bin/python -m pytest -q tests                  # 契约测试，约 2 秒
+../.venv/bin/python -m pytest -q tests/contracts        # 契约测试，约 20 秒
 ../.venv/bin/python -m curation.contracts check          # 无输出、退出码 0 = 契约与锁一致
 ```
 
@@ -77,19 +81,20 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - `openapi.yaml` 里就地的示例（C4 2.5.1 起）都能通过所在位置的 Schema：把 `POST /tasks` 的 201 示例里 `state: queued` 改成 `state: sleeping`
   再跑 `pytest -q tests/contracts/test_openapi.py`，`test_every_example_fits_its_schema[#/paths/~1tasks/post/responses/201/… queued]` 失败；改回来恢复。
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
-- 注册表 2.0 与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
+- 注册表与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
   `curl -s localhost:8080/curation/api/v1/modules | jq '.registry_version, .taxonomy_version, [.blocks[].stages], (.modules[] | {id, block, stage, covers})'`
-  应得到 `"2.0"`、`"1.1"`、两块的段，每个模块的块、段与覆盖；`jq '.modules[] | select(.id=="task_success") | .codes'` 列出它的五个细码
-  （`failure` 是 blocking 且可复议，`uncertain` 是 review、裁决线 `task_verdict`）。改了细码或覆盖要重新生成回归样本分类表的平台注记
+  应得到 `"7.0"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
+  不起 Daemon 时对 `docs/contracts/modules.json` 跑同样的 `jq`。`jq '.modules[] | select(.id=="task_success") | .codes'` 列出它的三个细码
+  （`failure` 是 blocking 且可复议，`uncertain` 是 review、裁决线 `task_verdict`，`task_text_missing` 是 info）。改了细码或覆盖要重新生成回归样本分类表的平台注记
   （`PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry`）。
-- 2.0 与 1.0 两种写法：`examples/result-record.json`、`report.json`、`plan.json` 等改过的六份里，`valid` 同时有 2.0 与 1.0 的实例，
-  `invalid` 里有把两种写法混用的（2.0 记录带 `verdict`、1.0 计划带 `block`）。
-- 数据可视化（C4 2.4.0、C7，设计 18）：`examples/viz-mapping.json` 的四个合法映射（UMI、ABC-130k、ROS 2、只有附件分段）通过、
-  十二个不合法的被拒（版本不对、少 `series`、相机没名字、`role` 不认识、点路径写错、不认识的变换、`message_timestamp` 没给字段、
-  任务两种写法混用、分段少字段、不认识的内置模版、多出 `episode_files`、`ignore` 重复）。起 Daemon 后
+- 只有 2.0（D90）：`examples/result-record.json`、`report.json`、`plan.json` 等改过的几份里，`valid` 只有 2.0 的实例，
+  `invalid` 里各有一份 1.0 写法（记录带 `verdict` / `passed` / `gate`，计划、报告、清单等写 `schema_version: "1.0"`），应被拒。
+- 数据可视化（C4 2.4.0、C7，设计 18）：`examples/viz-mapping.json` 的五个合法映射（UMI、ABC-130k、ROS 2、只有附件分段，
+  以及 1.1 带深度图的 RoboMIND）通过、十四个不合法的被拒（版本不对、少 `series`、相机没名字、`role` 不认识、点路径写错、不认识的变换、
+  `message_timestamp` 没给字段、任务两种写法混用、分段少字段、不认识的内置模版、多出 `episode_files`、`ignore` 重复，另有两份 `depths` 写错的）。起 Daemon 后
   `curl -s 'localhost:8080/curation/api/v1/datasets?viz=true' | jq '.items[] | {name, format, viz}'` 只列 LeRobot 与 mcap，
   每条带 `viz.state`（`ready`；mcap 没确认映射时 `mapping_pending` 并写原因）；`jq '.viz_mapping, .annotations'` 看单个数据集的详情
-  （非 mcap 的 `viz_mapping` 为 null）。可视化的数据接口在 F13.2 / F13.3 落地之前回 404（`daemon/operations.py` 的 `PENDING`）。
+  （非 mcap 的 `viz_mapping` 为 null）。
 
 ## EEF 输入格式（F5.1 冻结，2026-09-23）
 

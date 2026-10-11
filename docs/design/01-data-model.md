@@ -173,7 +173,7 @@ CREATE TABLE task_module (
                                           -- |'failed'|'skipped'|'stale'
   error      TEXT,
   input_digest TEXT,                      -- 这次结果是对哪个输入集合算的（episode 集合的哈希）
-  episodes_total INTEGER NOT NULL DEFAULT 0,   -- 该模块实际处理的条数（漏斗后）
+  episodes_total INTEGER NOT NULL DEFAULT 0,   -- 该模块实际处理的条数
   episodes_error INTEGER NOT NULL DEFAULT 0,   -- 其中出错的条数，「重试」默认只重跑它们
   params     TEXT,                        -- JSON，模块级参数覆盖
   started_at INTEGER, finished_at INTEGER,
@@ -234,8 +234,8 @@ CREATE TABLE token_usage (
   task_id     TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
   ledger      TEXT NOT NULL,              -- 'actual' 实际调用账 | 'attributed' 按模块分摊账
   subtask_id  TEXT NOT NULL DEFAULT '',   -- '' = 主流程
-  module_id   TEXT NOT NULL,              -- 含 'autolabel'；合并请求按权重摊派，见 04 篇 §5
-  call_kind   TEXT NOT NULL,              -- probe|endstate|arbitration|caption|llm|merged（前五个是 v1 的埋点标签）
+  module_id   TEXT NOT NULL,              -- 合并请求按权重摊派，见 04 篇 §5
+  call_kind   TEXT NOT NULL,              -- probe|eef_review|merged，或模块自己的类型（C3 1.1）
   model_name  TEXT NOT NULL,
   prompt_tokens     INTEGER NOT NULL DEFAULT 0,
   completion_tokens INTEGER NOT NULL DEFAULT 0,

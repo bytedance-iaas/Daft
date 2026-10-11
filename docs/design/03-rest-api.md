@@ -123,7 +123,7 @@
 | GET | `/api/v1/tasks/{id}/perf` | 性能剖析 |
 | GET | `/api/v1/tasks/{id}/adjudication` | 裁决队列，游标分页，`source` / `status` 过滤 |
 | POST | `/api/v1/tasks/{id}/adjudication` | 提交裁决（只记录，不执行，可反复改） |
-| POST | `/api/v1/tasks/{id}/adjudication/apply` | 执行裁决 → 建子任务；可选请求体 `{"relabel_rerun": "v1" \| "full"}`，缺省 `v1`（改标重判的口径，D39），记在子任务的 `scope.relabel_rerun` |
+| POST | `/api/v1/tasks/{id}/adjudication/apply` | 执行裁决 → 建子任务；请求体 `{}`（C4 7.0.0 起没有 `relabel_rerun`，D90：改标的条按新标注重判，一次请求） |
 
 **其它**
 
@@ -200,11 +200,11 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 | `limits.cpu_concurrency` | int ≥1 | 不设 | CPU 档并发的上限 | 新增 |
 | `limits.vlm_parallelism` | int ≥1 | 不设 | VLM 并行度 N 的上限 | v1 界面上的三个并发输入框 |
 | `vlm_hedge` | bool | true | 超时对冲补发 | v1 默认开 |
-| `vlm_timeouts_s` | object | probe/endstate/arbitration/caption 60，llm 120 | 各类调用的单次超时 | `vlm.timeouts_s` |
+| `vlm_timeouts_s` | object | probe 60 | 任务成败判定一次请求的超时下限（视频请求按视频量放宽，封顶 600） | `vlm.timeouts_s` |
 | `clips` | bool | false | 为裁决页预生成视频片段 | v1「一起生成」 |
 
 **并发只能给上限，不能给计划**（D31）。实际取值 = min(用户给的上限, 模型 / 后端上配的并行度, 站点上限, planner 算出来的值)；
-八把闸门怎么从 N 推出来、各档怎么排，仍然是 planner 的事（04 篇 §2）。超时和重试次数同理，是「最多这么多」。
+闸门怎么从 N 推出来、各段怎么排，仍然是 planner 的事（04 篇 §2）。超时和重试次数同理，是「最多这么多」。
 CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」提交的是同一组键。
 模块自己的参数走 `modules[].params`，可用的键由 `GET /modules` 给出
 （例：`video_action_sync.sync_plots = flagged | all | off`，取值沿用 v1 的 `pipeline.sync_plots`）。
@@ -238,7 +238,6 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   "result_rev": 1, "source": {"objects": 204, "bytes": 1520331122, "digest": "sha256:…"},
   "input": {...}, "output": {...}, "episodes": {...}, "vlm": {...}, "params": {...},
   "progress": {"stages": [
-    {"id": "autolabel", "state": "succeeded", "done": 22, "total": 22, "elapsed_s": 46},
     {"id": "numeric",   "state": "succeeded", "done": 50, "total": 50, "elapsed_s": 1},
     {"id": "frame",     "state": "succeeded", "done": 49, "total": 49, "elapsed_s": 144},
     {"id": "vlm",       "state": "succeeded", "done": 49, "total": 49, "elapsed_s": 408}
@@ -354,8 +353,7 @@ GET /api/v1/tasks/{id}/episodes?rev=2&list=reject&review=true&q=ep12&cursor=…&
 - **发现**（C4 2.3.0，设计 17 §5.4，F12.5）：发现结果版本（C2 2.0）的条目多 `items`（它的发现涉及的检测项，按分类表顺序）与 `levels`
   （这些发现在这一版的级别，blocking 在前）；两者取自清单条目的 `findings`（C2 final-list 2.0：任务策略的级别，已计入应用过的人工裁决——
   人的结论是它自己的 blocking 发现，复议恢复的可复议发现降为 info，已了结的 review 发现不再列出；D87 起重复检测的 `duplicate` 是 info，一组的每一条都有）。
-  `level=blocking|review|info`、`item=STRM-5` 只留下有该级别 / 该检测项发现的条目，项编号格式不对是 400；漏斗的旧结果版本没有发现，
-  这两个筛选一条也不留。
+  `level=blocking|review|info`、`item=STRM-5` 只留下有该级别 / 该检测项发现的条目，项编号格式不对是 400。
 
 ```
 GET /api/v1/tasks/{id}/episodes/{index}/sync-curves?rev=2
