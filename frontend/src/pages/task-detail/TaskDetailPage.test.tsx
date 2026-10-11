@@ -219,7 +219,7 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.getByTestId('stage-report')).toHaveTextContent(/^生成报告 已完成3 \/ 3 · 用时 16 秒/);
     for (const raw of ['numeric', 'frame', 'duplicate', 'vlm', 'final', 'export', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
     expect(screen.getByTestId('stages')).not.toHaveTextContent(/档|产物交付/);
-    const table = screen.getByTestId('modules-table');
+    const table = await screen.findByTestId('modules-table');          // it renders once the registry is in
     await user.click(await within(table).findByRole('button', { name: /2 条待补跑/ }));
     const list = await screen.findByTestId('error-episodes');
     expect(list).toHaveTextContent('ep 7');
