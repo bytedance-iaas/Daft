@@ -73,7 +73,7 @@ class SourceSpec:
     kind: str                           # pose | joints
     key: str | None                     # LeRobot column
     topic: str | None                   # mcap topic
-    fields: str | None                  # mcap field path (dotted), None: the message's numeric shape
+    fields: tuple[str, ...] | None      # mcap field paths (dotted), read in order; None: the message's numeric shape
     slice: tuple[int, int] | None
     layout: str | None                  # pose only
     quaternion_key: str | None          # pose only, LeRobot: the quaternion in another column
@@ -84,7 +84,8 @@ class SourceSpec:
     robot: str | None                   # joints only
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in {"kind": self.kind, "key": self.key, "topic": self.topic, "fields": self.fields,
+        return {k: v for k, v in {"kind": self.kind, "key": self.key, "topic": self.topic,
+                                  "fields": ", ".join(self.fields) if self.fields else None,
                                   "slice": list(self.slice) if self.slice else None, "layout": self.layout,
                                   "robot": self.robot, "frame_id": self.frame_id,
                                   "reference_frame": self.reference_frame}.items() if v is not None}
@@ -178,7 +179,7 @@ def _source(kind: str, d: Any, where: str) -> SourceSpec:
     if not isinstance(ref, str) or not ref:
         raise RecordMappingError(f"record mapping: {where}.reference_frame is required "
                                  f"(a frame name, or {UPLOAD_FRAME!r}: the upload's own base)")
-    common = dict(kind=kind, key=key, topic=topic, fields=d.get("fields") or None,
+    common = dict(kind=kind, key=key, topic=topic, fields=_fields(d.get("fields"), where),
                   slice=tuple(sl) if sl else None, reference_frame=str(ref))
     if kind == "pose":
         layout = d.get("layout")
@@ -212,6 +213,17 @@ def _source(kind: str, d: Any, where: str) -> SourceSpec:
                       frame_id=RB.get(robot).tip_frame, robot=robot)
 
 
+def _fields(v: Any, where: str) -> tuple[str, ...] | None:
+    """An mcap source's field paths: one dotted path (the ``eef-mapping/1.1`` spelling) or a list of them (the dataset
+    declaration's, C7), read in that order; none - the message by its shape."""
+    if v is None or v == "" or v == []:
+        return None
+    paths = [v] if isinstance(v, str) else v
+    if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
+        raise RecordMappingError(f"record mapping: {where}.fields must be a field path or a list of them")
+    return tuple(paths)
+
+
 def _frames(d: Any) -> dict[str, tuple[str, np.ndarray]]:
     from scipy.spatial.transform import Rotation
 
@@ -240,6 +252,24 @@ class Series:
     t: np.ndarray | None               # (M,) seconds from the episode's (or the topic's) start
     index: np.ndarray                  # (M,) row number / message ordinal, what source_state_index names
     T: np.ndarray                      # (M, 4, 4) pose of spec.frame_id in spec.reference_frame
+
+
+def message_vector(decoded, fields: tuple[str, ...] | None) -> np.ndarray | None:
+    """One mcap message's numbers for a source. With ``fields``: the numbers at each path, concatenated in order - the
+    visualizer's reading of a C7 ``fields`` list (``viz.mcap_messages.select``: list indexes, ``*``); a path without
+    numbers drops the message. Without: the message by its shape, as the check reader reads it."""
+    from ...ingest import mcap_reader as MR
+    from ...viz import mcap_messages as M
+
+    if not fields:
+        return MR._extract_source(decoded, None)
+    parts: list[float] = []
+    for path in fields:
+        got = M.select(decoded, path)
+        if not got:
+            return None
+        parts += got
+    return np.asarray(parts, dtype=np.float64)
 
 
 def _poses(spec: SourceSpec, vec: np.ndarray, quat: np.ndarray | None = None) -> np.ndarray:
@@ -357,14 +387,15 @@ class McapRecords:
             for schema, channel, message in make_reader(fh).iter_messages(topics=list(by_topic), log_time_order=True):
                 decoded = MR._decode(channel, schema, message, factories, decoders)
                 for s in by_topic.get(channel.topic, []):
-                    vec = MR._extract_source(decoded, s.fields)
+                    vec = message_vector(decoded, s.fields)
                     if vec is not None:
                         rows[s.kind].append((int(message.log_time), np.asarray(vec, float)))
         out = {}
         for s in specs:
             got = rows[s.kind]
             if not got:
-                raise RecordDataError(f"{os.path.basename(path)}: topic {s.topic} has no {s.fields or 'numeric'} values")
+                what = ", ".join(s.fields) if s.fields else "numeric"
+                raise RecordDataError(f"{os.path.basename(path)}: topic {s.topic} has no {what} values")
             widths = {len(v) for _, v in got}
             if len(widths) != 1:
                 raise RecordDataError(f"{s.topic}: messages carry {sorted(widths)} values; one width expected")
