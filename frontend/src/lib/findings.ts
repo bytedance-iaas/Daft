@@ -2,7 +2,7 @@
 // form the report, the task detail and the Episode tab draw. Every name - levels, items, dimensions,
 // codes, the reasons an item could not be assessed - comes from the registry (C1 2.x, GET /modules);
 // nothing here knows a module. Pure functions, unit tested.
-import type { EpisodeFinding, Finding, ModuleRegistry, ModuleSpec, Report, ReportModuleSectionV2, ReportV2 } from '../api/types';
+import type { EpisodeFinding, Finding, ModuleRegistry, ModuleSpec, Report, ReportModuleSection } from '../api/types';
 import { zh } from '../locales/zh';
 import { progressStageLabel } from './taskView';
 
@@ -13,11 +13,6 @@ export const LEVELS: readonly Level[] = ['blocking', 'review', 'info'];
 export const LEVEL_COLOR: Record<Level, string> = { blocking: '#F53F3F', review: '#FF7D00', info: '#86909C' };
 /** Arco Tag colours by level. */
 export const LEVEL_TAG: Record<Level, string> = { blocking: 'red', review: 'orange', info: 'gray' };
-
-/** A report of the policy verdicts (C2 2.0): its sections carry the findings statistics. */
-export function isReportV2(r: unknown): r is ReportV2 {
-  return Boolean(r && typeof r === 'object' && (r as { schema_version?: unknown }).schema_version === '2.0');
-}
 
 export function levelTitle(reg: ModuleRegistry | undefined, level: string): string {
   return reg?.finding_levels.find((l) => l.id === level)?.title_zh ?? zh.findings.level[level] ?? level;
@@ -50,22 +45,20 @@ export function unassessableTitle(reg: ModuleRegistry | undefined, reason: strin
 }
 
 /**
- * Modules whose blocking codes reject even under 只报不拒 (pipeline/policy.py REPORT_ONLY_GATES, policy
- * version 2 on): data integrity - the modules after it cannot use an empty, cut or unreadable file.
+ * Modules whose blocking codes reject even under 只报不拒 (pipeline/policy.py REPORT_ONLY_GATES): data
+ * integrity - the modules after it cannot use an empty, cut or unreadable file.
  */
 export const REPORT_ONLY_GATES: readonly string[] = ['data_integrity'];
 
 /**
  * What a module can do to an episode, for its tag: reject it (a blocking code), ask a person (a review
  * code) or only report. The registry's default levels (P18); under the report_only preset nobody is asked
- * and only data integrity rejects - a task frozen with policy version 1 (before 2026-10-05) rejected
- * nothing (design doc 17 §4.1). No version: the policy a new task gets.
+ * and only data integrity rejects (design doc 17 §4.1).
  */
-export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, preset?: string, policyVersion?: string | null): Level {
-  // a retired code (C4 4.7.0) is no longer reported: it says nothing of what the module does now
-  const levels = new Set((m?.codes ?? []).filter((c) => !c.retired).map((c) => c.level));
+export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, preset?: string): Level {
+  const levels = new Set((m?.codes ?? []).map((c) => c.level));
   if (preset === 'report_only') {
-    const gate = policyVersion !== '1' && m !== undefined && REPORT_ONLY_GATES.includes(m.id);
+    const gate = m !== undefined && REPORT_ONLY_GATES.includes(m.id);
     return gate && levels.has('blocking') ? 'blocking' : 'info';
   }
   return levels.has('blocking') ? 'blocking' : levels.has('review') ? 'review' : 'info';
@@ -108,7 +101,7 @@ export interface CoverageMatrix {
  * 本次覆盖分类表 N / 71 项 (design doc 17 §5.2): the taxonomy's check items by dimension - covered by a
  * module of this task, not covered by any, or covered but not assessable on some episodes (and why).
  */
-export function coverageMatrix(reg: ModuleRegistry | undefined, overview: ReportV2['overview']): CoverageMatrix {
+export function coverageMatrix(reg: ModuleRegistry | undefined, overview: Report['overview']): CoverageMatrix {
   const cov = overview.coverage;
   const covered = new Set(cov.covered);
   const checkable = new Set([...cov.covered, ...cov.not_covered]);
@@ -157,7 +150,7 @@ export function reportersOf(reg: ModuleRegistry | undefined, moduleIds: readonly
  * 判废原因分布 by taxonomy item (design doc 17 §5.2): the report's reject_items (an episode once per item);
  * a report without them has its reasons summed per item (an episode with two codes of one item counts twice).
  */
-export function rejectsByItem(reg: ModuleRegistry | undefined, overview: ReportV2['overview']): { name: string; value: number }[] {
+export function rejectsByItem(reg: ModuleRegistry | undefined, overview: Report['overview']): { name: string; value: number }[] {
   const rows = overview.reject_items ?? Object.values(
     overview.reject_reasons.reduce<Record<string, { item: string | null; count: number }>>((acc, r) => {
       const item = r.code ? r.item ?? null : null;
@@ -182,7 +175,7 @@ export interface ModuleItemRow {
   byCamera: { camera: string; episodes: number }[];
 }
 
-type Summary2 = ReportModuleSectionV2['summary'];
+type Summary2 = ReportModuleSection['summary'];
 
 /** A section's 检出项 (summary.items), most episodes first; codes keep registry order on ties. */
 export function moduleItems(reg: ModuleRegistry | undefined, module: string, summary: Summary2 | undefined): ModuleItemRow[] {
@@ -210,7 +203,7 @@ export function moduleLevels(summary: Summary2 | undefined): Record<Level, numbe
   return out;
 }
 
-/** The 0-1 readings' distributions (summary.score_hist 2.0: reading -> ten bins). */
+/** The 0-1 readings' distributions (summary.score_hist: reading -> ten bins). */
 export function scoreHists(summary: Summary2 | undefined): { reading: string; bins: { name: string; value: number }[] }[] {
   const hist = summary?.score_hist;
   if (!hist || Array.isArray(hist)) return [];
@@ -255,12 +248,7 @@ export function intervalOf(f: Pick<Finding, 'frames' | 'time_s'>): { text: strin
   return null;
 }
 
-/** The modules whose findings an episode view lists (2.0), in the report's order. */
+/** The modules whose findings an episode view lists, in the report's order. */
 export function findingModules(findings: readonly EpisodeFinding[]): string[] {
   return [...new Set(findings.map((f) => f.module))];
-}
-
-/** A report as the 2.0 views read it, or null for one of the funnel (C2 1.0). */
-export function v2Of(raw: Report | ReportV2 | null | undefined): ReportV2 | null {
-  return isReportV2(raw) ? raw : null;
 }

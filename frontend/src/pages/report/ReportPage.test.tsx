@@ -20,23 +20,23 @@ describe('质检报告 (07 §5)', () => {
     renderApp(REPORT);
     const eq = await screen.findByTestId('report-equation');
     expect(within(eq).getByTestId('eq-total')).toHaveTextContent('50');
-    expect(within(eq).getByTestId('eq-rejected')).toHaveTextContent('7');
-    expect(within(eq).getByTestId('eq-passed')).toHaveTextContent('41其中 10 条待人工确认');
+    expect(within(eq).getByTestId('eq-rejected')).toHaveTextContent('6');
+    expect(within(eq).getByTestId('eq-passed')).toHaveTextContent('42其中 10 条待人工确认');
     expect(within(eq).getByTestId('eq-held')).toHaveTextContent('2暂不交付');
     expect(screen.getByText('2 条待补跑')).toBeInTheDocument();
-    expect(screen.getByTestId('integrity')).toHaveTextContent('28 条有；22 条没有');
+    expect(screen.getByTestId('integrity')).toHaveTextContent('50 条有；0 条没有');
     expect(screen.getByTestId('integrity')).toHaveTextContent('机器人型号未读到');
     const scope = screen.getByTestId('report-scope');
     const skipped = (await within(scope).findByText('运动学极限')).closest('tr') as HTMLElement;
     expect(skipped).toHaveTextContent('未运行');
     expect(skipped).toHaveTextContent('预检没读到机器人型号');
-    expect(sectionIds()).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
+    expect(sectionIds()).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
     const ts = screen.getByTestId('section-task_success');
     expect(within(ts).getByText('错误')).toBeInTheDocument();
     expect(within(ts).getByText('调用模型')).toBeInTheDocument();
     expect(within(ts).getByText('出错 2 条（待补跑）')).toBeInTheDocument();
-    expect(within(ts).getByRole('link', { name: '去裁决（6）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
-    expect(screen.getByTestId('section-skill_profile')).toHaveTextContent('这一节的结果来自子任务「重试 #1」。');
+    expect(within(ts).getByRole('link', { name: '去裁决（10）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
+    expect(ts).toHaveTextContent('这一节的结果来自子任务「重试 #1」。');
     // Key figures and charts from the summary's chart-ready aggregates.
     expect(screen.getByTestId('summary-visual_quality')).toHaveTextContent('平均分0.87');
     const scoreChart = within(within(screen.getByTestId('section-visual_quality')).getByTestId('chart-score')).getByTestId('chart');
@@ -72,12 +72,12 @@ describe('质检报告 (07 §5)', () => {
   it('a history revision is read only and shows the failed module with its error', async () => {
     renderApp(`${REPORT}?rev=1`);
     expect(await screen.findByTestId('history-banner')).toHaveTextContent('你在看历史版本 r0001。当前生效的是 r0002。');
-    const sp = await screen.findByTestId('section-skill_profile');
-    expect(within(sp).getByTestId('section-error-skill_profile')).toHaveTextContent('429 QuotaExceeded');
-    expect(within(sp).getByRole('button', { name: '重试此模块' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '重试这 43 条' })).toBeDisabled();
-    expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '去裁决（6）' })).toBeDisabled();
-    expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '可复议（5）' })).toBeDisabled();
+    // the first run lost task success to the model's quota
+    const ts = await screen.findByTestId('section-task_success');
+    expect(within(ts).getByTestId('section-error-task_success')).toHaveTextContent('429 QuotaExceeded');
+    expect(within(ts).getByRole('button', { name: '重试此模块' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重试这 49 条' })).toBeDisabled();
+    expect(within(ts).queryByRole('button', { name: /去裁决|可复议/ })).toBeNull();
     expect(screen.queryByRole('link', { name: '人工裁决（10）' })).toBeNull();
     expect(within(screen.getByTestId('adjudicate-entry')).queryByRole('link')).toBeNull();
     expect(screen.getByRole('button', { name: '人工裁决（10）' })).toBeDisabled();
@@ -86,11 +86,11 @@ describe('质检报告 (07 §5)', () => {
   it('a section with appealable rejects offers 可复议（N） next to 去裁决（N）, filtered to that module (D42)', async () => {
     const { user } = renderApp(REPORT);
     const ts = await screen.findByTestId('section-task_success');
-    expect(within(ts).getByRole('link', { name: '去裁决（6）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
+    expect(within(ts).getByRole('link', { name: '去裁决（10）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
     expect(within(ts).getByRole('link', { name: '可复议（5）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`);
-    // this task ran exact dedup before it was removed (D87): its section asks nothing and offers no appeal
-    const dedup = screen.getByTestId('section-dedup');
-    await waitFor(() => expect(within(dedup).queryByRole('link', { name: /去裁决|可复议/ })).toBeNull());
+    // the duplicate check only reports (D87): its section asks nothing and offers no appeal
+    const duplicates = screen.getByTestId('section-duplicate_check');
+    await waitFor(() => expect(within(duplicates).queryByRole('link', { name: /去裁决|可复议/ })).toBeNull());
     await user.click(within(ts).getByRole('link', { name: '可复议（5）' }));
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`));
     // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
@@ -127,7 +127,9 @@ describe('质检报告 (07 §5)', () => {
     const seen = recordRequests();
     renderApp(REPORT);
     await screen.findByTestId('report-equation');
-    const charts = (id: string) => within(screen.getByTestId(`section-${id}`)).getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
+    // the module's own view, after the findings statistics every section has
+    const own = (id: string) => screen.getByTestId(`summary-${id}`).closest('.section-view') as HTMLElement;
+    const charts = (id: string) => within(own(id)).getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
     const figures = (id: string) => screen.getByTestId(`summary-${id}`).textContent ?? '';
     expect(figures('timestamp_check')).toContain('不合格1');
     expect(figures('timestamp_check')).toContain('残段1');
@@ -137,19 +139,19 @@ describe('质检报告 (07 §5)', () => {
     expect(screen.getByTestId('section-motion_quality')).toHaveTextContent('执行器饱和：本数据集不适用——速度型指令和位置读数含义不同');
     expect(charts('visual_quality')[0]).toContain('逐相机分布：exterior_image_1_left 均分 0.89');
     expect(figures('video_action_sync')).toContain('已标注异常2不判废');
-    expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 43'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
+    expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 44'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
     expect(within(screen.getByTestId('sync-cameras')).getByText('wrist_image_left')).toBeInTheDocument();
     expect(screen.getByTestId('sync-advice')).toHaveTextContent('数据集结论：全库逐相机中位滞后均在容差内');
-    expect(figures('task_success')).toContain('任务文本来源原始标注 26 · 自产描述 21');
+    expect(figures('task_success')).toContain('任务文本来源原始标注 48');
     expect(charts('task_success')).toEqual([
-      expect.stringContaining('判定结论分布：打分层判成功 30'),
-      expect.stringContaining('弃权原因：末态物证 … 在灰区 3'),
-      expect.stringContaining('各层判定条数：打分层 47'),
-      expect.stringContaining('出错停在哪一步：取证仲裁 2'),
+      expect.stringContaining('判定结论分布：判成功 33，判失败 5，拿不准 10'),
+      expect.stringContaining('弃权原因：整条判失败，机位之间分歧 5'),
+      expect.stringContaining('判定给出的内容：整条判定 48，逐机位回答 48'),
+      expect.stringContaining('出错停在哪一步：打分 2'),
     ]);
-    // skill_profile left the registry (3.0): this task ran before, so its section falls back to the
-    // generic view - no key figures of its own, and no raw keys either.
-    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup']) {
+    expect(own('task_success')).toHaveTextContent('一次请求：各机位的连续视频一起交给模型');
+    expect(own('task_success')).not.toHaveTextContent(/仲裁|护栏|自产/);
+    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']) {
       const section = screen.getByTestId(`section-${id}`);
       expect(section.textContent, id).not.toMatch(/[{}"]|ep \d+/);
       expect(within(section).queryByRole('link', { name: /^ep \d+$/ })).toBeNull();
@@ -172,16 +174,16 @@ describe('质检报告 (07 §5)', () => {
     await screen.findByTestId('report-equation');
     expect(await screen.findByRole('button', { name: '展开：视觉质量' })).toBeInTheDocument();
     await second.user.click(screen.getByRole('button', { name: '全部折叠' }));
-    for (const id of ['timestamp_check', 'task_success', 'dedup']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
+    for (const id of ['timestamp_check', 'task_success', 'duplicate_check']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
     expect(screen.getByTestId('report-equation')).toBeInTheDocument(); // the overview never folds
     // Jumping from 本次质检范围 unfolds the section it jumps to.
-    await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: 'dedup' }));   // a module the registry no longer names (D87)
-    expect(await screen.findByTestId('summary-dedup')).toBeInTheDocument();
+    await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: '重复检测' }));
+    expect(await screen.findByTestId('summary-duplicate_check')).toBeInTheDocument();
     await second.user.click(screen.getByRole('button', { name: '全部展开' }));
-    for (const id of ['timestamp_check', 'visual_quality', 'dedup']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
+    for (const id of ['timestamp_check', 'visual_quality', 'duplicate_check']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
   });
 
-  it('a report written before the chart-ready aggregates still shows what it has (06 §6.2)', async () => {
+  it("another task's report has every check's own view, kinematics included (06 §6.2)", async () => {
     renderApp('/tasks/task_01HXPZ2K/report');
     const ts = await screen.findByTestId('section-timestamp_check');
     expect(within(ts).getAllByTestId('chart').length).toBeGreaterThan(0);
@@ -211,27 +213,26 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=29#episodes`);
     const summary = await screen.findByTestId('episode-summary');
     expect(within(summary).getByTestId('episode-list')).toHaveTextContent('通过');
-    expect(within(summary).getByTestId('episode-review')).toHaveTextContent('任务成败判定 · 标注与画面疑似不符；证据不足，弃权');
+    expect(within(within(summary).getByTestId('findings-review')).getByText(/整条判失败，但机位之间分歧，转人工/)).toBeInTheDocument();
     const asks = within(summary).getAllByRole('link', { name: '去裁决' }).map((a) => a.getAttribute('href'));
     expect(asks).toEqual([`/tasks/${MAIN_TASK}/adjudication?source=task_success`]);
-    expect(within(summary).getByTestId('episode-task-text')).toHaveTextContent('任务文本：pour rice into the cup（来源：自产描述）');
+    expect(within(summary).getByTestId('episode-task-text')).toHaveTextContent('任务文本：Close the microwave door（来源：原始标注）');
     await waitFor(() => expect(within(summary).getByText('待裁')).toBeInTheDocument());
     const blocks = [...document.querySelectorAll('[data-testid^="episode-module-"]')].map((e) => e.getAttribute('data-testid')!.replace('episode-module-', ''));
-    expect(blocks).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
+    expect(blocks).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
     const task = screen.getByTestId('episode-module-task_success');
-    expect(within(task).getByText('弃权')).toBeInTheDocument();
+    expect(within(task).getByTestId('level-review')).toHaveTextContent('待人工复核');
+    // the one request (video-task/2): the episode's verdict, every camera's answer, the conclusion
     const trail = within(task).getByTestId('task-trail');
-    expect(trail).toHaveTextContent('打分层失败候选');
-    expect(trail).toHaveTextContent('逐机位复核一致判未完成（完成 0 · 未完成 3 · 看不清 0）');
-    expect(trail).toHaveTextContent('判废护栏标注与画面不是同一件事，拦下');
-    expect(trail).toHaveTextContent('取证仲裁未触发');
+    expect(trail).toHaveTextContent('整条判定失败候选');
+    expect(trail).toHaveTextContent('逐机位回答机位之间分歧（完成 1 · 未完成 2 · 看不清 0）');
     expect(trail).toHaveTextContent('结论转人工');
-    expect(task).toHaveTextContent('判定用的任务文本来自自产描述 · 持久任务');
+    expect(trail).not.toHaveTextContent(/护栏|仲裁/);
+    expect(task).toHaveTextContent('判定用的任务文本来自原始标注 · 持久任务');
     expect(within(screen.getByTestId('episode-module-motion_quality')).getByTestId('episode-motion')).toHaveTextContent('执行器饱和不适用—速度型指令和位置读数含义不同');
     expect(within(screen.getByTestId('episode-module-visual_quality')).getByTestId('episode-visual')).toHaveTextContent('wrist_image_left');
     expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('sync-badge')).toHaveTextContent('同步正常');
-    expect(screen.getByTestId('episode-module-skill_profile')).toHaveTextContent('技能族放置');
-    expect(screen.getByTestId('episode-module-dedup')).toBeInTheDocument();       // run before exact dedup was removed (D87)
+    expect(within(screen.getByTestId('episode-module-duplicate_check')).getByText('无发现')).toBeInTheDocument();
     const frame = await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/);
     expect(frame).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
     // a click shows it large (requester 2026-10-10)
@@ -259,19 +260,17 @@ describe('质检报告 (07 §5)', () => {
       '时间对齐extCPU：一致（0.05）模型看不了这一项一致 · 0.05只有一个渠道；模型看不了这一项',
       '朝向extCPU：判断不了（没有可比的轴）模型复核：判断不了（模型没有表态）判断不了—',
     ]);
-    expect(within(block).queryByTestId('eef-outcome')).toBeNull();          // no 判过 / 判废 / 转人工 any more
     expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');  // the CPU's readings stay below
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
-  it('Episode 明细: the EEF block shows the conclusion, the CPU readings and every review window with its crops (F5.12)', async () => {
+  it('Episode 明细: the EEF block shows the grounds, the CPU readings and every review window with its crops (F5.12)', async () => {
     // Test fixture only: the mock world's tasks do not select the EEF module.
     const why = '「位置」（相机 ext）CPU 判为可疑，模型多数认为一致（支持 2、反对 0）';
     db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefRecord(12, why) }]])]]);
     renderApp(`${REPORT}?ep=12#episodes`);
     const block = await screen.findByTestId('episode-module-eef_video_consistency');
-    expect(within(block).getByTestId('eef-outcome')).toHaveTextContent('转人工');
-    expect(within(block).getByTestId('eef-conclusion')).toHaveTextContent(`为什么转人工：${why}`);
+    expect(within(block).getByTestId('eef-reason')).toHaveTextContent(why);
     expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');
     const cand = within(block).getByTestId('eef-window-ext-0');
     expect(cand).toHaveTextContent('候选段 · 位置帧 121–151（3 帧）标记点 block_center · 朝向 gripper_x');
@@ -332,7 +331,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');
     // the record comparison needs no gripper reference: here no mapping was given
     expect(within(block).getByTestId('eef-record-status')).toHaveTextContent('不支持');
-    expect(within(block).getByTestId('eef-record')).toHaveTextContent('没有给数据集记录映射');
+    expect(within(block).getByTestId('eef-record')).toHaveTextContent('数据集声明里没有写位姿或关节角记录');
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
@@ -391,7 +390,9 @@ describe('质检报告 (07 §5)', () => {
 
   it('Episode 明细: the data integrity block lists every finding and every file it read (design doc 14 §5.2)', async () => {
     const record: ResultRecord = {
-      episode_index: 12, module: 'data_integrity', verdict: 'fail', passed: false, score: null, gate: 'hard', evidence: [], elapsed_s: 0.4, error: null,
+      episode_index: 12, module: 'data_integrity', status: 'ok', evidence: [], elapsed_s: 0.4, error: null, readings: {},
+      findings: [{ code: 'file_truncated', item: 'FILE-2', severity: 'high', scope: { camera: 'wrist' }, message_zh: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失' }],
+      assessed: ['FILE-1', 'FILE-2', 'FILE-3', 'FILE-4', 'FILE-5', 'FILE-6', 'FILE-8', 'FILE-10', 'STRM-4', 'STRM-1', 'STRM-3'], unassessable: [],
       details: {
         outcome: 'reject', reason: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失',
         tiers: { L1: true, L2: true, L3: false },
@@ -422,7 +423,8 @@ describe('质检报告 (07 §5)', () => {
   it('Episode 明细: the camera defects block names the camera, how bad and when, in one or two lines (registry 1.14)', async () => {
     const cam = (level: string, times: [number, number][] = [], extra: Record<string, unknown> = {}) => ({ level, times, note: '', ...extra });
     const record: ResultRecord = {
-      episode_index: 12, module: 'camera_defects', verdict: 'abstain', passed: null, score: null, gate: 'none', evidence: [], elapsed_s: 0.02, error: null,
+      episode_index: 12, module: 'camera_defects', status: 'ok', evidence: [], elapsed_s: 0.02, error: null, readings: {},
+      findings: [], assessed: ['IMG-5', 'IMG-6', 'IMG-7'], unassessable: [],
       details: {
         protocol: 'camera-check/1', source: 'task_success.video_reviews', reason: '',
         cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 6, clean_ratio: 0.67,
@@ -470,13 +472,16 @@ describe('质检报告 (07 §5)', () => {
     // The summary follows the selection.
     await waitFor(() => expect(screen.getByTestId('episode-search')).toHaveTextContent('ep 12'));
     // 拒绝 only: 上一条 / 下一条 step through the rejects around ep 12 (11 before, 18 after).
-    await user.click(screen.getByText(/^拒绝（7）$/));
+    await user.click(screen.getByText(/^拒绝（6）$/));
     await waitFor(() => expect(screen.getByRole('button', { name: /下一条/ })).toBeEnabled());
     expect(screen.getByText('这一条不在当前筛选的范围里')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /下一条/ }));
     await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=18#episodes`));
-    expect(await screen.findByTestId('episode-reasons')).toHaveTextContent('时间戳检查 · 未通过「时间戳检查」:全长只有 0.50 秒');
-    expect(screen.getByTestId('episode-module-visual_quality')).toHaveTextContent('未进入这一档（前面已判废或待补跑）');
+    const blocking = await screen.findByTestId('findings-blocking');
+    expect(blocking).toHaveTextContent('时间戳检查');
+    expect(blocking).toHaveTextContent('全长只有 0.50 秒');
+    // every module judges every episode (D57): the other checks ran on it too
+    expect(within(screen.getByTestId('episode-module-visual_quality')).getByText('无发现')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /上一条/ }));
     await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=11#episodes`));
     // 待裁决 only: the cards still to decide.
@@ -534,20 +539,21 @@ describe('质检报告 (07 §5)', () => {
     await user.click(within(held).getByRole('link', { name: 'ep 31' }));
     await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=31#episodes`));
     const task = await screen.findByTestId('episode-module-task_success');
-    expect(within(task).getByTestId('block-error')).toHaveTextContent('执行出错：arbitration：timeout 60s（3 次）');
+    expect(within(task).getByTestId('block-error')).toHaveTextContent('执行出错：probe：timeout 60s（3 次）');
     unmount();
+    // the first run: task success lost to the model's quota on every episode
     renderApp(`${REPORT}?rev=1&ep=29#episodes`);
     const old = await screen.findByTestId('episode-summary');
     expect(await screen.findByTestId('history-banner')).toBeInTheDocument();
-    expect(within(old).getAllByRole('button', { name: '去裁决' })[0]).toBeDisabled();
+    expect(within(old).getByTestId('episode-list')).toHaveTextContent('待补跑');
+    expect(within(await screen.findByTestId('episode-module-task_success')).getByTestId('block-error')).toHaveTextContent('429 QuotaExceeded');
   });
 
-  it('性能剖析: latency by call kind with the v1 labels, switchable to the main run or a subtask', async () => {
+  it('性能剖析: latency by call kind, switchable to the main run or a subtask', async () => {
     const seen = recordRequests();
     const { user } = renderApp(`${REPORT}#perf`);
     const latency = await screen.findByTestId('perf-latency');
     expect(within(latency).getByText('打分 · probe')).toBeInTheDocument();
-    expect(within(latency).getByText('取证仲裁 · arbitration')).toBeInTheDocument();
     expect(latency).toHaveTextContent('392');
     expect(screen.getByText('因中断而重做')).toBeInTheDocument();
     expect(screen.getByText('VLM 并行度')).toBeInTheDocument();                  // not 「VLM 并行度 N」 (fifth round)
@@ -560,7 +566,7 @@ describe('质检报告 (07 §5)', () => {
       const last = seen.filter((r) => r.path === `/tasks/${MAIN_TASK}/perf`).at(-1)!;
       expect([last.query.get('scope'), last.query.get('subtask'), last.query.get('rev')]).toEqual(['subtask', 'sub_retry1', '2']);
     });
-    expect(await screen.findByTestId('perf-tokens')).toHaveTextContent('打标 · caption');
+    expect(await screen.findByTestId('perf-tokens')).toHaveTextContent('打分 · probe');
     await user.click(screen.getByRole('tab', { name: '报告' }));
     await waitFor(() => expect(currentLocation()).toBe(REPORT));
   });

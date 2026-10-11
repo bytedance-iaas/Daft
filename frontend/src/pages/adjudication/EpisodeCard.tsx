@@ -84,8 +84,8 @@ function DecidedNote({ latest, effective }: { latest: Decision | null | undefine
 }
 
 /**
- * A question's head: its source module and line, and on a findings revision (C4 2.3.0, design doc 17 §4.4)
- * the findings it asks about - each code by the registry's name, with its taxonomy item.
+ * A question's head: its source module and line, and the findings it asks about (C4 2.3.0, design doc 17 §4.4) -
+ * each code by the registry's name, with its taxonomy item.
  */
 function QuestionHead({ index, q, catalog }: { index: number; q: Question; catalog: ReviewCatalog | undefined }) {
   const reg = useModules();
@@ -125,15 +125,13 @@ function Choice({ view, q, catalog, fallback, newLabel, onDecide }: { view: Card
 
 /**
  * 任务成败 (C1 1.3): one question - is this episode usable - and the person may rewrite the task
- * text in the same answer (`new_label`). The rewrite box opens by itself where the model suspects
- * the text and the picture disagree (it read a description off the video: the suggestion); the
- * verdict buttons send whatever the box holds. A verdict stands as it is; 拿不准 with a rewritten
- * text leaves the episode to the model, which judges it again under the new text (D39).
+ * text in the same answer (`new_label`). The rewrite box opens with an earlier rewrite; the verdict
+ * buttons send whatever the box holds. A verdict stands as it is; 拿不准 with a rewritten text leaves
+ * the episode to the model, which judges it again under the new text (D39).
  */
 function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
-  const suspect = Boolean(q.caption ?? q.suggestion);
-  const [editing, setEditing] = useState(suspect || Boolean(view.newLabel));
-  const [text, setText] = useState(view.newLabel ?? (suspect ? q.suggestion ?? '' : ''));
+  const [editing, setEditing] = useState(Boolean(view.newLabel));
+  const [text, setText] = useState(view.newLabel ?? '');
   const typed = text.trim();
   const relabel = typed && typed !== (q.annotation ?? '') ? typed : undefined;
   const asked = relabel ?? q.annotation ?? '';
@@ -143,14 +141,6 @@ function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number;
       <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         {q.reason}
       </div>
-      {suspect ? (
-        <dl className="kv" style={{ margin: '0 0 8px' }}>
-          <dt>{zh.adjudication.annotation}</dt>
-          <dd className="mono">{q.annotation ?? '—'}</dd>
-          <dt>{zh.adjudication.caption}</dt>
-          <dd className="mono">{q.caption ?? '—'}</dd>
-        </dl>
-      ) : null}
       <div style={{ marginBottom: 8 }} data-testid={`ask-${view.ep}`}>
         {zh.adjudication.verdictAsk(asked, Boolean(relabel))}
       </div>
@@ -299,7 +289,6 @@ export function EpisodeCard({
   const reg = useModules();
   // Nothing to send when a click only repeats the answer in force, the rewritten text included.
   const decide: Decide = async (line, d, label) => (repeats(answerOn(view, line), d, label ?? null) ? true : onDecide(line, d, label));
-  const priority = view.questions.find((q) => q.priority)?.priority;
   const annotation = view.questions.find((q) => q.annotation)?.annotation;
   const statusKey = view.optional && view.status === 'pending' ? 'optional' : view.status;
   const discardLine = view.discardOn ?? view.discardLine;
@@ -312,7 +301,6 @@ export function EpisodeCard({
         <Space wrap>
           <b>{zh.report.episode(view.ep)}</b>
           {annotation ? <span className="mono">{annotation}</span> : null}
-          {priority ? <Tag size="small">{priority}</Tag> : null}
         </Space>
       }
       extra={

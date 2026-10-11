@@ -53,12 +53,13 @@ describe("one episode's readings in Chinese (F6.2)", () => {
     ]);
   });
 
-  it('task_success: the trail through the layers, unreached ones marked', () => {
-    const trail = taskTrail({ verdict: 'arbitration_failure', init_verdict: 'success', strong_score: false, review: 'split', cam_votes: { a: 'no', b: 'no', c: 'yes' }, arbitration: { final: 'no', n_effective: 2 } }, 'fail');
-    expect(trail.map((s) => `${s.layer}:${s.text}`)).toEqual(['打分层:成功候选（弱）', '逐机位复核:复核分歧（完成 1 · 未完成 2 · 看不清 0）', '判废护栏:未触发', '取证仲裁:2 路取证，一致判未完成', '结论:判废']);
-    expect(trail[2].reached).toBe(false);
-    expect(trail[4].tone).toBe('bad');
-    expect(taskTrail({}, 'pass').filter((s) => !s.reached)).toHaveLength(4);
-    expect(judgementName({ verdict: 'label_conflict_suspect' })).toBe('疑似标注错（护栏拦下）');
+  it('task_success: the trail of the one request, unreached steps marked (video-task/2)', () => {
+    const trail = taskTrail({ verdict: 'uncertain', init_verdict: 'failure', review: 'split', cam_votes: { a: 'no', b: 'no', c: 'yes' } }, 'abstain');
+    expect(trail.map((s) => `${s.layer}:${s.text}`)).toEqual(['整条判定:失败候选', '逐机位回答:机位之间分歧（完成 1 · 未完成 2 · 看不清 0）', '结论:转人工']);
+    expect(trail[0].tone).toBe('bad');
+    expect(trail[2].tone).toBe('warn');
+    expect(taskTrail({}, 'error').filter((s) => !s.reached)).toHaveLength(2);
+    expect(judgementName({ verdict: 'failure' })).toBe('判失败');
+    expect(judgementName({ verdict: 'brand_new' })).toBe('brand_new');
   });
 });

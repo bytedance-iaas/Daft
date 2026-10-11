@@ -34,13 +34,13 @@ describe('report view helpers', () => {
   it('digests readings and execution errors', () => {
     expect(detailsDigest({ smoothness: 0.86, completion_end: 0.12 })).toBe('平滑度 0.86 · completion_end 0.12');
     expect(detailsDigest({})).toBe('—');
-    expect(recordError({ kind: 'execution', incidents: [{ step: 'arbitration', cause: 'timeout 60s', attempts: 3 }] })).toBe('arbitration：timeout 60s（3 次）');
+    expect(recordError({ kind: 'execution', incidents: [{ step: 'probe', cause: 'timeout 60s', attempts: 3 }] })).toBe('probe：timeout 60s（3 次）');
     expect(recordError(null)).toBe('');
   });
 
   it('reads reason items leniently', () => {
-    const reg = { registry_version: '1', stages: [], modules: [{ id: 'dedup', name_zh: '精确去重' }] } as never;
-    expect(reasonLine({ module: 'dedup', text: '与 ep 43 重复' }, reg)).toBe('精确去重 · 与 ep 43 重复');
+    const reg = { registry_version: '7.0', stages: [], modules: [{ id: 'timestamp_check', name_zh: '时间戳检查' }] } as never;
+    expect(reasonLine({ module: 'timestamp_check', text: '全长只有 0.50 秒' }, reg)).toBe('时间戳检查 · 全长只有 0.50 秒');
     expect(reasonLine({ foo: 1 }, reg)).toBe('foo 1');
   });
 
@@ -99,17 +99,18 @@ describe('report view helpers', () => {
       requests: 1,
       requests_unknown_usage: 0,
     });
-    const rows = [row('', 'probe', 10), row('', 'probe', 5), row('s1', 'probe', 7), row('s1', 'caption', 3)];
+    const rows = [row('', 'probe', 10), row('', 'probe', 5), row('s1', 'probe', 7), row('s1', 'eef_review', 3)];
     expect(usageByCallKind(rows, 'all', null).map((r) => [r.call_kind, r.prompt, r.requests])).toEqual([
       ['probe', 22, 3],
-      ['caption', 3, 1],
+      ['eef_review', 3, 1],
     ]);
     expect(usageByCallKind(rows, 'main', null).map((r) => r.prompt)).toEqual([15]);
-    expect(usageByCallKind(rows, 'subtask', 's1').map((r) => r.call_kind)).toEqual(['probe', 'caption']);
+    expect(usageByCallKind(rows, 'subtask', 's1').map((r) => r.call_kind)).toEqual(['probe', 'eef_review']);
   });
 
-  it('keeps the v1 call kind labels verbatim', () => {
-    expect(callKindLabel('arbitration')).toBe('取证仲裁 · arbitration');
+  it('names the call kinds, keeping the kind itself', () => {
+    expect(callKindLabel('probe')).toBe('打分 · probe');
+    expect(callKindLabel('eef_review')).toBe('EEF 复核 · eef_review');
     expect(callKindLabel('new_kind')).toBe('new_kind');
     expect(seconds(3.14)).toBe('3.1 秒');
     expect(seconds(402)).toBe('6 分 42 秒');

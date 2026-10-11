@@ -11,12 +11,14 @@ import {
   MAIN_TASK,
   episodeView,
   mainEpisodes,
+  mainModuleCounts,
   mainPerf,
   mainPlan,
   mainReport,
   mainSyncCurves,
   mainTimeline,
   mainUsage,
+  pipelineRow,
   preflightFor,
   registry,
   sampleSummary,
@@ -24,7 +26,6 @@ import {
   so101Subtasks,
   so101Timeline,
 } from './world';
-import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsTask, findingsView } from './findings';
 
 function expectValid(ref: string, value: unknown) {
   const v = contract.validator(ref);
@@ -67,50 +68,43 @@ describe('fixtures match the contract', () => {
     expect(EMBODIMENTS).toHaveLength(9);
   });
 
-  it('report, plan, perf, timeline, usage, episodes and adjudication of the main task', () => {
-    expectValid('https://curator.contracts/cli/report.schema.json', mainReport(1));
-    expectValid('https://curator.contracts/cli/report.schema.json', mainReport(2));
+  it('report, plan, perf, timeline, usage, episodes and adjudication of the main task (C2 2.0)', () => {
+    for (const rev of [1, 2] as const) {
+      const report = mainReport(rev);
+      expectValid('https://curator.contracts/cli/report.schema.json', report);
+      expect(report.schema_version).toBe('2.0');
+    }
     expectValid('https://curator.contracts/cli/plan.schema.json', mainPlan());
     for (const scope of ['all', 'main', 'subtask'] as const) expectValid(S('Perf'), mainPerf(scope, scope === 'subtask' ? 'sub_retry1' : null, 2));
     mainTimeline(Date.now()).forEach((e) => expectValid(S('TimelineEntry'), e));
     expectValid(S('UsageReport'), mainUsage());
-    for (let ep = 0; ep < 50; ep += 1) expectValid(S('EpisodeView'), episodeView(ep, 2));
+    for (let ep = 0; ep < 50; ep += 1) {
+      const view = episodeView(ep, 2);
+      expectValid(S('EpisodeView'), view);
+      expect(view.findings, `ep ${ep}`).toBeDefined();
+      expectValid(S('EpisodeView'), episodeView(ep, 1, true));
+      expectValid(S('PipelineEpisode'), pipelineRow(ep, 2, true));
+    }
     for (const ep of [5, 12, 20, 26, 35, 41]) expectValid(S('SyncCurves'), mainSyncCurves(ep, 2));
     expect(mainSyncCurves(0, 2)).toBeNull();
-    expectValid(S('TaskEpisodePage'), { items: mainEpisodes(new Map([[29, ['task_success', 'skill_profile']]])), next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 41, reject: 7, held: 2, review: 1 }, revision: 2 });
+    const items = mainEpisodes(new Map([[29, ['task_success']]]));
+    expectValid(S('TaskEpisodePage'), { items, next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 42, reject: 6, held: 2, review: 1 }, revision: 2 });
+    expect(items.find((e) => e.episode_index === 18)?.levels).toContain('blocking');
+    expect(mainModuleCounts().every((m) => m.judged + m.error === 50)).toBe(true);
     for (const id of registry.modules.map((m) => m.id)) {
       const summary = sampleSummary(id, 40);
       expect(summary.counts, id).toBeTruthy();
     }
-    [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => expectValid(S('AdjudicationCard'), c));
-  });
-
-  it('the findings task (C2 2.0, C4 2.3.0): report, plan, episodes, live rows and questions', () => {
-    expectValid(S('Task'), findingsTask(Date.now()));
-    const report = findingsReport();
-    expectValid('https://curator.contracts/cli/report.schema.json', report);
-    expect(report.schema_version).toBe('2.0');
-    expectValid('https://curator.contracts/cli/plan.schema.json', findingsPlan());
-    for (let ep = 0; ep < 50; ep += 1) {
-      const view = findingsView(ep, 1);
-      expectValid(S('EpisodeView'), view);
-      expect(view.findings, `ep ${ep}`).toBeDefined();
-      expectValid(S('PipelineEpisode'), findingsPipelineRow(ep));
-    }
-    const items = findingsEpisodes(new Map([[29, ['task_success']]]));
-    expectValid(S('TaskEpisodePage'), { items, next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 41, reject: 7, held: 2, review: 1 }, revision: 1 });
-    expect(items.find((e) => e.episode_index === 18)?.levels).toContain('blocking');
-    expect(findingsModuleCounts().every((m) => m.judged + m.error === 50)).toBe(true);
-    [...cardsOf(FINDINGS_TASK, 'review'), ...cardsOf(FINDINGS_TASK, 'appeals')].forEach((c) => {
+    [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => {
       expectValid(S('AdjudicationCard'), c);
       expect(c.questions.every((q) => q.codes?.length)).toBe(true);
     });
   });
 
-  it('the so101 sample: an adjudication whose relabels were judged with the full flow (D39) and skipped episodes (D40)', () => {
+  it('the so101 sample: an adjudication whose relabels were judged again (D39) and skipped episodes (D40)', () => {
     const subs = so101Subtasks(Date.now());
     subs.forEach((s) => expectValid(S('Subtask'), s));
-    expect(subs[0].scope.relabel_rerun).toBe('full');
+    expect(subs[0].kind).toBe('apply_adjudication');
     so101Timeline(Date.now()).forEach((e) => expectValid(S('TimelineEntry'), e));
     const so101 = db.tasks.find((t) => t.id === 'task_01HXPZ2K')!;
     expect(so101.summary?.skipped).toBe(SO101_SKIPPED.length);
@@ -244,18 +238,15 @@ const calls = (): Call[] => [
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 6, line: 'reject_appeal', decision: 'restore' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 29, line: 'label', decision: 'custom_label', new_label: 'pour rice into the bowl' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 18, line: 'reject_appeal', decision: 'restore' }] } },
-  { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: { relabel_rerun: 'full' } },
+  { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: {} },
   { op: 'signMedia', method: 'GET', path: `/media/sign?task=${T}&scope=input&path=videos/chunk-000/wrist/file-000.mp4&ttl=600` },
-  // the findings task (C2 2.0, C4 2.3.0): a report 2.0, the finding filters, an episode's findings, the live counts
-  { op: 'getReport', method: 'GET', path: `/tasks/${FINDINGS_TASK}/report` },
-  { op: 'getTaskPlan', method: 'GET', path: `/tasks/${FINDINGS_TASK}/plan` },
-  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?level=review&item=TASK-4` },
-  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?item=strm-5` },
+  // the findings (C4 2.3.0): the finding filters, an episode's findings (the first run's too)
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?level=review&item=TASK-4` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?item=strm-5` },
   { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?level=blocking` },
-  { op: 'getEpisode', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes/18` },
-  { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/pipeline/episodes?limit=20` },
-  { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${FINDINGS_TASK}/pipeline/episodes/7` },
-  { op: 'listAdjudication', method: 'GET', path: `/tasks/${FINDINGS_TASK}/adjudication?status=all` },
+  { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/18` },
+  { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/7?rev=1` },
+  { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${T}/pipeline/episodes/7` },
 ];
 
 const createAndRepreflight = async (): Promise<Call[]> => {

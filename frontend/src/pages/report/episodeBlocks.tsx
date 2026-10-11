@@ -7,13 +7,14 @@ import type { ComponentType, ReactNode } from 'react';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { qk } from '../../api/queries';
-import type { ResultRecord, SyncCurves } from '../../api/types';
+import type { SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
-import { EefConclusion, EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
+import { EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { eefCalibrationSuspects } from '../../lib/eefReadings';
+import type { LegacyRecord } from '../../lib/records';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
 import { zh } from '../../locales/zh';
@@ -22,15 +23,15 @@ export interface BlockProps {
   taskId: string;
   rev: number;
   ep: number;
-  record: ResultRecord;
+  record: LegacyRecord;
   onEpisode: (ep: number) => void;
-  /** the module's dataset-level findings in this revision's report (a report 2.0) */
+  /** the module's dataset-level findings in this revision's report */
   dataset?: readonly unknown[] | null;
 }
 
 type Details = Record<string, unknown>;
 const E = () => zh.episodeTab;
-const details = (r: ResultRecord): Details => (r.details && typeof r.details === 'object' ? (r.details as Details) : {});
+const details = (r: LegacyRecord): Details => (r.details && typeof r.details === 'object' ? (r.details as Details) : {});
 
 function Facts({ facts }: { facts: Fact[] }) {
   if (!facts.length) return null;
@@ -314,7 +315,6 @@ function TaskBlock({ record }: BlockProps) {
   const d = details(record);
   const trail = taskTrail(d, record.verdict);
   const T = E().task;
-  const completions = Array.isArray(d.completions) ? d.completions.map((v) => num(v)) : [];
   const videoEvidence = Array.isArray(d.video_evidence)
     ? d.video_evidence.filter((v): v is Details => !!v && typeof v === 'object') : [];
   const source = str(d.task_desc_source);
@@ -349,17 +349,6 @@ function TaskBlock({ record }: BlockProps) {
           {[source ? T.intent(zh.sections.task.sourceNames[source] ?? source) : '', str(d.task_type) ? T.taskType[str(d.task_type)!] ?? str(d.task_type) : ''].filter(Boolean).join(' · ')}
         </div>
       ) : null}
-      {completions.length > 1 ? (
-        <div className="episode-sub" style={{ maxWidth: 520 }}>
-          <div className="section-sub">
-            {T.completion}
-            <span className="muted">{T.completionDesc}</span>
-          </div>
-          <LazyVisible placeholder={<div style={{ height: 140 }} />}>
-            <Chart height={140} summary={`${T.completion}：${completions.map((v) => fmt(v)).join('，')}`} option={lineOption([{ name: T.completion, data: completions.map((v, i) => [i + 1, v] as [number, number | null]) }], { legend: false })} />
-          </LazyVisible>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -386,24 +375,17 @@ function DuplicateBlock({ record, onEpisode }: BlockProps) {
 }
 
 /**
- * EEF–视频一致性 (D49, F5.12): the conclusion and why, the CPU's sub-item readings per camera, every
- * review window with the model's answer and the marked crops it was shown, and the CPU's own frames
- * (the same block as the adjudication card); last, the trajectory against the dataset's own record
- * (design doc 12 §8.7), reported only.
+ * EEF–视频一致性 (F5.12, design doc 25 §7): label · confidence · grounds and every sub-item, the CPU's sub-item
+ * readings per camera, every review window with the model's answer and the marked crops it was shown, and the
+ * CPU's own frames (the same block as the adjudication card); last, the trajectory against the dataset's own
+ * record (design doc 12 §8.7), reported only.
  */
 function EefBlock({ taskId, ep, record, dataset }: BlockProps) {
   const d = details(record);
   const overall = str(d.overall);
   // a dataset-level calibration suspect this episode is one of (design doc 25 §7.4)
   const suspects = eefCalibrationSuspects(dataset, ep);
-  // registry 5.0 (design doc 25 §7): label · confidence · grounds and every sub-item; before it the module's verdict
-  const head = d.merged ? (
-    <EefOutput record={record} suspects={suspects} />
-  ) : (
-    <Space wrap>
-      <EefConclusion record={record} />
-    </Space>
-  );
+  const head = <EefOutput record={record} suspects={suspects} />;
   if (d.assessment_mode === 'vlm_opinion') {
     // no gripper reference (design doc 12 §10.5): the model's opinion only, no CPU reading
     return (
@@ -599,7 +581,7 @@ export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
   eef_video_consistency: EefBlock,
 };
 
-export function blockTitleExtra(record: ResultRecord): ReactNode {
+export function blockTitleExtra(record: LegacyRecord): ReactNode {
   const parts: ReactNode[] = [];
   if (record.score !== null && record.score !== undefined) parts.push(<span key="score">{`${zh.report.colScore} ${fmt(record.score, 3)}`}</span>);
   if (record.elapsed_s !== null && record.elapsed_s !== undefined) parts.push(<span key="t" className="muted">{`${E().elapsed} ${zh.common.seconds(Number(record.elapsed_s.toFixed(2)))}`}</span>);

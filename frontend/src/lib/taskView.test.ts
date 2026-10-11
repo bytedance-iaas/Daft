@@ -43,7 +43,7 @@ describe('presetOf (07 §4.1 preset line, derived from the registry)', () => {
 
 const stage = (id: StageProgress['id'], state: StageProgress['state'], done = 0, total = 0): StageProgress => ({ id, state, done, total });
 
-describe('stages and export', () => {
+describe('stages', () => {
   it('current stage is the running one, else the last started', () => {
     expect(currentStage([stage('numeric', 'succeeded'), stage('vlm', 'running', 3, 9)])?.id).toBe('vlm');
     expect(currentStage([stage('numeric', 'succeeded'), stage('frame', 'succeeded'), stage('vlm', 'pending')])?.id).toBe('frame');
@@ -59,7 +59,7 @@ describe('stages in groups (design doc 26 §2, D88)', () => {
     expect(progressStageLabel('integrity')).toBe('数据完整性');
     for (const id of ['numeric', 'frame', 'duplicate', 'vlm_prep']) expect(progressStageLabel(id)).toBe('CPU 检查');
     expect(progressStageLabel('vlm')).toBe('模型检查');
-    for (const id of ['final', 'report', 'export', 'verify']) expect(progressStageLabel(id)).toBe('生成报告');
+    for (const id of ['final', 'report', 'verify']) expect(progressStageLabel(id)).toBe('生成报告');
     expect(progressStageLabel('brand_new_stage')).toBe('brand_new_stage');
     expect(EPISODE_STAGES).toEqual(['integrity', 'numeric', 'frame', 'duplicate', 'vlm_prep', 'vlm']);
     // the log filter's options: the groups present, each with its stages, then the rest
@@ -109,25 +109,24 @@ describe('stages in groups (design doc 26 §2, D88)', () => {
     const views = groupStages([
       stage('vlm', 'succeeded', 49, 49),
       { ...stage('final', 'succeeded', 1, 1), elapsed_s: 1 },
-      { ...stage('export', 'skipped'), note: '主流程结束时没有可交付的条目，没有导出' },
-      { ...stage('report', 'succeeded', 1, 1), elapsed_s: 6 },
+      { ...stage('report', 'succeeded', 1, 1), elapsed_s: 6, note: '报告已写好' },
       stage('verify', 'skipped'),
     ]);
     expect(views.map((v) => [v.key, v.members.join('+'), v.state])).toEqual([
       ['model', 'vlm', 'succeeded'],
-      ['report', 'final+export+report+verify', 'succeeded'],
+      ['report', 'final+report+verify', 'succeeded'],
     ]);
-    expect(views[1]).toMatchObject({ done: 2, total: 2, percent: 100, elapsed_s: 7, note: '主流程结束时没有可交付的条目，没有导出' });
+    expect(views[1]).toMatchObject({ done: 2, total: 2, percent: 100, elapsed_s: 7, note: '报告已写好' });
   });
 
   it("a group's bar weighs its members the same and only moves forward", () => {
-    // The Daemon lists a stage it has not reached as 0 / 0, and export has no total of its own.
+    // The Daemon lists a stage it has not reached as 0 / 0.
     const at = (final: StageProgress, report: StageProgress) => groupStages([final, report])[0];
     expect(at(stage('final', 'pending'), stage('report', 'pending'))).toMatchObject({ state: 'pending', percent: 0 });
     expect(at(stage('final', 'running', 0, 1), stage('report', 'pending'))).toMatchObject({ state: 'running', percent: 0 });
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'pending'))).toMatchObject({ state: 'running', percent: 50 });
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'succeeded', 1, 1))).toMatchObject({ state: 'succeeded', percent: 100 });
-    const delivery = groupStages([stage('export', 'succeeded', 0, 0), stage('verify', 'running', 120, 300)])[0];
+    const delivery = groupStages([stage('report', 'succeeded', 0, 0), stage('verify', 'running', 120, 300)])[0];
     expect(delivery).toMatchObject({ key: 'report', state: 'running', done: 120, total: 300, percent: 70 });
     // A stage that failed shows how far it got.
     expect(groupStages([stage('frame', 'failed', 3, 20)])[0]).toMatchObject({ key: 'cpu', state: 'failed', percent: 15 });
@@ -144,8 +143,6 @@ describe('stages in groups (design doc 26 §2, D88)', () => {
     ];
     // four rows: (2 + 0.64) / 4
     expect(overallPercent(groupStages(running))).toBe(66);
-    // a funnel run's verdict is left out (sixth round)
-    expect(groupStages([...running, stage('verdict', 'pending')]).map((v) => v.key)).not.toContain('verdict');
     expect(overallPercent(groupStages([stage('numeric', 'succeeded', 5, 5), stage('frame', 'skipped'), stage('vlm', 'pending')]))).toBe(50);
     expect(overallPercent(groupStages(allDoneStages()))).toBe(100);
     expect(overallPercent([])).toBe(0);

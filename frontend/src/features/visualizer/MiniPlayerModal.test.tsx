@@ -8,19 +8,19 @@ import { readPrefs } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
 import { eefOpinionRecord, eefOverlay } from '../../mocks/eef';
-import { FINDINGS_TASK } from '../../mocks/findings';
 import { server } from '../../mocks/server';
+import { MAIN_TASK } from '../../mocks/world';
 import { renderWithProviders } from '../../test/render';
 import { MiniPlayerModal } from './MiniPlayerModal';
 
 async function episode(index: number): Promise<EpisodeView> {
-  return (await unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: FINDINGS_TASK, index } } }))) as EpisodeView;
+  return (await unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: MAIN_TASK, index } } }))) as EpisodeView;
 }
 
 /** The modal with its focus kept, as the report keeps it. */
 function Harness({ view, start = 0 }: { view: EpisodeView; start?: number | null }) {
   const [focus, setFocus] = useState<number | null>(start);
-  return <MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={focus} onFocus={setFocus} onClose={() => undefined} />;
+  return <MiniPlayerModal taskId={MAIN_TASK} view={view} focus={focus} onFocus={setFocus} onClose={() => undefined} />;
 }
 
 /** Bands of findings on the progress bar (annotation events are points of their own). */
@@ -58,7 +58,7 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
   it('opens a camera\'s source file from an icon beside 详细信息 and fills the window; Esc leaves the fill, not the modal (2026-10-10)', async () => {
     const view = await episode(6);
     const closed = vi.fn();
-    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={null} onFocus={() => undefined} onClose={closed} />);
+    renderWithProviders(<MiniPlayerModal taskId={MAIN_TASK} view={view} focus={null} onFocus={() => undefined} onClose={closed} />);
     const player = await screen.findByTestId('vz-player', {}, { timeout: 5000 });
     const open = await within(player).findByTestId('vz-open-source');
     expect(open.tagName).toBe('A');
@@ -83,7 +83,7 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
   it('says plainly when the episode of the task input cannot be read (an old task whose data is gone)', async () => {
     const view = await episode(6);
     server.use(http.get('*/api/v1/tasks/:id/episodes/:index/viz', () => HttpResponse.json({ error: { code: 'not_found', message: 'gone' } }, { status: 404 })));
-    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={0} onFocus={() => undefined} onClose={() => undefined} />);
+    renderWithProviders(<MiniPlayerModal taskId={MAIN_TASK} view={view} focus={0} onFocus={() => undefined} onClose={() => undefined} />);
     expect(await screen.findByText(/这条 episode 读不出来：gone/, {}, { timeout: 5000 })).toBeInTheDocument();
   });
 
@@ -91,7 +91,7 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
     const view = await episode(6);
     const base = view.findings![0];
     const whole = { ...view, findings: [{ ...base, finding: { ...base.finding, frames: undefined, time_s: undefined } }] };
-    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={whole} focus={0} onFocus={() => undefined} onClose={() => undefined} />);
+    renderWithProviders(<MiniPlayerModal taskId={MAIN_TASK} view={whole} focus={0} onFocus={() => undefined} onClose={() => undefined} />);
     const chip = await screen.findByTestId('vz-chip', {}, { timeout: 5000 });
     expect(chip).toHaveTextContent(zh.viz.mini.whole);
     await screen.findByTestId('vz-progress');
@@ -101,7 +101,7 @@ describe('MiniPlayerModal (design doc 18 §4.6)', () => {
   it('says so when the task input cannot be read any more, instead of failing', async () => {
     server.use(http.get('*/api/v1/tasks/:id/viz', () => HttpResponse.json({ error: { code: 'not_found', message: '数据集已经不在了' } }, { status: 404 })));
     const view = await episode(6);
-    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={null} onFocus={() => undefined} onClose={() => undefined} />);
+    renderWithProviders(<MiniPlayerModal taskId={MAIN_TASK} view={view} focus={null} onFocus={() => undefined} onClose={() => undefined} />);
     expect(await screen.findByText(/可视化读不出来：数据集已经不在了/, {}, { timeout: 5000 })).toBeInTheDocument();
     // the full page link is there while the registration is
     if (view.dataset_id) expect(screen.getByRole('link', { name: zh.viz.mini.openFull })).toHaveAttribute('href', `/visualize?dataset=${view.dataset_id}&ep=6`);
@@ -114,7 +114,7 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     window.localStorage.clear();
   });
   const ran = () => {
-    db.extraRecords = new Map([[FINDINGS_TASK, new Map([[6, { eef_video_consistency: eefOpinionRecord(6) }]])]]);
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[6, { eef_video_consistency: eefOpinionRecord(6) }]])]]);
   };
 
   it('a task without the EEF module gets no menu and no complaint', async () => {
@@ -172,7 +172,7 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
   it('opens on a frame the opinion cites, paused there', async () => {
     ran();
     const view = await episode(6);
-    renderWithProviders(<MiniPlayerModal taskId={FINDINGS_TASK} view={view} focus={null} seek={{ camera: 'ext', frame: 30 }} onFocus={() => undefined} onClose={() => undefined} />);
+    renderWithProviders(<MiniPlayerModal taskId={MAIN_TASK} view={view} focus={null} seek={{ camera: 'ext', frame: 30 }} onFocus={() => undefined} onClose={() => undefined} />);
     await screen.findByTestId('vz-eef-ext');
     // the mock shows sample frame 30 at 30 / 15 s
     await waitFor(() => expect(document.querySelector('.vz-stamp')).toHaveTextContent(/^00:02\.0/));
@@ -182,7 +182,7 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     ran();
     const asked: (string | null)[] = [];
     // the marks over the input's first camera, as the mock world puts them
-    const first = (await unwrap(api().GET('/tasks/{id}/viz', { params: { path: { id: FINDINGS_TASK } } }))).cameras[0].key;
+    const first = (await unwrap(api().GET('/tasks/{id}/viz', { params: { path: { id: MAIN_TASK } } }))).cameras[0].key;
     server.use(
       http.get('*/api/v1/tasks/:id/episodes/:index/eef-overlay', ({ request, params }) => {
         const gap = new URL(request.url).searchParams.get('max_gap_ms');

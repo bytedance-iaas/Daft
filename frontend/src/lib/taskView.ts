@@ -62,23 +62,18 @@ export type StageGroupKey = 'integrity' | 'cpu' | 'model' | 'report';
 /**
  * The groups every progress view shows (design doc 26 §2, D88): 数据完整性 alone, then CPU 检查 - every stage that
  * runs on the CPU, the model modules' CPU halves (vlm_prep) included - and 模型检查, the stages of the episodes;
- * then 生成报告, the steps after both blocks (终判、报告、交付核验; a task that ran before the export was retired,
- * D69, also has `export`). The backend's stages stay as they are; the console groups them. A stage of no group
- * (one a new module adds, or a stage of a task made before) is shown on its own.
+ * then 生成报告, the steps after both blocks (终判、报告、交付核验). The backend's stages stay as they are; the
+ * console groups them. A stage of no group (one a new module adds) is shown on its own.
  */
 export const STAGE_GROUPS: readonly { key: StageGroupKey; members: readonly string[]; perEpisode: boolean }[] = [
   { key: 'integrity', members: ['integrity'], perEpisode: true },
   { key: 'cpu', members: ['numeric', 'frame', 'duplicate', 'vlm_prep'], perEpisode: true },
   { key: 'model', members: ['vlm'], perEpisode: true },
-  { key: 'report', members: ['final', 'report', 'export', 'verify'], perEpisode: false },
+  { key: 'report', members: ['final', 'report', 'verify'], perEpisode: false },
 ];
 
 /** The stages each episode goes through (the streaming pipeline's layers), in order. */
 export const EPISODE_STAGES: readonly string[] = STAGE_GROUPS.filter((g) => g.perEpisode).flatMap((g) => g.members);
-
-/** Stages progress views leave out: a funnel run's verdict takes about a second (sixth round). The log
- * filter and the execution plan still list it. */
-export const HIDDEN_STAGES: readonly string[] = ['verdict'];
 
 export function stageGroupOf(stageId: string) {
   return STAGE_GROUPS.find((g) => g.members.includes(stageId));
@@ -186,7 +181,6 @@ export function groupStages(stages: readonly StageProgress[]): StageView[] {
   const out: StageView[] = [];
   const merged = new Set<string>();
   for (const s of stages) {
-    if (HIDDEN_STAGES.includes(s.id)) continue;
     const g = stageGroupOf(s.id);
     if (!g) {
       out.push(single(s));

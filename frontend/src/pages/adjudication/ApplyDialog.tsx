@@ -1,14 +1,11 @@
-import { Alert, Modal, Radio, Space, Spin, Typography } from '@arco-design/web-react';
+import { Alert, Modal, Spin, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { qk } from '../../api/queries';
 import type { AdjudicationCard, AdjudicationPage, DecisionValue } from '../../api/types';
 import { applySummary, decisionTitle, viewCard, type CardView, type LocalDecisions, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
-
-export type RelabelRerun = 'v1' | 'full';
 
 function describe(v: CardView, catalog: ReviewCatalog | undefined): string {
   const text = (line: string, d: DecisionValue) => decisionTitle(catalog, line, d);
@@ -34,9 +31,8 @@ async function unappliedCards(taskId: string): Promise<AdjudicationCard[]> {
 }
 
 /**
- * 执行裁决 (07 §6, D39): how many decisions will be applied, how many relabels are judged again,
- * that relabels a person already judged are not, and — when there are relabels to re-judge — the
- * protocol: v1's two layers by default, or the first run's full flow.
+ * 执行裁决 (07 §6, D39): how many decisions will be applied, how many relabels are judged again (with the new
+ * task text, in the one request, D71), and that relabels a person already judged are not.
  */
 export function ApplyDialog({
   taskId,
@@ -53,12 +49,8 @@ export function ApplyDialog({
   catalog: ReviewCatalog | undefined;
   busy: boolean;
   onCancel: () => void;
-  onOk: (relabelRerun: RelabelRerun) => void;
+  onOk: () => void;
 }) {
-  const [choice, setChoice] = useState<RelabelRerun>('v1');
-  useEffect(() => {
-    if (visible) setChoice('v1');
-  }, [visible]);
   const q = useQuery({
     queryKey: [...qk.adjudicationAll(taskId), 'apply-summary'],
     queryFn: () => unappliedCards(taskId),
@@ -73,7 +65,7 @@ export function ApplyDialog({
       title={zh.adjudication.applyTitle}
       visible={visible}
       onCancel={onCancel}
-      onOk={() => onOk(summary?.rerun ? choice : 'v1')}
+      onOk={onOk}
       okButtonProps={{ disabled: !summary }}
       confirmLoading={busy}
       okText={zh.adjudication.applyOk}
@@ -94,29 +86,6 @@ export function ApplyDialog({
               <li key={v.ep}>{describe(v, catalog)}</li>
             ))}
           </ul>
-          {summary.rerun ? (
-            <div style={{ margin: '8px 0 12px' }} data-testid="relabel-rerun">
-              <b>{zh.adjudication.rerunChoice}</b>
-              <Radio.Group direction="vertical" value={choice} onChange={(v: RelabelRerun) => setChoice(v)} aria-label={zh.adjudication.rerunChoice} style={{ display: 'block', marginTop: 6 }}>
-                <Radio value="v1">
-                  <Space direction="vertical" size={0}>
-                    <span>{zh.adjudication.rerunV1}</span>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {zh.adjudication.rerunV1Desc}
-                    </span>
-                  </Space>
-                </Radio>
-                <Radio value="full">
-                  <Space direction="vertical" size={0}>
-                    <span>{zh.adjudication.rerunFull}</span>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {zh.adjudication.rerunFullDesc}
-                    </span>
-                  </Space>
-                </Radio>
-              </Radio.Group>
-            </div>
-          ) : null}
           <Typography.Paragraph type="secondary">{zh.adjudication.applyNote}</Typography.Paragraph>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             {zh.adjudication.applyChecks}

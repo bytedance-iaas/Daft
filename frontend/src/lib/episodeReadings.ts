@@ -211,18 +211,15 @@ export interface TrailStep {
 }
 
 /**
- * The judgement trail (v1's 判定链): scoring → per-camera review → the label guard → the evidence
- * arbitration → the conclusion, each with what it said; the layers the episode never reached read
- * 未触发.
+ * The judgement trail (判定链): the one request's verdict for the episode → every camera's own answer from the same
+ * request → the conclusion (video-task/2, D71, D73); a step the episode never reached reads 未触发.
  */
 export function taskTrail(d: Details, verdict: string): TrailStep[] {
   const T = E().task;
   const steps: TrailStep[] = [];
-  const init = str(d.init_verdict) ?? str(d.verdict);
+  const init = str(d.init_verdict);
   if (init) {
-    let t = T.init[init] ?? init;
-    if (init === 'success' && typeof d.strong_score === 'boolean') t += d.strong_score ? T.strong : T.weak;
-    steps.push({ layer: T.layers.probe, text: t, reached: true, tone: init === 'success' || init === 'recovery' ? 'good' : init === 'failure' ? 'bad' : 'warn' });
+    steps.push({ layer: T.layers.probe, text: T.init[init] ?? init, reached: true, tone: init === 'success' ? 'good' : init === 'failure' ? 'bad' : 'warn' });
   } else {
     steps.push({ layer: T.layers.probe, text: T.notReached, reached: false });
   }
@@ -235,26 +232,6 @@ export function taskTrail(d: Details, verdict: string): TrailStep[] {
     steps.push({ layer: T.layers.endstate, text, reached: true, tone: tally === 'yes' ? 'good' : tally === 'no' ? 'bad' : 'warn' });
   } else {
     steps.push({ layer: T.layers.endstate, text: T.notReached, reached: false });
-  }
-  const guard = d.label_check && typeof d.label_check === 'object' ? (d.label_check as Details) : null;
-  if (guard) {
-    const outcome = String(guard.outcome ?? '');
-    const key = outcome.startsWith('error') ? 'error' : outcome;
-    steps.push({ layer: T.layers.label_guard, text: T.guard[key] ?? outcome, reached: true, tone: key === 'different' || key === 'error' ? 'warn' : undefined });
-  } else {
-    steps.push({ layer: T.layers.label_guard, text: T.notReached, reached: false });
-  }
-  const arb = d.arbitration && typeof d.arbitration === 'object' ? (d.arbitration as Details) : null;
-  const videoArb = d.video_arbitration && typeof d.video_arbitration === 'object' ? d.video_arbitration as Details : null;
-  if (videoArb) {
-    const final = str(videoArb.verdict) ?? 'uncertain';
-    steps.push({ layer: T.layers.arbitration, text: str(videoArb.reason) ?? str(videoArb.error) ?? T.init[final] ?? final,
-      reached: true, tone: final === 'success' ? 'good' : final === 'failure' ? 'bad' : 'warn' });
-  } else if (arb) {
-    const final = String(arb.final ?? arb.consensus ?? 'abstain');
-    steps.push({ layer: T.layers.arbitration, text: T.arbitration(num(arb.n_effective) ?? 0, T.consensus[final] ?? final), reached: true, tone: final === 'yes' ? 'good' : final === 'no' ? 'bad' : 'warn' });
-  } else {
-    steps.push({ layer: T.layers.arbitration, text: T.notReached, reached: false });
   }
   const tone: Record<string, TrailStep['tone']> = { pass: 'good', fail: 'bad', abstain: 'warn', error: 'warn' };
   steps.push({ layer: T.layers.final, text: T.final[verdict] ?? verdict, reached: true, tone: tone[verdict] });

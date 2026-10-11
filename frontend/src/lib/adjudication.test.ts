@@ -2,15 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { AdjudicationCard, AdjudicationQuestion, Decision, ReviewLine } from '../api/types';
 import { answerOn, applySummary, clicked, countsAsPending, decisionKey, decisionTitle, keepCard, lineDecisions, lineTitle, offersDiscard, repeats, statusQuery, viewCard } from './adjudication';
 
-/** The one question of a card whose task text the kill guard suspects (LABEL-4 on the verdict). */
-const conflictQ: AdjudicationQuestion = {
+/** The one question of a card whose task text a person rewrites in the answer. */
+const relabelQ: AdjudicationQuestion = {
   line: 'task_verdict',
   source_module: 'task_success',
-  reason: '标注与画面对不上；证据不足，弃权',
+  reason: '机位之间分歧，转人工',
   annotation: 'Put the orange thing in the can',
-  caption: 'pour rice into the green bowl',
-  suggestion: 'pour rice into the green bowl',
-  priority: '重点',
   latest_decision: null,
 };
 const verdictQ: AdjudicationQuestion = { line: 'task_verdict', source_module: 'task_success', reason: '证据不足，弃权', annotation: 'Put the orange thing in the can', latest_decision: null };
@@ -53,12 +50,12 @@ describe('adjudication rules (06 §5.1)', () => {
 
   it('rule 4: a rewritten task text is judged again unless the same answer concluded it', () => {
     const rewritten = { [decisionKey(29, 'task_verdict')]: answer('unsure', 'pour rice into the green bowl') };
-    const v = viewCard(card([conflictQ]), rewritten);
+    const v = viewCard(card([relabelQ]), rewritten);
     expect(v.newLabel).toBe('pour rice into the green bowl');
     expect(v.rerunsModel).toBe(true);
     expect(v.status).toBe('unsure');                      // still in the queue: the model judges it
     expect(v.unapplied).toEqual([{ line: 'task_verdict', decision: 'unsure', new_label: 'pour rice into the green bowl' }]);
-    const w = viewCard(card([conflictQ]), { [decisionKey(29, 'task_verdict')]: answer('failure', 'pour rice') });
+    const w = viewCard(card([relabelQ]), { [decisionKey(29, 'task_verdict')]: answer('failure', 'pour rice') });
     expect([w.newLabel, w.rerunsModel, w.humanVerdict, w.status]).toEqual(['pour rice', false, 'failure', 'decided']);
   });
 
@@ -74,14 +71,14 @@ describe('adjudication rules (06 §5.1)', () => {
     expect(v.unapplied).toEqual([]);
     expect(v.sources).toEqual(['task_success']);
     // the text in force comes from the answer the server sent
-    const w = viewCard(card([{ ...conflictQ, latest_decision: decided('task_verdict', 'unsure', false, 'pour rice') }]));
+    const w = viewCard(card([{ ...relabelQ, latest_decision: decided('task_verdict', 'unsure', false, 'pour rice') }]));
     expect([w.newLabel, w.rerunsModel]).toEqual(['pour rice', true]);
   });
 
   it('summarises what 执行裁决 applies and which rewritten texts are judged again (D39)', () => {
     const rewritten = answer('unsure', 'pour rice');
-    const a = viewCard({ episode_index: 1, status: 'unsure', questions: [conflictQ] }, { [decisionKey(1, 'task_verdict')]: rewritten });
-    const b = viewCard({ episode_index: 2, status: 'decided', questions: [conflictQ] }, { [decisionKey(2, 'task_verdict')]: answer('success', 'pour rice') });
+    const a = viewCard({ episode_index: 1, status: 'unsure', questions: [relabelQ] }, { [decisionKey(1, 'task_verdict')]: rewritten });
+    const b = viewCard({ episode_index: 2, status: 'decided', questions: [relabelQ] }, { [decisionKey(2, 'task_verdict')]: answer('success', 'pour rice') });
     const c = viewCard({ episode_index: 3, status: 'pending', questions: [verdictQ] }, { [decisionKey(3, 'task_verdict')]: answer('unsure') });
     const d = viewCard({ episode_index: 4, status: 'decided', questions: [verdictQ] }, { [decisionKey(4, 'task_verdict')]: answer('discard') });
     const s = applySummary([a, b, c, d]);
@@ -111,7 +108,7 @@ describe('adjudication rules (06 §5.1)', () => {
   });
 
   it('a click that only repeats the answer in force is not sent (the rewritten text included)', () => {
-    const v = viewCard(card([{ ...conflictQ, latest_decision: decided('task_verdict', 'failure', false, 'pour rice') }]), {});
+    const v = viewCard(card([{ ...relabelQ, latest_decision: decided('task_verdict', 'failure', false, 'pour rice') }]), {});
     expect(answerOn(v, 'task_verdict')?.decision).toBe('failure');
     expect(answerOn(v, 'eef_check')).toBeNull();
     const stored = { decision: 'failure', new_label: 'pour rice', applied: false };

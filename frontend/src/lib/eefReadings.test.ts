@@ -1,15 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { zh } from '../locales/zh';
-import { eefCalibrationSuspects, eefConclusion, eefCpuEvidence, eefCpuRows, eefMerged, eefStateMotion, eefWindowRows } from './eefReadings';
+import { eefCalibrationSuspects, eefCpuEvidence, eefCpuRows, eefMerged, eefStateMotion, eefWindowRows } from './eefReadings';
 
 const details = {
   reason: '「位置」（相机 wrist）CPU 与模型都认为不一致（模型反对 2、支持 0）',
-  decision: {
-    outcome: 'reject',
-    confirmed: [{ code: 'confirmed', text: '「位置」（相机 wrist）CPU 与模型都认为不一致（模型反对 2、支持 0）', subitem: 'position_2d', camera_id: 'wrist' }],
-    human: [{ code: 'model_cannot_see', text: '「时间对齐」（相机 wrist）CPU 判为可疑，模型看不了这一项', subitem: 'temporal_alignment', camera_id: 'wrist' }],
-    unchecked: [{ subitem: 'orientation_2d', camera_id: 'wrist', status: 'unknown' }, { subitem: 'state_motion', status: 'unsupported' }],
-  },
   cameras: { wrist: { mount: 'wrist', subitems: { position_2d: { status: 'suspect' }, temporal_alignment: { status: 'suspect' }, orientation_2d: { status: 'unknown' } } } },
   state_motion: { status: 'unsupported' },
   review: {
@@ -36,15 +30,6 @@ const details = {
 };
 
 describe('the EEF record for a person (F5.11, F5.12)', () => {
-  it('reads the conclusion, the reasons and what was not checked', () => {
-    const c = eefConclusion(details);
-    expect(c.outcome).toBe('reject');
-    expect(c.confirmed.map((x) => [x.code, x.camera])).toEqual([['confirmed', 'wrist']]);
-    expect(c.human[0].text).toContain('模型看不了这一项');
-    expect(c.unchecked).toEqual(['朝向（相机 wrist）：无法评估', '状态运动：不支持']);
-    expect(eefConclusion({}).human).toEqual([]);
-  });
-
   it('reads the CPU per camera and marks the suspect sub-items', () => {
     const [row] = eefCpuRows(details);
     expect(row.camera).toBe('wrist');
@@ -213,7 +198,7 @@ describe('eefDatasetRecord (design doc 12 §8.7, D-E16)', () => {
 
 describe('the opinion with its confidence (registry 5.0, design doc 25 §7)', () => {
   it('reads the episode and every cell, worst first, each side with its verdict and p', async () => {
-    const { eefConflictRecord, eefRecord, eefUnderivedRecord } = await import('../mocks/eef');
+    const { eefConflictRecord, eefUnderivedRecord } = await import('../mocks/eef');
     const m = eefMerged(eefConflictRecord(3).details as Record<string, unknown>)!;
     expect([m.label, m.p, m.flags, m.conflicts, m.uncalibrated]).toEqual(['inconsistent', 0.95, ['conflict'], 1, true]);
     expect(m.cells.map((c) => [c.subitem, c.p])).toEqual([['position_2d', 0.95], ['temporal_alignment', 0.05], ['orientation_2d', null]]);
@@ -221,8 +206,8 @@ describe('the opinion with its confidence (registry 5.0, design doc 25 §7)', ()
     expect(pos.sources.map((x) => [x.channel, x.verdict, x.p])).toEqual([['cpu', 'issue', 0.95], ['vlm_review', 'ok', 0.1]]);
     expect(pos.timeS).toEqual([8, 10]);
     expect(m.cells[1].missing).toBe('model_cannot_see');
-    // a record made before 5.0 has none; an episode nothing could be said about has no p and no cell
-    expect(eefMerged(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
+    // details without the opinion have none; an episode nothing could be said about has no p and no cell
+    expect(eefMerged({})).toBeNull();
     const none = eefMerged(eefUnderivedRecord(3).details as Record<string, unknown>)!;
     expect([none.label, none.p, none.cells]).toEqual(['cannot_tell', null, []]);
   });

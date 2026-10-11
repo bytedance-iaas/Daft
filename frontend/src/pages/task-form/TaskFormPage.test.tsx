@@ -239,8 +239,6 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(eef);
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
-    // the record mapping is no longer a parameter: the dataset declaration says the records (design doc 25 §3)
-    expect(within(s2()).queryByTestId('draft-record_mapping')).toBeNull();
     // the gripper reference is optional (registry 1.12, D-E15); trajectory.json is optional only where the platform
     // can compute the trajectory (design doc 24) - not on this so101 dataset, so it is asked for and required
     expect(requiredFieldLabels(s2())).toContain('trajectory.json');
@@ -316,9 +314,6 @@ describe('新建任务 · 两屏与提交', () => {
     expect(done).toHaveTextContent('template.json');
     expect(done).toHaveTextContent('3 个模板条目');
     expect(done).toHaveTextContent('相机 front、wrist');
-    // retired (registry 5.1): the declaration says the records and a handheld gripper's calibration
-    expect(within(s2()).queryByLabelText('数据集记录映射', { selector: 'input[type=file]' })).toBeNull();
-    expect(within(s2()).queryByLabelText('夹爪标定', { selector: 'input[type=file]' })).toBeNull();
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: { id: string; params?: Record<string, unknown> }[] };

@@ -2,7 +2,7 @@
 // Daemon (D17); nothing here is kept beyond the query cache.
 import { useQuery, type Query, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from './client';
-import type { ModuleRegistry, ModuleSpec, Subtask, Task, TaskListItem, TaskListPage } from './types';
+import type { ModuleRegistry, ModuleSpec, ReportResponse, Subtask, Task, TaskListItem, TaskListPage } from './types';
 
 export const qk = {
   modules: ['modules'] as const,
@@ -64,6 +64,13 @@ export function useTask(id: string | undefined, refetchInterval?: number | false
     enabled: Boolean(id),
     refetchInterval,
   });
+}
+
+/** A result revision's report (no rev: the current one), as the contract types it: openapi-fetch reads the
+ * findings' [first, last] pairs as plain arrays. */
+export async function fetchReport(id: string, rev?: number): Promise<ReportResponse> {
+  const query = rev === undefined ? {} : { query: { rev } };
+  return (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, ...query } }))) as ReportResponse;
 }
 
 /**

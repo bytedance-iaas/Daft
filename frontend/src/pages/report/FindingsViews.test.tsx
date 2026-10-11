@@ -1,17 +1,15 @@
-// The findings views of F12.5 (design doc 17 §5) on the mock world's task of the policy verdicts: the main
-// task's story run as the two blocks report it (src/mocks/findings.ts). The main task is the task made before
-// (C2 1.0, D59): ReportPage.test.tsx and TaskDetailPage.test.tsx keep testing that the console opens it as it was.
+// The findings views of F12.5 (design doc 17 §5) on the mock world's main task: its story run as the two blocks
+// report it (src/mocks/world.ts).
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { FINDINGS_TASK } from '../../mocks/findings';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
 
-const REPORT = `/tasks/${FINDINGS_TASK}/report`;
+const REPORT = `/tasks/${MAIN_TASK}/report`;
 
-describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', () => {
+describe('质检报告: the findings (design doc 17 §5.2)', () => {
   it('the overview counts the rejects by taxonomy item and names the policy', async () => {
     renderApp(REPORT);
     await screen.findByTestId('report-equation');
@@ -54,7 +52,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(await within(ts).findByText('模型检查')).toBeInTheDocument();
     const stats = within(ts).getByTestId('findings-task_success');
     expect(within(stats).getByTestId('level-count-task_success-blocking')).toHaveTextContent('5');
-    expect(within(stats).getByTestId('level-count-task_success-review')).toHaveTextContent('10');   // 弃权 and the suspected label conflicts
+    expect(within(stats).getByTestId('level-count-task_success-review')).toHaveTextContent('10');   // the episodes it could not decide
     const items = within(within(stats).getByTestId('chart-items-task_success')).getByTestId('chart');
     expect(items).toHaveAttribute('aria-label', expect.stringMatching(/检出项：.*判废.*5 条/));
     // the module's own view is still there (06 §6.2's keys)
@@ -74,7 +72,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
   });
 });
 
-describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)', () => {
+describe('Episode 明细: the findings (design doc 17 §5.4)', () => {
   it('lists every finding by level, with its module, code, item and moment; the reasons left are the other ones', async () => {
     renderApp(`${REPORT}?ep=7#episodes`);
     const summary = await screen.findByTestId('episode-summary');
@@ -91,12 +89,12 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     await waitFor(() => expect(blocking).toHaveTextContent('任务成败判定'));   // module names are the registry's
     expect(blocking).toHaveTextContent('TASK-4');
     expect(within(blocking).getByText('可复议')).toBeInTheDocument();
-    expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/adjudication?tab=appeals&source=task_success`);
+    expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`);
     // the moment opens the mini player on that finding (design doc 18 §4.6): its chip is the focused one
     const seen = recordRequests();
     await user.click(within(blocking).getByTestId('finding-seek'));
     const mini = await screen.findByTestId('vz-mini');
-    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/6/viz`)).toBe(true));
+    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${MAIN_TASK}/episodes/6/viz`)).toBe(true));
     const focused = await within(mini).findByText((_, el) => !!el?.classList.contains('chip') && el.classList.contains('on'));
     expect(focused).toHaveTextContent('TASK-4');
     await user.click(within(mini).getAllByRole('button', { name: '关闭' }).pop()!);
@@ -123,19 +121,11 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     await pick(user, '检测项', /^TASK-4/);
     await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('item') === 'TASK-4' && r.query.get('level') === 'blocking')).toBe(true));
   });
-
-  it('a task made before has no finding filters and keeps its 1.0 blocks (D59)', async () => {
-    renderApp(`/tasks/${MAIN_TASK}/report?ep=6#episodes`);
-    await screen.findByTestId('episode-summary');
-    expect(screen.queryByTestId('filter-level')).toBeNull();
-    expect(screen.queryByTestId('episode-findings')).toBeNull();
-    expect(screen.getByTestId('episode-reasons')).toBeInTheDocument();
-  });
 });
 
-describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
+describe('任务详情 (design doc 17 §5.3)', () => {
   it('one 详细进度 beside the tokens: CPU 检查 and 模型检查 in one chart, 生成报告 below (design doc 26 §2)', async () => {
-    renderApp(`/tasks/${FINDINGS_TASK}`);
+    renderApp(`/tasks/${MAIN_TASK}`);
     const stages = await screen.findByTestId('stages');
     // the episodes' stages in their groups in the one chart: a card each and a row of the run timeline
     const chart = within(stages).getByTestId('pipeline-activity');
@@ -157,12 +147,12 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
 
   it('an episode of Episode 流水线 opens the mini player with its findings as chips, as Episode 明细 does (2026-10-04)', async () => {
     const seen = recordRequests();
-    const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
+    const { user } = renderApp(`/tasks/${MAIN_TASK}`);
     const card = await screen.findByTestId('pipeline-episodes');
     // ep 44: a duplicate of ep 43, reported only (D87) (the newest 15 rows are eps 35-49)
     await user.click(await within(card).findByRole('button', { name: 'ep 44' }));
     const mini = await screen.findByTestId('vz-mini');
-    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/44`)).toBe(true));
+    await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${MAIN_TASK}/episodes/44`)).toBe(true));
     const chips = await within(mini).findAllByTestId('vz-chip');
     expect(chips.length).toBeGreaterThan(0);
     // no line of instructions above the player
@@ -170,30 +160,24 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
   });
 
   it('模块 is one row per module with what it assessed and found; unfolded, its findings charts; 去报告 opens its section', async () => {
-    const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
+    const { user } = renderApp(`/tasks/${MAIN_TASK}`);
     const row = await screen.findByTestId('module-stat-task_success');
     await within(row).findByTestId('module-assessed-task_success');
     expect(within(row).getByTestId('module-assessed-task_success')).toHaveTextContent('评估 48 / 选中');
     expect(row).toHaveTextContent('检出 15 条');
-    expect(within(row).getByTestId('module-report-task_success')).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/report?section=task_success`);
+    expect(within(row).getByTestId('module-report-task_success')).toHaveAttribute('href', `/tasks/${MAIN_TASK}/report?section=task_success`);
     await user.click(await within(row).findByRole('button', { name: /展开：任务成败判定/ }));
     expect(await within(row).findByTestId('findings-task_success')).toBeInTheDocument();
     expect(screen.getByTestId('module-stat-kinematic_limits')).toHaveTextContent('未运行');
     expect(screen.queryByTestId('modules-table')).toBeNull();
   });
-
-  it('a task made before keeps its module table (D59)', async () => {
-    renderApp(`/tasks/${MAIN_TASK}`);
-    expect(await screen.findByTestId('modules-table')).toBeInTheDocument();
-    expect(screen.queryByTestId('block-cpu')).toBeNull();
-  });
 });
 
-describe('人工裁决 of a task of the policy verdicts', () => {
+describe('人工裁决: the findings asked about', () => {
   it('each question names the findings it asks about by code and item (C4 2.3.0)', async () => {
-    renderApp(`/tasks/${FINDINGS_TASK}/adjudication?status=all`);
+    renderApp(`/tasks/${MAIN_TASK}/adjudication?status=all`);
     const codes = await screen.findAllByTestId('question-codes');
     expect(codes.map((c) => c.textContent).join(' ')).toMatch(/TASK-4/);
-    expect(codes.map((c) => c.textContent).join(' ')).toMatch(/LABEL-4/);
+    expect(codes.map((c) => c.textContent).join(' ')).not.toMatch(/LABEL-4/);     // no label guard any more (D73)
   });
 });

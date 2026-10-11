@@ -14,10 +14,4 @@ describe('report integrity of an mcap / lance run (D44)', () => {
     );
     expect(containerValue({ format: 'lance', findings: [] })).toBe('lance');
   });
-
-  it('keeps the delivery line of a report written before the export was retired (D69)', () => {
-    expect(containerValue({ format: 'mcap', delivery: 'mcap_curated/（12 个 .mcap）', findings: [] })).toBe(
-      'mcap · 交付：mcap_curated/（12 个 .mcap）',
-    );
-  });
 });

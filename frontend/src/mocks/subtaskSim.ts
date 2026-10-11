@@ -16,7 +16,7 @@ function plan(t: Task, s: Subtask): { id: string; total: number }[] {
       const left = t.progress.stages.filter((x) => x.state !== 'succeeded' && x.state !== 'skipped' && x.state !== 'completed_with_errors');
       const ids = left.length ? left.map((x) => x.id) : ['final', 'report', 'verify'];
       const total = t.modules.find((m) => m.selected)?.episodes_total || t.summary?.total || 1;
-      return ids.map((id) => ({ id, total: ['final', 'report', 'verify', 'verdict'].includes(id) ? 1 : total }));
+      return ids.map((id) => ({ id, total: ['final', 'report', 'verify'].includes(id) ? 1 : total }));
     }
     default:
       return [

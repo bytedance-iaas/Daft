@@ -1,6 +1,6 @@
 // Reading report.json's module summaries (06 §6.2, F6.2) for the section views: chart-ready
-// series, per-camera rows, the verdict counts - leniently, because a summary is a free object
-// (C2) and reports written before the chart-ready keys have only some of them.
+// series, per-camera rows, the verdict counts - leniently, because a module's own summary keys are
+// free (C2).
 import { zh } from '../locales/zh';
 
 export interface Item {
@@ -67,7 +67,7 @@ export function verdictItems(c: Counts): Item[] {
   return (['pass', 'fail', 'abstain', 'scored', 'error'] as const).filter((k) => c[k] > 0).map((k) => ({ name: zh.report.verdict[k] ?? k, value: c[k] }));
 }
 
-/** An array of objects (per-camera rows, the skill tree...), or null. */
+/** An array of objects (per-camera rows...), or null. */
 export function rowsOf<T extends Record<string, unknown>>(v: unknown): T[] | null {
   if (!Array.isArray(v) || !v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) return null;
   return v as T[];
@@ -86,20 +86,10 @@ export function signed(v: number | null | undefined, digits = 2): string {
   return v > 0 ? `+${s}` : v < 0 ? `−${s.slice(1)}` : s;
 }
 
-/** Does a summary carry any of `keys` (a report written after the chart-ready aggregates)? */
-export function hasAny(s: Summary, keys: readonly string[]): boolean {
-  return keys.some((k) => k in s);
-}
-
-/** The EEF module's opinion only (no gripper reference, design doc 12 §10.5): no verdict counts, nobody asked. */
-export function eefOpinionOnly(s: Summary): boolean {
-  return num(s.opinion_episodes) !== null && !['judged_pass', 'judged_reject', 'to_human'].some((k) => num(s[k]));
-}
-
 /**
- * One line for tables (本次质检范围, the task detail's 判决摘要): the essence of a section,
- * read from the keys it has - «错位判废 0 条，已标注 3 条», «6 个技能族，标注分歧 5 条»,
- * «重复 1 组、涉及 2 条», «平均分 0.84», «判废 5 条，转人工 6 条，出错 2 条». Null without counts.
+ * One line for tables (本次质检范围): the essence of a section, read from the keys it has -
+ * «错位判废 0 条，已标注 3 条», «重复 1 组、涉及 2 条», «不一致 3 条，可能不一致 2 条，冲突 1 条»,
+ * «平均分 0.84», «判废 5 条，转人工 6 条，出错 2 条». Null without counts.
  */
 export function sectionDigest(s: Summary): string | null {
   const c = countsOf(s);
@@ -110,21 +100,12 @@ export function sectionDigest(s: Summary): string | null {
   if (verdicts) {
     const v = Object.fromEntries(verdicts.map((i) => [i.name, i.value]));
     parts.push(Z.syncVerdicts(v.misaligned ?? 0, (v.annotated ?? 0) + (v.suspect ?? 0)));
-  } else if (num(s.families) !== null) {
-    parts.push(Z.families(num(s.families)!));
-    if (num(s.label_disagreements) !== null) parts.push(Z.disagreements(num(s.label_disagreements)!));
   } else if (num(s.groups) !== null && num(s.duplicated) !== null) {
     parts.push(Z.duplicated(num(s.groups)!, num(s.duplicated)!));
   } else if (Array.isArray(s.labels)) {
-    // the EEF module from registry 5.0 on (design doc 25 §7): opinions with a confidence, a conflict the only question
+    // the EEF module (design doc 25 §7): opinions with a confidence, a conflict the only question
     const by = Object.fromEntries((s.labels as { name: string; count: number }[]).map((x) => [x.name, x.count]));
     parts.push(Z.eefLabels(by.inconsistent ?? 0, by.possibly_inconsistent ?? 0, num(s.conflict_episodes) ?? 0));
-  } else if (eefOpinionOnly(s)) {
-    // no candidates, and it asks nobody: an episode it could not look at (no trajectory, design doc 22 §5.4) is no
-    // 转人工 even though the 1.0 counts call it an abstention
-    parts.push(Z.opinion(num(s.opinion_episodes)!));
-    if (num(s.opinion_flagged)) parts.push(Z.opinionFlagged(num(s.opinion_flagged)!));
-    if (num(s.opinion_not_assessable)) parts.push(Z.opinionUnassessed(num(s.opinion_not_assessable)!));
   } else if (num(s.candidates) !== null) {
     parts.push(Z.candidates(num(s.candidates)!));
   } else if (mean !== null) {

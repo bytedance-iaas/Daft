@@ -19,7 +19,6 @@ import {
   so101Timeline,
   taskText,
 } from './world';
-import { FINDINGS_TASK, findingsTask, withCodes } from './findings';
 import { seedVizMappings } from './vizWorld';
 
 export interface StoredPreflight {
@@ -95,7 +94,7 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.credentials = seedCredentials(now);
   db.backends = seedBackends(now);
   db.datasets = seedDatasets(now);
-  db.tasks = [...seedTasks(now), findingsTask(now), seedDeletedTask(now)];
+  db.tasks = [...seedTasks(now), seedDeletedTask(now)];
   db.subtasks = new Map([
     [MAIN_TASK, mainSubtasks(now)],
     [SO101_TASK, so101Subtasks(now)],
@@ -201,7 +200,6 @@ function questionsFor(taskId: string, tab: 'review' | 'appeals'): Map<number, Ad
 
 function baseQuestionsFor(taskId: string, tab: 'review' | 'appeals'): Map<number, AdjudicationCard['questions']> {
   if (taskId === MAIN_TASK) return tab === 'review' ? baseQuestions() : appealQuestions();
-  if (taskId === FINDINGS_TASK) return withCodes(tab === 'review' ? baseQuestions() : appealQuestions());
   const t = findTask(taskId);
   const out = new Map<number, AdjudicationCard['questions']>();
   if (!t || tab === 'appeals') return out;
@@ -211,12 +209,11 @@ function baseQuestionsFor(taskId: string, tab: 'review' | 'appeals'): Map<number
       {
         line: 'task_verdict',
         source_module: 'task_success',
-        reason: '证据不足，弃权：打分层拿不准 → 复核分歧 → 转人工',
+        reason: '模型拿不准这一条做没做成，转人工',
         annotation: taskText(ep).text,
-        caption: null,
-        suggestion: null,
-        priority: null,
         latest_decision: null,
+        codes: ['uncertain'],
+        items: ['TASK-4'],
       },
     ]);
   }

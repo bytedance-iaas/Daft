@@ -1,19 +1,18 @@
-import { Alert, Badge, Button, Card, Empty, Radio, Select, Space, Spin, Tag, Tooltip, Typography } from '@arco-design/web-react';
+import { Alert, Badge, Button, Card, Empty, Radio, Select, Space, Spin, Tag, Typography } from '@arco-design/web-react';
 import { IconLeft, IconRight } from '@arco-design/web-react/icon';
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { EpisodeView, ModuleRegistry, Report, ReportV2, TaskEpisode, TaskEpisodePage } from '../../api/types';
+import type { EpisodeView, ModuleRegistry, Report, TaskEpisode, TaskEpisodePage } from '../../api/types';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import { MiniPlayerOpen, type MiniSeek } from '../../features/visualizer/miniPlayer';
 import { reasonLine, recordError } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { BlockError, EPISODE_BLOCKS, GenericBlock, blockTitleExtra } from './episodeBlocks';
-import { asLegacyRecord, isRecordV2 } from '../../lib/records';
+import { asLegacyRecord } from '../../lib/records';
 import { isAppealable, reviewLinesOf } from '../../lib/registry';
 import { LEVELS, groupByLevel, itemLabel, levelTitle, moduleRole, unassessableTitle, type Level } from '../../lib/findings';
 import { LevelTag } from '../../features/findings/FindingsView';
@@ -22,14 +21,13 @@ import { EpisodeFindings, questionTargets } from './EpisodeFindings';
 export type EpisodeFilter = 'all' | 'passed' | 'reject' | 'held' | 'review';
 export const EPISODE_FILTERS: EpisodeFilter[] = ['all', 'passed', 'reject', 'held', 'review'];
 export const LIST_COLOR: Record<string, string> = { passed: 'green', reject: 'red', held: 'orange' };
-const VERDICT_COLOR: Record<string, string> = { pass: 'green', fail: 'red', abstain: 'orange', scored: 'arcoblue', error: 'orangered' };
 /** The order behind 上一条 / 下一条 is read this many episodes a page. */
 const ORDER_PAGE = 500;
 const SEARCH_LIMIT = 50;
 
 const E = () => zh.episodeTab;
 
-/** 按级别 / 按检测项 (design doc 17 §5.4): only on a findings revision (C4 2.3.0). */
+/** 按级别 / 按检测项 (design doc 17 §5.4). */
 export interface FindingFilter {
   level: Level | null;
   item: string | null;
@@ -81,7 +79,7 @@ function EpisodePicker({
   onFilter,
   findingFilter,
   onFindingFilter,
-  v2,
+  report,
   onSelect,
 }: {
   taskId: string;
@@ -91,8 +89,8 @@ function EpisodePicker({
   onFilter: (f: EpisodeFilter) => void;
   findingFilter: FindingFilter;
   onFindingFilter: (f: FindingFilter) => void;
-  /** the revision's report when it is one of the policy verdicts: its items are the 检测项 filter's */
-  v2: ReportV2 | null;
+  /** the revision's report: its items are the 检测项 filter's */
+  report: Report | undefined;
   onSelect: (ep: number) => void;
 }) {
   const reg = useModules();
@@ -158,30 +156,26 @@ function EpisodePicker({
             </Radio>
           ))}
         </Radio.Group>
-        {v2 ? (
-          <>
-            <Select
-              style={{ width: 150 }}
-              aria-label={zh.findings.filterLevel}
-              value={findingFilter.level ?? ''}
-              onChange={(x: string) => onFindingFilter({ ...findingFilter, level: (x || null) as Level | null })}
-              options={[{ label: zh.findings.anyLevel, value: '' }, ...LEVELS.map((lv) => ({ label: levelTitle(reg.data, lv), value: lv }))]}
-              data-testid="filter-level"
-            />
-            <Select
-              style={{ width: 240 }}
-              showSearch
-              aria-label={zh.findings.filterItem}
-              value={findingFilter.item ?? ''}
-              onChange={(x: string) => onFindingFilter({ ...findingFilter, item: x || null })}
-              options={[
-                { label: zh.findings.anyItem, value: '' },
-                ...v2.overview.findings_by_item.filter((f) => f.item && f.episodes).map((f) => ({ label: `${itemLabel(reg.data, f.item)}（${f.episodes}）`, value: f.item as string })),
-              ]}
-              data-testid="filter-item"
-            />
-          </>
-        ) : null}
+        <Select
+          style={{ width: 150 }}
+          aria-label={zh.findings.filterLevel}
+          value={findingFilter.level ?? ''}
+          onChange={(x: string) => onFindingFilter({ ...findingFilter, level: (x || null) as Level | null })}
+          options={[{ label: zh.findings.anyLevel, value: '' }, ...LEVELS.map((lv) => ({ label: levelTitle(reg.data, lv), value: lv }))]}
+          data-testid="filter-level"
+        />
+        <Select
+          style={{ width: 240 }}
+          showSearch
+          aria-label={zh.findings.filterItem}
+          value={findingFilter.item ?? ''}
+          onChange={(x: string) => onFindingFilter({ ...findingFilter, item: x || null })}
+          options={[
+            { label: zh.findings.anyItem, value: '' },
+            ...(report?.overview.findings_by_item ?? []).filter((f) => f.item && f.episodes).map((f) => ({ label: `${itemLabel(reg.data, f.item)}（${f.episodes}）`, value: f.item as string })),
+          ]}
+          data-testid="filter-item"
+        />
         <Space size={8}>
           <Button icon={<IconLeft />} disabled={!prev} onClick={() => prev && onSelect(prev.episode_index)}>
             {E().prev}
@@ -228,20 +222,10 @@ function SummaryCard({
   onOpenAll: () => void;
 }) {
   const reg = useModules();
-  // A findings revision (C2 2.0, design doc 17 §5.4): every finding by level, the questions on them; the reasons
-  // left are the ones no finding stands for (an execution error, a discard, a relabel waiting to be judged).
-  const findings = view.findings;
-  const reasons = findings ? (view.reasons ?? []).filter((r) => r.kind === 'execution_error' || !r.code) : view.reasons;
-  // one 去裁决 per page the questions are on (module × tab)
-  const seen = new Set<string>();
-  const target = (r: { module: string; kind?: string }) => {
-    if (!askable(reg.data, r)) return null;
-    const appeal = r.kind === 'reject_appeal';
-    const key = `${appeal ? 'appeals' : 'review'}|${r.module}`;
-    if (seen.has(key)) return null;
-    seen.add(key);
-    return `/tasks/${taskId}/adjudication?${appeal ? 'tab=appeals&' : ''}source=${encodeURIComponent(r.module)}`;
-  };
+  // Every finding by level, the questions on them (design doc 17 §5.4); the reasons left are the ones no finding
+  // stands for (an execution error, a discard, a relabel waiting to be judged).
+  const findings = view.findings ?? [];
+  const reasons = (view.reasons ?? []).filter((r) => r.kind === 'execution_error' || !r.code);
   return (
     <Card
       title={E().summary}
@@ -261,7 +245,7 @@ function SummaryCard({
           </Tag>
           {review ? <Badge text={E().reviewBadge} status="processing" /> : null}
         </Space>
-        {reasons?.length ? (
+        {reasons.length ? (
           <div>
             <b>{E().reasons}</b>
             <ul className="episode-items" data-testid="episode-reasons">
@@ -271,41 +255,7 @@ function SummaryCard({
             </ul>
           </div>
         ) : null}
-        {findings ? (
-          <EpisodeFindings taskId={taskId} findings={findings} targets={questionTargets(view.review, (r) => askable(reg.data, r))} readOnly={readOnly} onOpen={onOpen} />
-        ) : null}
-        {!findings && view.review?.length ? (
-          <div>
-            <b>{E().review}</b>
-            <ul className="episode-items" data-testid="episode-review">
-              {view.review.map((r, i) => {
-                const to = target(r);
-                return (
-                  <li key={i}>
-                    <Space size={8} wrap>
-                      <span>{reasonLine(r, reg.data)}</span>
-                      {to ? (
-                        readOnly ? (
-                          <Tooltip content={zh.report.historyDisabled}>
-                            <Button size="mini" disabled>
-                              {E().goAdjudicate}
-                            </Button>
-                          </Tooltip>
-                        ) : (
-                          <Link to={to}>
-                            <Button size="mini" type="primary">
-                              {E().goAdjudicate}
-                            </Button>
-                          </Link>
-                        )
-                      ) : null}
-                    </Space>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ) : null}
+        <EpisodeFindings taskId={taskId} findings={findings} targets={questionTargets(view.review, (r) => askable(reg.data, r))} readOnly={readOnly} onOpen={onOpen} />
         {view.task_text?.text ? (
           <div data-testid="episode-task-text">
             <b>{E().taskText}</b>：<span className="mono">{view.task_text.text}</span>
@@ -317,11 +267,11 @@ function SummaryCard({
   );
 }
 
-/** A module's block title on a findings revision: its findings on this episode by level, or none, or its error. */
+/** A module's block title: its findings on this episode by level, or none, or its error. */
 function FindingTags({ view, id }: { view: EpisodeView; id: string }) {
   const raw = view.modules[id];
   if (!raw) return null;
-  if (isRecordV2(raw) && raw.status === 'error') return <Tag color="orangered">{E().moduleError}</Tag>;
+  if (raw.status === 'error') return <Tag color="orangered">{E().moduleError}</Tag>;
   const groups = groupByLevel((view.findings ?? []).filter((f) => f.module === id));
   const levels = LEVELS.filter((lv) => groups[lv].length);
   if (!levels.length) return <Tag color="green">{E().noFindings}</Tag>;
@@ -339,10 +289,9 @@ function FindingTags({ view, id }: { view: EpisodeView; id: string }) {
   );
 }
 
-function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: string; rev: number; view: EpisodeView; report: Report | undefined; v2: ReportV2 | null; onSelect: (ep: number) => void }) {
+function ModuleBlocks({ taskId, rev, view, report, onSelect }: { taskId: string; rev: number; view: EpisodeView; report: Report | undefined; onSelect: (ep: number) => void }) {
   const reg = useModules();
   const ids = [...(report?.modules.map((m) => m.id) ?? []), ...Object.keys(view.modules).filter((id) => !report?.modules.some((m) => m.id === id))];
-  const findingsView = Boolean(view.findings);
   return (
     <>
       {ids.map((id) => {
@@ -350,8 +299,8 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
         const record = raw ? asLegacyRecord(raw, reg.data) : undefined;
         const Block = EPISODE_BLOCKS[id] ?? GenericBlock;
         // only reports: what it finds never rejects or asks (its codes, or the task's policy)
-        const advisory = findingsView && moduleRole(reg.data?.modules.find((m) => m.id === id), v2?.overview.policy.preset, v2?.overview.policy.version) === 'info';
-        const unassessable = raw && isRecordV2(raw) && raw.status !== 'error' ? raw.unassessable : [];
+        const advisory = moduleRole(reg.data?.modules.find((m) => m.id === id), report?.overview.policy.preset) === 'info';
+        const unassessable = raw && raw.status !== 'error' ? raw.unassessable : [];
         return (
           <Card
             key={id}
@@ -363,18 +312,14 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
               // 4px above the header's middle (requester, 2026-10-04)
               <Space size={8} align="center">
                 <b>{moduleName(reg.data, id)}</b>
-                {findingsView ? (
-                  <FindingTags view={view} id={id} />
-                ) : record ? (
-                  <Tag color={VERDICT_COLOR[record.verdict]}>{zh.report.verdict[record.verdict] ?? record.verdict}</Tag>
-                ) : null}
+                <FindingTags view={view} id={id} />
                 {advisory ? <span className="muted">{E().advisory}</span> : null}
               </Space>
             }
             extra={record ? blockTitleExtra(record) : null}
           >
             {!record ? (
-              <Typography.Text type="secondary">{findingsView ? E().noResult : view.list === 'passed' ? E().noRecord : E().notReached}</Typography.Text>
+              <Typography.Text type="secondary">{E().noResult}</Typography.Text>
             ) : record.verdict === 'error' ? (
               <BlockError text={recordError(record.error)} />
             ) : (
@@ -394,7 +339,7 @@ function ModuleBlocks({ taskId, rev, view, report, v2, onSelect }: { taskId: str
                   ep={view.episode_index}
                   record={record}
                   onEpisode={onSelect}
-                  dataset={v2?.modules.find((m) => m.id === id)?.summary?.dataset_findings}
+                  dataset={report?.modules.find((m) => m.id === id)?.summary.dataset_findings}
                 />
               </>
             )}
@@ -415,7 +360,6 @@ export function EpisodesTab({
   rev,
   readOnly,
   report,
-  v2 = null,
   ep,
   onSelect,
 }: {
@@ -423,7 +367,6 @@ export function EpisodesTab({
   rev: number;
   readOnly: boolean;
   report: Report | undefined;
-  v2?: ReportV2 | null;
   ep: number | null;
   onSelect: (ep: number) => void;
 }) {
@@ -434,7 +377,7 @@ export function EpisodesTab({
   const [mini, setMini] = useState<{ focus: number | null; seek?: MiniSeek } | null>(null);
   // the EEF opinion's evidence frames open it on a camera's sample frame (design doc 22 §3.3)
   const openSeek = useCallback((seek: MiniSeek) => setMini({ focus: null, seek }), []);
-  const fq = filterQuery(filter, v2 ? findingFilter : NO_FINDING_FILTER);
+  const fq = filterQuery(filter, findingFilter);
   // Without ?ep, the first episode of the filtered order.
   const first = useQuery({
     queryKey: qk.episodes(taskId, rev, { ...fq, limit: 1 }),
@@ -482,7 +425,7 @@ export function EpisodesTab({
           </Card>
         ) : null}
         <MiniPlayerOpen.Provider value={openSeek}>
-          <ModuleBlocks taskId={taskId} rev={rev} view={v} report={report} v2={v2} onSelect={onSelect} />
+          <ModuleBlocks taskId={taskId} rev={rev} view={v} report={report} onSelect={onSelect} />
         </MiniPlayerOpen.Provider>
       </div>
     );
@@ -497,7 +440,7 @@ export function EpisodesTab({
         onFilter={setFilter}
         findingFilter={findingFilter}
         onFindingFilter={setFindingFilter}
-        v2={v2}
+        report={report}
         onSelect={onSelect}
       />
       {body}

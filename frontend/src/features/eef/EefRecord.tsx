@@ -1,13 +1,11 @@
-// The EEF module's record of one episode for a person (design 12 C.9, D49): the conclusion and why,
-// the CPU's sub-item readings, and the model's answer on every review window next to the marked crops
+// The EEF module's record of one episode for a person (design 12 C.9, design doc 25 §7): the opinion with its
+// confidence, the CPU's sub-item readings, and the model's answer on every review window next to the marked crops
 // it was shown. The adjudication card (F5.11) and the report's Episode tab (F5.12) both show it.
 import { Button, Space, Table, Tag } from '@arco-design/web-react';
 import { useContext } from 'react';
-import type { ResultRecord } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import {
   EEF_CAMERA_SUBITEMS,
-  eefConclusion,
   eefCpuEvidence,
   eefCpuRows,
   eefDatasetRecord,
@@ -24,14 +22,14 @@ import {
   type EefRecordCurves,
   type EefWindowRow,
 } from '../../lib/eefReadings';
+import type { LegacyRecord } from '../../lib/records';
 import { zh } from '../../locales/zh';
 import { SignedImage } from '../media/SignedMedia';
 import { MiniPlayerOpen } from '../visualizer/miniPlayer';
 
 type D = Record<string, unknown>;
-const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
+const details = (r: LegacyRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
 const Z = () => zh.eefDetail;
-const OUTCOME_COLOR: Record<string, string> = { pass: 'green', reject: 'red', human: 'orange', opinion: 'arcoblue' };
 
 const LABEL_COLOR: Record<string, string | undefined> = { inconsistent: 'red', possibly_inconsistent: 'orange', consistent: 'green', cannot_tell: undefined };
 const FLAG_COLOR: Record<string, string | undefined> = { conflict: 'orangered', single_source: undefined, tracking_invalid: 'gold' };
@@ -58,7 +56,7 @@ function SideCell({ cell, side }: { cell: EefCell; side: 'cpu' | 'vlm' }) {
  * The opinion of registry 5.0 (design doc 25 §7): label · confidence · grounds for the episode, then every
  * sub-item and camera with what each side said and the merge - the largest p, a conflict, a single source capped.
  */
-export function EefOutput({ record, suspects = [] }: { record: ResultRecord; suspects?: readonly EefCalibrationSuspectRow[] }) {
+export function EefOutput({ record, suspects = [] }: { record: LegacyRecord; suspects?: readonly EefCalibrationSuspectRow[] }) {
   const m = eefMerged(details(record));
   if (!m) return null;
   const O = Z().output;
@@ -145,48 +143,8 @@ export function EefCalibrationSuspect({ suspects }: { suspects: readonly EefCali
   );
 }
 
-/** 判过 / 判废 / 转人工 and why: the person's reasons, the confirmed defects, what was not checked. */
-export function EefConclusion({ record, tag = true }: { record: ResultRecord; tag?: boolean }) {
-  const c = eefConclusion(details(record));
-  return (
-    <div data-testid="eef-conclusion">
-      {tag && c.outcome ? (
-        <Tag color={OUTCOME_COLOR[c.outcome]} data-testid="eef-outcome">
-          {zh.sections.eef.outcome[c.outcome] ?? c.outcome}
-        </Tag>
-      ) : null}
-      {c.human.length ? (
-        <div className="episode-line warn">
-          <b>{Z().why}：</b>
-          <ul className="eef-calls">
-            {c.human.map((h, i) => (
-              <li key={i}>{h.text}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {c.confirmed.length ? (
-        <div className="episode-line bad">
-          <b>{Z().confirmed}：</b>
-          <ul className="eef-calls">
-            {c.confirmed.map((h, i) => (
-              <li key={i}>{h.text}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {!c.human.length && !c.confirmed.length && c.reason ? <div className="episode-line">{c.reason}</div> : null}
-      {c.unchecked.length ? (
-        <div className="episode-line muted">
-          {Z().unchecked}：{c.unchecked.join('；')}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /** The CPU's sub-item statuses per camera, suspect cells marked. */
-export function EefCpuTable({ record }: { record: ResultRecord }) {
+export function EefCpuTable({ record }: { record: LegacyRecord }) {
   const d = details(record);
   const rows = eefCpuRows(d);
   const state = eefStateMotion(d);
@@ -261,7 +219,7 @@ function WindowBlock({ taskId, w }: { taskId: string; w: EefWindowRow }) {
 }
 
 /** Every review window with the model's answer and the marked crops it was shown. */
-export function EefWindows({ taskId, record }: { taskId: string; record: ResultRecord }) {
+export function EefWindows({ taskId, record }: { taskId: string; record: LegacyRecord }) {
   const windows = eefWindowRows(details(record));
   return (
     <div data-testid="eef-windows">
@@ -272,7 +230,7 @@ export function EefWindows({ taskId, record }: { taskId: string; record: ResultR
 }
 
 /** The CPU's own evidence frames: the record's evidence the windows and the dataset-record block do not show. */
-export function EefCpuEvidence({ taskId, record }: { taskId: string; record: ResultRecord }) {
+export function EefCpuEvidence({ taskId, record }: { taskId: string; record: LegacyRecord }) {
   const d = details(record);
   const rest = eefCpuEvidence((record.evidence ?? []) as string[], eefWindowRows(d), eefDatasetRecord(d)?.overlays.map((o) => o.path));
   if (!rest.length) return null;
@@ -353,10 +311,10 @@ function OpinionCamera({ c }: { c: EefOpinionCamera }) {
 
 /**
  * A handheld gripper's trajectory the platform derived from the recording (design doc 22 §5.4): which calibration
- * (built-in DEMO or uploaded, the assumed fields), each hand's camera - paired how well, or why not drawn - and
+ * (built-in DEMO or the dataset declaration's, the assumed fields), each hand's camera - paired how well, or why not drawn - and
  * what the export's checks found suspect. Nothing for an uploaded trajectory.json.
  */
-export function EefTrajectorySource({ record }: { record: ResultRecord }) {
+export function EefTrajectorySource({ record }: { record: LegacyRecord }) {
   const src = eefTrajectorySource(details(record));
   if (!src) return null;
   const T = Z().source;
@@ -382,7 +340,7 @@ export function EefTrajectorySource({ record }: { record: ResultRecord }) {
       <div className="episode-line">
         <Space wrap size={8}>
           <Tag color="arcoblue">{T.derived}</Tag>
-          <span>{src.builtin ? T.builtin(src.gripper) : T.uploaded(src.gripper)}</span>
+          <span>{src.builtin ? T.builtin(src.gripper) : T.declared(src.gripper)}</span>
           {src.assumed.length ? <span className="muted">{T.assumed(src.assumed.join('、'))}</span> : null}
         </Space>
       </div>
@@ -403,7 +361,7 @@ export function EefTrajectorySource({ record }: { record: ResultRecord }) {
   );
 }
 
-export function EefOpinion({ record }: { record: ResultRecord }) {
+export function EefOpinion({ record }: { record: LegacyRecord }) {
   const op = eefOpinion(details(record));
   if (!op) return null;
   const O = Z().opinion;
@@ -508,7 +466,7 @@ function EgoCamera({ c }: { c: EefEgoCamera }) {
  * recorded poses - good or bad in one sentence, every camera's readings and bad stretches. Reported only; the
  * thresholds are uncalibrated and the trajectory may rest on assumed values (the note says which).
  */
-export function EefEgoMotion({ record }: { record: ResultRecord }) {
+export function EefEgoMotion({ record }: { record: LegacyRecord }) {
   const ego = eefEgoMotion(details(record));
   if (!ego) return null;
   const G = Z().ego;
@@ -567,7 +525,7 @@ function RecordCurves({ curves }: { curves: EefRecordCurves }) {
  * relation, the time offset, the stretches that differ and their curves - then the dataset's own two
  * records against each other and the overlay frames. Reported only: never part of the verdict.
  */
-export function EefDatasetRecord({ taskId, record }: { taskId: string; record: ResultRecord }) {
+export function EefDatasetRecord({ taskId, record }: { taskId: string; record: LegacyRecord }) {
   const r = eefDatasetRecord(details(record));
   if (!r) return null;
   const R = Z().record;

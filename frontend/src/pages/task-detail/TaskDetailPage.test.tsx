@@ -40,7 +40,7 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.getAllByText('错误').length).toBeGreaterThan(0);
     expect(screen.queryByTestId('delivery-banner')).toBeNull();     // D69: nothing to re-export
     const summary = screen.getByTestId('report-summary');
-    for (const t of ['50', '41', '7', '2', '10', '82%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
+    for (const t of ['50', '42', '6', '2', '10', '84%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
   });
 
   it('shows episode pipeline results; an episode opens in the mini player', async () => {
@@ -211,21 +211,22 @@ describe('任务详情 (07 §4.2)', () => {
     await waitFor(() => expect(screen.getByTestId('live-mode')).toHaveAttribute('data-mode', 'sse'));
   });
 
-  it('stage bars by group carry their notes; module errors expand to the episodes', async () => {
+  it('the stages in their groups; a module\'s errors expand to the episodes', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
-    // the stages in their groups (design doc 26 §2): CPU 检查, 模型检查, 生成报告
-    expect(await screen.findByTestId('stage-cpu')).toHaveTextContent(/^CPU 检查 已完成50 \/ 50/);
-    expect(screen.getByTestId('stage-model')).toHaveTextContent('2 条出错（ep 7、ep 31），暂不交付，等待补跑');
+    // the stages in their groups (design doc 26 §2): CPU 检查 and 模型检查 in the one chart, 生成报告 a bar
+    expect(await screen.findByTestId('stage-cpu')).toHaveTextContent('50 / 50');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('50 / 50');
     expect(screen.getByTestId('stage-report')).toHaveTextContent(/^生成报告 已完成3 \/ 3 · 用时 16 秒/);
-    for (const raw of ['numeric', 'frame', 'duplicate', 'vlm', 'final', 'export', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
+    for (const raw of ['numeric', 'frame', 'duplicate', 'vlm', 'final', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
     expect(screen.getByTestId('stages')).not.toHaveTextContent(/档|产物交付/);
-    const table = await screen.findByTestId('modules-table');          // it renders once the registry is in
-    await user.click(await within(table).findByRole('button', { name: /2 条待补跑/ }));
-    const list = await screen.findByTestId('error-episodes');
+    const row = await screen.findByTestId('module-stat-task_success');          // it renders once the registry is in
+    await user.click(await within(row).findByRole('button', { name: /2 条待补跑/ }));
+    const list = await within(row).findByTestId('error-episodes');
     expect(list).toHaveTextContent('ep 7');
     expect(list).toHaveTextContent('ep 31');
-    expect(within(table).getByText('运动学极限')).toBeInTheDocument();
-    expect(within(table).getByText('预检未读到机器人型号，创建时选择跳过')).toBeInTheDocument();
+    const skipped = screen.getByTestId('module-stat-kinematic_limits');
+    expect(skipped).toHaveTextContent('运动学极限');
+    expect(skipped).toHaveTextContent('预检未读到机器人型号，创建时选择跳过');
   });
 
   it('the timeline runs horizontally, every node with its title, time and details; each result version opens its report', async () => {
@@ -274,13 +275,9 @@ describe('任务详情 (07 §4.2)', () => {
     // 明细 is open, by module first (requester item 13).
     const table = await screen.findByTestId('token-table');
     const rows = () => [...table.querySelectorAll('tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent));
-    await waitFor(() => expect(rows()).toHaveLength(2));
+    await waitFor(() => expect(rows()).toHaveLength(1));
     expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['模块', '请求', '输入', '输出', '思维链', '缓存命中']);
-    expect(rows()).toEqual([
-      ['任务成败判定', '786', '1.54M', '49.5K', '32.7K', '728K'],
-      // this task ran before the skill profile was retired: the registry no longer names it
-      ['skill_profile', '100', '466K', '18K', '10.2K', '203.8K'],
-    ]);
+    expect(rows()).toEqual([['任务成败判定', '886', '2.01M', '67.5K', '42.9K', '931.8K']]);
     const total = () => [...table.querySelectorAll('tfoot td, .arco-table-tfoot td')].map((c) => c.textContent);
     expect(total()).toEqual(['合计', '886', '2.01M', '67.5K', '42.9K', '931.8K']);
     await user.click(within(pair).getByText('按子任务'));
@@ -436,16 +433,11 @@ describe('任务详情 (07 §4.2)', () => {
     expect(await screen.findByText('任务已经开始，只能改名称和备注；要换数据、模块、模型或参数，请复制为新任务')).toBeInTheDocument();
   });
 
-  it('the timeline says how an adjudication judged its relabels again (scope.relabel_rerun, D39)', async () => {
+  it('the summary counts the episodes skipped for missing source files (D40)', async () => {
     renderApp('/tasks/task_01HXPZ2K');
-    // The summary also counts the episodes skipped for missing source files (D40).
     expect(await screen.findByTestId('report-summary')).toHaveTextContent('缺源文件3未参与质检，不计入总数');
     const timeline = await screen.findByTestId('timeline');
-    const tags = await within(timeline).findAllByTestId('relabel-rerun-tag');
-    // The apply_adjudication subtask's start and end both carry the protocol tag.
-    expect(tags.map((t) => t.textContent)).toEqual(['改标重判：首轮完整流程', '改标重判：首轮完整流程']);
-    expect(tags[0].closest('.htl-node')).toHaveTextContent('执行裁决：应用 12 条裁决');
-    expect(tags[0].closest('.htl-node')).toHaveTextContent('子任务 · 执行裁决 #1');
+    expect(within(timeline).getByText('子任务 · 执行裁决 #1').closest('.htl-node')).toHaveTextContent('执行裁决：应用 12 条裁决');
   });
 
   it('a finished task whose access key was deleted offers 重新绑定访问密钥 (rebind-credentials)', async () => {

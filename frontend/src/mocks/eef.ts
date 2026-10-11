@@ -1,8 +1,28 @@
-// A test fixture (F5.11 / F5.12): the EEF module's record of an episode it sent to a person. The mock
-// world's tasks do not select the module; tests add it through db.extraRecords.
-import type { EefOverlay, EefOverlayLayer, ResultRecord } from '../api/types';
+// A test fixture (F5.11 / F5.12): the EEF module's records of an episode (C2 2.0). The mock world's tasks do not
+// select the module; tests add it through db.extraRecords.
+import type { EefOverlay, EefOverlayLayer, Finding, ResultRecord } from '../api/types';
 
 const EEF = 'eef_video_consistency';
+
+/** A record of the EEF module: its findings (registry 5.x codes), the items it assessed, its own details. */
+function eefResult(ep: number, details: Record<string, unknown>, opts: { findings?: Finding[]; evidence?: string[]; elapsed_s?: number } = {}): ResultRecord {
+  return {
+    episode_index: ep,
+    module: EEF,
+    status: 'ok',
+    findings: opts.findings ?? [],
+    assessed: ['MV-4', 'AV-1'],
+    unassessable: [],
+    readings: {},
+    details,
+    evidence: opts.evidence ?? [],
+    elapsed_s: opts.elapsed_s ?? 3.2,
+    error: null,
+  };
+}
+
+const conflictAt = (camera: string, message: string): Finding => ({ code: 'conflict', item: 'MV-4', severity: 'medium', scope: { camera }, message_zh: message });
+const inconsistentAt = (camera: string, message: string): Finding => ({ code: 'inconsistent', item: 'MV-4', severity: 'medium', scope: { camera }, message_zh: message });
 
 const ZERO = { translation_mm: [0, 0, 0], translation_norm_mm: 0, rotation_deg: 0, rotation_axis: [0, 0, 1] };
 
@@ -67,29 +87,37 @@ export function eefDatasetRecordOf(ep: number): Record<string, unknown> {
   };
 }
 
-/** The EEF module's record of an episode it sent to a person (before registry 5.0): a candidate the model finds consistent, a window that timed out. */
+/** A merged cell of registry 5.0 (design doc 25 §7). */
+function cell(subitem: string, camera: string | null, p: number | null, sources: Record<string, Record<string, unknown>>, extra: Record<string, unknown> = {}) {
+  const label = p === null ? 'cannot_tell' : p >= 0.7 ? 'inconsistent' : p >= 0.4 ? 'possibly_inconsistent' : 'consistent';
+  return { subitem, camera, p, label, flags: [] as string[], sources, ...extra };
+}
+
+/** The conflict of {@link eefConflictRecord}, as the module words it. */
+const CONFLICT = '不一致 · 0.95 · 冲突：位置（相机 ext），CPU认为不一致（0.95），模型复核认为一致（0.10）';
+
+/**
+ * The EEF module's record of an episode a person is asked about (design doc 25 §7, D81): no verdict - the CPU finds
+ * position off on `ext` (0.95), the model's candidate window says it is fine (0.1): a conflict, the card a person
+ * answers; time alignment is the CPU's alone; a uniform window timed out. `why` is the record's grounds.
+ */
 export function eefRecord(ep: number, why: string): ResultRecord {
   const dir = `checks/${EEF}/evidence/${String(ep).padStart(6, '0')}/ext`;
   const record = eefDatasetRecordOf(ep);
-  return {
-    episode_index: ep,
-    module: EEF,
-    verdict: 'abstain',
-    passed: null,
-    score: null,
-    gate: 'hard',
-    elapsed_s: 3.2,
-    error: null,
-    evidence: [
-      `${dir}/aaaabbbbcccc_frame_000120.jpg`,
-      `${dir}/aaaabbbbcccc_frame_000150.jpg`,
-      `checks/${EEF}/overlays/${ep}_ext.jpg`,
-      ...(record.evidence as { path: string }[]).map((e) => e.path),
-    ],
-    details: {
-      reason: `需要人工裁决：${why}`,
+  const pos = cell('position_2d', 'ext', 0.95, { cpu: { verdict: 'issue', p: 0.95, confidence: 0.9 }, vlm_review: { verdict: 'ok', p: 0.1, confidence: 0.8 } }, {
+    flags: ['conflict'],
+    time_s: [8.0, 10.0],
+  });
+  const tem = cell('temporal_alignment', 'ext', 0.05, { cpu: { verdict: 'ok', p: 0.05, confidence: 0.9 } }, { flags: ['single_source'], missing: 'model_cannot_see' });
+  const ori = cell('orientation_2d', 'ext', null, { cpu: { verdict: 'cannot_tell', p: null, why: 'axis_mapping_missing' }, vlm_review: { verdict: 'cannot_tell', p: null, why: 'no_vote' } }, { why: ['axis_mapping_missing', 'no_vote'] });
+  return eefResult(ep, {
+      reason: why,
       record,
-      decision: { outcome: 'human', human: [{ code: 'conflict', text: why, subitem: 'position_2d', camera_id: 'ext' }], confirmed: [], unchecked: [] },
+      merged: {
+        cells: [pos, tem, ori],
+        episode: { label: 'inconsistent', p: 0.95, subitem: 'position_2d', camera: 'ext', flags: ['conflict'], conflicts: 1, reason: why },
+        profile: { calibrated: false, name: 'demo' },
+      },
       cameras: { ext: { mount: 'fixed_external', subitems: { position_2d: { status: 'suspect' }, orientation_2d: { status: 'ok' }, temporal_alignment: { status: 'ok' }, camera_motion: { status: 'ok' }, input_consistency: { status: 'ok' } } } },
       state_motion: { status: 'ok' },
       review: {
@@ -117,59 +145,25 @@ export function eefRecord(ep: number, why: string): ResultRecord {
           },
         },
       },
-    },
-  };
-}
-
-/** A merged cell of registry 5.0 (design doc 25 §7). */
-function cell(subitem: string, camera: string | null, p: number | null, sources: Record<string, Record<string, unknown>>, extra: Record<string, unknown> = {}) {
-  const label = p === null ? 'cannot_tell' : p >= 0.7 ? 'inconsistent' : p >= 0.4 ? 'possibly_inconsistent' : 'consistent';
-  return { subitem, camera, p, label, flags: [] as string[], sources, ...extra };
-}
-
-/**
- * {@link eefRecord} as registry 5.0 writes it (design doc 25 §7, D81): no verdict - the CPU finds position off on
- * `ext` (0.95), the model's candidate windows say it is fine (0.1): a conflict, the card a person answers; time
- * alignment is the CPU's alone.
- */
-export function eefConflictRecord(ep: number): ResultRecord {
-  const base = eefRecord(ep, 'x');
-  const { decision: _decision, ...details } = base.details as Record<string, unknown>;
-  const pos = cell('position_2d', 'ext', 0.95, { cpu: { verdict: 'issue', p: 0.95, confidence: 0.9 }, vlm_review: { verdict: 'ok', p: 0.1, confidence: 0.8 } }, {
-    flags: ['conflict'],
-    time_s: [8.0, 10.0],
+  }, {
+    findings: [conflictAt('ext', why)],
+    evidence: [
+      `${dir}/aaaabbbbcccc_frame_000120.jpg`,
+      `${dir}/aaaabbbbcccc_frame_000150.jpg`,
+      `checks/${EEF}/overlays/${ep}_ext.jpg`,
+      ...(record.evidence as { path: string }[]).map((e) => e.path),
+    ],
   });
-  const tem = cell('temporal_alignment', 'ext', 0.05, { cpu: { verdict: 'ok', p: 0.05, confidence: 0.9 } }, { flags: ['single_source'], missing: 'model_cannot_see' });
-  const ori = cell('orientation_2d', 'ext', null, { cpu: { verdict: 'cannot_tell', p: null, why: 'axis_mapping_missing' }, vlm_review: { verdict: 'cannot_tell', p: null, why: 'no_vote' } }, { why: ['axis_mapping_missing', 'no_vote'] });
-  return {
-    ...base,
-    verdict: 'abstain',
-    passed: true,
-    details: {
-      ...details,
-      reason: '不一致 · 0.95 · 冲突：位置（相机 ext），CPU认为不一致（0.95），模型复核认为一致（0.10）',
-      merged: {
-        cells: [pos, tem, ori],
-        episode: { label: 'inconsistent', p: 0.95, subitem: 'position_2d', camera: 'ext', flags: ['conflict'], conflicts: 1, reason: '不一致 · 0.95 · 冲突：位置（相机 ext），CPU认为不一致（0.95），模型复核认为一致（0.10）' },
-        profile: { calibrated: false, name: 'demo' },
-      },
-    },
-  };
+}
+
+/** {@link eefRecord} with the grounds the module writes for its conflict. */
+export function eefConflictRecord(ep: number): ResultRecord {
+  return eefRecord(ep, CONFLICT);
 }
 
 /** No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on the episode, one stretch flagged. */
 export function eefOpinionRecord(ep: number): ResultRecord {
-  return {
-    episode_index: ep,
-    module: EEF,
-    verdict: 'pass',
-    passed: true,
-    score: null,
-    gate: 'hard',
-    elapsed_s: 21.4,
-    error: null,
-    evidence: [],
-    details: {
+  return eefResult(ep, {
       assessment_mode: 'vlm_opinion',
       overall: 'opinion',
       reason: '不一致 · 0.80：位置（相机 ext），模型意见认为不一致（0.85），只有一个渠道：没给夹爪参考',
@@ -204,8 +198,7 @@ export function eefOpinionRecord(ep: number): ResultRecord {
           wrist: { status: 'skipped', reason: 'mount wrist does not take part' },
         },
       },
-    },
-  };
+  }, { findings: [inconsistentAt('ext', '不一致 · 0.80：位置（相机 ext），模型意见认为不一致（0.85），只有一个渠道：没给夹爪参考')], elapsed_s: 21.4 });
 }
 
 /**
@@ -218,6 +211,7 @@ export function eefHandheldRecord(ep: number): ResultRecord {
   const merged = (base.details as { merged: { cells: unknown[]; episode: unknown; profile: unknown } }).merged;
   return {
     ...base,
+    findings: [...base.findings, { code: 'ego_motion_suspect', item: 'MV-4', severity: 'medium', scope: { camera: 'ext' }, message_zh: '腕部相机的运动与记录的位姿不一致：ext：位姿约晚 0.47 s' }],
     details: {
       ...(base.details as Record<string, unknown>),
       // the wrist camera's own motion is its own cell, the ego-motion channel's alone (design doc 25 §6)
@@ -277,10 +271,12 @@ export function eefHandheldRecord(ep: number): ResultRecord {
  */
 export function eefUnderivedRecord(ep: number): ResultRecord {
   const why = '这一条推不出轨迹；robot0：这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback';
+  const base = eefOpinionRecord(ep);
   return {
-    ...eefOpinionRecord(ep),
-    verdict: 'abstain',
-    passed: null,
+    ...base,
+    findings: [],
+    assessed: [],
+    unassessable: ['MV-4', 'AV-1'].map((item) => ({ item, reason: 'not_applicable', message_zh: why })),
     elapsed_s: 0.2,
     details: {
       episode_index: ep,

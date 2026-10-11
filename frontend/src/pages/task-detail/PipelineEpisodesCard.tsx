@@ -32,7 +32,7 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
 }
 
 /**
- * Episode 流水线: the latest episodes through the funnel (PIPELINE_PAGE a page), refetched every 3 s while the task runs.
+ * Episode 流水线: the latest episodes through the two blocks (PIPELINE_PAGE a page), refetched every 3 s while the task runs.
  * A refetch (or a new key when the task's state or revision changes) keeps the rows on screen and
  * only turns the spinner in the header: swapping the table for a spinner made the page jump. An
  * episode's link opens it in the mini player (requester, 2026-10-04: no card of its records below).
@@ -116,7 +116,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
                   {copy.episode(ep)}
                 </Button>
               ) },
-              { title: copy.columnStage, dataIndex: 'last_stage', width: stagesW, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
+              { title: copy.columnStage, dataIndex: 'stages', width: stagesW, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
               ...groups.map((g) => ({
                 title: copy.processingStage[g.key] ?? g.key,
                 dataIndex: 'stage_processing_s.' + g.key,
@@ -130,7 +130,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
               })),
               { title: copy.processingTotal, dataIndex: 'processing_s', width: COL.total, align: 'right' as const, className: 'pipeline-num', render: (seconds: number | null | undefined) =>
                 seconds != null ? seconds.toFixed(2) + ' s' : '—' },
-              { title: copy.columnResult, dataIndex: 'next_stage', render: (_: unknown, row: PipelineEpisode) => (
+              { title: copy.columnResult, dataIndex: 'verdict', render: (_: unknown, row: PipelineEpisode) => (
                 <Tag color={color(row)}>{rowState(row)}</Tag>
               ) },
             ]}

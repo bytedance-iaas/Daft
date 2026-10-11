@@ -53,7 +53,6 @@ describe('the EEF module on screen 2 (design doc 25 §4.2-§4.3, registry 5.2)',
   it('offers only the parameters that apply to the dataset', () => {
     const all = keys({ availability: 'available' });
     expect(all).toContain('observation_seeds');
-    expect(all).not.toContain('record_mapping');                          // retired (5.1)
     const wrist = keys({ availability: 'available', applicable_params: all.filter((k) => !['observation_seeds', 'gripper_template'].includes(k)) });
     expect(wrist).not.toContain('observation_seeds');
     expect(wrist).toContain('use_vlm');

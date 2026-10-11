@@ -1,26 +1,23 @@
-// The report's module sections (06 §6.2, F6.2): for every module a row of key figures and one to
-// three charts drawn from its summary's chart-ready aggregates - statistics only, never a list of
-// episodes (those are in the Episode tab) and never JSON. A module without an entry here gets the
-// default view: its verdict distribution, its scalars, its series and dicts of counts as charts,
-// anything else as readable lines - so a new module needs no frontend change. Reports written
-// before the chart-ready aggregates have only counts and a few scalars: the views show what there
-// is, with a short note.
+// The report's module sections (06 §6.2, F6.2): a module's own view - a row of key figures and one to
+// three charts drawn from its summary's chart-ready aggregates - after the findings statistics every
+// section has (FindingsView). Statistics only, never a list of episodes (those are in the Episode tab)
+// and never JSON. A module without an entry here has the findings statistics alone, so a new module
+// needs no frontend change.
 import { Table, Typography } from '@arco-design/web-react';
 import type { ComponentType, ReactNode } from 'react';
-import type { ReportModuleSection } from '../../api/types';
 import { CHART_COLORS, Chart, LEGEND_GRID_TOP, barOption, chartSummary, groupedBarOption, type ChartOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
-import { fieldLabel, readable } from '../../lib/reportView';
-import { anyValue, countsOf, eefOpinionOnly, fmt, hasAny, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
-import { formatScalar, splitSummary } from '../../lib/summary';
+import type { LegacySection } from '../../lib/records';
+import { anyValue, countsOf, fmt, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
+import { formatScalar } from '../../lib/summary';
 import { zh } from '../../locales/zh';
 
 export interface SectionViewProps {
   taskId: string;
   rev: number;
-  section: ReportModuleSection;
+  section: LegacySection;
 }
 
 interface StatSpec {
@@ -57,8 +54,6 @@ interface ViewModel {
   charts: ChartSpec[];
   blocks?: ReactNode[];
   notes?: ReactNode[];
-  /** The summary has the chart-ready aggregates (written by a report after 06 §6.2's). */
-  fresh: boolean;
 }
 
 const S = () => zh.sections;
@@ -121,11 +116,6 @@ function ModelView({ id, model }: { id: string; model: ViewModel }) {
           {n}
         </div>
       ))}
-      {!model.fresh ? (
-        <div className="section-note muted" data-testid={`old-report-${id}`}>
-          {zh.reportPage.oldReport}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -193,7 +183,7 @@ function timestampModel(s: Summary): ViewModel {
   if (anyValue(reasons)) charts.push({ key: 'fail', title: Z.failChart, items: reasons, colors: reasons.map(() => RED) });
   const hist = seriesOf(s.duration_hist);
   if (hist?.length) charts.push({ key: 'duration', title: Z.durationChart, desc: Z.durationDesc, items: hist });
-  return { stats, charts, fresh: hasAny(s, ['fail_reasons', 'duration_hist']) };
+  return { stats, charts };
 }
 
 function kinematicsModel(s: Summary): ViewModel {
@@ -214,7 +204,7 @@ function kinematicsModel(s: Summary): ViewModel {
   const byJoint = seriesOf(s.violations_by_joint, Z.joint);
   if (anyValue(byJoint)) charts.push({ key: 'joint', title: Z.byJoint, desc: Z.byDesc, items: byJoint });
   const notes = episodes === 0 ? [Z.none] : [];
-  return { stats, charts, notes, fresh: hasAny(s, ['violation_episodes', 'violations_by_type']) };
+  return { stats, charts, notes };
 }
 
 function motionModel(s: Summary): ViewModel {
@@ -252,7 +242,7 @@ function motionModel(s: Summary): ViewModel {
   const notes = subs
     .filter((x) => x.na > 0)
     .map((x) => (num(x.mean) === null ? Z.notApplicable(Z.sub[x.name] ?? x.name, x.na_reason ?? Z.naGeneric) : Z.partlyApplicable(Z.sub[x.name] ?? x.name, x.na, x.na_reason ?? Z.naGeneric)));
-  return { stats, charts, notes, fresh: hasAny(s, ['subscores', 'score_hist']) };
+  return { stats, charts, notes };
 }
 
 function visualModel(s: Summary): ViewModel {
@@ -288,7 +278,7 @@ function visualModel(s: Summary): ViewModel {
   // plot below the other's legend: both score axes and all grid lines on one line.
   const hist = scoreHist(s);
   if (hist) charts.push(withHist.length ? { ...hist, gridTop: LEGEND_GRID_TOP } : hist);
-  return { stats, charts, fresh: hasAny(s, ['cameras', 'score_hist']) };
+  return { stats, charts };
 }
 
 function syncModel(s: Summary): ViewModel {
@@ -364,10 +354,10 @@ function syncModel(s: Summary): ViewModel {
     );
   }
   if (num(s.negative_lag_episodes)) notes.push(<span style={{ color: 'var(--c-warning)' }}>{Z.negative(num(s.negative_lag_episodes)!)}</span>);
-  return { stats, charts, blocks, notes, fresh: hasAny(s, ['verdicts', 'cameras']) };
+  return { stats, charts, blocks, notes };
 }
 
-function taskModel(s: Summary, section: ReportModuleSection): ViewModel {
+function taskModel(s: Summary, section: LegacySection): ViewModel {
   const Z = S().task;
   const c = countsOf(s);
   const stats: StatSpec[] = [];
@@ -380,8 +370,6 @@ function taskModel(s: Summary, section: ReportModuleSection): ViewModel {
   }
   const sources = seriesOf(s.text_sources);
   if (sources?.length) stats.push({ label: Z.sources, value: <span style={{ fontSize: 15 }}>{pieces(sources, Z.sourceNames)}</span> });
-  const arb = s.arbitration && typeof s.arbitration === 'object' ? (s.arbitration as Record<string, unknown>) : null;
-  if (arb && num(arb.triggered)) stats.push({ label: Z.arbitration, value: num(arb.triggered), foot: Z.arbitrationValue(num(arb.triggered) ?? 0, num(arb.adopted_success) ?? 0, num(arb.adopted_failure) ?? 0, num(arb.abstained) ?? 0) });
   const charts: ChartSpec[] = [];
   const judgements = labelled(s.judgements, Z.judgement);
   if (anyValue(judgements)) charts.push({ key: 'judgements', title: Z.judgements, desc: Z.judgementsDesc, items: judgements, horizontal: true });
@@ -399,7 +387,7 @@ function taskModel(s: Summary, section: ReportModuleSection): ViewModel {
       </ul>
     </>,
   ];
-  return { stats, charts, blocks, fresh: hasAny(s, ['judgements', 'layers']) };
+  return { stats, charts, blocks };
 }
 
 /** 重复检测 (design doc 26 §1, D87): the groups of identical episodes and how many episodes they hold - reported
@@ -416,12 +404,12 @@ function duplicateModel(s: Summary): ViewModel {
   if (anyValue(sizes)) charts.push({ key: 'sizes', title: Z.sizes, items: sizes });
   const notes: ReactNode[] = [];
   if (!num(s.groups)) notes.push(Z.none);
-  return { stats, charts, notes, fresh: hasAny(s, ['group_sizes']) };
+  return { stats, charts, notes };
 }
 
-/** Registry 5.0 (design doc 25 §7): the episodes by label and by confidence, the conflicts asked, what single
+/** The opinions (design doc 25 §7, D81): the episodes by label and by confidence, the conflicts asked, what single
  * sources missed and why some could not be told. */
-function eefV5(s: Summary, section: ReportModuleSection, stats: StatSpec[], charts: ChartSpec[]): void {
+function eefOpinions(s: Summary, section: LegacySection, stats: StatSpec[], charts: ChartSpec[]): void {
   const V = S().eef.v5;
   const O = zh.eefDetail.output;
   const raw = (rowsOf<{ name: string; count: number }>(s.labels) ?? []).reduce<Record<string, number>>((acc, x) => ({ ...acc, [x.name]: x.count }), {});
@@ -444,33 +432,14 @@ function eefV5(s: Summary, section: ReportModuleSection, stats: StatSpec[], char
   if (anyValue(cannot)) charts.push({ key: 'cannot-tell', title: V.cannotChart, items: cannot!, horizontal: true });
 }
 
-function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
+/** The EEF module (registry 5.0 on): its opinions, then the CPU's and the model review's readings, the trajectory
+ * against the dataset's own record and the wrist cameras' own motion - the last two reported only. */
+function eefModel(s: Summary, section: LegacySection): ViewModel {
   const Z = S().eef;
   const R = Z.review;
   const stats: StatSpec[] = [];
   const charts: ChartSpec[] = [];
-  const v5 = Array.isArray(s.labels);
-  if (v5) eefV5(s, section, stats, charts);
-  // 转人工 counts the module's records; the adjudication page asks those still in passed and not
-  // answered yet (C1 1.9) - the foot says how many, so the two numbers can be read together.
-  const pending = section.adjudication?.pending ?? 0;
-  const toHuman = num(s.to_human);
-  const outcome: [string, string, boolean, string | undefined][] = [
-    ['judged_pass', Z.outcome.pass, false, undefined],
-    ['judged_reject', Z.outcome.reject, true, section.adjudication?.appealable ? zh.report.goAppeal(section.adjudication.appealable) : undefined],
-    ['to_human', Z.outcome.human, true, toHuman ? Z.humanPending(pending, toHuman) : undefined],
-  ];
-  // a task without a gripper reference has only the model's opinion (D-E15): no verdict counts to show
-  const opinionOnly = eefOpinionOnly(s);
-  if (!opinionOnly && !v5) for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
-  const O = Z.opinion;
-  if (num(s.opinion_episodes) !== null && !v5) {
-    stats.push({ label: O.episodes, value: num(s.opinion_episodes), foot: O.episodesFoot });
-    stats.push({ label: O.flagged, value: num(s.opinion_flagged) ?? 0, tone: num(s.opinion_flagged) ? 'warn' : undefined, foot: O.flaggedFoot });
-    stats.push({ label: O.segments, value: num(s.opinion_segments) ?? 0 });
-    if (num(s.opinion_failed)) stats.push({ label: O.failed, value: num(s.opinion_failed), tone: 'warn' });
-    if (num(s.opinion_not_assessable)) stats.push({ label: O.notAssessable, value: num(s.opinion_not_assessable), foot: O.notAssessableFoot });
-  }
+  eefOpinions(s, section, stats, charts);
   if (num(s.model_cpu_agreement) !== null)
     stats.push({ label: Z.agreement, value: `${Math.round(num(s.model_cpu_agreement)! * 100)}%`, foot: Z.agreementFoot(num(s.model_votes) ?? 0) });
   if (num(s.windows) !== null) stats.push({ label: R.windows, value: num(s.windows), foot: Z.windowsValue(num(s.windows_answered) ?? 0, num(s.windows_failed) ?? 0) });
@@ -498,18 +467,10 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   if (anyValue(egoBands)) charts.push({ key: 'ego-bands', title: EG.bandsChart, items: egoBands, colors: egoBands.map((b) => (b.name === EG.band.minor ? undefined : ORANGE)) });
   const egoReasons = labelled(s.ego_motion_reasons, EG.reason);
   if (anyValue(egoReasons)) charts.push({ key: 'ego-reasons', title: EG.reasonsChart, items: egoReasons, horizontal: true });
-  const confidence = v5 ? null : seriesOf(s.opinion_confidence);
-  if (anyValue(confidence)) charts.push({ key: 'opinion-confidence', title: O.confidenceChart, items: confidence!, colors: confidence!.map((c) => (c.name.startsWith('<') || c.name.startsWith('0.3') ? undefined : ORANGE)) });
-  const aspects = labelled(s.opinion_aspects, O.aspect);
-  if (anyValue(aspects)) charts.push({ key: 'opinion-aspects', title: O.aspectChart, items: aspects!, horizontal: true });
-  const outcomes = v5 ? null : labelled(s.outcomes, Z.outcome);
-  if (anyValue(outcomes)) charts.push({ key: 'outcomes', title: Z.outcomeChart, items: outcomes!, horizontal: true });
-  const human = labelled(s.human_reasons, Z.humanReason);
-  if (anyValue(human)) charts.push({ key: 'human', title: Z.humanChart, desc: Z.humanChartDesc, items: human, horizontal: true, colors: human.map(() => ORANGE) });
+  const aspects = labelled(s.opinion_aspects, Z.opinion.aspect);
+  if (anyValue(aspects)) charts.push({ key: 'opinion-aspects', title: Z.opinion.aspectChart, items: aspects!, horizontal: true });
   const suspect = labelled(s.suspect_by_subitem, Z.subitem);
   if (anyValue(suspect)) charts.push({ key: 'suspect', title: zh.summaryKeys.suspect_by_subitem ?? '', items: suspect, colors: suspect.map(() => ORANGE) });
-  const rejected = labelled(s.reject_subitems, Z.subitem);
-  if (anyValue(rejected)) charts.push({ key: 'rejected', title: Z.rejectChart, items: rejected });
   const classes = labelled(s.review_classes, Z.reviewClasses);
   if (anyValue(classes)) charts.push({ key: 'classes', title: zh.summaryKeys.review_classes ?? '', items: classes });
   const failures = seriesOf(s.failure_codes);
@@ -570,23 +531,16 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     ...(fixed.length ? [<span data-testid="eef-declared-fixed-note">{Z.declaredFixed(fixed.join('、'))}</span>] : []),
     // a wrist camera's own hand stays still in its picture (design doc 25 §5.4)
     ...(num(s.ego_motion_episodes) ? [<span className="muted" data-testid="eef-wrist-note">{zh.viz.overlay.wristNote}</span>] : []),
-    v5 ? (
-      <span className="muted">
-        {Z.v5.note}
-        {s.confidence_uncalibrated ? Z.v5.uncalibrated : ''}
-      </span>
-    ) : (
-      <span className="muted">
-        {Z.verdictNote}
-        {s.uncalibrated ? Z.uncalibrated : ''}
-      </span>
-    ),
+    <span className="muted">
+      {Z.v5.note}
+      {s.confidence_uncalibrated ? Z.v5.uncalibrated : ''}
+    </span>,
   ];
-  return { stats, charts, blocks, notes, fresh: true };
+  return { stats, charts, blocks, notes };
 }
 
 /** 数据完整性 (design doc 14 §5.1): outcomes, what was read, the findings by kind, the dataset's own. */
-function integrityModel(s: Summary, section: ReportModuleSection): ViewModel {
+function integrityModel(s: Summary, section: LegacySection): ViewModel {
   const Z = S().integrity;
   const o = (s.integrity_outcomes ?? {}) as Record<string, unknown>;
   const f = (s.integrity_files ?? {}) as Record<string, unknown>;
@@ -622,35 +576,12 @@ function integrityModel(s: Summary, section: ReportModuleSection): ViewModel {
   const notes: ReactNode[] = [];
   if (!items.length && !dataset.length && Object.keys(o).length) notes.push(Z.none);
   notes.push(<span className="muted">{Z.note}</span>);
-  return { stats, charts, blocks, notes, fresh: hasAny(s, ['integrity_outcomes']) };
-}
-
-/** Any module: scalars, the verdict distribution, series and dicts of counts, the rest readable. */
-function defaultModel(s: Summary): ViewModel {
-  const { scalars, series, other } = splitSummary(s, ['counts']);
-  const c = countsOf(s);
-  const charts: ChartSpec[] = [];
-  const verdicts = c ? verdictItems(c) : [];
-  if (verdicts.length) charts.push({ key: 'counts', title: S().counts, items: verdicts });
-  for (const x of series) charts.push({ key: x.key, title: x.label, items: x.items, horizontal: x.items.length > 6 });
-  const blocks: ReactNode[] = other.length
-    ? [
-        <dl className="desc-grid" data-testid="section-other">
-          {other.map(([k, v]) => (
-            <div key={k} className="desc-item full">
-              <dt>{fieldLabel(k)}</dt>
-              <dd>{readable(v)}</dd>
-            </div>
-          ))}
-        </dl>,
-      ]
-    : [];
-  return { stats: scalars.map((x) => ({ label: x.label, value: formatScalar(x.value) })), charts, blocks, fresh: true };
+  return { stats, charts, blocks, notes };
 }
 
 // -------------------------------------------------------------------------- the registry
 
-type Model = (s: Summary, section: ReportModuleSection) => ViewModel;
+type Model = (s: Summary, section: LegacySection) => ViewModel;
 
 function view(id: string, model: Model, opts: ViewOpts = {}): ComponentType<SectionViewProps> {
   function SectionView({ section }: SectionViewProps) {
@@ -662,8 +593,8 @@ function view(id: string, model: Model, opts: ViewOpts = {}): ComponentType<Sect
 }
 
 /**
- * Section renderers by module id (06 §6.2): the eight v1 modules, the EEF module and the data
- * integrity module. A module without an entry gets DefaultSectionView.
+ * A module's own view by module id (06 §6.2): the checks carried over from v1, duplicate check, the EEF module and the
+ * data integrity module. A module without an entry has the findings statistics alone.
  */
 export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   data_integrity: view('data_integrity', integrityModel),
@@ -674,8 +605,7 @@ export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   video_action_sync: view('video_action_sync', syncModel),
   task_success: view('task_success', taskModel, { abstain: false }),
   duplicate_check: view('duplicate_check', duplicateModel),
-  // the opinion asks nobody: an episode it could not look at has its own figure (没问模型), no abstention chart
-  eef_video_consistency: view('eef_video_consistency', eefModel, { abstain: (s) => !eefOpinionOnly(s) }),
+  // a person is asked only on a conflict, and why an episode could not be told has its own chart: no abstention chart
+  eef_video_consistency: view('eef_video_consistency', eefModel, { abstain: false }),
 };
 
-export const DefaultSectionView = view('default', defaultModel);

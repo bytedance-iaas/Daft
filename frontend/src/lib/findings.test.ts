@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import modulesJson from '../../../docs/contracts/modules.json';
 import reportExamples from '../../../docs/contracts/examples/report.json';
-import type { EpisodeFinding, ModuleRegistry, ReportV2 } from '../api/types';
+import type { EpisodeFinding, ModuleRegistry, Report } from '../api/types';
 import {
   coverageMatrix,
   groupByLevel,
   intervalOf,
-  isReportV2,
   itemLabel,
   moduleItems,
   moduleLevels,
@@ -19,16 +18,10 @@ import {
 } from './findings';
 
 const reg = modulesJson as unknown as ModuleRegistry;
-const report = reportExamples.valid[0] as unknown as ReportV2;
+const report = reportExamples.valid[0] as unknown as Report;
 const spec = (id: string) => reg.modules.find((m) => m.id === id)!;
 
-describe('the findings views read the registry and the report 2.0', () => {
-  it('tells a report of the policy verdicts from one of the funnel', () => {
-    expect(isReportV2(report)).toBe(true);
-    expect(isReportV2(reportExamples.valid[1])).toBe(false);
-    expect(isReportV2(null)).toBe(false);
-  });
-
+describe('the findings views read the registry and the report', () => {
   it('names items from the taxonomy and modules by the group they run in (design doc 26 §2)', () => {
     expect(itemLabel(reg, 'STRM-5')).toMatch(/^STRM-5 /);
     expect(itemLabel(reg, null)).toBe('平台自有项');
@@ -45,11 +38,8 @@ describe('the findings views read the registry and the report 2.0', () => {
     expect(moduleRole(spec('visual_quality'))).toBe('info');
     expect(moduleRole(spec('task_success'), 'report_only')).toBe('info');
     expect(moduleRole(spec('timestamp_check'), 'report_only')).toBe('info');
-    // an empty or cut file still rejects (requester 2026-10-05, policy version 2)
+    // an empty or cut file still rejects (requester 2026-10-05)
     expect(moduleRole(spec('data_integrity'), 'report_only')).toBe('blocking');
-    expect(moduleRole(spec('data_integrity'), 'report_only', '2')).toBe('blocking');
-    // a task frozen with version 1 rejected nothing
-    expect(moduleRole(spec('data_integrity'), 'report_only', '1')).toBe('info');
   });
 
   it('lays the coverage out by dimension, control items left out', () => {

@@ -1,31 +1,36 @@
-// Result records of either C2 format (design doc 17 §1). The findings views (F12.5, src/lib/findings.ts) read a
-// record 2.0 as it is; the modules' own views - the Episode tab's per-module blocks, the specialised report
-// sections - still render a record by 1.0's verdict and score, so a record 2.0 is read for them through the same
-// compatibility rules as the backend's `records.legacy_verdict`: a finding whose code blocks by default is a
-// fail, a review finding an abstention, a score makes it scored; none of the items its own per-episode codes
-// report on assessed, or not what the module rejects on, is an abstention too. Details are the module's own and
-// stay as they are.
-import type { ModuleRegistry, Report, ReportResponse, ReportV2, ResultRecord, ResultRecordV2 } from '../api/types';
+// The modules' own views - the Episode tab's per-module blocks, the specialised report sections - render a result
+// record by a verdict word and a score, and a report section by the keys of its module's own summary (design doc 06
+// §6.2). Records and reports are C2 2.0 only (D90); this is how those views read them, with the same rules as the
+// backend's `records.legacy_verdict`: a finding whose code blocks by default is a fail, a review finding an
+// abstention, a score makes it scored; none of the items its own per-episode codes report on assessed, or not what
+// the module rejects on, is an abstention too. Details are the module's own and stay as they are. The findings views
+// (src/lib/findings.ts) read records and reports as they are.
+import type { ModuleRegistry, Report, ReportModuleSection, ResultRecord } from '../api/types';
 
-export type AnyRecord = ResultRecord | ResultRecordV2;
-type Verdict = ResultRecord['verdict'];
+/** The verdict words the modules' own views use. */
+export type LegacyVerdict = 'pass' | 'fail' | 'abstain' | 'scored' | 'error';
 
-export function isRecordV2(r: AnyRecord | null | undefined): r is ResultRecordV2 {
-  return Boolean(r && typeof r === 'object' && 'status' in r);
+/** A record as the modules' own views read it. */
+export interface LegacyRecord {
+  episode_index: number;
+  module: string;
+  verdict: LegacyVerdict;
+  passed: boolean | null;
+  score: number | null;
+  details: Record<string, unknown>;
+  evidence: string[];
+  elapsed_s: number | null;
+  error: ResultRecord['error'];
 }
 
-export function recordScore(r: AnyRecord | null | undefined): number | null {
-  if (!r) return null;
-  if (isRecordV2(r)) {
-    const s = (r.readings as Record<string, unknown> | undefined)?.score;
-    return typeof s === 'number' ? s : null;
-  }
-  return r.score ?? null;
+/** The module's 0-1 composite score among its readings, if it has one. */
+export function recordScore(r: ResultRecord | null | undefined): number | null {
+  const s = (r?.readings as Record<string, unknown> | undefined)?.score;
+  return typeof s === 'number' ? s : null;
 }
 
-export function recordVerdict(r: AnyRecord | null | undefined, reg: ModuleRegistry | undefined): Verdict | null {
+export function recordVerdict(r: ResultRecord | null | undefined, reg: ModuleRegistry | undefined): LegacyVerdict | null {
   if (!r) return null;
-  if (!isRecordV2(r)) return r.verdict;
   if (r.status === 'error') return 'error';
   const spec = reg?.modules.find((m) => m.id === r.module);
   const levelOf = (code: string) => spec?.codes.find((c) => c.code === code)?.level ?? 'info';
@@ -41,9 +46,8 @@ export function recordVerdict(r: AnyRecord | null | undefined, reg: ModuleRegist
   return 'pass';
 }
 
-/** A record of either format as the 1.0 views read it. */
-export function asLegacyRecord(r: AnyRecord, reg: ModuleRegistry | undefined): ResultRecord {
-  if (!isRecordV2(r)) return r;
+/** A record as the modules' own views read it. */
+export function asLegacyRecord(r: ResultRecord, reg: ModuleRegistry | undefined): LegacyRecord {
   const verdict = recordVerdict(r, reg) ?? 'error';
   return {
     episode_index: r.episode_index,
@@ -51,8 +55,6 @@ export function asLegacyRecord(r: AnyRecord, reg: ModuleRegistry | undefined): R
     verdict,
     passed: verdict === 'pass' ? true : verdict === 'fail' ? false : null,
     score: recordScore(r),
-    // registry 2.0 has no gate: no view reads it of a record 2.0 (the findings views show the levels)
-    gate: 'none',
     details: r.details,
     evidence: r.evidence,
     elapsed_s: r.elapsed_s,
@@ -60,42 +62,38 @@ export function asLegacyRecord(r: AnyRecord, reg: ModuleRegistry | undefined): R
   };
 }
 
-/** The statistics report 2.0 adds to every module section (design doc 17 §5.1): the 2.0 views of F12.5 show them;
- * the 1.0 views would list them as unknown fields. */
-const V2_SUMMARY_KEYS = ['assessed_episodes', 'flagged_episodes', 'levels', 'items', 'unassessable', 'dataset_findings', 'dataset_readings', 'delivered_family_distribution'];
+/** A report section as its module's own view reads it: the summary is the module's own keys. */
+export type LegacySection = Omit<ReportModuleSection, 'summary'> & { summary: Record<string, unknown> };
 
-/** A report of either format as the 1.0 views read it: a 2.0 section gets a placeholder gate (the 2.0 views show its
- * block and what it can do instead), its score
- * distribution (2.0: one per 0-1 reading) is the composite score's again and the 2.0 statistics are left out,
- * and the rejects counted per finding are summed per module (an episode with findings of several codes of one
- * module counts once per code there - the 2.0 views of F12.5 show them per finding). */
-export function asLegacyReport(raw: unknown): Report {
-  const r = raw as Report;
-  if ((raw as { schema_version?: string }).schema_version !== '2.0') return r;
-  const perModule = new Map<string, number>();
-  for (const x of (r.overview.reject_reasons ?? []) as { module: string; count: number }[]) perModule.set(x.module, (perModule.get(x.module) ?? 0) + x.count);
-  const legacySummary = (summary: Record<string, unknown>) => {
-    const out = Object.fromEntries(Object.entries(summary).filter(([k]) => !V2_SUMMARY_KEYS.includes(k)));
-    const hist = out.score_hist;
-    if (hist === undefined || Array.isArray(hist)) return out;
+/** A report whose sections are read by the modules' own views. */
+export type LegacyReport = Omit<Report, 'modules'> & { modules: LegacySection[] };
+
+/** The statistics every module section has (design doc 17 §5.1): the findings views show them; the modules' own
+ * views would list them as unknown fields. */
+const FINDINGS_SUMMARY_KEYS = ['assessed_episodes', 'flagged_episodes', 'levels', 'items', 'unassessable', 'dataset_findings', 'dataset_readings', 'delivered_family_distribution'];
+
+/** A section as its module's own view reads it: the findings statistics left out, and the composite score's
+ * distribution (one of the 0-1 readings' in score_hist) as the module's own score_hist. */
+export function asLegacySection(s: ReportModuleSection): LegacySection {
+  const summary = Object.fromEntries(Object.entries(s.summary as Record<string, unknown>).filter(([k]) => !FINDINGS_SUMMARY_KEYS.includes(k)));
+  const hist = summary.score_hist;
+  if (hist !== undefined && !Array.isArray(hist)) {
     const score = (hist as Record<string, unknown>).score;
-    delete out.score_hist;
-    return Array.isArray(score) ? { ...out, score_hist: score } : out;
-  };
-  return {
-    ...r,
-    overview: { ...r.overview, reject_reasons: [...perModule].map(([module, count]) => ({ module, count })) },
-    modules: r.modules.map((s) => ({
-      ...s,
-      gate: (s as { gate?: string }).gate ?? 'none',
-      summary: legacySummary(s.summary as Record<string, unknown>),
-    })) as Report['modules'],
-  } as Report;
+    delete summary.score_hist;
+    if (Array.isArray(score)) summary.score_hist = score;
+  }
+  return { ...s, summary };
 }
 
-/** The report response with its report read as 1.0, and the report 2.0 itself for the findings views. */
-export function legacyReportResponse(raw: unknown): ReportResponse {
-  const r = raw as ReportResponse;
-  const v2 = (r.report as { schema_version?: string }).schema_version === '2.0' ? (r.report as unknown as ReportV2) : null;
-  return { ...r, report: asLegacyReport(r.report), v2 };
+/** A report with its sections as the modules' own views read them. */
+export function asLegacyReport(r: Report): LegacyReport {
+  return { ...r, modules: r.modules.map(asLegacySection) };
+}
+
+/** The rejects per module (the overview counts them per blocking finding: an episode with findings of several
+ * codes of one module counts once per code there). */
+export function rejectsByModule(overview: Report['overview']): { module: string; count: number }[] {
+  const perModule = new Map<string, number>();
+  for (const x of overview.reject_reasons) perModule.set(x.module, (perModule.get(x.module) ?? 0) + x.count);
+  return [...perModule].map(([module, count]) => ({ module, count }));
 }

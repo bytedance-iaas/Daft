@@ -28,11 +28,11 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     // Default filter: pending (拿不准 included).
     expect(shownCards()).toEqual([4, 16, 22, 29, 33, 36, 40, 47]);
     expect(card(29)).toHaveTextContent('来源：任务成败判定');
-    // One card, one question: the suspected label conflict is part of the task verdict.
+    // One card, one question: the task verdict, with why it was asked.
     const q29 = within(card(29)).getByTestId('q-29-task_verdict');
     expect(q29).toHaveTextContent('① 来源：任务成败判定 · 任务成败');
-    expect(q29).toHaveTextContent('原始标注');
-    expect(q29).toHaveTextContent('画面描述');
+    expect(q29).toHaveTextContent('机位之间分歧，转人工');
+    expect(q29).toHaveTextContent('按任务文本「Close the microwave door」，这条做成了吗？');
     expect(within(card(29)).queryByTestId('q-29-label')).toBeNull();
     expect(within(card(16)).getByTestId('status-16')).toHaveTextContent('拿不准');
     expect(screen.queryByText(/裁决只属于这个任务/)).toBeNull();          // no page note (fourth round)
@@ -42,9 +42,9 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
-    // The model suspects this text, so the rewrite box is open with its description filled in.
+    await user.click(within(card(29)).getByRole('button', { name: '改写任务描述' }));
     const box = within(card(29)).getByLabelText('改写后的任务描述（选填）');
-    expect(box).toHaveValue('pour rice into the green bowl');
+    await user.type(box, 'pour rice into the green bowl');
     expect(within(card(29)).getByTestId('ask-29')).toHaveTextContent('按改写后的描述「pour rice into the green bowl」，这条做成了吗？');
     await user.click(within(card(29)).getByText('判失败'));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 29, line: 'task_verdict', decision: 'failure', new_label: 'pour rice into the green bowl' }]));
@@ -88,8 +88,8 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-36');
+    await user.click(within(card(36)).getByRole('button', { name: '改写任务描述' }));
     const box = within(card(36)).getByLabelText('改写后的任务描述（选填）');
-    await user.clear(box);
     await user.type(box, 'push the plate back');
     await user.click(within(card(36)).getByText('拿不准'));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 36, line: 'task_verdict', decision: 'unsure', new_label: 'push the plate back' }]));
@@ -106,11 +106,10 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(posts(seen)).toHaveLength(2);
   });
 
-  it('a card the model does not suspect asks the verdict alone, with the rewrite box folded away', async () => {
+  it('a card asks the verdict alone, with the rewrite box folded away until asked for', async () => {
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-33');
     expect(within(card(33)).queryByLabelText('改写后的任务描述（选填）')).toBeNull();
-    expect(within(card(33)).getByTestId('q-33-task_verdict')).not.toHaveTextContent('画面描述');
     await user.click(within(card(33)).getByRole('button', { name: '改写任务描述' }));
     expect(within(card(33)).getByLabelText('改写后的任务描述（选填）')).toHaveValue('');
   });
@@ -201,10 +200,8 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.click(screen.getByText('为什么有的被拒条目不在这里'));
     const final = await screen.findByTestId('final-rejects');
     expect(final).toHaveTextContent('时间戳检查：1 条');
-    // this task ran before exact dedup was removed (D87): its reject is final, named by its id
-    expect(final).toHaveTextContent('dedup：1 条');
     expect(final).not.toHaveTextContent('任务成败判定');
-    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定');
+    expect(screen.getByText(/物理与结构硬门.*的拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定');
     // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
     const q = within(card(6)).getByTestId('q-6-reject_appeal');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
@@ -322,7 +319,9 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
-    // ep 29: the suggested text taken as it is, the verdict left to the model.
+    // ep 29: the task text rewritten, the verdict left to the model.
+    await user.click(within(card(29)).getByRole('button', { name: '改写任务描述' }));
+    await user.type(within(card(29)).getByLabelText('改写后的任务描述（选填）'), 'pour rice into the green bowl');
     await user.click(within(card(29)).getByText('拿不准'));
     await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('4 条尚未应用'));
     await user.click(within(card(40)).getByText('判成功'));
@@ -338,41 +337,17 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(items).toHaveTextContent('ep 29：拿不准，改写为「pour rice into the green bowl」 → 按新描述重跑任务成败判定');
     expect(items).toHaveTextContent('ep 4：拿不准，改写为「fold the cloth and put it on the table」 → 按新描述重跑任务成败判定');
     expect(items).toHaveTextContent('ep 40：判成功 → 不跑模型，人说了算');
-    // The protocol: v1's two layers by default, the first run's full flow on request.
-    const choice = within(dialog).getByTestId('relabel-rerun');
-    expect(within(choice).getByRole('radio', { name: /与旧版一致（默认）/ })).toBeChecked();
-    expect(choice).toHaveTextContent('只跑多视角打分和逐机位复核两层');
-    expect(choice).toHaveTextContent('同样的裁决可能得出和旧版不同的结论');
+    // nothing to choose: a relabel is judged again with its new text, in the one request (D71)
+    expect(within(dialog).queryByRole('radio')).toBeNull();
     await user.click(within(dialog).getByRole('button', { name: '执行' }));
     expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
     const applies = seen.filter((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication/apply`);
     expect(applies).toHaveLength(1);
-    expect(applies[0].body).toEqual({ relabel_rerun: 'v1' });
+    expect(applies[0].body).toEqual({});
     expect(applies[0].headers['idempotency-key']).toBeTruthy();
-    expect(findTask(MAIN_TASK)!.active_subtask?.scope.relabel_rerun).toBe('v1');
+    expect(findTask(MAIN_TASK)!.active_subtask?.kind).toBe('apply_adjudication');
     await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('0 条尚未应用'));
     expect(screen.getByRole('button', { name: '执行裁决' })).toBeDisabled();
-  });
-
-  it('按首轮的完整流程重判 sends relabel_rerun: full; a text the person judged with is not re-judged', async () => {
-    const seen = recordRequests();
-    const { user } = renderApp(PAGE);
-    await screen.findByTestId('card-29');
-    await user.click(within(card(29)).getByText('判失败'));
-    await waitFor(() => expect(posts(seen)).toHaveLength(1));
-    await user.click(screen.getByRole('button', { name: '执行裁决' }));
-    const dialog = await screen.findByRole('dialog', { name: '执行裁决' });
-    const summary = await within(dialog).findByTestId('apply-summary');
-    expect(summary).toHaveTextContent('本次应用 4 条裁决（4 条 episode）。');
-    expect(summary).toHaveTextContent('其中 1 条改了标，要按新标注重判任务成败。');
-    expect(summary).toHaveTextContent('人已判了成功或失败的改标条目不重判（本次 1 条）。');
-    expect(within(dialog).getByTestId('apply-list')).toHaveTextContent('ep 29：判失败，改写为「pour rice into the green bowl」 → 不跑模型，人说了算');
-    await user.click(within(dialog).getByText('按首轮的完整流程重判'));
-    await user.click(within(dialog).getByRole('button', { name: '执行' }));
-    expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
-    const apply = seen.find((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication/apply`);
-    expect(apply?.body).toEqual({ relabel_rerun: 'full' });
-    expect(findTask(MAIN_TASK)!.active_subtask?.scope.relabel_rerun).toBe('full');
   });
 
   it('an answer recorded earlier comes back in the rewrite box and counts the same after a reload', async () => {
@@ -403,7 +378,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     ]);
   });
 
-  it('without relabels to judge again there is no protocol to pick; the body still says v1', async () => {
+  it('without relabels to judge again the summary says nothing of a re-judge; the body is empty', async () => {
     // The earlier relabel (ep 4) was applied already.
     for (const d of decisionsOf(MAIN_TASK)) if (d.episode_index === 4) d.applied = true;
     const seen = recordRequests();
@@ -415,10 +390,9 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const summary = await within(dialog).findByTestId('apply-summary');
     expect(summary).toHaveTextContent('本次应用 2 条裁决（2 条 episode）。');
     expect(summary).not.toHaveTextContent('改了标');
-    expect(within(dialog).queryByTestId('relabel-rerun')).toBeNull();
     await user.click(within(dialog).getByRole('button', { name: '执行' }));
     expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
-    expect(seen.find((r) => r.method === 'POST' && r.path.endsWith('/adjudication/apply'))?.body).toEqual({ relabel_rerun: 'v1' });
+    expect(seen.find((r) => r.method === 'POST' && r.path.endsWith('/adjudication/apply'))?.body).toEqual({});
   });
 
   it('the card opens the mini player of its episode, and reads no camera before (design doc 18 §4.6)', async () => {

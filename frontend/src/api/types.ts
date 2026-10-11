@@ -84,17 +84,13 @@ export type Incompatibility = RepreflightResult['incompatibilities'][number];
 export type Plan = S['plan.schema'];
 export type PlanStage = S['stage'];
 
-// C2 2.0 (design doc 17) changed the result record, the report and the plan. The modules' own views (the
-// specialised report sections, the Episode tab's blocks) read the 1.0 keys a report 2.0 keeps, through
-// `asLegacyReport` / `asLegacyRecord` (src/lib/records.ts); the findings views (F12.5, src/lib/findings.ts)
-// read the 2.0 report as it is (`ReportResponse.v2`). Tasks made before carry 1.0 and open as they are (D59).
-export type Report = S['report_1'];
-export type ReportV2 = S['report_2'];
-export type ReportModuleSection = S['module_section_1'];
-export type ReportModuleSectionV2 = S['module_section_2'];
-type RawReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
-/** `report` as the 1.0 views read it; `v2` the report itself when it is one of the policy verdicts (C2 2.0). */
-export type ReportResponse = Omit<RawReportResponse, 'report'> & { report: Report; v2: ReportV2 | null };
+// C2 2.0 (design doc 17) is the only format of the result record, the report and the plan (D90). The modules'
+// own views (the specialised report sections, the Episode tab's blocks) read them in 1.0's vocabulary - the
+// verdict words, the summary's own keys - through src/lib/records.ts; the findings views (src/lib/findings.ts)
+// read them as they are.
+export type Report = S['report.schema'];
+export type ReportModuleSection = S['module_section'];
+export type ReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
 export type Finding = S['finding'];
 export type FindingLevel = S['FindingLevel'];
 export type EpisodeFinding = S['EpisodeFinding'];
@@ -105,8 +101,7 @@ export type TaskEpisode = S['TaskEpisode'];
 export type TaskEpisodePage = S['TaskEpisodePage'];
 export type SyncCurves = S['SyncCurves'];
 export type SyncCurveCamera = S['SyncCurveCamera'];
-export type ResultRecord = S['record_1'];
-export type ResultRecordV2 = S['record_2'];
+export type ResultRecord = S['result-record.schema'];
 export type Perf = S['Perf'];
 export type AdjudicationQuestion = S['AdjudicationQuestion'];
 export type AdjudicationCard = S['AdjudicationCard'];

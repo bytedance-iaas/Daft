@@ -6,27 +6,17 @@ const name = (id: string) => ({ eef_video_consistency: 'EEF–视频一致性', 
 describe('plan texts in Chinese (fourth round)', () => {
   it('names the gates and the merge strategy', () => {
     expect(planGateText('probe', 64)).toBe('打分 64');
-    expect(planGateText('guard_caption', 32)).toBe('护栏打标 32');
+    expect(planGateText('episode', 32)).toBe('并行条目 32');
     expect(planGateText('someday', 4)).toBe('someday 4');
     expect(planMergeText('none')).toBe('请求合并：不合并');
   });
 
   it('translates the planner notes it knows and leaves the others alone', () => {
     // exactly as backend/curation/planner/estimates.py writes them
-    expect(planNoteText('rough estimate: every selected episode is assumed to pass the hard gates; 22.7 s per request at 67% gate use (v1, 2026-09-07)', name)).toBe(
-      '粗估：假设选中的条目都通过硬门，每个请求按 22.7 秒、闸门占用 67% 计（v1 在 2026-09-07 实测）',
-    );
-    expect(planNoteText('task_success label-guard calls depend on the data and are not counted', name)).toBe('任务成败判定的判废护栏调用视数据而定，没有计入');
     expect(planNoteText('88 selected episode(s) have no task text: task_success does not judge them (their cameras are still checked for picture defects, one request each), every other check still runs on them', name)).toBe(
       '88 条没有任务标注：不判任务成败，只看画面缺陷（各一次请求），其余检查照常',
     );
-    // a plan made before D71 (one judgement per episode) still carries the two-pass note
-    expect(planNoteText('task_success arbitration and label-guard calls depend on the data and are not counted', name)).toBe('任务成败判定的取证仲裁和判废护栏调用视数据而定，没有计入');
-    expect(planNoteText('skill_profile text calls (taxonomy, label audit) are per dataset and not counted', name)).toBe('技能画像的文本调用（技能归纳、标注核对）按数据集算，没有计入');
     expect(planNoteText("no request model for ['eef_video_consistency', 'task_success']; not counted", name)).toBe('EEF–视频一致性、任务成败判定没有请求数估算，没有计入');
-    expect(planNoteText('rough estimate: every selected episode is assumed to pass the hard gates; 22.7 s per request at 67% gate use (image-request baseline from v1, 2026-09-07; video latency is not calibrated)', name)).toBe(
-      '粗估：假设选中的条目都通过硬门，每个请求按 22.7 秒、闸门占用 67% 计（v1 在 2026-09-07 实测）',
-    );
     expect(planNoteText('rough estimate: every selected episode goes through both blocks, which run side by side; 22.7 s per request at 67% gate use (image-request baseline from v1, 2026-09-07; video latency is not calibrated)', name)).toBe(
       '粗估：选中的条目都要过两块（两块同时跑），每个请求按 22.7 秒、闸门占用 67% 计（图像请求在 v1 上 2026-09-07 实测，视频请求的延迟还没校准）',
     );

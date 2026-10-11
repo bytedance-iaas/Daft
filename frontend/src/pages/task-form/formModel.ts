@@ -22,7 +22,8 @@ import { presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 export type Source = 'tos' | 'public' | 'local';
-export type TimeoutKey = 'probe' | 'endstate' | 'arbitration' | 'caption' | 'llm';
+/** The model calls a task times out (C4 7.0.0: the one request of task success and the picture defects). */
+export type TimeoutKey = 'probe';
 
 /** A change to the form: the fields to set, or a function of the form as it is when applied. */
 export type FormPatch = Partial<FormValues> | ((prev: FormValues) => Partial<FormValues>);
@@ -65,7 +66,7 @@ export interface FormValues {
   policy: 'default' | 'report_only';
 }
 
-export const DEFAULT_TIMEOUTS: Record<TimeoutKey, number> = { probe: 60, endstate: 60, arbitration: 60, caption: 60, llm: 120 };
+export const DEFAULT_TIMEOUTS: Record<TimeoutKey, number> = { probe: 60 };
 
 export function defaultValues(): FormValues {
   return {
@@ -344,7 +345,7 @@ export function fromTask(t: Task, reg: ModuleRegistry | undefined): FormValues {
     effort: t.vlm?.reasoning_effort ?? '',
     vlmRetry: p.vlm_retry ?? 3,
     vlmHedge: p.vlm_hedge ?? true,
-    timeouts: { ...DEFAULT_TIMEOUTS, ...(p.vlm_timeouts_s ?? {}) } as Record<TimeoutKey, number>,
+    timeouts: { probe: p.vlm_timeouts_s?.probe ?? DEFAULT_TIMEOUTS.probe },
     cpuLimit: p.limits?.cpu_concurrency,
     vlmLimit: p.limits?.vlm_parallelism,
     clips: p.clips ?? false,

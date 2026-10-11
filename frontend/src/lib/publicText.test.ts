@@ -72,6 +72,7 @@ describe('publicText', () => {
       'Confirm a new version (validated against the mapping schema and the topics)',
     );
     expect(publicText('lower (P4, D54). Plans made before D54 may say site.')).toBe('lower. Older plans may say site.');
+    expect(publicText('a document C2 2.0 (or D90) changed; its 1.0 form is no longer read')).toBe('a document changed in format 2.0; its 1.0 form is no longer read');
     expect(publicText("Create a task - the requirement's run_modules() (D5)")).toBe('Create a task');
   });
 });

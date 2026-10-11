@@ -3,8 +3,8 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
-import { moduleById, moduleName, qk, useModules, useTask } from '../../api/queries';
-import type { Report, ReportModuleSection, ReportV2, Subtask, Task } from '../../api/types';
+import { fetchReport, moduleById, moduleName, qk, useModules, useTask } from '../../api/queries';
+import type { Report, Subtask, Task } from '../../api/types';
 import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
@@ -22,7 +22,7 @@ import { zh } from '../../locales/zh';
 import { EpisodesTab } from './EpisodesTab';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
-import { legacyReportResponse } from '../../lib/records';
+import { asLegacySection } from '../../lib/records';
 import { LEVEL_TAG, moduleRole, placeLabel, rejectsByItem } from '../../lib/findings';
 import { CoverageMatrix } from './CoverageMatrix';
 
@@ -99,14 +99,14 @@ function retryBlocked(task: Task): string | null {
   return null;
 }
 
-function OverviewCard({ task, report, v2, readOnly, runs, onRetryHeld }: { task: Task; report: Report; v2: ReportV2 | null; readOnly: boolean; runs: RunPart[]; onRetryHeld: () => void }) {
+function OverviewCard({ task, report, readOnly, runs, onRetryHeld }: { task: Task; report: Report; readOnly: boolean; runs: RunPart[]; onRetryHeld: () => void }) {
   const reg = useModules();
   const o = report.overview;
   const c = o.counts;
   const t = o.token_usage;
-  // a report of the policy verdicts counts the rejects by taxonomy item (design doc 17 §5.2), one of the funnel by module
-  const reasons = v2 ? rejectsByItem(reg.data, v2.overview) : o.reject_reasons.map((r) => ({ name: moduleName(reg.data, r.module), value: r.count }));
-  const preset = v2?.overview.policy.preset;
+  // the rejects by taxonomy item (design doc 17 §5.2)
+  const reasons = rejectsByItem(reg.data, o);
+  const preset = o.policy.preset;
   const blocked = readOnly ? zh.report.historyDisabled : retryBlocked(task);
   const skipped = skippedOf(report).count;
   return (
@@ -128,7 +128,7 @@ function OverviewCard({ task, report, v2, readOnly, runs, onRetryHeld }: { task:
           <Stat label={zh.report.duration} value={zh.reportPage.durationParts(runs.map((r) => zh.time.duration(r.seconds)))} foot={zh.reportPage.durationParts(runs.map((r) => r.label))} testId="report-duration" />
         ) : null}
         <Stat label={zh.report.tokens} value={compactNumber(t.prompt + t.completion)} foot={zh.report.tokensFoot(compactNumber(t.prompt), compactNumber(t.completion))} />
-        {preset ? <Stat label={zh.findings.policy} value={zh.findings.policyName[preset] ?? preset} testId="report-policy" /> : null}
+        <Stat label={zh.findings.policy} value={zh.findings.policyName[preset] ?? preset} testId="report-policy" />
       </div>
       {skipped ? (
         // D40: not part of the equation above, not in any list, and no retry - the source is frozen.
@@ -161,14 +161,14 @@ function OverviewCard({ task, report, v2, readOnly, runs, onRetryHeld }: { task:
         />
       ) : null}
       <Typography.Title heading={6} style={{ margin: '16px 0 4px' }}>
-        {v2 ? zh.report.rejectItems : zh.report.rejectReasons}
+        {zh.report.rejectItems}
         <span className="muted" style={{ fontWeight: 'normal', fontSize: 12, marginLeft: 8 }}>
-          {v2 ? zh.report.rejectItemsDesc(c.rejected) : zh.report.rejectReasonsDesc(c.rejected)}
+          {zh.report.rejectItemsDesc(c.rejected)}
         </span>
       </Typography.Title>
       {reasons.length ? (
         <LazyVisible>
-          <Chart option={barOption(reasons, { horizontal: true })} summary={`${v2 ? zh.report.rejectItems : zh.report.rejectReasons}：${chartSummary(reasons)}`} height={Math.max(120, reasons.length * 36)} />
+          <Chart option={barOption(reasons, { horizontal: true })} summary={`${zh.report.rejectItems}：${chartSummary(reasons)}`} height={Math.max(120, reasons.length * 36)} />
         </LazyVisible>
       ) : (
         <Typography.Text type="secondary">{zh.report.rejectNone}</Typography.Text>
@@ -236,33 +236,29 @@ interface ScopeRow {
   key: string;
   order: number | null;
   id: string;
-  /** a report of the funnel (1.0): the module's gate */
-  gate: string;
   state: string;
   note: string;
   failed: boolean;
-  /** a report of the policy verdicts (2.0): episodes assessed and with a finding */
+  /** episodes assessed and with a finding */
   assessed?: number;
   flagged?: number;
 }
 
-function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report: Report; v2: ReportV2 | null; onJump: (id: string) => void; onCollapseAll: () => void; onExpandAll: () => void }) {
+function ScopeCard({ report, onJump, onCollapseAll, onExpandAll }: { report: Report; onJump: (id: string) => void; onCollapseAll: () => void; onExpandAll: () => void }) {
   const reg = useModules();
-  const preset = v2?.overview.policy.preset;
-  const stats = new Map((v2?.modules ?? []).map((s) => [s.id, s.summary]));
+  const preset = report.overview.policy.preset;
   const rows: ScopeRow[] = [
     ...report.modules.map((s, i) => ({
       key: s.id,
       order: i + 1,
       id: s.id,
-      gate: s.gate,
       state: s.state,
-      note: s.state === 'failed' ? s.error ?? '' : summaryDigest(s.summary as Record<string, unknown>),
+      note: s.state === 'failed' ? s.error ?? '' : summaryDigest(asLegacySection(s).summary),
       failed: s.state === 'failed',
-      assessed: stats.get(s.id)?.assessed_episodes,
-      flagged: stats.get(s.id)?.flagged_episodes,
+      assessed: s.summary.assessed_episodes,
+      flagged: s.summary.flagged_episodes,
     })),
-    ...report.skipped_modules.map((s) => ({ key: `skip-${s.id}`, order: null, id: s.id, gate: '', state: 'skipped', note: s.reason, failed: false })),
+    ...report.skipped_modules.map((s) => ({ key: `skip-${s.id}`, order: null, id: s.id, state: 'skipped', note: s.reason, failed: false })),
   ];
   const usesVlm = (id: string) =>
     ((moduleById(reg.data, id)?.needs ?? []) as string[]).includes('vlm') ? (
@@ -270,36 +266,25 @@ function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report:
         {zh.report.usesVlm}
       </Tag>
     ) : null;
-  // 2.0: where the module runs and what it can do under the task's policy; 1.0: the funnel's gate
-  const placeColumn = v2
-    ? {
-        title: zh.report.colPlace,
-        key: 'place',
-        dataIndex: 'id',
-        render: (_: unknown, r: ScopeRow) => {
-          const spec = moduleById(reg.data, r.id);
-          const role = moduleRole(spec, preset, v2?.overview.policy.version);
-          return (
-            <Space size={4} wrap>
-              <span className="nowrap">{placeLabel(spec)}</span>
-              <Tag size="small" color={LEVEL_TAG[role]}>
-                {zh.findings.role[role]}
-              </Tag>
-              {usesVlm(r.id)}
-            </Space>
-          );
-        },
-      }
-    : {
-        title: zh.report.colGate,
-        dataIndex: 'gate',
-        render: (_: unknown, r: ScopeRow) => (
-          <Space size={4}>
-            {r.gate ? zh.gate[r.gate] ?? r.gate : '—'}
-            {usesVlm(r.id)}
-          </Space>
-        ),
-      };
+  // where the module runs and what it can do under the task's policy
+  const placeColumn = {
+    title: zh.report.colPlace,
+    key: 'place',
+    dataIndex: 'id',
+    render: (_: unknown, r: ScopeRow) => {
+      const spec = moduleById(reg.data, r.id);
+      const role = moduleRole(spec, preset);
+      return (
+        <Space size={4} wrap>
+          <span className="nowrap">{placeLabel(spec)}</span>
+          <Tag size="small" color={LEVEL_TAG[role]}>
+            {zh.findings.role[role]}
+          </Tag>
+          {usesVlm(r.id)}
+        </Space>
+      );
+    },
+  };
   const findingsColumn = {
     title: zh.report.colFlagged,
     dataIndex: 'flagged',
@@ -342,11 +327,11 @@ function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report:
           },
           placeColumn,
           { title: zh.report.colState, dataIndex: 'state', render: (v: string) => <Tag color={SECTION_STATE_COLOR[v] ?? 'gray'}>{zh.moduleState[v] ?? v}</Tag> },
-          ...(v2 ? [findingsColumn] : []),
+          findingsColumn,
           { title: zh.report.colNote, dataIndex: 'note', render: (v: string, r: ScopeRow) => <span style={{ color: r.failed ? 'var(--c-danger)' : undefined }}>{v || '—'}</span> },
         ]}
       />
-      {v2 ? <CoverageMatrix report={v2} onJump={onJump} /> : null}
+      <CoverageMatrix report={report} onJump={onJump} />
     </Card>
   );
 }
@@ -354,7 +339,6 @@ function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report:
 function ReportBody({
   task,
   report,
-  v2,
   rev,
   readOnly,
   subtasks,
@@ -363,7 +347,6 @@ function ReportBody({
 }: {
   task: Task;
   report: Report;
-  v2: ReportV2 | null;
   rev: number;
   readOnly: boolean;
   subtasks: readonly Subtask[];
@@ -408,19 +391,17 @@ function ReportBody({
   }, [section, ids.join(',')]);
   return (
     <div className="card-gap">
-      <OverviewCard task={task} report={report} v2={v2} readOnly={readOnly} runs={runs} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
+      <OverviewCard task={task} report={report} readOnly={readOnly} runs={runs} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
       <IntegrityCard task={task} report={report} />
-      <ScopeCard report={report} v2={v2} onJump={jump} onCollapseAll={() => update(new Set([...collapsed, ...ids]))} onExpandAll={() => update(new Set([...collapsed].filter((id) => !ids.includes(id))))} />
-      {report.modules.map((s: ReportModuleSection, i: number) => (
+      <ScopeCard report={report} onJump={jump} onCollapseAll={() => update(new Set([...collapsed, ...ids]))} onExpandAll={() => update(new Set([...collapsed].filter((id) => !ids.includes(id))))} />
+      {report.modules.map((s, i) => (
         <ModuleSection
           key={s.id}
           index={i + 1}
           taskId={task.id}
           rev={rev}
           section={s}
-          v2={v2?.modules.find((x) => x.id === s.id) ?? null}
-          preset={v2?.overview.policy.preset}
-          policyVersion={v2?.overview.policy.version}
+          preset={report.overview.policy.preset}
           subtasks={subtasks}
           readOnly={readOnly}
           retryBlocked={blocked}
@@ -458,7 +439,7 @@ export function ReportPage() {
   const tab = hashTab ?? (ep !== null ? 'episodes' : 'report');
   const report = useQuery({
     queryKey: qk.report(id, rev),
-    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } }))),
+    queryFn: () => fetchReport(id, rev),
     enabled: Boolean(t) && rev > 0,
     placeholderData: keepPreviousData,
     retry: false,
@@ -562,7 +543,6 @@ export function ReportPage() {
             <ReportBody
               task={t}
               report={report.data.report}
-              v2={report.data.v2}
               rev={report.data.revision}
               readOnly={readOnly}
               subtasks={subs}
@@ -572,7 +552,7 @@ export function ReportPage() {
           )}
         </Tabs.TabPane>
         <Tabs.TabPane key="episodes" title={zh.reportPage.tabEpisodes}>
-          {tab === 'episodes' ? <EpisodesTab taskId={t.id} rev={rev} readOnly={readOnly} report={report.data?.report} v2={report.data?.v2 ?? null} ep={ep} onSelect={selectEpisode} /> : null}
+          {tab === 'episodes' ? <EpisodesTab taskId={t.id} rev={rev} readOnly={readOnly} report={report.data?.report} ep={ep} onSelect={selectEpisode} /> : null}
         </Tabs.TabPane>
         <Tabs.TabPane key="perf" title={zh.report.tabPerf}>
           {tab === 'perf' ? <PerfTab taskId={t.id} rev={rev} subtasks={subs} /> : null}

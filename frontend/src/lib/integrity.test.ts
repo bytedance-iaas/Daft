@@ -7,7 +7,8 @@ const value = (items: ReturnType<typeof integrityItems>, key: string) => items.f
 
 describe('数据包完整性 in Chinese (F6.2)', () => {
   it("renders the CLI's integrity and dataset facts as Chinese label / value pairs", () => {
-    const report = mainReport(2);
+    const main = mainReport(2);
+    const report = { ...main, integrity: { ...main.integrity, labels: { with_task: 28, without_task: 22 } } } as Report;
     const task = { episodes: { mode: 'head', n: 50 }, source: { objects: 204, bytes: 1_520_331_122, digest: 'sha256:9f3c1a2b3c4d5e6f7a8b9c0de21a' } } as unknown as Task;
     const items = integrityItems(report, task);
     expect(items.map((i) => i.label)).toEqual(['格式', 'Episode', '相机', '帧率', '机器人型号', '语义档案', '任务标注', '源文件清单', '结构校验', '预检提示']);

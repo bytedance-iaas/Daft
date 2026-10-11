@@ -88,9 +88,6 @@ describe('param_schema → form fields (C1, D38)', () => {
   it('reads a file parameter as an upload whose value is the handle (registry 1.5, F5.5)', () => {
     const [traj, seeds] = paramFields(schemaOf('eef_video_consistency'));
     expect(traj).toMatchObject({ key: 'trajectory_json', kind: 'upload', required: false, uploadKind: 'eef_trajectory', accept: ['.json'], maxMb: 64, default: '' });
-    // registry 5.1: the declaration says the handheld calibration and the records - their parameters are not offered
-    expect(paramFields(schemaOf('eef_video_consistency')).map((f) => f.key)).not.toContain('gripper_calibration');
-    expect(paramFields(schemaOf('eef_video_consistency')).map((f) => f.key)).not.toContain('record_mapping');
     expect(seeds).toMatchObject({ key: 'observation_seeds', kind: 'upload', required: false, uploadKind: 'eef_observation_seeds', accept: ['.jsonl', '.json'] });
     expect(validateParam(traj, '')).toBeNull();                   // optional: generated from the dataset (design doc 24)
     expect(validateParam(traj, '/data/trajectory.json')).toBe('trajectory.json要先上传文件');
@@ -104,10 +101,5 @@ describe('param_schema → form fields (C1, D38)', () => {
     expect(changedParams(schemaOf('video_action_sync'), { sync_plots: 'flagged' })).toEqual({});
     expect(changedParams(schemaOf('video_action_sync'), { sync_plots: 'all' })).toEqual({ sync_plots: 'all' });
     expect(changedParams(schemaOf('duplicate_check'), { anything: 1 })).toEqual({});
-  });
-
-  it('a deprecated parameter is not offered (registry 5.1: the declaration says it)', () => {
-    const fields = paramFields({ type: 'object', properties: { a: { type: 'string' }, b: { type: 'string', deprecated: true } } });
-    expect(fields.map((f) => f.key)).toEqual(['a']);
   });
 });

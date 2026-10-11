@@ -12,7 +12,7 @@ import { keepCard, statusQuery, viewCard } from '../../lib/adjudication';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { AppealsTab } from './AppealsTab';
-import { ApplyDialog, type RelabelRerun } from './ApplyDialog';
+import { ApplyDialog } from './ApplyDialog';
 import { EpisodeCard } from './EpisodeCard';
 import { useLoadAll, usePaged } from './paging';
 import { useAdjudicationList, useDecisions, type AdjTab } from './useAdjudication';
@@ -92,11 +92,11 @@ export function AdjudicationPage() {
     </>
   );
 
-  const apply = async (relabelRerun: RelabelRerun) => {
+  const apply = async () => {
     setApplying(true);
     try {
-      // The body is optional in C4 1.4; sending it always makes the choice explicit (D39).
-      const r = await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: { relabel_rerun: relabelRerun } }));
+      // the request carries nothing to choose (C4 7.0.0): a relabel is judged again with its new text (D39, D71)
+      const r = await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: {} }));
       showSubtask(qc, id, r.subtask);
       Message.success(zh.actions.done.apply);
       setApplyOpen(false);
@@ -228,7 +228,7 @@ export function AdjudicationPage() {
           ) : null}
         </div>
       ) : null}
-      <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} catalog={catalog} busy={applying} onCancel={() => setApplyOpen(false)} onOk={(r) => void apply(r)} />
+      <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} catalog={catalog} busy={applying} onCancel={() => setApplyOpen(false)} onOk={() => void apply()} />
     </div>
   );
 }

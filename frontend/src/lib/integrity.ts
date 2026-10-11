@@ -81,22 +81,17 @@ function episodesValue(report: Report, task: Task | undefined, dataset: Record<s
   return P().episodesValue(count, scope) + (c.skipped ? P().episodesSkipped(c.skipped) : '');
 }
 
-/**
- * mcap / lance (D44): v1's container findings ([{项, 状态, 说明}],
- * export/report.container_findings) as one line. A report written before the export was
- * retired (D69) also carries `delivery`, which then stays in the line.
- */
+/** mcap / lance (D44): the container findings ([{项, 状态, 说明}], export/report.container_findings) as one line. */
 export function containerValue(v: unknown): string | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const o = v as { format?: unknown; delivery?: unknown; findings?: unknown };
+  const o = v as { format?: unknown; findings?: unknown };
   const findings = Array.isArray(o.findings)
     ? o.findings
         .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
         .map((f) => zh.report.containerFinding(f))
         .join(zh.report.containerFindingSep)
     : '';
-  const delivery = typeof o.delivery === 'string' && o.delivery ? o.delivery : '';
-  return zh.report.containerValue(String(o.format ?? ''), delivery, findings);
+  return zh.report.containerValue(String(o.format ?? ''), findings);
 }
 
 const KNOWN = new Set(['format', 'validation', 'warnings', 'labels', 'profile', 'robot_type', 'skipped_episodes', 'container']);

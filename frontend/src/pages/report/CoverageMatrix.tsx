@@ -1,6 +1,6 @@
 import { Space, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { moduleName, useModules } from '../../api/queries';
-import type { ReportV2 } from '../../api/types';
+import type { Report } from '../../api/types';
 import { coverageMatrix, reportersOf, type CoverageItem } from '../../lib/findings';
 import { zh } from '../../locales/zh';
 
@@ -12,7 +12,7 @@ const STATUS_COLOR: Record<string, string> = { covered: 'arcoblue', unassessable
  * this task's modules, not covered, or covered but not assessable on some episodes (with the reasons).
  * A covered item jumps to the first module section that reports it.
  */
-export function CoverageMatrix({ report, onJump }: { report: ReportV2; onJump: (moduleId: string) => void }) {
+export function CoverageMatrix({ report, onJump }: { report: Report; onJump: (moduleId: string) => void }) {
   const reg = useModules();
   const m = coverageMatrix(reg.data, report.overview);
   const ids = report.modules.map((s) => s.id);

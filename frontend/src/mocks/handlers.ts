@@ -14,7 +14,6 @@ import type {
   InputRef,
   ModuleChoice,
   Overview,
-  PipelineEpisode,
   PreflightResult,
   ReasoningLevel,
   Report,
@@ -34,6 +33,7 @@ import type {
 import {
   EMBODIMENTS,
   MAIN_TASK,
+  coverageOf,
   PUBLIC_BUCKET,
   ZERO_USAGE,
   DATASET_PROFILES,
@@ -42,11 +42,13 @@ import {
   episodeView,
   genericEpisodes,
   mainEpisodes,
+  mainModuleCounts,
   mainPerf,
   mainPlan,
   mainReport,
   mainSyncCurves,
   mainUsage,
+  pipelineRow,
   preflightFor,
   profileFor,
   registry,
@@ -55,9 +57,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
-import { asLegacyRecord } from '../lib/records';
 import { producesAdjudication } from '../lib/registry';
-import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsView } from './findings';
 import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
@@ -1036,7 +1036,7 @@ const tasks = [
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');
     if (!t.started_at) return err(404, 'not_found', '任务还没开始，没有执行计划');
-    return HttpResponse.json(t.id === FINDINGS_TASK ? findingsPlan() : mainPlan());
+    return HttpResponse.json(mainPlan());
   }),
   http.get(`${API}/tasks/:id/logs`, ({ request, params }) => {
     const t = findTask(String(params.id));
@@ -1093,30 +1093,45 @@ function genericLogs(t: Task) {
 
 // ------------------------------------------------------------------ report
 
+/** Another task's report (C2 2.0): its rejects are timestamp gaps, every module's own summary scaled to its episodes. */
 function genericReport(t: Task, revision: number): Report {
   const s = t.summary ?? { total: 0, passed: 0, rejected: 0, held: 0, review: 0, pass_rate: null };
   const cameras = profileFor(t.input.uri).cameras;
+  const selected = t.modules.filter((m) => m.selected).map((m) => m.id);
+  const rejects = s.rejected ? [{ module: 'timestamp_check', kind: 'finding' as const, code: 'gap', item: 'STRM-3', count: s.rejected }] : [];
   return {
-    schema_version: '1.0',
+    schema_version: '2.0',
     revision,
     overview: {
       dataset: { input: t.input.uri, source_digest: t.source?.digest ?? null, episode_count: s.total + (s.skipped ?? 0), cameras, fps: 30, robot_type: t.embodiment_id },
-      run: { run_dir: t.run_id, revision, modules: t.modules.filter((m) => m.selected).map((m) => m.id), adjudications_applied: 0 },
+      run: { run_dir: t.run_id, revision, modules: selected, adjudications_applied: 0 },
       counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review, ...(s.skipped !== undefined ? { skipped: s.skipped } : {}) },
       pass_rate: s.pass_rate,
-      reject_reasons: s.rejected ? [{ module: 'timestamp_check', count: s.rejected }] : [],
+      reject_reasons: rejects,
+      reject_items: rejects.map((r) => ({ item: r.item, count: r.count })),
       token_usage: { prompt: t.usage.prompt_tokens, completion: t.usage.completion_tokens, reasoning: t.usage.reasoning_tokens, cached: t.usage.cached_tokens, requests: t.usage.requests, requests_unknown_usage: t.usage.requests_unknown_usage },
       duration_s: null,
+      policy: { preset: t.params.policy?.preset ?? 'default', version: '2' },
+      coverage: { ...coverageOf(selected), unassessable: [] },
+      findings_by_item: s.rejected ? [{ item: 'STRM-3', episodes: s.rejected, blocking: s.rejected, review: 0, info: 0 }] : [],
     },
     modules: t.modules
       .filter((m) => m.selected)
       .map((m) => {
         const spec = registry.modules.find((x) => x.id === m.id)!;
+        const n = m.episodes_total || s.total;
+        const flagged = m.id === 'timestamp_check' ? s.rejected : 0;
+        const stats = {
+          assessed_episodes: n,
+          flagged_episodes: flagged,
+          levels: { blocking: flagged, review: 0, info: 0 },
+          items: flagged ? [{ item: 'STRM-3', code: 'gap', level: 'blocking', episodes: flagged, share: n ? Number((flagged / n).toFixed(4)) : null }] : [],
+          unassessable: [],
+        };
         return {
           id: m.id,
           state: 'succeeded' as const,
-          gate: (spec.codes.some((c) => c.level === 'blocking') ? 'hard' : 'none') as 'hard' | 'none',
-          summary: sampleSummary(m.id, m.episodes_total || s.total),
+          summary: { ...sampleSummary(m.id, n), ...stats } as unknown as Report['modules'][number]['summary'],
           tables: spec.tables.map((tb) => ({ id: tb.id, rows: tableRows(tb.id).length, file: `tables/${tb.id}.parquet` })),
           adjudication: producesAdjudication(spec) && t.pending_adjudication ? { pending: t.pending_adjudication } : null,
         };
@@ -1144,20 +1159,6 @@ function revisionOf(t: Task, url: URL): number | Response {
   return n;
 }
 
-/** A row of a two-block run (design doc 17 §3.3): every stage's state, the time in each, the verdict - final once
- * the run is over (C4 5.3.2), provisional while it runs. */
-function pipelineMockRow(ep: number, revision: number, finished: boolean): PipelineEpisode {
-  const view = episodeView(ep, revision);
-  const records = Object.values(view.modules).map((r) => asLegacyRecord(r, registry));
-  const verdict = records.some((r) => r.verdict === 'fail') ? 'drop'
-    : records.some((r) => r.verdict === 'error') ? 'held' : 'keep';
-  const took = { numeric: 0.18, frame: 2.9 + (ep % 7) * 0.1, duplicate: 0.02, vlm: 11.2 + (ep % 5) };
-  return { episode_index: ep, reason: null, verdict, provisional: !finished,
-    stages: { numeric: 'done', frame: 'done', duplicate: 'done', vlm: verdict === 'held' ? 'error' : 'done' },
-    stage_processing_s: took, processing_s: Object.values(took).reduce((a, x) => a + x, 0),
-    verdict_reason: verdict === 'drop' ? view.reasons?.[0]?.text ?? null : null };
-}
-
 const report = [
   http.get(`${API}/tasks/:id/pipeline/episodes`, ({ request, params }) => {
     const t = findTask(String(params.id));
@@ -1168,31 +1169,24 @@ const report = [
     const total = t.summary?.total ?? t.progress.stages.find((s) => s.id === 'numeric')?.total ?? 0;
     const completed = t.result_rev ? total : Math.min(total, t.progress.stages.find((s) => s.id === 'vlm')?.done ?? 0);
     const indexes = Array.from({ length: completed }, (_, i) => i).filter((ep) => ep < before).reverse();
-    if (t.id === FINDINGS_TASK) {
-      // a two-block run (C4 2.2.0 / 2.3.0): per-stage states, the provisional verdict, the live module counts
-      const rows = indexes.slice(0, limit).map((ep) => findingsPipelineRow(ep));
-      return HttpResponse.json({ items: rows, next_cursor: indexes.length > limit ? rows.at(-1)!.episode_index : null,
-        started: completed, finished: completed, modules: findingsModuleCounts() });
-    }
-    const items = indexes.slice(0, limit).map((ep) => pipelineMockRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'));
+    const items = indexes.slice(0, limit).map((ep) => pipelineRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'));
+    // per module the episodes judged, failed on and with a finding (C4 2.3.0): the main task's story has them
     return HttpResponse.json({ items, next_cursor: indexes.length > limit ? items.at(-1)!.episode_index : null,
-      started: completed, finished: completed });
+      started: completed, finished: completed, ...(t.id === MAIN_TASK ? { modules: mainModuleCounts() } : {}) });
   }),
   http.get(`${API}/tasks/:id/pipeline/episodes/:index`, ({ params }) => {
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');
     const ep = Number(params.index);
     if (!Number.isInteger(ep) || ep < 0) return err(404, 'not_found', 'episode 不存在');
-    if (t.id === FINDINGS_TASK) return HttpResponse.json({ ...findingsPipelineRow(ep), modules: findingsView(ep, 1).modules });
-    return HttpResponse.json({ ...pipelineMockRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'),
-      modules: episodeView(ep, t.result_rev || 1).modules });
+    return HttpResponse.json({ ...pipelineRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'), modules: episodeView(ep, t.result_rev || 1).modules });
   }),
   http.get(`${API}/tasks/:id/report`, ({ request, params }) => {
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');
     const rev = revisionOf(t, new URL(request.url));
     if (rev instanceof Response) return rev;
-    const r = t.id === MAIN_TASK ? mainReport(rev === 1 ? 1 : 2) : t.id === FINDINGS_TASK ? findingsReport() : genericReport(t, rev);
+    const r = t.id === MAIN_TASK ? mainReport(rev === 1 ? 1 : 2) : genericReport(t, rev);
     return HttpResponse.json({ revision: rev, report: r, links: [{ rel: 'report', title: 'Open QA report', url: `/tasks/${t.id}/report?rev=${rev}`, absolute: false }] });
   }),
   http.get(`${API}/tasks/:id/report/tables/:table`, ({ request, params }) => {
@@ -1230,7 +1224,8 @@ const report = [
     const ep = Number(params.index);
     const total = t.summary?.total ?? 50;
     if (!Number.isInteger(ep) || ep < 0 || ep >= Math.max(total, 50)) return err(404, 'not_found', `没有 ep ${String(params.index)}`);
-    const view = t.id === FINDINGS_TASK ? findingsView(ep, rev) : episodeView(ep, rev);
+    // the main task's first run lost task success to the model's quota (r0001)
+    const view = episodeView(ep, rev, t.id === MAIN_TASK && rev === 1);
     // C4 2.4.0: the mini player reads frames as seconds and links to the visualize page
     const ds = db.datasets.find((d) => d.id === t.dataset_id);
     view.fps = ds?.preflight.dataset?.fps ?? null;
@@ -1256,7 +1251,7 @@ const report = [
     if (review !== null && review !== 'true' && review !== 'false') return err(400, 'validation_failed', 'review 只能是 true 或 false');
     const limit = Number(q.get('limit') ?? 50);
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) return err(400, 'validation_failed', 'limit 在 1 到 500 之间');
-    // C4 2.3.0: the findings filters (a funnel's revision has no findings: they match nothing)
+    // C4 2.3.0: the findings filters
     const level = q.get('level');
     if (level !== null && !['blocking', 'review', 'info'].includes(level)) return err(400, 'validation_failed', 'level 只能是 blocking、review、info');
     const item = q.get('item');
@@ -1276,7 +1271,7 @@ const report = [
       }
     }
     const s = t.summary;
-    const all: TaskEpisode[] = t.id === MAIN_TASK ? mainEpisodes(open) : t.id === FINDINGS_TASK ? findingsEpisodes(open) : genericEpisodes(s?.total ?? 0, s?.rejected ?? 0, s?.held ?? 0, open);
+    const all: TaskEpisode[] = t.id === MAIN_TASK ? mainEpisodes(open, rev) : genericEpisodes(s?.total ?? 0, s?.rejected ?? 0, s?.held ?? 0, open);
     const counts = { all: all.length, passed: 0, reject: 0, held: 0, review: 0 };
     for (const e of all) {
       counts[e.list] += 1;
@@ -1315,8 +1310,7 @@ const report = [
     const ep = Number(params.index);
     if (!Number.isInteger(ep) || ep < 0) return err(400, 'validation_failed', 'episode 下标不能是负数');
     const name = `ep${String(ep).padStart(6, '0')}`;
-    if (ep === 18 && t.id === MAIN_TASK) return err(404, 'not_found', `${name} 没有走到视频-动作同步这一档（前面已被判废），没有同步曲线`, { episode_index: ep, revision: rev, reason: 'no_record' });
-    const curves = t.id === MAIN_TASK || t.id === FINDINGS_TASK ? mainSyncCurves(ep, rev) : null;
+    const curves = t.id === MAIN_TASK ? mainSyncCurves(ep, rev) : null;
     if (!curves) return err(404, 'not_found', `${name} 同步正常：默认只为值得留意的条目（没对齐、有相机被标注或测不准）保存同步曲线`, { episode_index: ep, revision: rev, reason: 'no_curves' });
     return HttpResponse.json(curves);
   }),
@@ -1376,11 +1370,11 @@ const report = [
     idempotent(request, async () => {
       const t = findTask(String(params.id));
       if (!t) return err(404, 'not_found', '任务不存在');
-      // C4 1.4: optional AdjudicationApply body; v1's two layers unless full is asked for (D39).
-      const b = await body<{ relabel_rerun?: 'v1' | 'full' }>(request, 'applyAdjudication');
+      // C4 7.0.0: the body carries nothing to choose (a relabel is judged again with its new text, D39, D71)
+      await body<Record<string, never>>(request, 'applyAdjudication');
       if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务，等它结束后再执行裁决');
       if (countsOf(t.id).unapplied === 0) return err(400, 'validation_failed', '没有尚未应用的裁决');
-      const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
+      const s = newSubtask(t, 'apply_adjudication', {});
       // The answers in force; a bare 拿不准 changes nothing, one that rewrote the text is applied.
       for (const d of executable(t.id)) if (d.decision !== 'unsure' || d.new_label) d.applied = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
@@ -1470,7 +1464,7 @@ const uploadHandlers = [
       return HttpResponse.json(up, { status: 201 });
     }
     const text = await request.text();
-    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template', 'eef_record_mapping', 'viz_annotations'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
+    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template', 'viz_annotations'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
     let doc: unknown;
     try {
       doc = JSON.parse(text);
@@ -1503,15 +1497,6 @@ const uploadHandlers = [
         return err(400, 'validation_failed', '标注格式不支持：认得出的是 Argus 风格的 timeline / key_events / completion（或 event_labels）', { errors: [{ field: null, problem: 'no timeline or event_labels', code: 'annotation_unsupported' }] });
       const ep = Number(/(\d+)\.json$/i.exec(name)?.[1] ?? 0);
       summary = { format: 'argus', episodes: 1, first: ep, last: ep, segments: (a.timeline ?? a.event_labels ?? []).length, events: (a.key_events ?? []).length, zip: false };
-    } else if (kind === 'eef_record_mapping') {
-      // as the Daemon summarizes a dataset-record mapping (daemon/uploads.py, design doc 12 §8.7)
-      const m = doc as { schema_version?: string; record?: Record<string, Record<string, unknown> | undefined> };
-      const rec = m.record ?? {};
-      const sources = ['joints', 'pose'].filter((k) => rec[k]);
-      if (!['eef-mapping/1.0', 'eef-mapping/1.1'].includes(m.schema_version ?? '') || !sources.length)
-        return err(400, 'validation_failed', '数据集记录映射不合格：record mapping: record needs pose, joints or both', { errors: [{ field: null, problem: 'record needs pose, joints or both', code: 'record_mapping_invalid' }] });
-      const field = (k: string) => [...new Set(sources.map((x) => rec[x]?.[k]).filter((v): v is string => typeof v === 'string'))].sort();
-      summary = { sources, robot: typeof rec.joints?.robot === 'string' ? rec.joints.robot : null, columns: field('key'), topics: field('topic'), declared_frames: Object.keys(rec.frames ?? {}).sort() };
     } else {
       if (!Array.isArray(doc) || !doc.length) return err(400, 'validation_failed', '种子文件应是 observation 行的 JSON 数组', { errors: [{ field: null, problem: 'expected an array' }] });
       summary = { rows: doc.length, samples: new Set((doc as { sample_id: string }[]).map((r) => r.sample_id)).size };

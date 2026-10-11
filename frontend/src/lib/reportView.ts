@@ -47,7 +47,7 @@ export function detailsDigest(details: Record<string, unknown> | null | undefine
   return parts.join(' · ') || '—';
 }
 
-/** Where an execution error happened: «arbitration：timeout 60s（3 次）». */
+/** Where an execution error happened: «probe：timeout 60s（3 次）». */
 export function recordError(e: ResultRecord['error']): string {
   if (!e || typeof e !== 'object') return '';
   const incidents = (e as { incidents?: { step: string; cause?: string; attempts?: number; camera?: string }[] }).incidents ?? [];

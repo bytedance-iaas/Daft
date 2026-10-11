@@ -1,7 +1,7 @@
 import { Space, Tag, Typography } from '@arco-design/web-react';
 import type { ReactNode } from 'react';
 import { useModules } from '../../api/queries';
-import type { ReportModuleSectionV2 } from '../../api/types';
+import type { ReportModuleSection } from '../../api/types';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
 import { LEVELS, LEVEL_COLOR, LEVEL_TAG, itemLabel, levelTitle, moduleItems, moduleLevels, readingName, scoreHists, unassessableTitle, type Level } from '../../lib/findings';
@@ -21,7 +21,7 @@ export function LevelTag({ level }: { level: string }) {
 }
 
 /** The bars of a section's 检出项 (summary.items): one per finding code, by level, with its share of the assessed. */
-export function itemsChart(moduleId: string, summary: ReportModuleSectionV2['summary'], reg: Parameters<typeof moduleItems>[0]): ChartSpec | null {
+export function itemsChart(moduleId: string, summary: ReportModuleSection['summary'], reg: Parameters<typeof moduleItems>[0]): ChartSpec | null {
   const rows = moduleItems(reg, moduleId, summary);
   if (!rows.length) return null;
   const cams = rows.filter((r) => r.byCamera.length);
@@ -54,7 +54,7 @@ export function itemsChart(moduleId: string, summary: ReportModuleSectionV2['sum
 }
 
 /**
- * What every module section of a report 2.0 has (design doc 17 §5.2): the episodes it assessed, those it
+ * What every module section of a report has (design doc 17 §5.2): the episodes it assessed, those it
  * found something in, per level; its 检出项 (codes by level, with their share and cameras); the
  * distributions of its 0-1 readings; why it could not assess some episodes; its dataset-level findings.
  * Drawn from the section's summary alone, so a new module needs no frontend change.
@@ -66,7 +66,7 @@ export function FindingsView({
   ownScore = false,
 }: {
   moduleId: string;
-  section: ReportModuleSectionV2;
+  section: ReportModuleSection;
   extra?: ReactNode;
   /** the module's own view draws the composite score's distribution already (06 §6.2's score_hist) */
   ownScore?: boolean;

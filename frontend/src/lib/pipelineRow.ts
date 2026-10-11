@@ -1,10 +1,9 @@
-// One row of the Episode 流水线 card (C4 PipelineEpisode). A two-block run (design doc 17 §3.3) gives every
-// per-episode stage's state over both blocks and a provisional verdict - the policy on the findings so far; a
-// funnel run (a task made before) gives its position in the funnel. The card shows the stages in their groups
-// (design doc 26 §2, D88): 数据完整性, CPU 检查, 模型检查.
+// One row of the Episode 流水线 card (C4 PipelineEpisode): every per-episode stage's state over both blocks
+// (design doc 17 §3.3) and a provisional verdict - the policy on the findings so far. The card shows the stages in
+// their groups (design doc 26 §2, D88): 数据完整性, CPU 检查, 模型检查.
 import type { PipelineEpisode } from '../api/types';
 import { zh } from '../locales/zh';
-import { STAGE_GROUPS, progressStageLabel } from './taskView';
+import { STAGE_GROUPS } from './taskView';
 
 const copy = zh.taskDetail.pipelineEpisodes;
 /** The groups of the episodes' stages, as the card lists them. */
@@ -13,7 +12,7 @@ export const ROW_GROUPS = STAGE_GROUPS.filter((g) => g.perEpisode);
 const CPU_GROUPS = ['integrity', 'cpu'];
 const MARK: Record<string, string> = { done: '✓', error: '✗', running: '…', waiting: '…' };
 
-type Row = Pick<PipelineEpisode, 'stages' | 'next_stage' | 'last_stage' | 'verdict' | 'reason' | 'provisional'>;
+type Row = Pick<PipelineEpisode, 'stages' | 'verdict' | 'reason' | 'provisional'>;
 
 const open = (state: string | undefined) => state === 'waiting' || state === 'running';
 
@@ -35,7 +34,7 @@ export function rowGroups(row: Row): { key: string; label: string; state: string
   });
 }
 
-/** The groups a two-block row waits for: the first unfinished one of each block. */
+/** The groups a row waits for: the first unfinished one of each block. */
 export function waitingStages(row: Row): string[] {
   const groups = rowGroups(row).filter((g) => open(g.state));
   const cpu = groups.find((g) => CPU_GROUPS.includes(g.key));
@@ -44,27 +43,22 @@ export function waitingStages(row: Row): string[] {
 }
 
 export function rowFinished(row: Row): boolean {
-  if (row.stages) return Object.values(row.stages).every((v) => v === 'done' || v === 'error');
-  return row.next_stage === 'done';
+  return Object.values(row.stages ?? {}).every((v) => v === 'done' || v === 'error');
 }
 
 /** The 当前结果 tag. */
 export function rowState(row: Row): string {
   if (row.reason === 'missing') return copy.missing;
-  if (row.stages) {
-    if (!rowFinished(row)) return copy.waiting(waitingStages(row).join('、'));
-    // provisional while anything runs; once the run is over the Daemon gives the current results' verdict (C4 5.3.2)
-    const labels = row.provisional === false ? copy.final : copy.provisional;
-    return (row.verdict && labels[row.verdict]) || copy.finished;
-  }
-  if (row.next_stage === 'done') return (copy.verdict as Record<string, string>)[row.verdict ?? ''] ?? copy.finished;
-  return copy.waiting(row.next_stage ? progressStageLabel(row.next_stage) : '');
+  if (!rowFinished(row)) return copy.waiting(waitingStages(row).join('、'));
+  // provisional while anything runs; once the run is over the Daemon gives the current results' verdict (C4 5.3.2)
+  const labels = row.provisional === false ? copy.final : copy.provisional;
+  return (row.verdict && labels[row.verdict]) || copy.finished;
 }
 
-/** The 最近阶段 column: a funnel row's last stage; a two-block row's groups, each marked done / error / not yet. */
+/** The 最近阶段 column: the row's groups, each marked done / error / not yet. */
 export function rowStages(row: Row): string {
-  if (!row.stages) return row.last_stage ? progressStageLabel(row.last_stage) : '—';
-  return rowGroups(row).map((g) => `${g.label} ${MARK[g.state] ?? ''}`.trim()).join(' · ');
+  const groups = rowGroups(row);
+  return groups.length ? groups.map((g) => `${g.label} ${MARK[g.state] ?? ''}`.trim()).join(' · ') : '—';
 }
 
 /** The seconds a row's episode spent in a group: its stages' added up (none yet: null). */

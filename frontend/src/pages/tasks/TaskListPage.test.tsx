@@ -28,7 +28,7 @@ describe('任务列表 (07 §4.1)', () => {
     // Badges: pending adjudication links to the adjudication page
     const droid = row('droid 前 50 条质检');
     expect(within(droid).getByRole('link', { name: '待裁决 10' })).toHaveAttribute('href', '/tasks/task_01HXR2D8/adjudication');
-    expect(within(droid).getByText('通过 41 · 拒绝 7 · 待补跑 2')).toBeInTheDocument();
+    expect(within(droid).getByText('通过 42 · 拒绝 6 · 待补跑 2')).toBeInTheDocument();
     expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
   });
 
@@ -59,12 +59,12 @@ describe('任务列表 (07 §4.1)', () => {
       const dialog = await screen.findByRole('dialog', { name: '重试出错的条目' });
       await user.click(within(dialog).getByRole('button', { name: '开始重试' }));
       await waitFor(() => expect(within(row('droid 前 50 条质检')).getByTestId('state-tag')).toHaveTextContent(/^运行中$/));
-      expect(within(row('droid 前 50 条质检')).getByTestId('progress-subtask')).toHaveTextContent('子任务运行中通过 41 · 拒绝 7 · 待补跑 2');
+      expect(within(row('droid 前 50 条质检')).getByTestId('progress-subtask')).toHaveTextContent('子任务运行中通过 42 · 拒绝 6 · 待补跑 2');
       expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
       // The retry ends on the server: the next poll shows the recomputed state, and polling stops.
       finishSubtask(findTask('task_01HXR2D8')!.id);
       await waitFor(() => expect(within(row('droid 前 50 条质检')).getByTestId('state-tag')).toHaveTextContent(/^已完成$/));
-      expect(row('droid 前 50 条质检')).toHaveTextContent('通过 43 · 拒绝 7');
+      expect(row('droid 前 50 条质检')).toHaveTextContent('通过 44 · 拒绝 6');
       await waitFor(() => expect(screen.queryByText('有未结束的任务，每 5 秒自动刷新')).toBeNull());
     } finally {
       EVENTS_CONFIG.pollMs = 5000;
@@ -117,15 +117,16 @@ describe('任务列表 (07 §4.1)', () => {
     renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });
     const droid = within(row('droid 前 50 条质检')).getByTestId('module-summary');
-    expect(droid).toHaveTextContent('7 项');                                   // data_integrity is in every preset
+    expect(droid).toHaveTextContent('6 项');
     expect(droid).toHaveTextContent('1 项错误');
-    expect(droid).toHaveTextContent('完整质检');
+    expect(droid).toHaveTextContent('自选');                                   // without data_integrity, which is in every preset
+    expect(within(row('so101 夜间批次')).getByTestId('module-summary')).toHaveTextContent('完整质检');
     expect(within(row('libero-10 抽检')).getByTestId('module-summary')).toHaveTextContent('快速质检');
   });
 
   it('paginates by page number with a total and keeps the page in the URL', async () => {
     const { user } = renderApp('/tasks');
-    expect(await screen.findByText('共 41 条')).toBeInTheDocument();
+    expect(await screen.findByText('共 40 条')).toBeInTheDocument();
     await user.click(screen.getByText('2', { selector: '.arco-pagination-item' }));
     await waitFor(() => expect(currentLocation()).toContain('page=2'));
     expect(await screen.findByRole('link', { name: '历史批次 11' })).toBeInTheDocument();

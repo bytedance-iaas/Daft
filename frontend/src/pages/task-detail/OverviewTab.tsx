@@ -1,27 +1,23 @@
-import { Button, Card, Collapse, Descriptions, Empty, Popover, Progress, Radio, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
+import { Card, Collapse, Descriptions, Empty, Popover, Progress, Radio, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
-import { moduleName, qk, useModules } from '../../api/queries';
-import type { ModuleState, Plan, StageProgress, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
-import { legacyReportResponse } from '../../lib/records';
+import { fetchReport, moduleName, qk, useModules } from '../../api/queries';
+import type { Plan, StageProgress, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
 import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
-import { MODULE_STATE_COLOR } from '../../features/tasks/ModuleSummary';
-import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
-import { summaryDigest } from '../../lib/summary';
-import { EPISODE_STAGES, activeSubtask, groupStages, isTerminalState, progressStageLabel, progressStages, stageLabel, subtaskLabel, type StageView } from '../../lib/taskView';
+import { EPISODE_STAGES, activeSubtask, groupStages, progressStageLabel, progressStages, subtaskLabel, type StageView } from '../../lib/taskView';
 import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
 import { StatCell } from '../../components/StatCell';
 import { PipelineActivity } from './PipelineActivity';
-import { ErrorEpisodes, ModuleStatCards, logStageOf } from './ModuleStats';
+import { ModuleStatCards } from './ModuleStats';
 
 const Stat = StatCell;
 
@@ -112,7 +108,7 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
   const lanes = raw.filter((s) => EPISODE_STAGES.includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
   const rest = showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw;
-  const stages = groupStages([...rest.filter((s) => s.id === 'autolabel'), ...rest.filter((s) => s.id !== 'autolabel')]);
+  const stages = groupStages(rest);
   return (
     <Card
       title={
@@ -180,8 +176,7 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   });
   const [view, setView] = useState<TokenView>('module');
   const u = task.usage;
-  const moduleLabel = (id: string) =>
-    id === 'autolabel' ? zh.stage.autolabel : id.includes('+') ? zh.taskDetail.mergedModules(id.split('+').map((m) => moduleName(reg.data, m)).join('、')) : moduleName(reg.data, id);
+  const moduleLabel = (id: string) => (id.includes('+') ? zh.taskDetail.mergedModules(id.split('+').map((m) => moduleName(reg.data, m)).join('、')) : moduleName(reg.data, id));
   const rows = usage.data?.actual ?? [];
   const data = sumRows(rows, view === 'module' ? (r) => moduleLabel(r.module_id) : (r) => subtaskName(subtasks, r.subtask_id));
   const total = sumRows(rows, () => zh.taskDetail.tokenTotal)[0];
@@ -256,102 +251,6 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   );
 }
 
-function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefined; digest: Record<string, string> }) {
-  const reg = useModules();
-  const qc = useQueryClient();
-  const [open, setOpen] = useState<string[]>([]);
-  const selected = task.modules.filter((m) => m.selected);
-  const skipped = task.modules.filter((m) => !m.selected && m.availability !== 'available');
-  const terminal = isTerminalState(task.state);
-  const retry = (m: ModuleState) =>
-    confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, qc, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
-  // Widths (07 §4.2): the state, the count and the duration read on one line at any window size;
-  // only the summary column gives way.
-  const columns: ColumnProps<ModuleState>[] = [
-    { title: zh.taskDetail.colModule, dataIndex: 'name', width: 140, render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
-    { title: zh.taskDetail.colStage, key: 'stage', dataIndex: 'id', width: 100, render: (_: unknown, m) => progressStageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
-    {
-      title: zh.taskDetail.colState,
-      dataIndex: 'state',
-      width: 110,
-      render: (_: unknown, m) => (
-        <span className="nowrap">
-          <span className="dot" style={{ background: MODULE_STATE_COLOR[m.selected ? m.state : 'skipped'] }} />
-          {m.selected ? zh.moduleState[m.state] ?? m.state : zh.moduleState.skipped}
-        </span>
-      ),
-    },
-    { title: zh.taskDetail.colTotal, dataIndex: 'episodes_total', width: 100, render: (_: unknown, m) => (m.selected ? m.episodes_total : '—') },
-    {
-      title: zh.taskDetail.processingElapsed,
-      dataIndex: 'elapsed_s',
-      width: 150,
-      render: (_: unknown, m) => {
-        const stage = reg.data?.modules.find((x) => x.id === m.id)?.stage;
-        const mean = task.progress.stages.find((s) => s.id === stage)?.pipeline?.processing?.mean_s;
-        if (stage && EPISODE_STAGES.includes(stage)) {
-          return <span className="nowrap">{mean != null ? zh.taskDetail.perEpisode(mean.toFixed(2)) : '—'}</span>;
-        }
-        return <span className="nowrap">{m.elapsed_s != null ? zh.taskDetail.wholeStage(zh.time.duration(m.elapsed_s)) : '—'}</span>;
-      },
-    },
-    {
-      title: zh.taskDetail.colSummary,
-      dataIndex: 'error',
-      render: (_: unknown, m) =>
-        !m.selected ? <span className="muted">{m.unavailable_reason ?? '—'}</span> : m.error ? <span style={{ color: 'var(--c-danger)' }}>{m.error}</span> : <span className="muted">{digest[m.id] ?? '—'}</span>,
-    },
-    {
-      title: zh.taskDetail.colErrors,
-      dataIndex: 'episodes_error',
-      width: 120,
-      render: (_: unknown, m) =>
-        m.episodes_error ? (
-          <Button type="text" size="mini" status="warning" onClick={() => setOpen((o) => (o.includes(m.id) ? o.filter((x) => x !== m.id) : [...o, m.id]))}>
-            {zh.taskDetail.errorsCount(m.episodes_error)} {open.includes(m.id) ? '▴' : '▾'}
-          </Button>
-        ) : (
-          '—'
-        ),
-    },
-    {
-      title: zh.taskDetail.colOps,
-      key: 'ops',
-      dataIndex: 'id',
-      width: 90,
-      render: (_: unknown, m) =>
-        m.selected && terminal && (m.episodes_error > 0 || m.state === 'failed') ? (
-          <Button size="mini" type="text" disabled={Boolean(task.active_subtask)} onClick={() => retry(m)}>
-            {zh.taskDetail.retryModule}
-          </Button>
-        ) : null,
-    },
-  ];
-  return (
-    <Card title={zh.taskDetail.modulesTitle}>
-      <Table
-        rowKey="id"
-        size="small"
-        pagination={false}
-        columns={columns}
-        data={[...selected, ...skipped]}
-        scroll={{ x: 980 }}
-        expandedRowKeys={open}
-        expandedRowRender={(m) => (m.episodes_error ? <ErrorEpisodes taskId={task.id} stage={logStageOf(plan, m.id, reg.data?.modules.find((x) => x.id === m.id)?.stage)} /> : null)}
-        onExpand={(m) => setOpen((o) => (o.includes(m.id) ? o.filter((x) => x !== m.id) : [...o, m.id]))}
-        expandProps={{ icon: () => null, width: 0, rowExpandable: (m) => m.episodes_error > 0 }}
-        data-testid="modules-table"
-      />
-    </Card>
-  );
-}
-
-/** An apply_adjudication subtask records how relabels were judged again (D39, `scope.relabel_rerun`). */
-function relabelRerunOf(subtasks: readonly Subtask[], id: string | null | undefined): 'v1' | 'full' | null {
-  const s = id ? subtasks.find((x) => x.id === id) : undefined;
-  return s?.kind === 'apply_adjudication' ? s.scope.relabel_rerun ?? null : null;
-}
-
 /** A timeline node's title: subtask entries name the subtask (「子任务 · 重试 #1」「重试 #1 结束」). */
 function timelineTitle(e: TimelineEntry, subtasks: readonly Subtask[]): string {
   const named = e.subtask_id && subtasks.some((s) => s.id === e.subtask_id) ? subtaskName(subtasks, e.subtask_id) : null;
@@ -370,7 +269,7 @@ function timelineColor(e: TimelineEntry): string {
 /**
  * 执行时间线 (07 §4.2), laid out horizontally (requester item 21): one node per entry in a row
  * that scrolls sideways when it does not fit, opened at the newest end. Each node shows its title
- * and time, the relabel tag, the revision's report link and 当前版本 on the node itself; the entry's
+ * and time, the revision's report link and 当前版本 on the node itself; the entry's
  * text is clamped to two lines, the full text in a popover.
  */
 function TimelineCard({ task, entries, subtasks }: { task: Task; entries: TimelineEntry[]; subtasks: readonly Subtask[] }) {
@@ -386,7 +285,6 @@ function TimelineCard({ task, entries, subtasks }: { task: Task; entries: Timeli
         <div className="htl" ref={row} data-testid="timeline">
           <ol className="htl-track">
             {entries.map((e, i) => {
-              const rerun = e.kind === 'subtask_started' || e.kind === 'subtask_finished' ? relabelRerunOf(subtasks, e.subtask_id) : null;
               const revision = e.kind === 'revision' && e.revision ? e.revision : null;
               return (
                 <li key={i} className="htl-node" data-kind={e.kind}>
@@ -398,13 +296,8 @@ function TimelineCard({ task, entries, subtasks }: { task: Task; entries: Timeli
                   <div className="htl-time">
                     <RelTime ms={e.at} />
                   </div>
-                  {rerun || revision ? (
+                  {revision ? (
                     <div className="htl-extra">
-                      {rerun ? (
-                        <Tag size="small" color={rerun === 'full' ? 'orangered' : 'arcoblue'} data-testid="relabel-rerun-tag">
-                          {zh.taskDetail.relabelRerun[rerun]}
-                        </Tag>
-                      ) : null}
                       {revision ? <Link to={`/tasks/${task.id}/report?rev=${revision}`}>{zh.taskDetail.openRevision(revision)}</Link> : null}
                       {revision && revision === task.result_rev ? (
                         <Tag size="small" color="green">
@@ -454,11 +347,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
   };
   const limit = (l: { value: number; bound_by: string }, labels: Record<string, string> = {}) =>
     `${l.value}（${labels[l.bound_by] ?? zh.taskDetail.boundBy[l.bound_by] ?? l.bound_by}）`;
-  const episodes = (ref: string | undefined) => {
-    if (!ref) return '—';
-    if (ref.startsWith('survivors:')) return zh.taskDetail.planSurvivors(stageLabel(ref.slice('survivors:'.length)));
-    return zh.taskDetail.planEpisodes[ref] ?? ref;
-  };
+  const episodes = (ref: string | undefined) => (ref ? zh.taskDetail.planEpisodes[ref] ?? ref : '—');
   return (
     <div data-testid="plan">
       <Typography.Paragraph>{zh.taskDetail.planLimits(p.vlm_parallelism, limit(p.limits.cpu_concurrency, zh.taskDetail.cpuBoundBy), limit(p.limits.vlm_parallelism))}</Typography.Paragraph>
@@ -475,7 +364,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
             title: zh.taskDetail.planCols.concurrency,
             dataIndex: 'concurrency',
             render: (_: unknown, s: Plan['stages'][number]) =>
-              [s.concurrency ? zh.taskDetail.planCpu(s.concurrency) : '', s.gates ? Object.entries(s.gates).map(([k, n]) => planGateText(k, n)).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? planMergeText(s.merge.strategy) : '']
+              [s.concurrency ? zh.taskDetail.planCpu(s.concurrency) : '', s.gates ? Object.entries(s.gates).map(([k, n]) => planGateText(k, n)).join(' · ') : '', s.merge ? planMergeText(s.merge.strategy) : '']
                 .filter(Boolean)
                 .join(' · ') || '—',
           },
@@ -540,26 +429,20 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   });
   const report = useQuery({
     queryKey: qk.report(task.id, null),
-    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: task.id } } }))),
+    queryFn: () => fetchReport(task.id),
     enabled: task.result_rev > 0,
     retry: false,
   });
-  const digest: Record<string, string> = {};
-  for (const m of report.data?.report.modules ?? []) digest[m.id] = summaryDigest(m.summary);
-  const v2 = report.data?.v2 ?? null;
-  const { raw } = stageSource(task, subtasks);
-  // a task made before the findings (D59): its report is 1.0, or its stages are the funnel's
-  const legacy = Boolean(report.data && !v2) || raw.some((s) => s.id === 'verdict' || s.id === 'profile_vlm');
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
       {task.started_at ? <PipelineEpisodesCard task={task} /> : null}
-      {/* Side by side, equal height (requester item 13; again for two-block runs, 2026-10-04). */}
+      {/* Side by side, equal height (requester item 13; again 2026-10-04). */}
       <div className="grid-2">
         <StagesCard task={task} subtasks={subtasks} />
         <TokensCard task={task} subtasks={subtasks} />
       </div>
-      {legacy ? <ModulesCard task={task} plan={plan.data} digest={digest} /> : <ModuleStatCards task={task} plan={plan.data} v2={v2} />}
+      <ModuleStatCards task={task} plan={plan.data} report={report.data?.report ?? null} />
       <TimelineCard task={task} entries={timeline} subtasks={subtasks} />
       <MoreInfo task={task} />
       <div className="muted" style={{ fontSize: 12 }}>

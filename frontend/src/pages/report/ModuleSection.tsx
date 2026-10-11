@@ -2,35 +2,33 @@ import { Alert, Button, Card, Space, Tag, Tooltip, Typography } from '@arco-desi
 import { IconDown, IconUp } from '@arco-design/web-react/icon';
 import { Link } from 'react-router-dom';
 import { moduleById, moduleName, useModules } from '../../api/queries';
-import type { ReportModuleSection, ReportModuleSectionV2, Subtask } from '../../api/types';
+import type { ReportModuleSection, Subtask } from '../../api/types';
 import { FindingsView } from '../../features/findings/FindingsView';
 import { LEVEL_TAG, moduleRole, placeLabel } from '../../lib/findings';
+import { asLegacySection } from '../../lib/records';
 import { isAppealable } from '../../lib/registry';
 import { formatValue, subtaskName } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
-import { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
+import { SECTION_VIEWS } from './sectionViews';
 
-export { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
+export { SECTION_VIEWS } from './sectionViews';
 export type { SectionViewProps } from './sectionViews';
 
 // 错误 in red, like the task's state tag (fourth round)
 export const SECTION_STATE_COLOR: Record<string, string> = { succeeded: 'green', completed_with_errors: 'red', failed: 'red' };
 
 /**
- * One report section per selected module, in report.json order (07 §5, 06 §6.2): the module's
- * statistics and charts (SECTION_VIEWS), never a list of episodes. The toggle on the right folds
- * the section away (remembered per browser, F6.2). A report of the policy verdicts (C2 2.0, design doc
- * 17 §5.2) puts the generic findings statistics first (FindingsView: 检出项 by level, the readings'
- * distributions, what could not be assessed); a module's own view follows when it has one.
+ * One report section per selected module, in report.json order (07 §5, 06 §6.2): statistics and charts, never a
+ * list of episodes. The toggle on the right folds the section away (remembered per browser, F6.2). The generic
+ * findings statistics come first (FindingsView, design doc 17 §5.2: 检出项 by level, the readings'
+ * distributions, what could not be assessed); a module's own view (SECTION_VIEWS) follows when it has one.
  */
 export function ModuleSection({
   index,
   taskId,
   rev,
   section,
-  v2 = null,
   preset,
-  policyVersion,
   subtasks,
   readOnly,
   retryBlocked,
@@ -42,11 +40,7 @@ export function ModuleSection({
   taskId: string;
   rev: number;
   section: ReportModuleSection;
-  /** the section as a report 2.0 has it; null for a report of the funnel */
-  v2?: ReportModuleSectionV2 | null;
   preset?: string;
-  /** the version of the policy the report was judged with (version 1: report_only rejected nothing) */
-  policyVersion?: string;
   subtasks: readonly Subtask[];
   readOnly: boolean;
   retryBlocked: string | null;
@@ -63,8 +57,8 @@ export function ModuleSection({
   const fromSubtask = typeof fp.from_subtask === 'string' ? fp.from_subtask : null;
   const fpRest = Object.entries(fp).filter(([k]) => k !== 'from_subtask');
   const Own = SECTION_VIEWS[section.id];
-  const View = Own ?? DefaultSectionView;
-  const role = moduleRole(spec, preset, policyVersion);
+  const own = Own ? asLegacySection(section) : null;
+  const role = moduleRole(spec, preset);
   const disabledReason = readOnly ? zh.report.historyDisabled : retryBlocked;
   const bodyId = `section-body-${section.id}`;
   const adjudicate = pending ? (
@@ -82,8 +76,7 @@ export function ModuleSection({
       </Link>
     )
   ) : null;
-  // D42: rejects attributed to this module that a person may appeal (optional, not pending) - only while the registry
-  // still has the module appealable: a report of exact dedup, run before it was removed (D87), offers none
+  // D42: rejects attributed to this module that a person may appeal (optional, not pending)
   const appealable = reg.data && !isAppealable(spec) ? 0 : (section.adjudication?.appealable ?? 0);
   const appeal = appealable ? (
     readOnly ? (
@@ -108,18 +101,12 @@ export function ModuleSection({
         <div className="section-head">
           <span className="section-index">{index}</span>
           <b>{name}</b>
-          {v2 ? (
-            <>
-              <span className="muted" style={{ fontSize: 12 }}>
-                {placeLabel(spec)}
-              </span>
-              <Tag size="small" color={LEVEL_TAG[role]}>
-                {zh.findings.role[role]}
-              </Tag>
-            </>
-          ) : (
-            <Tag size="small">{zh.gate[section.gate] ?? section.gate}</Tag>
-          )}
+          <span className="muted" style={{ fontSize: 12 }}>
+            {placeLabel(spec)}
+          </span>
+          <Tag size="small" color={LEVEL_TAG[role]}>
+            {zh.findings.role[role]}
+          </Tag>
           {usesVlm ? (
             <Tag size="small" color="purple">
               {zh.report.usesVlm}
@@ -187,13 +174,11 @@ export function ModuleSection({
                   </Space>
                 }
               />
-            ) : v2 ? (
-              <>
-                <FindingsView moduleId={section.id} section={v2} ownScore={Boolean(Own) && Array.isArray((section.summary as { score_hist?: unknown }).score_hist)} />
-                {Own ? <Own taskId={taskId} rev={rev} section={section} /> : null}
-              </>
             ) : (
-              <View taskId={taskId} rev={rev} section={section} />
+              <>
+                <FindingsView moduleId={section.id} section={section} ownScore={Array.isArray(own?.summary.score_hist)} />
+                {Own && own ? <Own taskId={taskId} rev={rev} section={own} /> : null}
+              </>
             )}
           </Space>
         </div>

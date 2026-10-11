@@ -1,21 +1,20 @@
 import { Card, Collapse, Space, Spin, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { api, unwrap } from '../../api/client';
-import { moduleName, qk, useModules } from '../../api/queries';
+import { fetchReport, moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, DecisionValue } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import type { CardView, ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 import { EpisodeCard } from './EpisodeCard';
 import { usePaged } from './paging';
-import { legacyReportResponse } from '../../lib/records';
+import { rejectsByModule } from '../../lib/records';
 import { isAppealable } from '../../lib/registry';
 
 /**
  * 被拒复议 (07 §6, rule 2, D42): rejects attributed to an appealable module (registry
  * `appealable`: today task_success alone — rejects attributed to it alone), one card each.
- * The page explains why the other rejects are final (physical and structural gates, soft scores);
+ * The page explains why the other rejects are final (data integrity, the physical and structural gates);
  * the server checks the rule again. Appeals are optional and never count as pending.
  */
 export function AppealsTab({
@@ -47,12 +46,12 @@ export function AppealsTab({
   const paged = usePaged(views, resetKey, 'appeals-pager');
   const report = useQuery({
     queryKey: qk.report(taskId, rev),
-    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } }))),
+    queryFn: () => fetchReport(taskId, rev),
     enabled: rev > 0,
   });
   const appealable = (reg.data?.modules ?? []).filter(isAppealable);
   const appealableNames = appealable.map((m) => m.name_zh).join('、');
-  const reasons = report.data?.report.overview.reject_reasons ?? [];
+  const reasons = report.data ? rejectsByModule(report.data.report.overview) : [];
   const final = reasons.filter((r) => r.count > 0 && !appealable.some((m) => m.id === r.module));
   const total = reasons.reduce((n, r) => n + r.count, 0);
   const finalCount = final.reduce((n, r) => n + r.count, 0);

@@ -20,6 +20,7 @@ const CITING_SENTENCE = new RegExp(String.raw`^${NAMED}.*?\.\s+(?=[A-Z\x60])`);
 const PROSE: readonly [RegExp, string][] = [
   [/\bC2 (final-list|source-manifest)\b/g, '$1'],
   [/\bvalidated against C7\b/g, 'validated against the mapping schema'],
+  [/ \(or D\d{1,2}\)/g, ''],
   [/\ba document C2 2\.0 changed\b/g, 'a document changed in format 2.0'],
   [/\btasks made before C2 2\.0\b/g, 'tasks made before format 2.0'],
   [/\bPlans made before D54\b/g, 'Older plans'],

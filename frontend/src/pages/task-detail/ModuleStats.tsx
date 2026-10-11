@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { ModuleState, Plan, ReportV2, Task } from '../../api/types';
+import type { ModuleState, Plan, Report, Task } from '../../api/types';
 import { MODULE_STATE_COLOR } from '../../features/tasks/ModuleSummary';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { FindingsView, LevelTag } from '../../features/findings/FindingsView';
@@ -51,7 +51,7 @@ interface LiveCounts {
 }
 
 /**
- * The live module counts of a two-block run while it has no report yet (design doc 17 §5.3, C4 2.3.0
+ * The live module counts of a run while it has no report yet (design doc 17 §5.3, C4 2.3.0
  * `modules` of the live episode page): per module the episodes judged, failed on, with a finding.
  */
 function useLiveCounts(task: Task, enabled: boolean): Map<string, LiveCounts> {
@@ -72,12 +72,12 @@ function useLiveCounts(task: Task, enabled: boolean): Map<string, LiveCounts> {
  * 检出项 chart and readings as its report section. From the current report (each new revision refreshes it);
  * while a run has no report yet, the live counts. 去报告 opens the section.
  */
-export function ModuleStatCards({ task, plan, v2 }: { task: Task; plan: Plan | undefined; v2: ReportV2 | null }) {
+export function ModuleStatCards({ task, plan, report }: { task: Task; plan: Plan | undefined; report: Report | null }) {
   const reg = useModules();
   const qc = useQueryClient();
   const [open, setOpen] = useState<string[]>([]);
   const [errorsOpen, setErrorsOpen] = useState<string[]>([]);
-  const counts = useLiveCounts(task, !v2);
+  const counts = useLiveCounts(task, !report);
   const selected = task.modules.filter((m) => m.selected);
   const skipped = task.modules.filter((m) => !m.selected && m.availability !== 'available');
   const terminal = isTerminalState(task.state);
@@ -86,7 +86,7 @@ export function ModuleStatCards({ task, plan, v2 }: { task: Task; plan: Plan | u
     confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, qc, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
   const row = (m: ModuleState) => {
     const spec = reg.data?.modules.find((x) => x.id === m.id);
-    const section = v2?.modules.find((s) => s.id === m.id);
+    const section = report?.modules.find((s) => s.id === m.id);
     const live = counts.get(m.id);
     const levels = section ? moduleLevels(section.summary) : null;
     const unfolded = open.includes(m.id) && section;
