@@ -62,10 +62,17 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert set(results(rd, "task_success")) == set(range(8))
     page = d.api("GET", f"/tasks/{task['id']}/pipeline/episodes").json()
     assert page["started"] == page["finished"] == 8
-    # dedup is a segment of the CPU block like the others since D70, so it has a per-episode position too
+    # dedup is a segment of the CPU block like the others since D70, so it has a per-episode position too;
+    # the run is over, so every row has the revision's final verdict (C4 5.3.2)
     assert all(set(r["stages"]) == {"numeric", "frame", "dedup", "vlm"}
                and set(r["stages"].values()) == {"done"}
-               and r["provisional"] for r in page["items"])
+               and not r["provisional"] for r in page["items"])
+    lists = {name: {e["episode_index"] for e in json.load(open(os.path.join(rd, "revisions", "r0001", f"{name}.json"),
+                                                               encoding="utf-8"))["episodes"]}
+             for name in ("passed", "reject", "held")}
+    verdict = {"passed": "keep", "reject": "drop", "held": "held"}
+    assert {r["episode_index"]: r["verdict"] for r in page["items"]} == {
+        ep: verdict[name] for name, eps in lists.items() for ep in eps}
     counts = {m["id"]: m for m in page["modules"]}            # the live module cards (C4 2.3.0)
     assert {"timestamp_check", "visual_quality", "task_success"} <= set(counts)
     assert counts["timestamp_check"]["judged"] + counts["timestamp_check"]["error"] == 8

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 5.3.1
+  version: 5.3.2
   description: |
     ## Overview
 
@@ -213,6 +213,12 @@ info:
     `readings` name the episodes it covers, the direction and size of the offset, the extrinsic correction fitted on
     them and the calibration values that were assumptions. Nothing else changes.
 
+    **5.3.2** (2026-10-11): `GET /tasks/{id}/pipeline/episodes` (and its single-episode form) gives the final
+    verdict once a task's run is over: when the task is finished, has results and no retry or decision run is going
+    on, each row has `provisional: false` and the verdict and reason of the current results, adjudication included.
+    While anything runs, rows stay provisional as before. A row's `stage_processing_s` may also hold `vlm_prep`, the
+    time of the model-preparation stage.
+
   x-description-zh: |
     ## 概览
 
@@ -343,6 +349,10 @@ info:
     **5.3.1**（2026-10-10）：报告的 EEF 小节可能在 `dataset_findings` 里多一条数据集级发现 `calibration_suspect`：同一路相机在多数条目上
     位置偏差的方向一致、大小相近——多半是这路相机的标定、工具的偏移或按假设值的项，不是各条自己的问题。它的 `readings` 写明涉及哪些条目、
     偏差的方向与大小、在这些条目上拟合出的外参修正，以及标定里按假设值的项。其他不变。
+
+    **5.3.2**（2026-10-11）：`GET /tasks/{id}/pipeline/episodes`（及单条的接口）在任务跑完后给最终判决：任务已结束、已有结果、没有重试或执行裁决在跑时，
+    每一行 `provisional` 为 false，判决与原因取当前结果（含人工裁决）。有运行在进行时仍是暂定判决，和以前一样。一行的 `stage_processing_s`
+    还可能有 `vlm_prep`，即模型准备阶段的耗时。
 
 servers:
   - url: "{base}/api/v1"
@@ -4898,8 +4908,9 @@ components:
         provisional:
           type: boolean
           description: >-
-            the verdict is the policy applied to the findings so far, not the final one (two-block
-            pipelines: the final verdict is only given by aggregate)
+            two-block pipelines. true: the verdict is the policy applied to the findings so far, not the final one
+            (the final verdict is only given by aggregate). false (5.3.2): the run is over - the task is terminal,
+            has a result revision and no subtask runs - and the verdict and its reason are the current revision's
         processing_s: {type: [number, "null"], description: Sum of completed layer processing times for this episode; excludes queue and CPU admission waits}
         stage_processing_s:
           type: object
@@ -4908,6 +4919,7 @@ components:
             integrity: {type: number, minimum: 0}
             numeric: {type: number, minimum: 0}
             frame: {type: number, minimum: 0}
+            vlm_prep: {type: number, minimum: 0, description: "5.3.2: a model module's CPU half (the stage since 5.2.0)"}
             vlm: {type: number, minimum: 0}
         modules:
           type: object

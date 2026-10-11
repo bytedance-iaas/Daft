@@ -35,7 +35,8 @@ export function rowState(row: Row): string {
   if (row.reason === 'missing') return copy.missing;
   if (row.stages) {
     if (!rowFinished(row)) return copy.waiting(waitingStages(row).map((id) => STAGE[id] ?? id).join('、'));
-    const labels = row.provisional ? copy.provisional : (copy.verdict as Record<string, string>);
+    // provisional while anything runs; once the run is over the Daemon gives the current results' verdict (C4 5.3.2)
+    const labels = row.provisional === false ? copy.final : copy.provisional;
     return (row.verdict && labels[row.verdict]) || copy.finished;
   }
   if (row.next_stage === 'done') return (copy.verdict as Record<string, string>)[row.verdict ?? ''] ?? copy.finished;

@@ -22,6 +22,9 @@ describe('a row of the episode pipeline', () => {
     expect(rowFinished(row)).toBe(true);
     expect(rowState(row)).toBe('暂判拒绝');
     expect(rowState({ ...row, verdict: null })).toBe('已完成');
+    // the run is over: the current results' verdict (C4 5.3.2)
+    expect(rowState({ ...row, provisional: false })).toBe('拒绝');
+    expect(rowState({ ...row, provisional: false, verdict: 'keep' })).toBe('通过');
   });
 
   it('a funnel row (a task made before) keeps its position', () => {

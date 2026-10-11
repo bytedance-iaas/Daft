@@ -877,6 +877,8 @@ export const zh = {
       verdict: { keep: '漏斗保留', drop: '漏斗拒绝', held: '待补跑' },
       /** a two-block run (design doc 17 §3.3): the policy on the findings so far; the final verdict is the report's */
       provisional: { keep: '暂判保留', drop: '暂判拒绝', held: '待补跑' } as Record<string, string>,
+      /** the run is over (C4 5.3.2): the current results' verdict, in the report's words */
+      final: { keep: '通过', drop: '拒绝', held: '待补跑' } as Record<string, string>,
       missing: '源文件缺失',
       finished: '已完成',
       waiting: (stage: string) => `等待${stage}`,
@@ -2001,7 +2003,7 @@ export const zh = {
     rerunV1Desc: '只跑多视角打分和逐机位复核两层，结论和调用与旧版一致。',
     rerunFull: '按首轮的完整流程重判',
     rerunFullDesc: '多了判废护栏和取证仲裁，判得更全，但同样的裁决可能得出和旧版不同的结论。',
-    applyNote: '执行会建一个子任务，完成后生成新的结果版本。判决或任务文本变了，交付数据集要再导出一次，平台不会自动重建。',
+    applyNote: '执行会建一个子任务，完成后生成新的结果版本，并把新版本的报告、结果清单和裁决记录同步到交付目录。',
     applyChecks: '开始前会检查：数据集能读、交付目录能写、模型能调通。',
     applyOk: '执行',
     relabelTo: (text: string) => `改写为「${text}」`,

@@ -2657,7 +2657,7 @@ export interface components {
             stages?: {
                 [key: string]: "waiting" | "running" | "done" | "error";
             };
-            /** @description the verdict is the policy applied to the findings so far, not the final one (two-block pipelines: the final verdict is only given by aggregate) */
+            /** @description two-block pipelines. true: the verdict is the policy applied to the findings so far, not the final one (the final verdict is only given by aggregate). false (5.3.2): the run is over - the task is terminal, has a result revision and no subtask runs - and the verdict and its reason are the current revision's */
             provisional?: boolean;
             /** @description Sum of completed layer processing times for this episode; excludes queue and CPU admission waits */
             processing_s?: number | null;
@@ -2665,6 +2665,8 @@ export interface components {
                 integrity?: number;
                 numeric?: number;
                 frame?: number;
+                /** @description 5.3.2: a model module's CPU half (the stage since 5.2.0) */
+                vlm_prep?: number;
                 vlm?: number;
             };
             /** @description Present on the single-episode endpoint */

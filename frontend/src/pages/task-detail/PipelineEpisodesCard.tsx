@@ -42,9 +42,10 @@ export const PIPELINE_PAGE = 15;
 
 /**
  * Column widths (requester 2026-10-05): 最近阶段 holds four stages on one line (「完整性验证 ✓ · 数值验证 ✓ ·
- * 视频验证 ✓ · 模型验证 …」is 335 px), the time columns are only as wide as their heads; 当前结果 takes the rest.
+ * 视频验证 ✓ · 模型验证 …」is 335 px), and one more stage's room for each beyond four - EEF's 模型准备 makes five
+ * (2026-10-11: they ran into the next column); the time columns are only as wide as their heads; 当前结果 takes the rest.
  */
-const COL = { episode: 84, stages: 372, time: 96, total: 108, resultMin: 200 };
+const COL = { episode: 84, stages: 372, extraStage: 92, time: 96, total: 108, resultMin: 200 };
 
 /**
  * The mini player of a pipeline row: the episode's findings as chips and bands, read from the task's
@@ -83,6 +84,8 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
   const funnel = FUNNEL_STAGES.filter((id) => task.progress.stages.some((s) => s.id === id));
   const total = task.progress.stages.find((s) => s.id === funnel[0])?.total
     ?? task.summary?.total ?? 0;
+  const timeCols = funnel.length || FUNNEL_STAGES.length - 1;
+  const stagesW = COL.stages + Math.max(0, timeCols - 4) * COL.extraStage;
   return (
     <Card
       title={copy.title}
@@ -103,7 +106,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
             rowKey="episode_index"
             size="small"
             pagination={false}
-            scroll={{ x: COL.episode + COL.stages + (funnel.length || FUNNEL_STAGES.length - 1) * COL.time + COL.total + COL.resultMin }}
+            scroll={{ x: COL.episode + stagesW + timeCols * COL.time + COL.total + COL.resultMin }}
             className="pipeline-table"
             data={rows}
             columns={[
@@ -112,7 +115,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
                   {copy.episode(ep)}
                 </Button>
               ) },
-              { title: copy.columnStage, dataIndex: 'last_stage', width: COL.stages, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
+              { title: copy.columnStage, dataIndex: 'last_stage', width: stagesW, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
               ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
                 title: copy.processingStage[stage] ?? stage,
                 dataIndex: 'stage_processing_s.' + stage,

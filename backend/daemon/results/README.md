@@ -14,7 +14,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 | `records.py` | 模块结果的行索引：只认该版本用过的分片，高编号的分片、靠后的行优先（与 CLI 的 `load_parts` 一致） |
 | `tables.py` | 明细表：pyarrow 读 Parquet 的行组，排序只认 C1 `TableSpec.sortable`，游标带结果版本 |
 | `episode.py` / `videos.py` | 单条 episode 的全模块视图；各机位视频从哪里放（片段 → 交付数据集 → 源数据集） |
-| `live.py` | 运行中的 episode 进度、模块记录与即时漏斗判定；不要求结果版本已提交 |
+| `live.py` | 运行中的 episode 进度、模块记录与即时判定；不要求结果版本已提交，跑完后给当前结果版本的判决 |
 | `episode_list.py` | 报告「Episode 明细」页签的 episode 列表（F6.2）：所在清单、归因模块、是否待裁，按清单 / 待裁 / 编号筛选，游标带结果版本 |
 | `sync_curves.py` | 单条 episode 的同步曲线（F6.2）：逐相机的画面运动与机械臂运动、互相关曲线与这一版的读数 |
 | `perf.py` | 性能剖析：全部 / 仅主流程 / 某次子任务 |
@@ -29,7 +29,8 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   `GET /tasks/{id}/pipeline/episodes/{index}` 读取这条的当前模块结果。两块的运行（计划 2.0）每条给各逐条段的状态与临时判决
   （任务策略作用在已有的发现上），第一页还带 `modules`：每个逐条段模块到目前为止判过、出错、有发现的条数（episode 状态库的
   `findings` 列，C4 2.3.0，任务详情的模块卡在没有报告时用）；漏斗的旧任务照旧给机器漏斗判定。
-  去重仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准。
+  去重仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准：任务到终态、有结果版本、没有子任务在跑时，每一行改给当前结果版本的判决
+  （`provisional: false`，原因取清单的 `reasons[].text`，C4 5.3.2）；有重试或执行裁决在跑时重新回到临时判决。
 - **读哪个版本**：缺省读 `task.result_rev`；`?rev=N` 可读 1 到 `result_rev` 之间任一已提交的版本。
   没有 `commit.json` 的版本不认；`result_rev` 之后已提交、还没切换过去的版本也不给看（D25）。
   任务还没有结果、版本号越界、本地文件不全，一律 404 `not_found`，`details.reason` 说明是
@@ -187,6 +188,10 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
    任务的待裁数是 1。
 7. `c "$B/adjudication?limit=1"` 取第一页，再提交一条裁决之后带着 `next_cursor` 翻下一页：不重不漏；
    结果版本切换之后再用旧游标是 409 `result_changed`（自动化测试里有完整的切换过程）。
+8. **跑完的流水线给最终判决**（C4 5.3.2；要一个真跑完的两块任务，如本机 `curator-daemon-eef` 上的任务，`B` 换成它的地址）：
+   `c "$B/pipeline/episodes?limit=3"` —— 每一行 `provisional: false`，`verdict` 与运行目录 `revisions/r000N/` 当前版本的清单一致
+   （passed → keep、reject → drop、held → held），`verdict_reason` 是拒绝原因的原文；控制台任务详情的「当前结果」写「通过 / 拒绝 / 待补跑」。
+   在这个任务上「重试」或「执行裁决」，子任务跑着时这一页回到 `provisional: true`（「暂判…」）。
 
 ## 自动化测试
 
