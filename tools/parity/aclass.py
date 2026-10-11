@@ -1,24 +1,25 @@
 """A-class guard: algorithm files must stay identical to the freeze commit.
 
     python -m parity a-class-check [--tree backend/curation] [--pr-body-env PR_BODY]
-                                   [--declared a_class_declared.json]
+                                   [--manifest a_class_manifest.json] [--declared a_class_declared.json]
 
-A-class code (design doc 10, section 2) is copied verbatim from v1; only import
+A-class code (design doc 10, section 2) was copied verbatim from v1; only import
 paths may change. This compares every A-class file under ``--tree`` with its
-git blob hash in ``v1_manifest.json``. Any difference fails the check unless
-the pull request description contains a ``parity-change:`` line explaining it,
-or ``a_class_declared.json`` pins the file's current hash with the reason it was
-adopted (design 13, 2026-09-24): a branch push has no pull request description,
-and a declared file edited once more is caught again.
+git blob hash in ``a_class_manifest.json`` (the freeze commit's). Any difference
+fails the check unless the pull request description contains a ``parity-change:``
+line explaining it, or ``a_class_declared.json`` pins the file's current hash (or
+its removal) with the reason it was adopted: a branch push has no pull request
+description, and a declared file edited once more is caught again.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 
-from .dump_v1 import DEFAULT_MANIFEST, git_blob_sha1
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 #: Paths relative to the ``curation`` package (design doc 10, section 2).
 A_CLASS = ("core/", "registry/", "ingest/", "dataset_level/",
@@ -27,8 +28,16 @@ A_CLASS = ("core/", "registry/", "ingest/", "dataset_level/",
 MARKER = "parity-change:"
 #: A-class files adopted with a known difference, or whose removal was adopted:
 #: {rel: {"blob", "since", "why"}} - a removal pins ``"removed": true`` instead of a blob.
-DEFAULT_DECLARED = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "a_class_declared.json")
+DEFAULT_DECLARED = os.path.join(HERE, "a_class_declared.json")
+#: the freeze commit's blob hash of every A-class file: {"commit", "files": {rel: sha}}
+DEFAULT_MANIFEST = os.path.join(HERE, "a_class_manifest.json")
+
+
+def git_blob_sha1(path: str) -> str:
+    """The hash git gives the file's content (``git hash-object``)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def is_a_class(rel: str) -> bool:

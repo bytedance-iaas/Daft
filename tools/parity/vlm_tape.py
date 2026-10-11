@@ -3,19 +3,18 @@
 A tape is a gzip JSON-Lines file. Each line is one *entry*: the canonical form
 of a request, its hash, and what came back (a response or an exception).
 
-Two kinds of entries mirror the two ways the v1 client talks to the model:
+Two kinds of entries mirror the two ways the client talks to the model:
 
 * ``logical`` - one call made through ``vlm_client.hedged_request``. Hedging may
   send the same request twice; only the attempt whose result the caller got is
   recorded, so replay hands back exactly what the pipeline used.
-* ``direct`` - one plain ``requests.post``/``requests.get`` attempt (the text
-  LLM client retries on its own, the endpoint probe calls ``/models``). Each
-  attempt is one entry; replay serves them in recorded order.
+* ``direct`` - one plain ``requests.post``/``requests.get`` attempt (the endpoint
+  probe calls ``/models``). Each attempt is one entry; replay serves them in
+  recorded order.
 
 The canonical request keeps every prompt character and every model parameter,
-and replaces each inline image with the sha256 of its decoded bytes. The hash
-of the canonical form is the replay key. Nothing here imports the pipeline, so
-the same code hashes requests on the v1 side and on the v2 side.
+and replaces each inline image or video with the sha256 of its decoded bytes. The
+hash of the canonical form is the replay key. Nothing here imports the pipeline.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 
-TAPE_SCHEMA_VERSION = "1.0"
+TAPE_SCHEMA_VERSION = "2.0"
 
 _DATA_URI_PREFIX = "data:"
 
@@ -129,9 +128,8 @@ def read_tape(path: str) -> tuple[dict, list[dict]]:
     """Return ``(header, entries)``; entries keep file order.
 
     A run that was killed leaves a gzip stream without its trailer and maybe a
-    half-written last line; everything before that is still usable (e.g. for a
-    replay-record rerun), so reading stops there and ``header["truncated"]``
-    is set.
+    half-written last line; everything before that is still readable, so reading
+    stops there and ``header["truncated"]`` is set.
     """
     header: dict = {}
     entries: list[dict] = []
@@ -159,13 +157,10 @@ def read_tape(path: str) -> tuple[dict, list[dict]]:
 
 def make_entry(kind: str, *, canonical: dict, digest: str, tag: str | None,
                response=None, exc: BaseException | None = None,
-               t_start: float | None = None, t_end: float | None = None,
-               replayed_from: int | None = None) -> dict:
+               t_start: float | None = None, t_end: float | None = None) -> dict:
     """Build a tape entry from a ``requests.Response`` or an exception."""
     entry: dict = {"kind": kind, "hash": digest, "tag": tag, "request": canonical,
                    "t_start": t_start, "t_end": t_end}
-    if replayed_from is not None:
-        entry["replayed_from"] = replayed_from
     if exc is not None:
         entry.update(outcome="exception", exc_type=_exc_name(exc), exc_message=str(exc))
     else:
@@ -204,24 +199,18 @@ class ReplayStore:
     """FIFO queues of recorded outcomes, keyed by (kind, hash).
 
     ``sticky_tags``: entries with these tags are not consumed and not counted -
-    every request with their hash gets the last recorded outcome. The v2 replay uses
-    it for ``/models`` endpoint probes: each v2 command probes once, v1 probed twice
-    per run, and a probe is not part of the VLM call graph (design doc 04 §4.1).
+    every request with their hash gets the last recorded outcome. The replay uses
+    it for ``/models`` endpoint probes: each command probes once, and a probe is
+    not part of the VLM call graph (design doc 04 §4.1).
     """
 
-    def __init__(self, entries: Iterable[dict], *, skip_failures: bool = False,
-                 drop_hashes: Iterable[str] = (), sticky_tags: Iterable[str] = ()):
+    def __init__(self, entries: Iterable[dict], *, sticky_tags: Iterable[str] = ()):
         self._queues: dict[tuple[str, str], collections.deque] = collections.defaultdict(
             collections.deque)
         self._sticky: dict[tuple[str, str], dict] = {}
         sticky = set(sticky_tags)
-        drop = set(drop_hashes)
         for e in entries:
             if e.get("kind") not in ("logical", "direct"):
-                continue                    # failure markers are bookkeeping only
-            if skip_failures and not _entry_ok(e):
-                continue
-            if e.get("hash") in drop:
                 continue
             if e.get("tag") in sticky:
                 self._sticky[(e["kind"], e["hash"])] = e
@@ -327,14 +316,10 @@ class TapeHooks:
     """Patch ``requests`` and ``vlm_client.hedged_request`` for record/replay.
 
     mode:
-      * ``record``        - forward to the real endpoint, write every call.
-      * ``replay``        - serve from ``replay_entries``; a miss raises
-                            ``requests.exceptions.ConnectionError`` (the
-                            pipeline sees a network failure) and is logged.
-      * ``replay-record`` - serve successful recorded outcomes; anything not on
-                            the tape (or recorded as a failure) goes live and is
-                            written. The output tape is a complete recording of
-                            this run.
+      * ``record`` - forward to the real endpoint, write every call.
+      * ``replay`` - serve from ``replay_entries``; a miss raises
+                     ``requests.exceptions.ConnectionError`` (the pipeline sees
+                     a network failure) and is logged.
 
     ``transport`` replaces the real ``requests.post``/``requests.get`` for live
     calls (tests plug a fake model in here).
@@ -344,19 +329,15 @@ class TapeHooks:
                  replay_entries: list[dict] | None = None,
                  transport: dict[str, Callable] | None = None,
                  tape_meta: dict | None = None,
-                 drop_hashes: Iterable[str] = (),
                  sticky_tags: Iterable[str] = ()):
-        if mode not in ("record", "replay", "replay-record"):
+        if mode not in ("record", "replay"):
             raise ValueError(f"unknown tape mode {mode!r}")
-        if mode != "replay" and not tape_out:
-            raise ValueError(f"mode {mode!r} needs tape_out")
+        if mode == "record" and not tape_out:
+            raise ValueError("mode 'record' needs tape_out")
         self.mode = mode
-        self.writer = TapeWriter(tape_out, tape_meta) if tape_out else None
-        self.store = (ReplayStore(replay_entries or [],
-                                  skip_failures=(mode == "replay-record"),
-                                  drop_hashes=drop_hashes if mode == "replay-record" else (),
-                                  sticky_tags=sticky_tags)
-                      if mode != "record" else None)
+        self.writer = TapeWriter(tape_out, tape_meta) if mode == "record" else None
+        self.store = (ReplayStore(replay_entries or [], sticky_tags=sticky_tags)
+                      if mode == "replay" else None)
         self._transport = transport or {}
         self._orig: dict = {}
         self.counts = collections.Counter()
@@ -447,17 +428,13 @@ class TapeHooks:
         if self.store is not None:
             entry = self.store.take("direct", digest)
             if entry is not None:
-                if self.writer:
-                    self._write({**{k: v for k, v in entry.items() if k != "seq"},
-                                 "replayed_from": entry.get("seq")})
                 if entry.get("outcome") == "exception":
                     raise exception_from_entry(entry)
                 return response_from_entry(entry, url)
             self.store.note_miss("direct", digest, canonical, tag)
-            if self.mode == "replay":
-                import requests
-                raise requests.exceptions.ConnectionError(
-                    f"parity replay: request not on tape ({digest})")
+            import requests
+            raise requests.exceptions.ConnectionError(
+                f"parity replay: request not on tape ({digest})")
         t0 = time.time()
         try:
             resp = live()
@@ -474,13 +451,12 @@ class TapeHooks:
         if self.store is not None:
             call = _Call(tag, "lookup")
             try:
-                return self._run_send(call, send, timeout_s, record_replay=True)
+                return self._run_send(call, send, timeout_s)
             except ReplayMiss as miss:
                 self.store.note_miss("logical", miss.digest, miss.canonical, tag)
-                if self.mode == "replay":
-                    import requests
-                    raise requests.exceptions.ConnectionError(
-                        f"parity replay: request not on tape ({miss.digest})") from None
+                import requests
+                raise requests.exceptions.ConnectionError(
+                    f"parity replay: request not on tape ({miss.digest})") from None
         call = _Call(tag, "live")
 
         def send_live(hard):
@@ -503,25 +479,12 @@ class TapeHooks:
                                t_start=t0, t_end=time.time()))
         return resp
 
-    def _run_send(self, call: _Call, send, timeout_s: float, record_replay: bool):
+    def _run_send(self, call: _Call, send, timeout_s: float):
         _TL.call = call
         try:
-            result = send(timeout_s)
-        except ReplayMiss:
-            raise
-        except BaseException:
-            if record_replay and self.writer and call.attempts:
-                entry = call.attempts[-1]
-                self._write({**{k: v for k, v in entry.items() if k != "seq"},
-                             "replayed_from": entry.get("seq")})
-            raise
+            return send(timeout_s)
         finally:
             _TL.call = None
-        if record_replay and self.writer and call.attempts:
-            entry = call.attempts[-1]
-            self._write({**{k: v for k, v in entry.items() if k != "seq"},
-                         "replayed_from": entry.get("seq")})
-        return result
 
     # -- stats ---------------------------------------------------------------
     def stats(self) -> dict:

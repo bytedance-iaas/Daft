@@ -1,4 +1,4 @@
-"""Tape hashing, storage, replay and the request hooks (no v1 needed)."""
+"""Tape hashing, storage, replay and the request hooks."""
 from __future__ import annotations
 
 import base64
@@ -78,15 +78,6 @@ def test_replay_store_is_fifo_per_hash_and_counts_hits():
     assert store.hits == {"logical": 2, "direct": 1}
 
 
-def test_replay_record_store_skips_failures_and_dropped_hashes():
-    entries = [_entry("logical", "bad", exc="requests.exceptions.ReadTimeout"),
-               _entry("logical", "429", status=429),
-               _entry("logical", "drop"), _entry("logical", "keep")]
-    store = T.ReplayStore(entries, skip_failures=True, drop_hashes={"drop"})
-    assert [store.take("logical", h) for h in ("bad", "429", "drop")] == [None, None, None]
-    assert store.take("logical", "keep") is not None
-
-
 def test_failures_are_counted_per_logical_call():
     entries = [_entry("logical", "a"), _entry("logical", "b", status=500),
                _entry("logical", "c", exc="requests.exceptions.ReadTimeout"),
@@ -156,7 +147,7 @@ def test_record_then_replay_serves_the_same_answers(tmp_path):
     finally:
         hooks.uninstall()
     header, entries = T.read_tape(tape)
-    assert header["tape_schema_version"] == "1.0"
+    assert header["tape_schema_version"] == "2.0"
     assert [(e["kind"], e["tag"]) for e in entries] == [("logical", "probe"), ("direct", None)]
     schema = load_schema("parity", "vlm-tape-entry.schema.json")
     with gzip.open(tape, "rt") as fh:
@@ -173,30 +164,6 @@ def test_record_then_replay_serves_the_same_answers(tmp_path):
         replay.uninstall()
     s = replay.stats()
     assert s["hits"] == {"logical": 1, "direct": 1} and s["misses"] == 1
-
-
-def test_replay_record_fills_the_gaps_and_writes_a_complete_tape(tmp_path):
-    mod = _fake_client()
-    first = str(tmp_path / "a.jsonl.gz")
-    hooks = T.TapeHooks("record", tape_out=first, transport=_transport({}))
-    hooks.install(mod)
-    try:
-        _vision_call(mod, URL)
-    finally:
-        hooks.uninstall()
-    _, entries = T.read_tape(first)
-    second = str(tmp_path / "b.jsonl.gz")
-    hooks = T.TapeHooks("replay-record", tape_out=second, replay_entries=entries,
-                        transport=_transport({}))
-    hooks.install(mod)
-    try:
-        _vision_call(mod, URL)                      # replayed
-        _vision_call(mod, URL, img=PNG_B)           # live, recorded
-    finally:
-        hooks.uninstall()
-    _, out = T.read_tape(second)
-    assert [e.get("replayed_from") for e in out] == [1, None]
-    assert not T.tape_failures(out)
 
 
 def test_hooked_functions_pickle_by_reference():

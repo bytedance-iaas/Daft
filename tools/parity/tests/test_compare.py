@@ -1,39 +1,57 @@
-"""The compare command on hand-made dumps."""
+"""The compare command on hand-made v2 run directories."""
 from __future__ import annotations
 
 import json
 import os
 
+import pytest
+
 from parity import compare as C
 from parity import records as R
 
 
-def _dump(root, *, records=None, autolabel=None, skill=None, final=None, duplicates=None,
-          tape_mode="record", misses=0):
-    os.makedirs(os.path.join(root, "records"), exist_ok=True)
-    with open(os.path.join(root, "dump.json"), "w") as fh:
-        json.dump({"tape": {"mode": tape_mode, "hooks": {"misses": misses,
-                                                         "hits": {"logical": 3}}}}, fh)
+def _run(root, *, records=None, final=None, duplicates=None, parts=None, tape_mode="record", misses=0,
+         kind="v2-run"):
+    """A v2 run directory: ``checks/<m>/results.jsonl``, ``revisions/r0001`` with the lists, ``parity.json``."""
+    os.makedirs(os.path.join(root, "checks"), exist_ok=True)
+    with open(os.path.join(root, "parity.json"), "w") as fh:
+        json.dump({"kind": kind, "tape": {"mode": tape_mode, "hooks": {"misses": misses,
+                                                                       "hits": {"logical": 3}}}}, fh)
     for module, rows in (records or {}).items():
-        R.write_jsonl(os.path.join(root, "records", f"{module}.jsonl"), rows)
-    if autolabel is not None:
-        R.write_jsonl(os.path.join(root, "autolabel.jsonl"), autolabel)
-    for name, obj in (("skill_profile.json", skill), ("final.json", final),
-                      ("dedup.json", duplicates)):
-        if obj is not None:
-            with open(os.path.join(root, name), "w") as fh:
-                json.dump(obj, fh)
+        os.makedirs(os.path.join(root, "checks", module), exist_ok=True)
+        R.write_jsonl(os.path.join(root, "checks", module, "results.jsonl"), rows)
+    for module, by_part in (parts or {}).items():
+        os.makedirs(os.path.join(root, "checks", module, "parts"), exist_ok=True)
+        for part, rows in by_part.items():
+            R.write_jsonl(os.path.join(root, "checks", module, "parts", f"{part}.jsonl"), rows)
+    if duplicates is not None:
+        os.makedirs(os.path.join(root, "checks", "duplicate_check"), exist_ok=True)
+        with open(os.path.join(root, "checks", "duplicate_check", "groups.json"), "w") as fh:
+            json.dump(duplicates, fh)
+    if final is not None:
+        rev = os.path.join(root, "revisions", "r0001")
+        os.makedirs(rev, exist_ok=True)
+        for name in ("passed", "reject", "held", "review"):
+            eps = [{"episode_index": e, **({"review": [{"kind": "task_verdict"}]} if name == "review" else {})}
+                   for e in final.get(name, [])]
+            with open(os.path.join(rev, f"{name}.json"), "w") as fh:
+                json.dump({"episodes": eps}, fh)
+        with open(os.path.join(rev, "commit.json"), "w") as fh:
+            json.dump({}, fh)
     return str(root)
 
 
 def _motion(idx, score):
-    return R.make_record("motion_quality", idx, passed=None, score=score,
-                         details={"jerk": score / 3})
+    return {"episode_index": idx, "module": "motion_quality", "status": "ok", "findings": [],
+            "assessed": ["ACT-1"], "unassessable": [], "details": {"jerk": score / 3, "score": score}}
 
 
-def _task(idx, passed, rules=("review_confirms_success",), incidents=None):
-    return R.make_record("task_success", idx, passed=passed, score=None,
-                         details={"rules": list(rules)}, incidents=incidents)
+def _task(idx, failed=False, rules=("video_single_pass_success",), error=False):
+    findings = [{"code": "failure", "item": "TASK-4", "severity": "high", "scope": None, "readings": {},
+                 "message_zh": "任务失败"}] if failed else []
+    return {"episode_index": idx, "module": "task_success", "status": "error" if error else "ok",
+            "findings": findings, "assessed": ["TASK-4"], "unassessable": [],
+            "details": {"rules": list(rules)}}
 
 
 def _args(golden, candidate, **kw):
@@ -43,136 +61,111 @@ def _args(golden, candidate, **kw):
     return ns
 
 
-def test_identical_dumps_pass(tmp_path):
+def test_identical_runs_pass(tmp_path):
     recs = {"motion_quality": [_motion(i, 0.5 + i / 10) for i in range(3)]}
-    g = _dump(tmp_path / "g", records=recs)
-    c = _dump(tmp_path / "c", records=recs)
+    g = _run(tmp_path / "g", records=recs)
+    c = _run(tmp_path / "c", records=recs)
     res = C.run_compare(_args(g, c))
     assert res["conclusion"] == "pass"
     assert res["modules"]["motion_quality"]["status"] == "pass"
 
 
 def test_one_ulp_difference_fails_strict(tmp_path):
-    g = _dump(tmp_path / "g", records={"motion_quality": [_motion(0, 0.1)]})
-    c = _dump(tmp_path / "c", records={"motion_quality": [_motion(0, 0.1 + 2 ** -55)]})
+    g = _run(tmp_path / "g", records={"motion_quality": [_motion(0, 0.1)]})
+    c = _run(tmp_path / "c", records={"motion_quality": [_motion(0, 0.1 + 2 ** -55)]})
     res = C.run_compare(_args(g, c))
     m = res["modules"]["motion_quality"]
     assert m["status"] == "fail" and m["different"] == 1 and res["conclusion"] == "fail"
 
 
 def test_missing_episode_fails_strict(tmp_path):
-    g = _dump(tmp_path / "g", records={"motion_quality": [_motion(0, .5), _motion(1, .5)]})
-    c = _dump(tmp_path / "c", records={"motion_quality": [_motion(0, .5)]})
+    g = _run(tmp_path / "g", records={"motion_quality": [_motion(0, .5), _motion(1, .5)]})
+    c = _run(tmp_path / "c", records={"motion_quality": [_motion(0, .5)]})
     assert C.run_compare(_args(g, c))["modules"]["motion_quality"]["only_in_golden"] == [1]
 
 
-def test_task_success_rate_and_noise_floor(tmp_path):
-    base = [_task(i, True) for i in range(100)]
-    one_off = [_task(i, i != 0) for i in range(100)]            # 1 % differs
-    three_off = [_task(i, i > 2) for i in range(100)]           # 3 % differs
-    g = _dump(tmp_path / "g", records={"task_success": base})
-    assert C.run_compare(_args(g, _dump(tmp_path / "c1", records={"task_success": one_off})
-                               ))["modules"]["task_success"]["status"] == "pass"
-    assert C.run_compare(_args(g, _dump(tmp_path / "c3", records={"task_success": three_off})
-                               ))["modules"]["task_success"]["status"] == "fail"
-    # with a noise floor of 0 %, even 1 % is too much; with 1 %, 1.5 % is allowed
-    same = _dump(tmp_path / "n0", records={"task_success": base})
-    res = C.run_compare(_args(g, _dump(tmp_path / "c1b", records={"task_success": one_off}),
-                              noise_floor=same))
-    assert res["modules"]["task_success"]["status"] == "fail"
-    res = C.run_compare(_args(g, _dump(tmp_path / "c1c", records={"task_success": one_off}),
-                              noise_floor=_dump(tmp_path / "n1",
-                                                records={"task_success": one_off})))
-    assert res["modules"]["task_success"]["noise_floor"]["rate"] == 0.01
+def test_task_success_differences_are_held_to_the_rate(tmp_path):
+    base = [_task(i) for i in range(100)]
+    one_off = [_task(i, failed=i == 0) for i in range(100)]            # 1 % differs
+    three_off = [_task(i, failed=i <= 2) for i in range(100)]          # 3 % differs
+    g = _run(tmp_path / "g", records={"task_success": base})
+    res = C.run_compare(_args(g, _run(tmp_path / "c1", records={"task_success": one_off})))
     assert res["modules"]["task_success"]["status"] == "pass"
+    assert res["modules"]["task_success"]["examples"][0]["candidate"][0] == "fail"
+    assert C.run_compare(_args(g, _run(tmp_path / "c3", records={"task_success": three_off}))
+                         )["modules"]["task_success"]["status"] == "fail"
+    res = C.run_compare(_args(g, _run(tmp_path / "c1s", records={"task_success": one_off}), all_strict=True))
+    assert res["modules"]["task_success"]["mode"] == "strict" and res["modules"]["task_success"]["different"] == 1
 
 
 def test_rules_are_part_of_the_task_verdict(tmp_path):
-    g = _dump(tmp_path / "g", records={"task_success": [_task(0, True)]})
-    c = _dump(tmp_path / "c", records={"task_success": [_task(0, True, ("review_rescue",))]})
-    assert C.run_compare(_args(g, c, max_diff_rate=0.5))["modules"]["task_success"][
-        "different"] == 1
+    g = _run(tmp_path / "g", records={"task_success": [_task(0)]})
+    c = _run(tmp_path / "c", records={"task_success": [_task(0, rules=("video_single_pass_uncertain",))]})
+    assert C.run_compare(_args(g, c, max_diff_rate=0.5))["modules"]["task_success"]["different"] == 1
 
 
 def test_final_lists_leave_out_error_episodes(tmp_path):
-    err = [{"step": "probe", "cause": "timeout"}]
-    g = _dump(tmp_path / "g", records={"task_success": [_task(0, True), _task(1, True)]},
-              final={"passed": [0, 1], "reject": [], "review": [], "held": []})
-    c = _dump(tmp_path / "c", records={"task_success": [_task(0, True),
-                                                         _task(1, None, incidents=err)]},
-              final={"passed": [0], "reject": [], "review": [], "held": [1]})
+    g = _run(tmp_path / "g", records={"task_success": [_task(0), _task(1)]},
+             final={"passed": [0, 1]})
+    c = _run(tmp_path / "c", records={"task_success": [_task(0), _task(1, error=True)]},
+             final={"passed": [0], "held": [1]})
     res = C.run_compare(_args(g, c))
     assert res["final"]["status"] == "pass" and res["final"]["excluded_errors"] == [1]
 
 
-def test_a_reject_v1_still_asks_about_is_left_out_of_review_and_listed(tmp_path):
-    """v1 queues the abstention of a copy its dedup removed (7); in v2 a rejected episode
-    has no task question (D42): v1's review leaves out its own rejects."""
-    g = _dump(tmp_path / "g", final={"passed": [0, 3], "reject": [2, 7],
-                                     "review": [3, 7], "held": []})
-    c = _dump(tmp_path / "c", final={"passed": [0, 3], "reject": [2, 7],
-                                     "review": [3], "held": []})
+def test_final_lists_must_match(tmp_path):
+    g = _run(tmp_path / "g", final={"passed": [0, 3], "reject": [2], "review": [3]})
+    c = _run(tmp_path / "c", final={"passed": [0, 3], "reject": [2]})
     res = C.run_compare(_args(g, c))
-    assert res["final"]["status"] == "pass"
-    assert res["final"]["review"]["golden"] == 1
-    assert res["final"]["review_excluded_rejects"] == [7]
-    assert "rejected by v1" in C.render(res)
-    # a question on a passed episode still has to match
-    c = _dump(tmp_path / "c2", final={"passed": [0, 3], "reject": [2, 7],
-                                      "review": [], "held": []})
-    assert C.run_compare(_args(g, c))["final"]["review"]["missing_in_candidate"] == [3]
+    assert res["final"]["status"] == "fail" and res["final"]["review"]["missing_in_candidate"] == [3]
 
 
 def test_an_adjudication_golden_compares_what_was_judged_again(tmp_path):
-    """A v1 rejudge dump: task_success of the re-judged episodes only (a re-judge that
-    failed is left out and listed) and the final lists."""
-    err = [{"step": "probe", "cause": "timeout"}]
+    """Only the task_success records of the parts after the first run's; a re-judge that failed on
+    either side is left out and listed."""
+    first = [_task(i) for i in range(3)]
 
-    def rejudge_dump(root, records, final):
-        path = _dump(root, records={"task_success": records}, final=final,
-                     skill={"ran": True, "assignments": [{"episode_index": 0,
-                                                          "family": "f", "subskill": "s"}],
-                            "label_audit_queue": []})
-        with open(os.path.join(path, "dump.json")) as fh:
-            meta = json.load(fh)
-        meta.update(command="rejudge", adjudication={"relabels": {"0": "a", "1": "b"},
-                                                     "rejudged": [0, 1]})
-        with open(os.path.join(path, "dump.json"), "w") as fh:
-            json.dump(meta, fh)
-        return path
+    def adjudicated(root, again):
+        current = {r["episode_index"]: r for r in first} | {r["episode_index"]: r for r in again}
+        return _run(root, kind="v2-adjudication", records={"task_success": list(current.values())},
+                    parts={"task_success": {"p0001": first, "p0002": again}}, final={"passed": [0, 1, 2]})
 
-    lists = {"passed": [0, 2], "reject": [3], "review": [], "held": []}
-    g = rejudge_dump(tmp_path / "g", [_task(0, True), _task(1, None, incidents=err)], lists)
-    c = rejudge_dump(tmp_path / "c", [_task(0, True), _task(1, True)], lists)
-    res = C.run_compare(_args(g, c, all_strict=True))
+    g = adjudicated(tmp_path / "g", [_task(0, failed=True), _task(1)])
+    c = adjudicated(tmp_path / "c", [_task(0, failed=True), _task(1, error=True)])
+    res = C.run_compare(_args(g, c))
     ts = res["modules"]["task_success"]
-    assert ts["status"] == "pass" and ts["compared"] == 1 and ts["excluded_errors"] == [1]
     assert set(res["modules"]) == {"task_success"}
-    assert res["adjudication"]["relabels"] == {"0": "a", "1": "b"}
-    c = rejudge_dump(tmp_path / "c2", [_task(0, False), _task(1, True)], lists)
+    assert ts["status"] == "pass" and ts["compared"] == 1 and ts["excluded_errors"] == [1]
+    assert ts["judged_again"] == [0]
+    c = adjudicated(tmp_path / "c2", [_task(0), _task(1)])
     assert C.run_compare(_args(g, c))["modules"]["task_success"]["different"] == 1
 
 
 def test_replay_misses_fail(tmp_path):
-    g = _dump(tmp_path / "g")
-    c = _dump(tmp_path / "c", tape_mode="replay", misses=2)
+    g = _run(tmp_path / "g")
+    c = _run(tmp_path / "c", tape_mode="replay", misses=2)
     res = C.run_compare(_args(g, c))
     assert res["replay"] == {"status": "fail", "hits": 3, "misses": 2, "unused_on_tape": None}
     assert res["conclusion"] == "fail"
 
 
 def test_duplicate_groups_must_match(tmp_path):
-    """v2's groups (D87); a v1 dump's dedup pairs read as the groups they make."""
-    g = _dump(tmp_path / "g", duplicates={"groups": [[3, 7]], "action_collisions": [[3, 7]]})
-    v1 = _dump(tmp_path / "v1", duplicates={"dropped": [{"episode_index": 7, "duplicate_of": 3}],
-                                            "action_collisions": [[3, 7]]})
-    assert C.run_compare(_args(g, v1))["modules"]["duplicate_check"]["status"] == "pass"
-    c = _dump(tmp_path / "c", duplicates={"groups": [[3, 5, 7]], "action_collisions": [[3, 5, 7]]})
+    g = _run(tmp_path / "g", duplicates={"groups": [[3, 7]], "action_collisions": [[3, 7]]})
+    same = _run(tmp_path / "s", duplicates={"groups": [[7, 3]], "action_collisions": [[3, 7]]})
+    assert C.run_compare(_args(g, same))["modules"]["duplicate_check"]["status"] == "pass"
+    c = _run(tmp_path / "c", duplicates={"groups": [[3, 5, 7]], "action_collisions": [[3, 5, 7]]})
     res = C.run_compare(_args(g, c))["modules"]["duplicate_check"]
     assert res["status"] == "fail" and (res["golden_groups"], res["candidate_groups"]) == (1, 1)
 
 
+def test_not_a_run_directory_is_refused(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match="not a v2 run directory"):
+        C.RunDir(str(tmp_path / "empty"))
+    assert C.main(["--golden", str(tmp_path / "empty"), "--candidate", str(tmp_path / "empty")]) == 2
+
+
 def test_render_mentions_every_check(tmp_path):
-    g = _dump(tmp_path / "g", records={"motion_quality": [_motion(0, .5)]})
+    g = _run(tmp_path / "g", records={"motion_quality": [_motion(0, .5)]})
     text = C.render(C.run_compare(_args(g, g)))
     assert "motion_quality" in text and "conclusion: PASS" in text

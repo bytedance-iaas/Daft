@@ -1,30 +1,23 @@
-"""Compare two parity dumps: ``python -m parity compare --golden G --candidate C``.
+"""Compare two v2 run directories: ``python -m parity compare --golden G --candidate C``.
+
+Both sides are ``run-v2`` directories (``checks/``, ``revisions/``, ``parity.json``): the golden
+recorded with ``--fake-vlm``, the candidate replaying its tape with ``--replay`` (design doc 13, plan A).
 
 Checks (all on by default):
 
-* **strict** modules - every normalized record must match exactly (floats by
-  ``repr``); for ``duplicate_check`` the groups of identical episodes and the
-  action-hash collision groups must match (a v1 dump's dedup pairs read as groups).
-* **verdict-only** modules (model-driven, not reproducible):
-    - ``autolabel``     : whether each unlabeled episode got a caption;
-    - ``task_success``  : final verdict + the rules it went through.
-  The share of differing episodes must stay under ``--max-diff-rate`` and, with
-  ``--noise-floor`` (a second v1 dump of the same data), under
-  ``--noise-multiplier`` x v1's own difference rate.
-* **final** lists (passed / reject / review) - episodes that are ``error`` on
-  either side are left out and listed separately (D24, D33). v1 still asks about
-  an episode it rejected (a copy v1's dedup removed that also abstained); a rejected
-  episode has no task or label question in v2 (D42), so a v1 side's review
-  leaves out its own rejects, and they are listed.
-* **replay** - when the candidate was replayed, every request must have been on
-  the tape.
+* **strict** modules - every record must match exactly (floats by ``repr``); for
+  ``duplicate_check`` the groups of identical episodes and the action-hash collision groups.
+* **verdict-only** modules (model-driven): ``task_success``'s verdict and the rules it went
+  through; the share of differing episodes must stay under ``--max-diff-rate``.
+  ``--all-strict`` compares them record by record too (replay parity).
+* **final** lists (passed / reject / review) - episodes that are ``error`` on either side
+  are left out and listed separately (D24, D33).
+* **replay** - when the candidate was replayed, every request must have been on the tape
+  and every recorded call asked.
 
-An **adjudication** golden (``dump-v1 -- rejudge``: v1 applying human decisions)
-is compared with v2's adjudication sequence (``run-v2 --from ... --decisions``):
-the task_success records of the episodes judged again, exactly (v2's record also
-names the text and the protocol it judged with - the new label, ``人工改标``,
-``v1`` - which v1 keeps on the delivered entry instead); the skill assignments
-after the decisions; the final lists; the replay. The other modules did not run.
+An **adjudication** golden (``run-v2 --from ... --decisions ... --fake-vlm``) is compared
+with a replay of the same decisions: the task_success records of the episodes judged
+again, exactly; the final lists; the replay. The other modules did not run.
 
 Exit code 0 when every enabled check passes, 1 otherwise, 2 on bad input.
 """
@@ -39,105 +32,36 @@ from . import records as R
 
 STRICT_DEFAULT = ("timestamp_check", "kinematic_limits", "motion_quality",
                   "visual_quality", "video_action_sync", "duplicate_check", "camera_defects")
-VERDICT_DEFAULT = ("autolabel", "task_success")
+VERDICT_DEFAULT = ("task_success",)
 
 
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
 
-def load_side(path: str):
-    """A parity dump (``dump.json``) or a v2 run directory (``checks/``, ``revisions/``)."""
-    if os.path.isfile(os.path.join(path, "dump.json")):
-        return Side(path)
-    if os.path.isdir(os.path.join(path, "checks")) or os.path.isdir(os.path.join(path,
-                                                                                 "revisions")):
-        return V2Side(path)
-    raise ValueError(f"{path}: neither a parity dump (dump.json) nor a v2 run directory "
-                     "(checks/, revisions/)")
-
-
-class Side:
-    """One dump directory, loaded lazily."""
+class RunDir:
+    """A v2 run directory (design doc 06 §1); the revision read is the newest committed one,
+    else the newest one. ``parity.json`` (written by ``run-v2``) carries the tape statistics."""
 
     def __init__(self, path: str):
+        if not (os.path.isdir(os.path.join(path, "checks"))
+                or os.path.isdir(os.path.join(path, "revisions"))):
+            raise ValueError(f"{path}: not a v2 run directory (no checks/ or revisions/)")
         self.path = path
-        meta_path = os.path.join(path, "dump.json")
-        if not os.path.isfile(meta_path):
-            raise ValueError(f"{path}: no dump.json (not a parity dump)")
-        with open(meta_path, encoding="utf-8") as fh:
-            self.meta = json.load(fh)
         self._cache: dict = {}
-
-    def _json(self, name: str, default):
-        p = os.path.join(self.path, name)
-        if not os.path.isfile(p):
-            return default
-        with open(p, encoding="utf-8") as fh:
-            return json.load(fh)
-
-    def records(self, module: str) -> dict[int, dict]:
-        key = ("records", module)
-        if key not in self._cache:
-            p = os.path.join(self.path, "records", f"{module}.jsonl")
-            rows = R.read_jsonl(p) if os.path.isfile(p) else []
-            self._cache[key] = {r["episode_index"]: r for r in rows}
-        return self._cache[key]
-
-    def has_records(self, module: str) -> bool:
-        return os.path.isfile(os.path.join(self.path, "records", f"{module}.jsonl"))
-
-    def autolabel(self) -> dict[int, dict]:
-        p = os.path.join(self.path, "autolabel.jsonl")
-        rows = R.read_jsonl(p) if os.path.isfile(p) else []
-        return {r["episode_index"]: r for r in rows}
-
-    def duplicates(self) -> dict:
-        """v1's dedup: ``dropped`` (each copy and the episode it kept) and ``action_collisions``."""
-        return self._json("dedup.json", {})
-
-    def final(self) -> dict:
-        return self._json("final.json", {})
-
-    def judged_again(self, module: str) -> set[int]:
-        """An adjudication dump holds only the episodes v1 judged again."""
-        return set(self.records(module))
-
-    def error_episodes(self) -> set[int]:
-        out = set()
-        for name in os.listdir(os.path.join(self.path, "records")) \
-                if os.path.isdir(os.path.join(self.path, "records")) else []:
-            if name.endswith(".jsonl"):
-                for idx, rec in self.records(name[:-len(".jsonl")]).items():
-                    if R.is_error(rec):
-                        out.add(idx)
-        out |= set(self.final().get("held") or [])
-        return out
-
-
-class V2Side(Side):
-    """A v2 run directory (design doc 06 §1), read into the shape of a parity dump.
-
-    * ``records/<m>.jsonl``   <- ``checks/<m>/results.jsonl`` (same C2 record);
-    * ``autolabel.jsonl``     <- ``autolabel/captions.jsonl`` (an ``unclear`` or failed
-      caption is v1's empty caption);
-    * ``dedup.json``          <- ``checks/duplicate_check/groups.json`` (its ``groups``);
-    * ``final.json``          <- the revision's ``passed`` / ``reject`` / ``held`` and the
-      ``review`` view without pure appeal entries (v1 has no appeal queue in review.json);
-    * ``dump.json`` ``tape``  <- ``parity.json`` written by ``python -m parity run-v2``.
-
-    The revision is the newest committed one, else the newest one.
-    """
-
-    def __init__(self, path: str):
-        self.path = path
-        self._cache = {}
+        self.meta: dict = {}
         meta_path = os.path.join(path, "parity.json")
-        self.meta = {}
         if os.path.isfile(meta_path):
             with open(meta_path, encoding="utf-8") as fh:
                 self.meta = json.load(fh)
         self.revision_dir = self._revision()
+
+    def _json(self, *parts: str, default=None):
+        p = os.path.join(self.path, *parts)
+        if not os.path.isfile(p):
+            return default
+        with open(p, encoding="utf-8") as fh:
+            return json.load(fh)
 
     def _revision(self) -> str | None:
         base = os.path.join(self.path, "revisions")
@@ -158,31 +82,22 @@ class V2Side(Side):
     def has_records(self, module: str) -> bool:
         return os.path.isfile(os.path.join(self.path, "checks", module, "results.jsonl"))
 
-    def autolabel(self) -> dict[int, dict]:
-        p = os.path.join(self.path, "autolabel", "captions.jsonl")
-        out = {}
-        for line in R.read_jsonl(p) if os.path.isfile(p) else []:
-            cap = str(line.get("caption") or "") if line.get("status") == "ok" else ""
-            out[line["episode_index"]] = {"episode_index": line["episode_index"],
-                                          "caption": cap, "has_caption": bool(cap)}
-        return out
-
     def duplicates(self) -> dict:
-        return self._json(os.path.join("checks", "duplicate_check", "groups.json"), {})
+        return self._json("checks", "duplicate_check", "groups.json", default={})
 
     def final(self) -> dict:
+        """The revision's ``passed`` / ``reject`` / ``held`` and the ``review`` view without pure
+        appeal entries."""
         if not self.revision_dir:
             return {}
         out: dict = {}
         for name in ("passed", "reject", "held", "review"):
-            doc = self._json(os.path.relpath(os.path.join(self.revision_dir, f"{name}.json"),
-                                             self.path), None)
+            doc = self._json(os.path.relpath(os.path.join(self.revision_dir, f"{name}.json"), self.path))
             if doc is None:
                 return {}
             eps = doc.get("episodes") or []
             if name == "review":
-                eps = [e for e in eps if any(i.get("kind") != "reject_appeal"
-                                             for i in e.get("review") or [])]
+                eps = [e for e in eps if any(i.get("kind") != "reject_appeal" for i in e.get("review") or [])]
             out[name] = sorted(int(e["episode_index"]) for e in eps)
         return out
 
@@ -204,69 +119,12 @@ class V2Side(Side):
             for idx, rec in self.records(name).items():
                 if R.is_error(rec):
                     out.add(idx)
-        out |= set(self.final().get("held") or [])
-        p = os.path.join(self.path, "autolabel", "captions.jsonl")
-        out |= {int(line["episode_index"]) for line in (R.read_jsonl(p) if os.path.isfile(p)
-                                                         else []) if line.get("status") == "error"}
-        return out
+        return out | set(self.final().get("held") or [])
 
 
 # ---------------------------------------------------------------------------
 # Strict comparison
 # ---------------------------------------------------------------------------
-
-def _strict_rows(side: Side, module: str) -> dict[int, dict] | None:
-    """Per-episode rows compared exactly; None when the module left no output."""
-    if module == "autolabel":
-        rows = side.autolabel()
-        return rows or None
-    if not side.has_records(module):
-        return None
-    return {i: R.comparable(r) for i, r in side.records(module).items()}
-
-
-def compare_strict_module(g: Side, c: Side, module: str, max_diffs: int) -> dict:
-    if module == "duplicate_check":
-        return compare_duplicates(g, c, max_diffs)
-    grows, crows = _strict_rows(g, module), _strict_rows(c, module)
-    if grows is None and crows is None:
-        return {"mode": "strict", "status": "skipped", "note": "no output on either side"}
-    return _strict_diff(grows or {}, crows or {}, max_diffs)
-
-
-def duplicate_groups(doc: dict) -> list[list[int]]:
-    """The groups of identical episodes, each sorted: v2's ``groups`` (D87), or v1's dedup pairs
-    (``dropped``: a copy and the episode kept in its place) gathered by the episode kept."""
-    if "groups" in doc:
-        return sorted(sorted(int(e) for e in g) for g in doc.get("groups") or [])
-    by_keeper: dict[int, set[int]] = {}
-    for d in doc.get("dropped") or []:
-        keeper = int(d["duplicate_of"])
-        by_keeper.setdefault(keeper, {keeper}).add(int(d["episode_index"]))
-    return sorted(sorted(g) for g in by_keeper.values())
-
-
-def compare_duplicates(g: Side, c: Side, max_diffs: int) -> dict:
-    gd, cd = g.duplicates(), c.duplicates()
-    if not gd and not cd:
-        return {"mode": "strict", "status": "skipped", "note": "no duplicate check on either side"}
-    gg, cg = duplicate_groups(gd), duplicate_groups(cd)
-    problems = R.diff_values(gg, cg, path="groups", limit=max_diffs)
-    problems += R.diff_values(gd.get("action_collisions"), cd.get("action_collisions"),
-                              path="action_collisions", limit=max_diffs)
-    return {"mode": "strict", "status": "fail" if problems else "pass",
-            "golden_groups": len(gg), "candidate_groups": len(cg),
-            "examples": problems[:max_diffs]}
-
-
-# ---------------------------------------------------------------------------
-# Adjudication (a v1 rejudge against v2's adjudication sequence)
-# ---------------------------------------------------------------------------
-
-#: what v2's record of a relabelled episode adds to v1's re-judge detail: the text it
-#: was judged with, where the text came from and how it was judged (D39)
-BOOKKEEPING = ("task_desc", "task_desc_source", "relabel_rerun")
-
 
 def _strict_diff(gr: dict, cr: dict, max_diffs: int) -> dict:
     only_g, only_c = sorted(set(gr) - set(cr)), sorted(set(cr) - set(gr))
@@ -283,54 +141,41 @@ def _strict_diff(gr: dict, cr: dict, max_diffs: int) -> dict:
             "only_in_golden": only_g, "only_in_candidate": only_c, "examples": diffs}
 
 
-def compare_adjudicated_task(g: Side, c: Side, max_diffs: int,
+def compare_strict_module(g: RunDir, c: RunDir, module: str, max_diffs: int) -> dict:
+    if module == "duplicate_check":
+        return compare_duplicates(g, c, max_diffs)
+    if not g.has_records(module) and not c.has_records(module):
+        return {"mode": "strict", "status": "skipped", "note": "no output on either side"}
+    return _strict_diff({i: R.comparable(r) for i, r in g.records(module).items()},
+                        {i: R.comparable(r) for i, r in c.records(module).items()}, max_diffs)
+
+
+def duplicate_groups(doc: dict) -> list[list[int]]:
+    """The groups of identical episodes (D87), each sorted."""
+    return sorted(sorted(int(e) for e in g) for g in doc.get("groups") or [])
+
+
+def compare_duplicates(g: RunDir, c: RunDir, max_diffs: int) -> dict:
+    gd, cd = g.duplicates(), c.duplicates()
+    if not gd and not cd:
+        return {"mode": "strict", "status": "skipped", "note": "no duplicate check on either side"}
+    gg, cg = duplicate_groups(gd), duplicate_groups(cd)
+    problems = R.diff_values(gg, cg, path="groups", limit=max_diffs)
+    problems += R.diff_values(gd.get("action_collisions"), cd.get("action_collisions"),
+                              path="action_collisions", limit=max_diffs)
+    return {"mode": "strict", "status": "fail" if problems else "pass",
+            "golden_groups": len(gg), "candidate_groups": len(cg),
+            "examples": problems[:max_diffs]}
+
+
+def compare_adjudicated_task(g: RunDir, c: RunDir, max_diffs: int,
                              exclude: set[int] = frozenset()) -> dict:
-    """task_success of the episodes the adjudication judged again, exactly; a re-judge
-    that failed on either side (v1 leaves the entry as it was, v2 holds it) is left out
-    and listed."""
-    relabels = {int(k): str(v) for k, v in
-                ((g.meta.get("adjudication") or {}).get("relabels") or {}).items()}
+    """The task_success records the adjudication judged again (parts after the first run's),
+    exactly; a re-judge that failed on either side is left out and listed."""
     g_eps = g.judged_again("task_success") - set(exclude)
     c_eps = c.judged_again("task_success") - set(exclude)
     gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
-    cr, texts = {}, []
-    for i, rec in c.records("task_success").items():
-        if i not in c_eps:
-            continue
-        details = dict(rec.get("details") or {})
-        if isinstance(c, V2Side):
-            kept = {k: details.pop(k) for k in BOOKKEEPING if k in details}
-            want = {"task_desc": relabels.get(i, "")[:80], "task_desc_source": "人工改标",
-                    "relabel_rerun": "v1"}
-            if kept != want:
-                texts.append({"episode_index": i, "golden": want, "candidate": kept})
-        cr[i] = R.comparable({**rec, "details": details})
-    out = _strict_diff(gr, cr, max_diffs)
-    out["judged_again"] = sorted(set(gr) | set(cr))
-    out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
-                                                   | c.judged_again("task_success")))
-    if texts:
-        out["status"], out["judged_with"] = "fail", texts[:max_diffs]
-    return out
-
-
-def compare_adjudicated_task_v2(g: Side, c: Side, max_diffs: int,
-                                exclude: set[int] = frozenset()) -> dict:
-    """Plan A (2026-09-24): both sides are ``run-v2`` directories, the golden one recorded
-    with ``--fake-vlm --decisions``. The re-judged records (parts after the first run's) are
-    compared exactly, bookkeeping fields included — same decisions file, so they match. The
-    one exception is ``relabel_rerun``: under the single judgement the recorded mode changes
-    nothing, so a candidate run with the other mode is still an exact replay."""
-    g_eps = g.judged_again("task_success") - set(exclude)
-    c_eps = c.judged_again("task_success") - set(exclude)
-
-    def comparable(rec: dict) -> dict:
-        details = dict(rec.get("details") or {})
-        details.pop("relabel_rerun", None)
-        return R.comparable({**rec, "details": details})
-
-    gr = {i: comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
-    cr = {i: comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
+    cr = {i: R.comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
     out = _strict_diff(gr, cr, max_diffs)
     out["judged_again"] = sorted(set(gr) | set(cr))
     out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
@@ -342,17 +187,11 @@ def compare_adjudicated_task_v2(g: Side, c: Side, max_diffs: int,
 # Verdict-level comparison
 # ---------------------------------------------------------------------------
 
-def _task_key(rec: dict):
-    rules = (rec.get("details") or {}).get("rules") or []
-    return (R.verdict_of(rec), tuple(rules))
-
-
-def verdict_keys(side: Side, module: str) -> dict[int, object]:
+def verdict_keys(side: RunDir, module: str) -> dict[int, object]:
     """Per-episode value compared for a model-driven module."""
     if module == "task_success":
-        return {i: _task_key(r) for i, r in side.records("task_success").items()}
-    if module == "autolabel":
-        return {i: bool(r.get("has_caption")) for i, r in side.autolabel().items()}
+        return {i: (R.verdict_of(r), tuple((r.get("details") or {}).get("rules") or []))
+                for i, r in side.records("task_success").items()}
     raise ValueError(f"no verdict-level rule for module {module!r}")
 
 
@@ -370,58 +209,32 @@ def _fmt(v):
     return list(v) if isinstance(v, tuple) else v
 
 
-def compare_verdict_module(g: Side, c: Side, module: str, *, noise: Side | None,
-                           max_rate: float, multiplier: float, exclude: set[int],
-                           max_diffs: int) -> dict:
+def compare_verdict_module(g: RunDir, c: RunDir, module: str, *, max_rate: float,
+                           exclude: set[int], max_diffs: int) -> dict:
     ga, ca = verdict_keys(g, module), verdict_keys(c, module)
     if not ga and not ca:
         return {"mode": "verdict", "status": "skipped", "note": "not run on either side"}
     res = diff_rate(ga, ca, exclude)
-    out = {"mode": "verdict", "compared": res["compared"], "different": res["different"],
-           "rate": round(res["rate"], 4), "only_in_golden": res["only_in_golden"],
-           "only_in_candidate": res["only_in_candidate"],
-           "examples": [{"episode_index": i, "golden": _fmt(ga[i]), "candidate": _fmt(ca[i])}
-                        for i in res["differing"][:max_diffs]]}
     ok = res["rate"] < max_rate and not res["only_in_golden"] and not res["only_in_candidate"]
-    if noise is not None:
-        nf = diff_rate(ga, verdict_keys(noise, module), exclude)
-        allowed = multiplier * nf["rate"]
-        out["noise_floor"] = {"rate": round(nf["rate"], 4), "compared": nf["compared"],
-                              "allowed": round(allowed, 4)}
-        ok = ok and res["rate"] <= allowed + 1e-12
-    out["status"] = "pass" if ok else "fail"
-    return out
+    return {"mode": "verdict", "status": "pass" if ok else "fail",
+            "compared": res["compared"], "different": res["different"],
+            "rate": round(res["rate"], 4), "only_in_golden": res["only_in_golden"],
+            "only_in_candidate": res["only_in_candidate"],
+            "examples": [{"episode_index": i, "golden": _fmt(ga[i]), "candidate": _fmt(ca[i])}
+                         for i in res["differing"][:max_diffs]]}
 
 
 # ---------------------------------------------------------------------------
 # Final lists and replay
 # ---------------------------------------------------------------------------
 
-def _review(side: Side, final: dict) -> tuple[set[int], list[int]]:
-    """(the review list to compare, the rejects left out of it).
-
-    v1 queues a task_success abstention even when it rejected the episode (a copy
-    that its dedup removed); in v2 a rejected episode has no task or label question,
-    only an appeal (D42), and the v2 side's review has no pure appeals.
-    """
-    review = set(final.get("review") or [])
-    if isinstance(side, V2Side):
-        return review, []
-    rejected = sorted(review & set(final.get("reject") or []))
-    return review - set(rejected), rejected
-
-
-def compare_final(g: Side, c: Side, exclude: set[int], max_diffs: int) -> dict:
+def compare_final(g: RunDir, c: RunDir, exclude: set[int], max_diffs: int) -> dict:
     gf, cf = g.final(), c.final()
     if not gf or not cf:
-        return {"status": "skipped", "note": "final.json missing"}
-    (g_review, g_rejected), (c_review, c_rejected) = _review(g, gf), _review(c, cf)
-    out, ok = {"excluded_errors": sorted(exclude),
-               "review_excluded_rejects": sorted(set(g_rejected) | set(c_rejected))}, True
+        return {"status": "skipped", "note": "result lists missing"}
+    out, ok = {"excluded_errors": sorted(exclude)}, True
     for key in ("passed", "reject", "review"):
         gs, cs = set(gf.get(key) or []) - exclude, set(cf.get(key) or []) - exclude
-        if key == "review":
-            gs, cs = g_review - exclude, c_review - exclude
         miss, extra = sorted(gs - cs), sorted(cs - gs)
         out[key] = {"golden": len(gs), "candidate": len(cs),
                     "missing_in_candidate": miss[:max_diffs],
@@ -431,20 +244,16 @@ def compare_final(g: Side, c: Side, exclude: set[int], max_diffs: int) -> dict:
     return out
 
 
-def check_replay(c: Side) -> dict:
+def check_replay(c: RunDir) -> dict:
     tape = c.meta.get("tape") or {}
-    if tape.get("mode") not in ("replay", "replay-record"):
+    if tape.get("mode") != "replay":
         return {"status": "skipped", "note": f"candidate tape mode is {tape.get('mode')!r}"}
     hooks = tape.get("hooks") or {}
     misses = int(hooks.get("misses") or 0)
     hits = sum((hooks.get("hits") or {}).values())
-    if tape.get("mode") == "replay-record":
-        # not a replay-parity run: whatever missed was asked live and recorded
-        return {"status": "skipped", "hits": hits, "misses": misses,
-                "note": f"replay-record run, {misses} calls recorded live"}
     unused = hooks.get("unused")
-    # the call graph must be the same both ways: nothing asked that v1 did not ask
-    # (misses), nothing v1 asked left unasked (unused)
+    # the call graph must be the same both ways: nothing asked that the golden did not ask
+    # (misses), nothing the golden asked left unasked (unused)
     ok = misses == 0 and not unused
     return {"status": "pass" if ok else "fail", "hits": hits, "misses": misses,
             "unused_on_tape": unused}
@@ -460,7 +269,7 @@ def _csv(value: str) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m parity compare",
-                                description="Compare a candidate parity dump with the golden one.")
+                                description="Compare a candidate v2 run directory with the golden one.")
     p.add_argument("--golden", required=True)
     p.add_argument("--candidate", required=True)
     p.add_argument("--strict", default=",".join(STRICT_DEFAULT),
@@ -470,10 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all-strict", action="store_true",
                    help="replay parity: every module, the model-driven ones included, "
                         "must match exactly (overrides --strict / --verdict-only)")
-    p.add_argument("--noise-floor", metavar="DUMP",
-                   help="a second v1 dump of the same data (v1's own variance)")
     p.add_argument("--max-diff-rate", type=float, default=0.02)
-    p.add_argument("--noise-multiplier", type=float, default=1.5)
     p.add_argument("--no-final", action="store_true", help="skip the final-list comparison")
     p.add_argument("--max-diffs", type=int, default=20, help="examples kept per check")
     p.add_argument("--json", action="store_true", help="machine-readable result on stdout")
@@ -481,33 +287,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_compare(args) -> dict:
-    g, c = load_side(args.golden), load_side(args.candidate)
-    noise = load_side(args.noise_floor) if args.noise_floor else None
+    g, c = RunDir(args.golden), RunDir(args.candidate)
     exclude = g.error_episodes() | c.error_episodes()
     strict, verdict_only = _csv(args.strict), _csv(args.verdict_only)
     if args.all_strict:
         strict, verdict_only = list(STRICT_DEFAULT) + list(VERDICT_DEFAULT), []
     result: dict = {"golden": args.golden, "candidate": args.candidate, "modules": {}}
-    g_v2_adj = isinstance(g, V2Side) and g.meta.get("kind") == "v2-adjudication"
-    if isinstance(g, Side) and not isinstance(g, V2Side) \
-            and g.meta.get("command") == "rejudge":
-        adj = g.meta.get("adjudication") or {}
-        result["adjudication"] = {k: adj.get(k) for k in ("relabels", "rejudged",
-                                                          "rerun_failed", "human_concluded")}
+    if g.meta.get("kind") == "v2-adjudication":
         strict, verdict_only = [], []
-        result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs,
-                                                                     exclude)
-    elif g_v2_adj:
-        # plan A: the golden is a recorded v2 adjudication (run-v2 --fake-vlm --decisions)
-        strict, verdict_only = [], []
-        result["modules"]["task_success"] = compare_adjudicated_task_v2(g, c, args.max_diffs,
-                                                                        exclude)
+        result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs, exclude)
     for module in strict:
         result["modules"][module] = compare_strict_module(g, c, module, args.max_diffs)
     for module in verdict_only:
         result["modules"][module] = compare_verdict_module(
-            g, c, module, noise=noise, max_rate=args.max_diff_rate,
-            multiplier=args.noise_multiplier, exclude=exclude, max_diffs=args.max_diffs)
+            g, c, module, max_rate=args.max_diff_rate, exclude=exclude, max_diffs=args.max_diffs)
     if not args.no_final:
         result["final"] = compare_final(g, c, exclude, args.max_diffs)
     result["replay"] = check_replay(c)
@@ -519,24 +312,13 @@ def run_compare(args) -> dict:
 
 def render(result: dict) -> str:
     lines = [f"golden:    {result['golden']}", f"candidate: {result['candidate']}", ""]
-    if "adjudication" in result:
-        adj = result["adjudication"]
-        lines += [f"adjudication: relabels {adj.get('relabels')}, v1 judged again "
-                  f"{adj.get('rejudged')}", ""]
     for name, m in result["modules"].items():
-        extra = ""
-        if m.get("mode") == "verdict" and m.get("status") != "skipped":
-            extra = f" rate={m['rate']:.2%}"
-            if "noise_floor" in m:
-                extra += f" (v1 noise {m['noise_floor']['rate']:.2%}, allowed " \
-                         f"{m['noise_floor']['allowed']:.2%})"
+        extra = f" rate={m['rate']:.2%}" if m.get("mode") == "verdict" and m.get("status") != "skipped" else ""
         count = (f"{m.get('different', 0)}/{m.get('compared', 0)} differ"
                  if "compared" in m else "")
         lines.append(f"  {m['status'].upper():7} {name:18} {m.get('mode', ''):8} {count}{extra}")
         for ex in (m.get("examples") or [])[:3]:
             lines.append(f"           e.g. {json.dumps(ex, ensure_ascii=False)[:240]}")
-        for ex in (m.get("judged_with") or [])[:3]:
-            lines.append(f"           judged with {json.dumps(ex, ensure_ascii=False)[:240]}")
     if "final" in result:
         f = result["final"]
         lines.append(f"  {f['status'].upper():7} final lists")
@@ -547,9 +329,6 @@ def render(result: dict) -> str:
                              f"extra {f[key]['extra_in_candidate']}")
         if f.get("excluded_errors"):
             lines.append(f"           excluded (error on either side): {f['excluded_errors']}")
-        if f.get("review_excluded_rejects"):
-            lines.append("           left out of review (rejected by v1, no question under "
-                         f"D42): {f['review_excluded_rejects']}")
     r = result["replay"]
     lines.append(f"  {r['status'].upper():7} replay         "
                  + (f"hits={r.get('hits')} misses={r.get('misses')}" if "hits" in r

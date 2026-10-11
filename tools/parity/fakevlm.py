@@ -1,16 +1,16 @@
 """A deterministic stand-in for an OpenAI-compatible VLM endpoint.
 
-It answers each v1 prompt family in the format that prompt asks for, and the
-answer depends only on the request (``FakeVlm.answer_key``), so the same
-request always gets the same answer. That is all the parity tests need: v1 run
-twice against it must agree bit for bit, and a recorded run must replay exactly.
+It answers each prompt family the platform sends in the format that prompt asks
+for, and the answer depends only on the request (``FakeVlm.answer_key``), so the
+same request always gets the same answer. That is all the parity tests need: two
+runs against it must agree bit for bit, and a recorded run must replay exactly.
 
 The answer is picked from the request's texts and, of each image, only its
 pixel size - never its bytes. The JPEG bytes a frame encodes to differ between
 platforms (PyAV/FFmpeg decode the video, OpenCV's libjpeg-turbo encodes the
 frame), so answering from them gave the same test other verdicts on Linux than
 on macOS. The tape still hashes the bytes (``canonical_request``): replay must
-match a request exactly, and v1 and v2 are compared on one machine.
+match a request exactly, and a golden and its replay run on one machine.
 
 Plug it in through ``TapeHooks(transport=FakeVlm(...).transport())``.
 """
@@ -22,13 +22,6 @@ import json
 import re
 
 from .vlm_tape import canonical_request
-
-CAPTIONS = (
-    "pick up the red block and place it in the bin",
-    "push the red block to the left side of the table",
-    "move the blue cup next to the plate",
-)
-
 
 def _texts(payload: dict) -> str:
     parts = []
@@ -42,16 +35,8 @@ def _texts(payload: dict) -> str:
     return "\n".join(parts)
 
 
-def _bullets_after(text: str, marker: str) -> list[str]:
-    tail = text.split(marker, 1)[1] if marker in text else ""
-    return [line[2:].strip() for line in tail.splitlines() if line.startswith("- ")]
-
-
-#: Mixed into every answer key. Episodes with the same task send the same texts, so
-#: the seed decides the synthetic dataset's verdicts; 11 makes it walk every
-#: task_success path: eps 0, 3 and 7 abstain, arbitration rescues ep 1 (it has
-#: fewer wrist frames around the release), and the captions of eps 4 and 6 differ
-#: from the annotated task.
+#: Mixed into every answer key, so changing it moves every key-picked answer (the EEF
+#: opinions below); the goldens are recorded with 11.
 SEED = 11
 
 
@@ -184,44 +169,6 @@ class FakeVlm:
                         check["shake"] = item(levels[(k // 3) % 3])
                     out["camera_check"] = check
             return json.dumps(out)
-        if "Build a TWO-LEVEL skill taxonomy" in text:
-            caps = _bullets_after(text, "CAPTIONS:")
-            return json.dumps({"families": [{
-                "name": "grasp-and-transport", "criterion": "grasp an object and carry it",
-                "subskills": [{"name": "place-object", "criterion": "carry and release",
-                               "members": caps}]}]})
-        if "Sub-skill A:" in text and "Answer ONLY yes or no" in text:
-            return "no"
-        if "Assign the caption below to exactly one EXISTING sub-skill" in text:
-            return json.dumps({"family": "grasp-and-transport", "subskill": "place-object"})
-        if "Translate the following robot-manipulation skill names" in text:
-            return json.dumps({"families": []})
-        if "Skill families:" in text and "ANNOTATIONS:" in text:
-            labels = [line.strip("- ").strip() for line in
-                      text.split("ANNOTATIONS:", 1)[1].splitlines() if line.strip()]
-            return json.dumps({"map": [{"label": lb, "family": "grasp-and-transport"}
-                                       for lb in labels]})
-        if "Return STRICT JSON: {\"pairs\"" in text or "\"pairs\": [" in text:
-            idx = sorted({int(x) for x in re.findall(r"^\s*\[?(\d+)\]?[.):]", text.split(
-                "PAIRS:", 1)[-1], flags=re.M)}) or [0]
-            return json.dumps({"pairs": [{"i": i, "verdict": "same", "why": "fake"}
-                                         for i in idx]})
-        if "You are preparing a verification checklist" in text:
-            return json.dumps({"task_type": "persistent", "target_location": "the bin",
-                               "target_visual": "a gray plastic bin", "object": "the block",
-                               "verify_question": "Is the block inside the bin?"})
-        if "locate two things" in text:
-            return "NOT VISIBLE\nNOT VISIBLE"
-        if "You are verifying whether a robot manipulation task succeeded" in text:
-            return "Step 1: a block near a bin.\nVERDICT: " + ("YES" if n % 2 else "UNCLEAR")
-        if "Did the robot COMPLETE the task" in text:
-            return "yes" if n % 4 else "no"
-        if "Did the robot FAIL to complete" in text:
-            return "no" if n % 4 else "yes"
-        if "All cameras show the SAME robot episode" in text:
-            return CAPTIONS[n % len(CAPTIONS)]
-        if "robot episode" in text and ("0 to 100" in text or "Score" in text):
-            return str(n % 101)
         if "You check a recorded robot trajectory against a camera video" in text:
             # the EEF opinion without a gripper reference (design doc 12 §10.5): every other clip gets one
             # stretch flagged at its start, the others none
@@ -246,8 +193,6 @@ class FakeVlm:
                                "orientation_support": "uncertain",
                                "offset_direction": "none", "offset_magnitude_class": "none",
                                "evidence_frame_ids": frames, "reason_codes": [], "explanation": "fake"})
-        if text.strip() == "ping":
-            return "pong"
         return "unclear"
 
     # -- transport -------------------------------------------------------------

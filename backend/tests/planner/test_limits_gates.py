@@ -1,61 +1,22 @@
 """Caps intersect (D31) and one parallelism N -> the eight gates (04 §2.2)."""
 from __future__ import annotations
 
-import copy
-
 import pytest
 
-from curation.pipeline import config as v1_config
-from curation.planner import (GATE_NAMES, V1_CONFIG_KEYS, PlanLimits, SiteConfig,
-                              available_cpu_workers, derive_gates, effective_cpu_concurrency,
-                              effective_vlm_parallelism, retired_site_keys, v1_set_overrides)
+from curation.planner import (GATE_NAMES, PlanLimits, SiteConfig, available_cpu_workers, derive_gates,
+                              effective_cpu_concurrency, effective_vlm_parallelism, retired_site_keys,
+                              v1_set_overrides)
 from curation.planner.limits import DEFAULT_VLM_PARALLELISM
 
-from . import v1_source
 
+# ---------------------------------------------------------------- the default plan
 
-# ---------------------------------------------------------------- gates vs v1
-
-def test_v1_factory_gates_are_read_from_v1_itself():
-    """The helper finds every gate in v1's code, and v1's call sites of each gate agree."""
-    values = v1_source.gate_values(v1_source.factory_config())
-    assert set(values) == set(GATE_NAMES)
-    for gate, sites in values.items():
-        assert sites and len(set(sites)) == 1, (gate, sites)
-
-
-def test_n64_gates_equal_v1_factory_defaults_item_by_item():
-    """Acceptance (F2.4 as amended by D23): at N = 64 the eight derived gates are v1's defaults."""
-    v1 = v1_source.factory_gates()
-    derived = derive_gates(64)
-    for gate in GATE_NAMES:
-        assert derived[gate] == v1[gate], f"{gate}: planner {derived[gate]} != v1 {v1[gate]}"
-    assert DEFAULT_VLM_PARALLELISM == 64
-
-
-def test_default_plan_parallelism_reproduces_v1():
-    """With no caps at all the planner lands on v1's factory gates."""
+def test_the_default_plan_lands_on_n_64():
+    """With no caps at all the planner lands on N = 64 and its gates."""
     n = effective_vlm_parallelism(PlanLimits(), SiteConfig())
-    assert n.value == 64 and n.bound_by == "planner"
-    assert derive_gates(n.value) == v1_source.factory_gates()
-
-
-@pytest.mark.parametrize("n", [1, 2, 3, 7, 16, 33, 64, 100, 128, 256])
-def test_v1_config_keys_reproduce_every_gate(n):
-    """Setting the five v1 keys makes v1's own code size all eight gates as derive_gates(n)."""
-    cfg = v1_config.apply_overrides(copy.deepcopy(v1_source.factory_config()),
-                                    v1_set_overrides(derive_gates(n)))
-    v1_config.validate_config(cfg)
-    assert v1_source.gates(cfg) == derive_gates(n)
-
-
-def test_v1_keys_exist_in_factory_config():
-    cfg = v1_source.factory_config()
-    for path in V1_CONFIG_KEYS.values():
-        node = cfg
-        for part in path.split("."):
-            node = node[part]
-        assert isinstance(node, int)
+    assert n.value == DEFAULT_VLM_PARALLELISM == 64 and n.bound_by == "planner"
+    assert derive_gates(n.value) == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
+                                     "guard_caption": 32, "caption": 32, "llm": 16, "audit": 16}
 
 
 # ---------------------------------------------------------------- derive_gates
@@ -107,9 +68,6 @@ def test_episode_override_carries_v1_coupled_gates():
     gates = derive_gates(64, {"episode": 48})
     assert (gates["episode"], gates["endstate"], gates["arbitration"], gates["guard_caption"]) == \
         (48, 96, 48, 48)
-    cfg = v1_config.apply_overrides(copy.deepcopy(v1_source.factory_config()),
-                                    v1_set_overrides(gates))
-    assert v1_source.gates(cfg) == gates
     assert derive_gates(64, {"episode": 48, "endstate": 64})["endstate"] == 64
 
 

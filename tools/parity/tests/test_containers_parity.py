@@ -1,9 +1,7 @@
-"""v2 on the synthetic dataset as mcap and as lance (D44, v1's PR #155), against its own golden.
+"""v2 on the synthetic dataset as mcap and as lance (D44), against its own golden.
 
-The LeRobot fixture's eight episodes in the two new formats (``make-fixture --format``).
-Design 13 retired the v1 comparison (plan A, 2026-09-24): the frozen v1 asks image probes
-and v2 sends continuous videos, so v1's tape answers none of v2's requests. As for LeRobot
-(``test_v2_parity.py``), ``run-v2 --fake-vlm`` records a golden and a tape of every model
+The LeRobot fixture's eight episodes in the two other formats (``make-fixture --format``).
+As for LeRobot (``test_v2_parity.py``), ``run-v2 --fake-vlm`` records a golden and a tape of every model
 call, and ``run-v2 --replay`` of that tape must reproduce it exactly (``compare
 --all-strict``): every module's records, the final lists and the call graph. Read from
 either container, the eight episodes end in the LeRobot fixture's final lists. Deselect
@@ -77,6 +75,4 @@ def test_v2_replays_its_golden_on_the_format(container, lerobot_final):
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
                                       "duplicate_check"}
-    # autolabel: neither side writes captions any more (D72), so that comparison has nothing to say
-    assert {m: r["status"] for m, r in report["modules"].items() if m != "autolabel"} == {
-        m: "pass" for m in report["modules"] if m != "autolabel"}
+    assert {m: r["status"] for m, r in report["modules"].items()} == {m: "pass" for m in report["modules"]}

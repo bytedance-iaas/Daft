@@ -1,18 +1,14 @@
 """The v2 command chain against its own golden baseline (plan A, 2026-09-24).
 
-Design 13 switched the judgement protocol to continuous video, so the frozen v1
-(image probes) can no longer answer v2's requests and the v1-vs-v2 comparison is
-retired. The safety net is now self-referential: ``run-v2 --fake-vlm`` records a
-golden dump **and** a tape of every model call; a second ``run-v2 --replay`` of
-that tape must reproduce the golden exactly (``compare --all-strict``) — the
-model is pinned, so any difference is the code's. The sessions's golden recording
+The safety net is self-referential: ``run-v2 --fake-vlm`` records a golden run
+directory **and** a tape of every model call; a second ``run-v2 --replay`` of that
+tape must reproduce the golden exactly (``compare --all-strict``) — the model is
+pinned, so any difference is the code's. The session's golden recording
 (``v2_golden``) is shared by the tests below. Deselect with ``-m "not e2e"``.
 
 The adjudication (D39) is golden-based the same way: ``run-v2 --from ... --decisions
 --fake-vlm`` records the adjudication golden; replaying its tape with the same
-decisions must find the re-judged records, the skill assignments, the final lists
-and the call graph identical. A ``relabel_rerun=full`` adjudication sends requests
-the v1-rerun-mode golden never recorded, which fails the replay — on purpose.
+decisions must find the re-judged records, the final lists and the call graph identical.
 """
 from __future__ import annotations
 
@@ -21,8 +17,7 @@ import os
 
 import pytest
 
-from .conftest import run_parity
-from .test_dump_v1_e2e import kept_task_text, of_task, rewrite_tape
+from .conftest import of_task, rewrite_tape, run_parity
 
 pytestmark = pytest.mark.e2e
 
@@ -75,9 +70,7 @@ def test_v2_replays_its_own_tape_exactly(v2_golden, mini_dataset, tmp_path_facto
     rc, report = compare(golden, out)
     assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
     assert report["conclusion"] == "pass"
-    # autolabel: v2 writes no captions since D72, so that comparison is skipped on both sides
-    assert {m: r["status"] for m, r in report["modules"].items() if m != "autolabel"} == {
-        m: "pass" for m in report["modules"] if m != "autolabel"}
+    assert {m: r["status"] for m, r in report["modules"].items()} == {m: "pass" for m in report["modules"]}
     assert set(report["modules"]) >= {"timestamp_check", "kinematic_limits", "motion_quality",
                                       "visual_quality", "video_action_sync", "task_success",
                                       "duplicate_check"}
@@ -123,8 +116,8 @@ def test_a_request_missing_from_the_tape_fails_the_comparison(v2_golden, mini_da
                         str(tmp_path / "short.jsonl.gz"), edit)
     out, proc, doc = run_v2(tmp_path, "v2-short", mini_dataset, "--replay", tape)
     # the missing answer is an execution error of that episode (held back), so the kept set
-    # and the final lists change; in video mode the chain itself still completes (skill
-    # profile reads every episode's caption) — the divergence is caught by the comparison.
+    # and the final lists change; the chain itself still completes - the divergence is
+    # caught by the comparison.
     assert proc.returncode == 0
     assert doc["tape"]["hooks"]["misses"] >= 1
     rc, report = compare(golden, out)
@@ -138,13 +131,11 @@ def test_a_request_missing_from_the_tape_fails_the_comparison(v2_golden, mini_da
 RELABELS = {1: "stack the cups", 0: "wipe the table"}
 
 
-def _decisions(path: str, relabel_rerun: str | None = None) -> str:
+def _decisions(path: str) -> str:
     doc = {"schema_version": "1.0", "decisions": [
         {"id": i, "episode_index": ep, "line": "task_verdict", "decision": "unsure",
          "new_label": label, "note": None, "decided_by": "alice", "decided_at": 1790000000000 + i}
         for i, (ep, label) in enumerate(RELABELS.items(), start=1)]}
-    if relabel_rerun is not None:
-        doc["relabel_rerun"] = relabel_rerun
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
     return path
@@ -184,21 +175,6 @@ def test_adjudication_replays_its_golden_exactly(v2_adj_golden, mini_dataset, tm
     ts = report["modules"]["task_success"]
     assert ts["status"] == "pass" and ts["judged_again"] == [0, 1] and ts["compared"] == 2
     assert report["final"]["status"] == "pass" and report["replay"]["status"] == "pass"
-
-
-def test_both_rerun_modes_replay_the_golden_tape(v2_adj_golden, mini_dataset, tmp_path):
-    """D71: ``relabel_rerun`` "full" no longer picks another protocol - a relabel is judged in
-    the one request whatever mode was recorded - so a "full" rerun replays the golden's tape
-    exactly, like the default mode does."""
-    out, proc, doc = adjudicate_v2(tmp_path, "v2-full", mini_dataset, v2_adj_golden[2]["from"],
-                                   _decisions(str(tmp_path / "d.json"), "full"),
-                                   os.path.join(v2_adj_golden[0], "vlm_tape.jsonl.gz"))
-    assert proc.returncode == 0, proc.stderr[-4000:]
-    assert doc["tape"]["hooks"]["misses"] == 0 and doc["tape"]["hooks"]["unused"] == 0
-    rc, report = compare(v2_adj_golden[0], out)
-    assert rc == 0, json.dumps(report, ensure_ascii=False)[:3000]
-    ts = report["modules"]["task_success"]
-    assert ts["status"] == "pass" and ts["judged_again"] == [0, 1] and ts["compared"] == 2
 
 
 def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_dataset, tmp_path_factory):

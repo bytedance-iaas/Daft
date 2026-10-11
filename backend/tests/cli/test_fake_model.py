@@ -51,7 +51,7 @@ def test_the_server_answers_a_re_encoded_request_alike():
     with FakeVlmServer() as vlm:
         got = [requests.post(vlm.url + "/chat/completions", json=_payload(u), timeout=10)
                .json()["choices"][0]["message"]["content"] for u in urls]
-    assert len(set(got)) == 1 and got[0].isdigit()        # ... the same answer
+    assert len(set(got)) == 1                             # ... the same answer
     assert len({FakeVlm.answer_key(_payload(u)) for u in urls}) == 1
 
 

@@ -31,7 +31,7 @@
   "docs/contracts/eef/umi_calibration.schema.json": "sha256:875fbe6ea53fdd5b40513e86e153c464108ae885b6cb3ea40769e67720095c44",
   "docs/contracts/modules.json": "sha256:9c5e64f40223c4182434f6e913f57c1e3333debdd77447adf1b7dcf71708c9f2",
   "docs/contracts/openapi.yaml": "sha256:d3865efd65fb3dd7ca42b8196d2406975dbbd69af9adb9a7e0e64c890c096c3b",
-  "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
+  "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:a24d8ee4b08af94b68d167f7886b2acd6331c1791840ed880bdf8f3707618a65",
   "docs/contracts/progress.schema.json": "sha256:0fe1972ddf29b4824dfa3de3581f0d01b990d9b6381df7c0412f7acd49ac2f57",
   "docs/contracts/taxonomy.json": "sha256:62046d3db5ef48cd6101369ee474893dae48265e8085df81a2f4ad0faeaaa058",
   "docs/contracts/taxonomy.schema.json": "sha256:4c2420773bf685b9b15dec29c1f522d8ccbadca5adb17c05321ea2e04826d813",

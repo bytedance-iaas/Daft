@@ -3,10 +3,11 @@
 The dataset is small (8 episodes, two cameras, a few seconds each) but walks
 the paths the parity tools must see:
 
-* ep 2 has a 0.6 s timestamp jump      -> the timestamp hard gate drops it;
-* ep 5 is a 0.4 s fragment             -> dropped as a fragment;
-* ep 7 is a byte-for-byte copy of ep 3 -> both reported by the duplicate check (v1's dedup removed 7);
-* eps 4 and 6 have no task text        -> captioned by the model first.
+* ep 2 has a 0.6 s timestamp jump      -> the timestamp check rejects it;
+* ep 5 is a 0.4 s fragment             -> rejected as a fragment;
+* ep 7 is a byte-for-byte copy of ep 3 -> both reported by the duplicate check (D87);
+* eps 4 and 6 have no task text        -> not judged by task success, only checked for
+                                          picture defects (D72, D73).
 
 Videos are real H.264 files, so decoding, optical flow and frame sampling run
 exactly as on customer data. The square in each frame moves with joint 0, so
@@ -169,7 +170,7 @@ def make_mini_lerobot(root: str, *, overwrite: bool = False) -> str:
 
 # ---------------------------------------------------------------- mcap and lance (D44)
 #
-# The same eight episodes in the two container formats v1's PR #155 reads, so a check run
+# The same eight episodes in the two container formats, so a check run
 # on them sees the same actions, timestamps, tasks and pictures as on the LeRobot fixture:
 #
 # * mcap: one ``episode_<i>.mcap`` per episode, ROS2 cdr messages (mcap-ros2-support's

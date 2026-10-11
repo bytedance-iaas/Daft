@@ -84,11 +84,3 @@ def test_changed_documents_have_examples_of_both_versions(rel):
     assert any(_is_2_0(rel, inst) for inst in ex["invalid"]), "and 2.0 has invalid examples too"
 
 
-def test_parity_records_match_the_result_record_contract():
-    """tools/parity writes the same record rows v2's check will write."""
-    from parity import records as R
-
-    rec = R.make_record("task_success", "ep000031", passed=True, score=None,
-                        details={"rules": ["vlm_call_failed"]},
-                        incidents=[{"step": "probe", "cause": "timeout"}])
-    schemas.validate("cli/result-record.schema.json", rec)

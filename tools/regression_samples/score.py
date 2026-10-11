@@ -3,26 +3,24 @@
 
 One run directory per subset (what ``curation check`` / the Daemon write: ``checks/<module>/``, ``revisions/rNNNN/``,
 ``preflight.json``). The expectation says which items each episode should (present) or should not (absent) show.
-Two record formats, told apart per run directory (a record 2.0 has ``status``; a run with nothing to read, because the
-preflight refused the dataset, takes the format of the runs scored with it):
+The records (C2 2.0) name the items themselves - ``findings[].item`` with its ``scope``, the items a module ``assessed``
+and the ones it found ``unassessable``, ``status: error`` when it could not judge the episode. Which modules cover an
+item is the registry's (``docs/contracts/modules.json``, ``covers``). Several modules on one item: the union counts in
+the item's metrics, and every module also gets its own (``by_module``). Dataset-level findings come from the revision's
+report (``dataset_findings``) and count once per subset, for the items scored per subset only: an episode-level item is
+read from the episodes' own records. The episode level reads the final lists. A run made before findings (C2 1.0, D59)
+is refused: run the subset again.
 
-* **2.0** (C2 2.0, findings): the records name the items themselves - ``findings[].item`` with its ``scope``, the items a
-  module ``assessed`` and the ones it found ``unassessable``, ``status: error`` when it could not judge the episode. Which
-  modules cover an item is the registry's (``docs/contracts/modules.json``, ``covers``). Several modules on one item: the
-  union counts in the item's metrics, and every module also gets its own (``by_module``). Dataset-level findings come
-  from the revision's report (``dataset_findings``) and count once per subset, for the items scored per subset only: an
-  episode-level item is read from the episodes' own records. The episode level reads the final lists.
-* **1.0** (tasks made before, D59): ``finding_map.json`` turns each module's record into check items, as score 1.1 did.
-
-The map's ``controls`` and ``ingestion`` apply to both formats. Per item:
+``finding_map.json`` holds what the records do not say: the ``controls`` (legitimate situations the platform must not
+report) and the ``ingestion`` items (input formats it must read). Per item:
 
     TP = expected present, reported      FN = expected present, not reported
     FP = expected absent, reported       TN = expected absent, not reported
 
-An episode whose mapped modules did not run on it (funnel short circuit, module not selected; 2.0: no module that ran
-assessed the item, or it said why it could not) is ``not_assessed``; one whose mapped modules all failed to execute is
-``error``; neither counts in precision or recall, but both stay in the denominator of ``recall_end_to_end``. Items
-without a rule (2.0: no module covers them) are ``no_check`` - the platform's gaps. A camera-scoped expectation only
+An episode on which no module that ran assessed the item (module not selected, or it said why it could not) is
+``not_assessed``; one whose covering modules all failed to execute is ``error``; neither counts in precision or recall,
+but both stay in the denominator of ``recall_end_to_end``. Items no module covers are ``no_check`` - the platform's
+gaps. A camera-scoped expectation only
 matches a finding on the same camera. A dataset-level item (taxonomy level ``dataset``, or an entry with ``unit:
 subset``) counts once per subset, not once per episode it is repeated on.
 
@@ -51,7 +49,6 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 SCHEMA_VERSION = "2.0"
 #: the registry export (C1) whose ``covers`` say which modules assess an item on a run of findings
 REGISTRY = os.path.join(REPO, "docs", "contracts", "modules.json")
-TIMESTAMP_FAIL_KINDS = ("out_of_order", "gap", "fragment", "jitter")
 #: preflight availabilities under which a module never runs on the subset
 UNAVAILABLE = ("unsupported", "needs_input", "unavailable")
 #: streams a scope may name that are not cameras
@@ -174,15 +171,12 @@ def module_records(run_dir, module):
     return out
 
 
-def run_format(run_dir):
-    """``2.0`` for a run of findings (C2 2.0), ``1.0`` for one made before (D59): the report says it, else a record;
-    None when there is nothing to tell it by (the preflight refused the dataset: no record, no report)."""
+def made_before_findings(run_dir) -> bool:
+    """Whether the run was made before findings (C2 1.0, D59): its report or its first record says so."""
     reports = sorted(glob.glob(os.path.join(run_dir, "revisions", "r*", "report.json")))
     if reports:
         try:
-            if str(load_json(reports[-1]).get("schema_version")) == "2.0":
-                return "2.0"
-            return "1.0"
+            return str(load_json(reports[-1]).get("schema_version")) != "2.0"
         except InputError:
             pass
     for path in sorted(glob.glob(os.path.join(run_dir, "checks", "*", "parts", "*.jsonl"))) + \
@@ -190,8 +184,8 @@ def run_format(run_dir):
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 if line.strip():
-                    return "2.0" if "status" in json.loads(line) else "1.0"
-    return None
+                    return "status" not in json.loads(line)
+    return False
 
 
 def run_modules(run_dir):
@@ -232,13 +226,6 @@ def finding_cameras(f) -> list:
     return sorted(cams) if cams else [None]
 
 
-def funnel_verdicts(run_dir):
-    revs = sorted(glob.glob(os.path.join(run_dir, "revisions", "r*", "verdicts.jsonl")))
-    if not revs:
-        return {}
-    return {int(r["episode_index"]): r for r in read_jsonl(revs[-1])}
-
-
 def preflight(run_dir):
     """(format supported or None, {module: availability})."""
     path = os.path.join(run_dir, "preflight.json")
@@ -247,103 +234,6 @@ def preflight(run_dir):
     p = load_json(path)
     avail = {m.get("id"): m.get("availability") for m in p.get("modules") or [] if isinstance(m, dict)}
     return bool((p.get("format") or {}).get("supported")), avail
-
-
-# ---------------------------------------------------------------- rules
-
-def _details(rec):
-    d = rec.get("details") or rec.get("detail") or {}
-    if isinstance(d, str):                           # v1-shaped structs keep the detail as a JSON string
-        try:
-            d = json.loads(d)
-        except ValueError:
-            d = {}
-    return d if isinstance(d, dict) else {}
-
-
-def _num(v):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-
-def _dig(d, dotted):
-    for k in dotted.split("."):
-        if not isinstance(d, dict):
-            return None
-        d = d.get(k)
-    return d
-
-
-def timestamp_fail_kind(d):
-    """Why a timestamp check failed, from the keys the check leaves (as the platform's report reads them)."""
-    if d.get("gap_frames"):
-        return "gap"
-    if "jitter_ratio" in d:
-        return "jitter"
-    if "ts" in d and "frame" in d:
-        return "out_of_order"
-    if "duration_s" in d and "dt_nominal" not in d:
-        return "fragment"
-    return "other"
-
-
-def unassessed(rule, rec):
-    """Whether the record says it could not judge the rule's items on this episode (e.g. the model did not answer)."""
-    u = rule.get("unknown_when")
-    if not u:
-        return False
-    return _dig(_details(rec), u["detail"]) in u["values"]
-
-
-def apply_rule(rule, rec):
-    """The (camera or None) hits of one rule on one record."""
-    m = rule["match"]
-    d = _details(rec)
-    hits = []
-    if "finding_codes" in m:
-        rx = re.compile(m["message_regex"]) if m.get("message_regex") else None
-        for f in d.get("findings") or []:
-            if f.get("code") in m["finding_codes"] and (rx is None or rx.search(str(f.get("message", "")) + str((f.get("args") or {}).get("error", "")))):
-                hits.append(short_camera(f["camera"]) if f.get("camera") else None)
-    if "timestamp_fail_kinds" in m and rec.get("verdict") == "fail":
-        if timestamp_fail_kind(d) in m["timestamp_fail_kinds"] and (
-                not m.get("reason_regex") or re.search(m["reason_regex"], str(d.get("reason", "")))):
-            hits.append(None)
-    if "violation_types" in m:
-        if any(isinstance(v, dict) and v.get("type") in m["violation_types"] for v in d.get("violations") or []):
-            hits.append(None)
-    if "subscore" in m:
-        v = _num(d.get(m["subscore"]))
-        if v is not None and v < m["below"]:
-            hits.append(None)
-    if "detail_nonempty" in m and d.get(m["detail_nonempty"]):
-        hits.append(None)
-    if "camera_detail" in m:
-        per = d.get("per_camera_detail") or {}
-        for cam, cd in per.items():
-            v = _num((cd or {}).get(m["camera_detail"])) if isinstance(cd, dict) else None
-            if v is None:
-                continue
-            if ("below" in m and v < m["below"]) or ("at_least" in m and v >= m["at_least"]):
-                hits.append(short_camera(cam))
-    if "camera_list" in m:
-        for cam in _dig(d, m["camera_list"]) or []:
-            hits.append(short_camera(cam))
-    if "detail_verdicts" in m and d.get("verdict") in m["detail_verdicts"]:
-        hits.append(None)
-    if "camera_codes" in m:
-        for cam, cd in (d.get("per_camera") or {}).items():
-            if isinstance(cd, dict) and cd.get("code") in m["camera_codes"] and cd.get("trusted", True):
-                hits.append(short_camera(cam))
-    if "camera_levels" in m:
-        key, levels = m["camera_levels"]["key"], m["camera_levels"]["levels"]
-        for cam, cd in (d.get("per_camera") or {}).items():
-            if isinstance(cd, dict) and isinstance(cd.get(key), dict) and cd[key].get("level") in levels:
-                hits.append(short_camera(cam))
-    if "detail_outcomes" in m and d.get("outcome") in m["detail_outcomes"]:
-        hits.append(None)
-    if "passed" in m and rec.get("passed") in m["passed"] and rec.get("verdict") != "error":
-        hits.append(None)
-    return hits
 
 
 # ---------------------------------------------------------------- scoring
@@ -425,43 +315,6 @@ def registry_covers(registry) -> dict:
     return out
 
 
-def _v1_episode(ep, rules, modules, recs, verdicts, availability, mapped_codes, rule_hits, unmapped_codes):
-    """The evidence of one episode of a run made before (C2 1.0): what the finding map's rules read from its records."""
-    hits = defaultdict(list)                 # item -> cameras
-    state = {}                               # module -> "ok" | "error" | "unsupported" | None
-    unknown = defaultdict(set)               # module -> items it ran for but could not judge
-    for m in modules:
-        rec = recs[m].get(ep)
-        if rec is None:
-            # not run on this episode: the module cannot read the dataset (preflight), or the funnel / the
-            # module selection left the episode out
-            state[m] = "unsupported" if availability.get(m) in UNAVAILABLE else None
-            continue
-        if rec.get("verdict") == "error":
-            state[m] = "error"
-            continue
-        state[m] = "ok"
-        for r in rules:
-            if r["module"] != m:
-                continue
-            if unassessed(r, rec):
-                unknown[m].update(r["items"])
-                continue
-            h = apply_rule(r, rec)
-            if h:
-                rule_hits[r["id"]] += 1
-                for i in r["items"]:
-                    hits[i].extend(h)
-        if m == "data_integrity":
-            for f in _details(rec).get("findings") or []:
-                if f.get("code") not in mapped_codes:
-                    unmapped_codes[f.get("code")] += 1
-    v = verdicts.get(ep) or {}
-    by = set(v.get("hard_fails") or []) or {m for m in modules if (recs[m].get(ep) or {}).get("verdict") == "scored"}
-    return {"hits": hits, "states": lambda mods, item: [None if (state.get(m) == "ok" and item in unknown[m]) else state.get(m) for m in mods],
-            "verdict": v.get("verdict") if v else None, "by": by, "per_module": None}
-
-
 #: the EEF module's opinions (registry 5.0, design doc 25 §7): a finding of it counts as a detection from this
 #: inconsistency confidence on - the demo profile's high band, "inconsistent" (a conflict reaches it by definition)
 EEF_MODULE, EEF_MIN_P = "eef_video_consistency", 0.7
@@ -473,8 +326,8 @@ def _eef_below(f: dict, min_p: float) -> bool:
     return isinstance(p, (int, float)) and not isinstance(p, bool) and p < min_p
 
 
-def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals, eef_min_p=EEF_MIN_P):
-    """The evidence of one episode of a run of findings (C2 2.0): its records' findings, what they assessed, what failed.
+def _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p=EEF_MIN_P):
+    """The evidence of one episode: its records' findings, what they assessed, what failed.
     The EEF module's opinions count from ``eef_min_p`` on (label + p, design doc 25 §7)."""
     hits = defaultdict(list)
     per_module = defaultdict(lambda: defaultdict(list))      # item -> module -> cameras
@@ -518,21 +371,13 @@ def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals, 
 
 
 def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, registry=None, eef_min_p=EEF_MIN_P):
-    """runs: {subset: run_dir}; registry: the C1 export (modules.json) for the runs of findings. Returns the score document."""
+    """runs: {subset: run_dir}; registry: the C1 export (modules.json), which says the modules that cover an item.
+    Returns the score document."""
+    if registry is None:
+        raise InputError("the registry (modules.json) is needed: it says which modules cover an item")
     idx, meta = expectation_index(expectation, taxonomy)
-    items_meta = {i["id"]: i for i in taxonomy["items"]}
-    rules = fmap["rules"]
-    for r in rules:
-        unknown = [i for i in r["items"] if i not in items_meta]
-        if unknown:
-            raise InputError(f"rule {r['id']} names items not in the taxonomy: {unknown}")
-    rule_modules = defaultdict(set)
-    for r in rules:
-        for i in r["items"]:
-            rule_modules[i].add(r["module"])
-    modules = sorted({r["module"] for r in rules})
     covers = registry_covers(registry)
-    item_modules = defaultdict(set)              # the modules that judge an item on the runs scored (either format)
+    item_modules = defaultdict(set)              # the modules that judge an item on the runs scored
     controls = (fmap.get("controls") or {}).get("items") or {}
     ingestion_items = set((fmap.get("ingestion") or {}).get("items") or [])
 
@@ -561,43 +406,28 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
     control_stats = defaultdict(Counter)
     control_fail = defaultdict(list)
     ingestion = {}
-    formats = {}
-    rule_hits = Counter()
-    unmapped_codes = Counter()
-    mapped_codes = {c for r in rules for c in r["match"].get("finding_codes", [])}
     scored_eps = 0
 
     def sample(item, cell, ep_id):
         if cell in ("fp", "fn") and len(samples[item][cell]) < sample_cap:
             samples[item][cell].append(ep_id)
 
-    found = {s: run_format(runs[s]) for s in subsets if s in runs}
-    # a run with nothing to read takes the format of the runs scored with it: its items are judged by the same
-    # modules (the registry's, or the map's), none of which could run on it
-    nothing_to_read = "2.0" if {f for f in found.values() if f} == {"2.0"} else "1.0"
     for subset in subsets:
         if subset not in runs:
             continue
         run_dir = runs[subset]
-        fmt = found[subset] or nothing_to_read
-        formats[subset] = fmt
+        if made_before_findings(run_dir):
+            raise InputError(f"{run_dir} was made before findings (C2 1.0, D59): run the subset again to score it")
         supported, availability = preflight(run_dir)
-        if fmt == "2.0":
-            if registry is None:
-                raise InputError(f"{run_dir} holds findings (C2 2.0): the registry (modules.json) is needed to score it")
-            recs = {m: module_records(run_dir, m) for m in run_modules(run_dir)}
-            lists = final_lists(run_dir)
-            # the subset's own findings: they count for the items scored per subset (every episode carries them, one
-            # cell per subset), never as a finding on each episode of an episode-level item
-            dataset_hits = defaultdict(list)
-            for m, f in dataset_findings(run_dir):
-                if f.get("item"):
-                    dataset_hits[f["item"]].extend(finding_cameras(f))
-            mods_of = covers
-        else:
-            recs = {m: module_records(run_dir, m) for m in modules}
-            verdicts = funnel_verdicts(run_dir)
-            mods_of = rule_modules
+        recs = {m: module_records(run_dir, m) for m in run_modules(run_dir)}
+        lists = final_lists(run_dir)
+        # the subset's own findings: they count for the items scored per subset (every episode carries them, one
+        # cell per subset), never as a finding on each episode of an episode-level item
+        dataset_hits = defaultdict(list)
+        for m, f in dataset_findings(run_dir):
+            if f.get("item"):
+                dataset_hits[f["item"]].extend(finding_cameras(f))
+        mods_of = covers
         keys = sorted(k for k in idx if k[0] == subset)
         if any(ingestion_items & set(idx[k]) for k in keys):
             ingestion[subset] = {"handled": bool(supported), "preflight_supported": supported}
@@ -605,10 +435,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         for key in keys:
             ep = key[1]
             scored_eps += 1
-            if fmt == "2.0":
-                ev = _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals, eef_min_p)
-            else:
-                ev = _v1_episode(ep, rules, modules, recs, verdicts, availability, mapped_codes, rule_hits, unmapped_codes)
+            ev = _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p)
             hits = ev["hits"]
             subset_hits = ev.get("dataset_hits") or {}
             dropped = ev["verdict"] == "drop"
@@ -670,9 +497,9 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                         continue
                     _count(stats[item], side, cell, weight(key, item, side), unsupported, flagged_any)
                     sample(item, cell, meta[key]["episode_id"])
-                    # each module on its own (runs of findings): the episodes it assessed the item on
+                    # each module on its own: the episodes it assessed the item on
                     pm = ev["per_module"]
-                    if pm is not None and mods:
+                    if mods:
                         for m in sorted(mods):
                             if m in pm["errored"] or m not in pm["assessed"].get(item, set()):
                                 continue
@@ -685,13 +512,11 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
             sample(item, kind, f"{subset.split('/')[-1]} (subset)")
 
     items_out = {}
-    v2 = "2.0" in formats.values()
-    v1 = "1.0" in formats.values() or not formats
     for it in taxonomy["items"]:
         iid = it["id"]
         s = stats.get(iid, Counter())
-        # the modules that judge the item: the ones met on the runs, else the map's (1.0) and the registry's (2.0)
-        mods = sorted(item_modules.get(iid) or ((rule_modules.get(iid, set()) if v1 else set()) | (covers.get(iid, set()) if v2 else set())))
+        # the modules that judge the item: the ones met on the runs, else the registry's
+        mods = sorted(item_modules.get(iid) or covers.get(iid, set()))
         row = {"name": it["name"], "kind": it["kind"], "level": it["level"], "mapped": bool(mods), "modules": mods,
                "unit": "/".join(sorted(units.get(iid) or {"subset" if it["level"] == "dataset" else "episode"})),
                "present": _r(s["present"]), "absent": _r(s["absent"])}
@@ -710,7 +535,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         if samples[iid]:
             row["samples"] = {k: v for k, v in samples[iid].items()}
         if module_stats.get(iid):
-            # runs of findings: every module on its own, over the episodes it assessed the item on (design doc 17 §6.1)
+            # every module on its own, over the episodes it assessed the item on (design doc 17 §6.1)
             row["by_module"] = {m: {"tp": _r(c["tp"]), "fp": _r(c["fp"]), "fn": _r(c["fn"]), "tn": _r(c["tn"]),
                                     "precision": _ratio(c["tp"], c["tp"] + c["fp"]), "recall": _ratio(c["tp"], c["tp"] + c["fn"])}
                                 for m, c in sorted(module_stats[iid].items())}
@@ -736,12 +561,9 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         "by_lineage": by_lineage,
         "episodes": {"expected": len(idx), "scored": scored_eps, "subsets": len(subsets), "runs": len([s for s in subsets if s in runs]),
                      "missing_runs": missing},
-        "formats": dict(sorted(formats.items())),
         "episode_level": el,
         "items": items_out,
         "ingestion": ingestion,
-        "rule_hits": dict(sorted(rule_hits.items())),
-        "unmapped_integrity_codes": dict(unmapped_codes),
     }
 
 
@@ -811,9 +633,7 @@ def markdown(doc, regressions=None):
         bad = [s for s, v in doc["ingestion"].items() if not v["handled"]]
         L.append(f"\n**Ingestion** (SET-2): {len(doc['ingestion']) - len(bad)} of {len(doc['ingestion'])} subsets read" + (f"; not read: {', '.join(bad)}" if bad else ""))
     if gaps:
-        why = {"1.0": "no rule maps to them", "2.0": "no module covers them"}
-        fmts = sorted(set((doc.get("formats") or {}).values())) or ["1.0"]
-        L.append(f"\n**No check on the platform** (expectations exist, {' / '.join(why[f] for f in fmts if f in why)}):")
+        L.append("\n**No check on the platform** (expectations exist, no module covers them):")
         L.extend(f"- {g}" for g in gaps)
     if regressions is not None:
         L.append("\n**Against the baseline**: " + ("no regression" if not regressions else f"{len(regressions)} regression(s)"))
@@ -854,8 +674,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--expectation", required=True, help="the set's expectation.json")
     ap.add_argument("--taxonomy", help="taxonomy.json (default: next to the expectation, else the one in this directory)")
-    ap.add_argument("--map", default=os.path.join(HERE, "finding_map.json"), help="finding_map.json (rules for runs made before; controls and ingestion for all)")
-    ap.add_argument("--registry", default=REGISTRY, help="the platform's registry export, modules.json (which modules cover an item, for runs of findings)")
+    ap.add_argument("--map", default=os.path.join(HERE, "finding_map.json"), help="finding_map.json (the controls and the ingestion items)")
+    ap.add_argument("--registry", default=REGISTRY, help="the platform's registry export, modules.json (which modules cover an item)")
     ap.add_argument("--runs-map", help="JSON {run_name: {set, subset}} (baseline/<commit>/runs.json)")
     ap.add_argument("--runs-root", help="directory holding the run directories named in --runs-map")
     ap.add_argument("--run", action="append", help="SUBSET=RUN_DIR, repeatable")

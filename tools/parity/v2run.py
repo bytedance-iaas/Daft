@@ -11,15 +11,15 @@ one block after the other -
 - every stage on the whole selection (no stage filters another, D57; an episode without a
 task text is not judged by task_success, D72), into one v2 run
 directory, which ``python -m parity compare`` loads directly. Model calls go
-through the same tape hooks as ``dump-v1``: ``--replay`` serves v1's recorded
-answers and counts every request that is not on the tape (a different prompt,
-frame or JPEG parameter gives a different hash), ``--fake-vlm`` answers live
-from the deterministic fake model and records a tape. ``/models`` endpoint
-probes are served from the tape without being counted: every v2 command probes
-its endpoint once, v1 probed twice per run, and a probe is not a model call.
+through the tape hooks (``vlm_tape``): ``--fake-vlm`` answers live from the
+deterministic fake model and records a tape, ``--replay`` serves a recorded tape
+and counts every request that is not on it (a different prompt or different video
+bytes give a different hash). ``/models`` endpoint probes are served from the tape
+without being counted: every command probes its endpoint once, and a probe is not
+a model call.
 
-The VLM commands run with ``--hedge`` (v1 always hedges; the tape hooks replace
-``hedged_request``) and ``--concurrency 64`` (the gates of v1's factory defaults).
+The VLM commands run with ``--hedge`` (the tape hooks replace ``hedged_request``)
+and ``--concurrency 64``.
 
 With ``--from RUN_DIR --decisions FILE`` it runs the Daemon's adjudication sequence
 instead (doc 02 section 3.9) on a copy of a finished run directory -
@@ -27,8 +27,8 @@ instead (doc 02 section 3.9) on a copy of a finished run directory -
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
     -> aggregate final -> report
 
-on the next result revision; its tape is the one ``dump-v1 -- rejudge`` recorded
-while v1 applied the same decisions, and ``compare`` checks the two (D39).
+on the next result revision. Recorded with ``--fake-vlm`` it is an adjudication
+golden; replayed with the same decisions, ``compare`` checks the re-judged records (D39).
 
 Exit code 0 when every command succeeded, 1 otherwise; ``parity.json`` in the
 run directory records the steps and the tape statistics.
@@ -50,8 +50,8 @@ REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 BACKEND = os.path.join(REPO, "backend")
 ALL_MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
                "video_action_sync", "task_success", "duplicate_check")
-#: v2's own first gate (design doc 14); v1 has no such module, so the default chain leaves it out
-#: and ``--modules`` adds it to record a golden with it
+#: the CPU block's first stage (design doc 14); the default chain leaves it out (the goldens were
+#: recorded without it) and ``--modules`` adds it to record a golden with it
 INTEGRITY = "data_integrity"
 
 
@@ -142,8 +142,8 @@ class Chain:
 
 
 def models_probe_entry(model: str) -> dict:
-    """A tape entry answering ``GET /models``. v1's rejudge never probes its endpoint and
-    every v2 command does; a probe is not a model call (served, never counted)."""
+    """A tape entry answering ``GET /models``: every command probes its endpoint, and a probe
+    is not a model call (served, never counted)."""
     canonical, digest = T.canonical_request(None, method="GET", path="/models")
     return {"kind": "direct", "hash": digest, "tag": "models", "request": canonical,
             "outcome": "response", "status": 200, "reason": "OK",
@@ -152,7 +152,7 @@ def models_probe_entry(model: str) -> dict:
 
 def all_episodes(dataset: str) -> str:
     """Every episode of a local dataset as an expression: LeRobot and lance from
-    ``meta/info.json``, mcap by v1's numbering of its files (D44)."""
+    ``meta/info.json``, mcap by the numbering of its files (D44)."""
     info = os.path.join(dataset, "meta", "info.json")
     if os.path.isfile(info):
         with open(info, encoding="utf-8") as fh:
@@ -205,8 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vlm-endpoint", default="http://fake-vlm.local/v1")
     p.add_argument("--vlm-model", default="fake-vlm")
     p.add_argument("--modules", default=",".join(ALL_MODULES),
-                   help=f"the task's modules (default: v1's eight); add {INTEGRITY} for a golden "
-                        f"with v2's data integrity gate in front")
+                   help=f"the task's modules (default: the seven above); add {INTEGRITY} for a "
+                        f"golden with the data integrity stage in front")
     return p
 
 
