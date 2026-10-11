@@ -15,10 +15,9 @@ import { SearchInput } from '../../components/SearchInput';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
 import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
-import { VisualizeButton } from '../../features/datasets/VisualizeButton';
+import { rerunMenuItem, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { grouped } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
-import { rerunViewerUrl } from '../../lib/rerun';
 import { zh } from '../../locales/zh';
 
 /** The fingerprint state; ``short`` (the list's narrow column) says 有变化 and keeps the rest for the tooltip. */
@@ -68,27 +67,18 @@ export function MappingLine({ d }: { d: Pick<DatasetItem, 'viz_mapping' | 'decla
 }
 
 /**
- * A row's 「更多」 (requester, 2026-10-04: a row shows only 可视化, 新建任务 and 更多): 可视化（旧） opens the
+ * A row's 「更多」 (requester, 2026-10-04: a row shows only 可视化, 新建任务 and 更多): 「ReRun」 opens the
  * ReRun viewer in a new tab (disabled for a locally mounted dataset, saying why), 「mcap 配置」 for an
  * mcap dataset, and a red 删除.
  */
 function MoreOps({ d, onMapping, onDelete }: { d: DatasetItem; onMapping: () => void; onDelete: () => void }) {
-  const legacy = rerunViewerUrl(d);
   return (
     <Dropdown
       trigger="click"
       position="br"
       droplist={
         <Menu onClickMenuItem={(key) => (key === 'mcap' ? onMapping() : key === 'delete' ? onDelete() : undefined)}>
-          <Menu.Item key="legacy" disabled={!legacy}>
-            {legacy ? (
-              <a href={legacy} target="_blank" rel="noopener noreferrer" title={zh.datasets.visualizeLegacyTitle}>
-                {zh.datasets.visualizeLegacy}
-              </a>
-            ) : (
-              <span title={zh.datasets.visualizeLocal}>{zh.datasets.visualizeLegacy}</span>
-            )}
-          </Menu.Item>
+          {rerunMenuItem(d)}
           {d.viz_mapping ? <Menu.Item key="mcap">{zh.mcap.entry}</Menu.Item> : null}
           <Menu.Item key="delete">
             <span style={{ color: 'var(--c-danger)' }}>{zh.datasets.delete}</span>

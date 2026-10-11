@@ -17,7 +17,7 @@ import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer
 import { McapConfigDrawer } from '../../features/datasets/McapConfigDrawer';
 import { useVizDisplay } from '../../features/visualizer/data';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
-import { LegacyVisualizeButton, VisualizeButton } from '../../features/datasets/VisualizeButton';
+import { rerunMenuItem, VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { bytes, grouped } from '../../lib/format';
 import { reasonText, withVlmBackends } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
@@ -109,15 +109,20 @@ export function DatasetDetailPage() {
               {zh.datasets.newTask}
             </Button>
             <VisualizeButton d={d} type="secondary" size="default" />
-            {d.viz_mapping ? <Button onClick={() => setMapping(true)}>{zh.mcap.entry}</Button> : null}
-            <LegacyVisualizeButton d={d} type="secondary" size="default" />
-            {d.check_state === 'changed' ? <Button onClick={() => actions.repreflight(d)}>{zh.datasets.repreflight}</Button> : null}
-            <Button onClick={() => actions.recheck(d)}>{zh.datasets.recheck}</Button>
+            {/* the rest under 更多 (requester 2026-10-11: the head kept only these two) */}
             <Dropdown
               trigger="click"
               position="br"
               droplist={
-                <Menu onClickMenuItem={(k) => (k === 'edit' ? actions.edit(d) : actions.remove(d))}>
+                <Menu
+                  onClickMenuItem={(k) =>
+                    k === 'mcap' ? setMapping(true) : k === 'repreflight' ? actions.repreflight(d) : k === 'recheck' ? actions.recheck(d) : k === 'edit' ? actions.edit(d) : k === 'delete' ? actions.remove(d) : undefined
+                  }
+                >
+                  {rerunMenuItem(d)}
+                  {d.viz_mapping ? <Menu.Item key="mcap">{zh.mcap.entry}</Menu.Item> : null}
+                  {d.check_state === 'changed' ? <Menu.Item key="repreflight">{zh.datasets.repreflight}</Menu.Item> : null}
+                  <Menu.Item key="recheck">{zh.datasets.recheck}</Menu.Item>
                   <Menu.Item key="edit">{zh.datasets.edit}</Menu.Item>
                   <Menu.Item key="delete">
                     <span style={{ color: 'var(--c-danger)' }}>{zh.datasets.delete}</span>

@@ -1,4 +1,4 @@
-import { Button, Tooltip } from '@arco-design/web-react';
+import { Button, Menu, Tooltip } from '@arco-design/web-react';
 import type { DatasetItem } from '../../api/types';
 import { getBase } from '../../base';
 import { rerunViewerUrl } from '../../lib/rerun';
@@ -36,25 +36,22 @@ export function VisualizeButton({ d, type = 'text', size = 'small' }: { d: Pick<
 }
 
 /**
- * 「可视化（旧）」 (requester item 22; kept one more version, D63): the dataset in the ReRun web viewer
- * of the same deployment, in a new tab. A locally mounted dataset cannot be opened there: the button
- * is disabled and says why. A private TOS dataset's link names the registration, so the viewer reads
- * it with Daemon-signed URLs (design doc 15).
+ * 「ReRun」 in a 「更多」 menu (requester item 22, D63; named so since 2026-10-11, 「可视化（旧）」 before): the dataset in
+ * the ReRun web viewer of the same deployment, in a new tab. A locally mounted dataset cannot be opened there: the item
+ * is disabled and says why. A private TOS dataset's link names the registration, so the viewer reads it with
+ * Daemon-signed URLs (design doc 15). Called as a function: Arco's menu wants its items as direct children.
  */
-export function LegacyVisualizeButton({ d, type = 'text', size = 'small' }: { d: Pick<DatasetItem, 'id' | 'source' | 'uri' | 'region'>; type?: Kind; size?: Size }) {
+export function rerunMenuItem(d: Pick<DatasetItem, 'id' | 'source' | 'uri' | 'region'>, key = 'rerun') {
   const url = rerunViewerUrl(d);
-  if (!url) {
-    return (
-      <Tooltip content={zh.datasets.visualizeLocal}>
-        <Button type={type} size={size} disabled>
-          {zh.datasets.visualizeLegacy}
-        </Button>
-      </Tooltip>
-    );
-  }
   return (
-    <Button type={type} size={size} title={zh.datasets.visualizeLegacyTitle} href={url} anchorProps={{ target: '_blank', rel: 'noopener noreferrer' }}>
-      {zh.datasets.visualizeLegacy}
-    </Button>
+    <Menu.Item key={key} disabled={!url}>
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" title={zh.datasets.visualizeLegacyTitle}>
+          {zh.datasets.visualizeLegacy}
+        </a>
+      ) : (
+        <span title={zh.datasets.visualizeLocal}>{zh.datasets.visualizeLegacy}</span>
+      )}
+    </Menu.Item>
   );
 }

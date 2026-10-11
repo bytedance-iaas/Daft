@@ -705,8 +705,8 @@ export const zh = {
     newTaskShort: '新建任务',
     // Requester item 22: the ReRun viewer of the same deployment
     visualize: '可视化',
-    visualizeLegacy: '可视化（旧）',
-    visualizeLegacyTitle: '在 ReRun 网页查看器里打开（旧入口，保留一个版本）',
+    visualizeLegacy: 'ReRun',
+    visualizeLegacyTitle: '在 ReRun 网页查看器里打开',
     visualizeTitle: '在新窗口打开可视化页',
     visualizeLocal: '本地挂载的数据集不支持可视化',
     moreOf: (name: string) => `更多操作：${name}`,
