@@ -116,21 +116,3 @@ def test_reader_uses_preflight_when_profiles_ignored(monkeypatch):
     ex2 = json.loads(rows[0]["semantics_extras"])
     assert rows[0]["semantics_source"] in ("preflight", "preflight_unknown")
     assert "semantics_preflight" in ex2 and "profile_name" not in ex2
-
-
-def test_report_semantics_line_four_variants():
-    from curation.export.report import semantics_line
-    base = {"action_space": "ee", "control_mode": "velocity", "proprio_space": "ee"}
-    assert semantics_line({**base, "source": "profile", "profile_name": "droid.yaml",
-                           "preflight": {"agrees_with_profile": True, "fit": 0.9}}) \
-        == "- **动作含义**: 末端速度指令 / 状态:末端位姿(已登记格式 droid)"
-    assert semantics_line({**base, "control_mode": "delta", "source": "preflight",
-                           "preflight": {"fit": 0.91}}) \
-        == "- **动作含义**: 末端位移增量 / 状态:末端位姿(系统判断,吻合度 0.91;如不符请登记格式)"
-    assert semantics_line({"action_space": "unknown", "control_mode": "unknown",
-                           "proprio_space": "unknown", "source": "preflight_unknown"}) \
-        == "- **动作含义**: 无法判断——已跳过运动学与相关运动质量项,请提供动作定义"
-    assert semantics_line({**base, "source": "profile", "profile_name": "droid.yaml",
-                           "preflight": {"agrees_with_profile": False, "fit": 0.12}}) \
-        == "- **动作含义**: 按登记为末端速度指令 / 状态:末端位姿,但与数据吻合度仅 0.12,请核对数据集版本"
-    assert semantics_line(None) == ""

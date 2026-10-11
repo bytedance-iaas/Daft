@@ -33,40 +33,10 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
     daemon_threads = True
 
-from curation.adapters.vlm_client import (
-    make_vlm_completion,
-    parse_completion,
-    parse_completion_list,
-    vlm_completion_from_config,
-)
+from curation.adapters.vlm_client import vlm_completion_from_config
 
 
 # ---------- 解析 ----------
-
-@pytest.mark.parametrize("text,expected", [
-    ("85", 0.85),
-    ("85.5", 0.855),
-    ("0.3", 0.3),
-    ("The completion is 70 percent", 0.70),
-    ("100", 1.0),
-    ("0", 0.0),
-    ("120", 1.0),          # 越界裁剪
-    ("-5", 0.0),
-])
-def test_parse_completion(text, expected):
-    assert parse_completion(text) == pytest.approx(expected)
-
-
-def test_parse_no_number_raises():
-    with pytest.raises(ValueError, match="没有数字"):
-        parse_completion("I cannot tell.")
-
-
-def test_parse_completion_list():
-    assert parse_completion_list("10, 20, 90", 3) == pytest.approx([0.1, 0.2, 0.9])
-    assert parse_completion_list("0.1 0.5 0.9", 3) == pytest.approx([0.1, 0.5, 0.9])
-    with pytest.raises(ValueError, match="期望 3 个数"):
-        parse_completion_list("10, 20", 3)
 
 
 # ---------- 请求构造(stub openai 兼容服务器) ----------
@@ -128,27 +98,6 @@ def stub_server():
     srv.shutdown()
 
 
-def test_end_to_end_against_stub(stub_server):
-    vlm = make_vlm_completion(stub_server, model="test-model")
-    ref = _mark_frame(0)
-    marks = [10, 20, 30, 40]
-    shuffled = [_mark_frame(m) for m in marks]         # 每帧编入自己的标记值
-    out = vlm(ref, shuffled, "push the block")
-    # 桩按"请求里查询帧的标记"回值 → 第 i 帧必须拿到第 i 个值,并发下也不能错位
-    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
-
-    assert len(_Stub.seen) == 4                        # 锚定协议:4 帧 = 4 次请求
-    req = _Stub.seen[0]
-    assert req["path"] == "/v1/chat/completions"
-    assert req["body"]["model"] == "test-model"
-    content = req["body"]["messages"][0]["content"]
-    imgs = [c for c in content if c["type"] == "image_url"]
-    assert len(imgs) == 2                              # 参考帧 + 查询帧
-    assert all(c["image_url"]["url"].startswith("data:image/jpeg;base64,") for c in imgs)
-    txt = next(c for c in content if c["type"] == "text")["text"]
-    assert "push the block" in txt and "START" in txt
-
-
 def test_from_config_single_source_of_truth(stub_server):
     """模型只在 YAML 一处:从配置构造,端点/模型都来自 vlm: 段。
 
@@ -178,21 +127,6 @@ def test_from_config_reads_max_concurrency(stub_server, monkeypatch):
     assert capacities == [1]
 
 
-@pytest.mark.parametrize("concurrency", [1, 4, 8])
-def test_order_preserved_under_concurrency(stub_server, concurrency):
-    """★ 保序是正确性要求:VOC 抗幻觉靠"预测完成度 vs 真实时序"的相关性,
-    结果错位整个判定就废。服务端加随机延迟放大乱序风险,断言 i 帧拿到 i 值。"""
-    _Stub.delay_jitter = 0.05          # 让响应先后顺序与请求顺序脱钩
-    try:
-        vlm = make_vlm_completion(stub_server, model="m", max_concurrency=concurrency)
-        marks = [70, 10, 90, 40, 20, 60, 30, 80]        # 刻意乱序,非单调
-        out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
-        assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
-        assert len(_Stub.seen) == len(marks)            # 不多发也不漏发
-    finally:
-        _Stub.delay_jitter = 0.0
-
-
 def test_missing_endpoint_is_explicit():
     with pytest.raises(ValueError, match="endpoint"):
         vlm_completion_from_config({"checks": {"task_success": {"vlm": {"model": "m"}}}})
@@ -206,47 +140,3 @@ def test_strip_reasoning():
     assert strip_reasoning("no tags 70") == "no tags 70"
 
 
-def test_parse_list_ignores_cot_numbers():
-    from curation.adapters.vlm_client import parse_completion_list
-
-    text = "<think>frame 1 maybe 90? frame 2... 8 frames total</think>10, 20, 30"
-    assert parse_completion_list(text, 3) == pytest.approx([0.1, 0.2, 0.3])
-
-
-def test_parse_list_takes_last_k():
-    from curation.adapters.vlm_client import parse_completion_list
-
-    # 模型复述题干"the 4 frames"后再给答案 → 取最后 K 个
-    assert parse_completion_list("For the 4 frames: 10, 20, 30, 40", 4) == \
-        pytest.approx([0.1, 0.2, 0.3, 0.4])
-
-
-def test_v5_fewshot_anchored_request_structure(stub_server):
-    from curation.adapters.vlm_client import build_linear_context, make_vlm_completion
-
-    ctx_src = [np.full((16, 16, 3), i * 25, dtype=np.uint8) for i in range(9)]
-    ctx = build_linear_context(ctx_src, n=4)
-    vlm = make_vlm_completion(stub_server, model="m-v5", context=ctx)
-    ref = np.zeros((16, 16, 3), dtype=np.uint8)
-    out = vlm(ref, [ref] * 3, "stack cubes")
-    assert len(out) == 3
-
-    assert len(_Stub.seen) == 3                        # v5 = 每评测帧一次请求
-    content = _Stub.seen[0]["body"]["messages"][0]["content"]
-    imgs = [c for c in content if c["type"] == "image_url"]
-    assert len(imgs) == 4 + 1 + 1                      # 4 上下文 + 起始帧 + 1 查询帧
-    texts = [c["text"] for c in content if c["type"] == "text"]
-    assert sum("Task completion:" in t for t in texts) == 4   # 每个上下文帧带标注
-    assert any("THIS frame" in t for t in texts)
-    assert any("stack cubes" in t for t in texts)
-
-
-def test_build_linear_context_labels_match_frames():
-    from curation.adapters.vlm_client import build_linear_context
-
-    frames = [np.full((8, 8, 3), i * 30, dtype=np.uint8) for i in range(9)]
-    ctx_frames, ctx_rates = build_linear_context(frames, n=5)
-    # 打乱后标注仍与帧一一对应:帧亮度单调编码时序 → 亮度排序应还原标注排序
-    lum = [f.mean() for f in ctx_frames]
-    assert sorted(range(5), key=lambda i: lum[i]) == sorted(range(5), key=lambda i: ctx_rates[i])
-    assert min(ctx_rates) == 0.0 and max(ctx_rates) == 1.0

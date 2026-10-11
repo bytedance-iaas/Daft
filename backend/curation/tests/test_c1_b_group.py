@@ -54,37 +54,6 @@ def test_b2_control_mode_fingerprint():
     assert _infer_control_mode(np.zeros((50, 3))) == "unknown"    # 全零
 
 
-def test_b1_b2_kinematics_abstain_in_funnel():
-    """funnel 级:关节增量→弃权;单位错配(弧度数据×度制极限)→弃权;都不杀数据。"""
-    from curation.ingest.lerobot_reader import rows_to_daft
-    from curation.pipeline.config import load_config
-    from curation.pipeline.funnel import run_funnel
-    from curation.registry.registry import EmbodimentRegistry
-
-    cfg = load_config()
-    for name in ("visual_quality", "video_action_sync", "task_success", "motion_quality"):
-        cfg["checks"][name]["enable"] = False
-    reg = EmbodimentRegistry()
-
-    def row(eid, action, cmode):
-        return {"episode_id": eid, "embodiment_id": "so100", "instruction": "",
-                "action": action.astype(np.float32), "proprio_state": None,
-                "timestamps": np.arange(action.shape[0]) / 30.0, "fps": 30.0,
-                "action_space": "joint",
-                "control_mode": cmode,
-                "video": {"cam": {"path": "/nonexistent.mp4", "from_ts": 0.0, "to_ts": 1.0}}}
-
-    delta_a = np.random.default_rng(0).normal(0, 0.01, (100, 6))          # 关节增量
-    rad_a = np.clip(np.random.default_rng(1).normal(0, 1.0, (100, 6)), -3, 3)  # 弧度 × 度制表
-    rows = [row("epA", delta_a, "delta"), row("epB", rad_a, "absolute")]
-    df, stats = run_funnel(rows_to_daft(rows), cfg, reg)
-    out = df.select("episode_id", "check_kinematic_limits").to_pydict()
-    res = dict(zip(out["episode_id"], out["check_kinematic_limits"]))
-    assert res["epA"]["passed"] is None and "增量" in res["epA"]["detail"]
-    assert res["epB"]["passed"] is None and "错配" in res["epB"]["detail"]
-    assert stats["output"] == 2                            # 弃权≠杀
-
-
 def test_b4_stats_prior_warnings(tmp_path):
     meta = tmp_path / "meta"
     meta.mkdir()

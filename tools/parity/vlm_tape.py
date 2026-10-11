@@ -177,16 +177,9 @@ def make_entry(kind: str, *, canonical: dict, digest: str, tag: str | None,
 
 
 def tape_failures(entries: Iterable[dict]) -> list[dict]:
-    """Calls whose final outcome was not a usable model answer.
-
-    * a ``logical`` (hedged) call failed when it raised or came back non-2xx;
-    * a text call through ``llm_ask`` retries on its own, so its individual
-      ``direct`` attempts are not failures - the hooks write one ``llm_failure``
-      marker when the whole call finally raised.
-    """
-    return [e for e in entries
-            if (e.get("kind") == "logical" and not _entry_ok(e))
-            or e.get("kind") == "llm_failure"]
+    """Calls whose final outcome was not a usable model answer: a ``logical`` (hedged) call that raised or came
+    back non-2xx. A ``direct`` attempt is not one on its own - its caller may try again."""
+    return [e for e in entries if e.get("kind") == "logical" and not _entry_ok(e)]
 
 
 def _entry_ok(e: dict) -> bool:
@@ -316,29 +309,6 @@ def hooked_hedged_request(send, *, tag: str, timeout_s: float, gate=None):
     return _active()._hedged(send, tag=tag, timeout_s=timeout_s, gate=gate)
 
 
-class LlmAskWrapper:
-    """Text client wrapper that leaves a marker when a whole call raised.
-
-    Picklable as long as the wrapped client is (v1 keeps its clients picklable
-    for daft), because it holds nothing but that client.
-    """
-
-    def __init__(self, inner):
-        self.inner = inner
-
-    def __call__(self, prompt_text: str) -> str:
-        try:
-            return self.inner(prompt_text)
-        except BaseException as exc:
-            if _ACTIVE is not None:
-                _ACTIVE.llm_failed(exc, prompt_text)
-            raise
-
-
-def hooked_make_llm_ask(*args, **kw):
-    return LlmAskWrapper(_active()._orig["make_llm_ask"](*args, **kw))
-
-
 class _Call:
     """Per-logical-call state shared by the hedged wrapper and the post hook."""
 
@@ -392,10 +362,9 @@ class TapeHooks:
         self.counts = collections.Counter()
 
     # -- install / uninstall -------------------------------------------------
-    # v1 hands its model clients to daft UDFs, and daft cloudpickles every UDF
-    # closure up front. The replacements therefore must pickle by reference:
-    # they are module-level functions (or a small module-level class) that look
-    # up the active hooks at call time, never bound methods holding locks.
+    # The replacements pickle by reference - module-level functions that look up
+    # the active hooks at call time, never bound methods holding locks - so a
+    # client holding one still pickles.
     def install(self, vlm_client_module) -> None:
         import requests
 
@@ -404,13 +373,11 @@ class TapeHooks:
             raise RuntimeError("another TapeHooks instance is already installed")
         self._orig = {"post": requests.post, "get": requests.get,
                       "hedged": vlm_client_module.hedged_request,
-                      "make_llm_ask": vlm_client_module.make_llm_ask,
                       "vlm_client": vlm_client_module}
         _ACTIVE = self
         requests.post = hooked_post
         requests.get = hooked_get
         vlm_client_module.hedged_request = hooked_hedged_request
-        vlm_client_module.make_llm_ask = hooked_make_llm_ask
 
     def uninstall(self) -> None:
         import requests
@@ -421,16 +388,10 @@ class TapeHooks:
         requests.post = self._orig["post"]
         requests.get = self._orig["get"]
         self._orig["vlm_client"].hedged_request = self._orig["hedged"]
-        self._orig["vlm_client"].make_llm_ask = self._orig["make_llm_ask"]
         self._orig = {}
         _ACTIVE = None
         if self.writer:
             self.writer.close()
-
-    def llm_failed(self, exc: BaseException, prompt_text: str) -> None:
-        self._write({"kind": "llm_failure", "outcome": "exception", "tag": "llm",
-                     "hash": "", "exc_type": _exc_name(exc), "exc_message": str(exc)[:500],
-                     "prompt_head": str(prompt_text)[:200], "t_end": time.time()})
 
     # -- live transport ------------------------------------------------------
     def _live_post(self, url, *args, **kw):

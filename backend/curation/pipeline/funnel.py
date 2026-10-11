@@ -1,32 +1,21 @@
-"""漏斗装配:DataFrame 链即编排(文档中的 M3,Daft 下大幅简化)。
+"""The per-episode check bodies: ``make_timestamp_check``, ``make_kinematic_check``,
+``make_motion_check``, ``make_frame_checks`` and ``task_check_episode``.
 
-顺序按成本:纯数值(时间戳/运动学/运动质量)→ filter(硬门) → 抽帧(视觉/同步)→
-filter(硬门) → VLM 任务成败(垫底只跑幸存者,省一个数量级)→ verdict。
-本模块是编排壳,允许 import daft(core/ 才是无 daft 区);检查本体全在 core/ 纯函数。
-
-v2 split (W3): the per-episode check bodies live at module level
-(``make_timestamp_check`` / ``make_kinematic_check`` / ``make_motion_check`` /
-``make_frame_checks`` / ``task_check_episode``) so that ``curation check`` can
-call them one episode at a time. ``run_funnel`` wraps the very same functions in
-daft UDFs, in the same order and with the same parameters as before; only the
-progress ticks moved from inside the bodies into those wrappers (still one tick
-per episode). Model clients and the frame decoder are passed in, so the v2 shell
-can wrap them per episode to record execution incidents (D33) without touching
-the A-class code they call.
+``curation check`` calls them one episode at a time (``pipeline/check_stage.py``); the checks themselves are
+the pure functions of ``core/``. Model clients and the frame decoder are passed in, so the stage can wrap them
+per episode to record execution incidents (D33) without touching the A-class code they call.
 """
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 
-from ..adapters.daft_adapter import result_to_struct
+from ..core.contract import CheckResult
 from ..core.checks.kinematics import kinematic_limits
 from ..core.checks.motion_quality import motion_quality
-from ..core.checks.task_success import endstate_review, task_success
 from ..core.checks.video_action_sync import (
     camera_reading,
     global_lag,
@@ -37,169 +26,12 @@ from ..core.checks.video_action_sync import (
 )
 from ..core.checks.visual_quality import is_live_channel, visual_quality
 from .config import enabled
-from .progress import _progress_init, _progress_tick
-from .verdict import episode_verdict
 
 
-
-def gripper_signal(action, timestamps, embodiment_id, semantics_extras, registry):
-    """仲裁取证用的夹爪信号 → (夹爪列 [T,G] | None, 时间戳 | None, closed_high, 来源)。
-    多列(双臂/双手)原样全部给出:仲裁按打分层强探针从所有握持段里选,不需要相机↔列对号。
-
-    列下标先查本体规格库(registry.gripper_dims);本体未注册(umi 这类客户手持夹爪)再退到
-    随行的 semantics_extras["gripper"]({dims, closed}:档案声明,或读取器按字段名/
-    数值指纹认出的,见 lerobot_reader._attach_semantics),最后退 extras["layout"]。
-    极性 closed="low" 是宽度制(数值大=张开),仲裁找闭合事件前要翻转;档案没写时按字段名推
-    (width/opening → low),再没有沿用 droid 约定(数值大=闭合)。都拿不到 → (None, None, True, "", {})。
-    2026-09-18 umi ep3:夹爪信号明明在档案里,仲裁却按"没有"退到末段峰值帧取证,落在松手
-    之后 —— 瞬时任务的"握在手里"在那一刻恒为否。
-    """
-    try:
-        a = np.asarray(action)
-        if a.ndim != 2 or not a.shape[0]:
-            return None, None, True, ""
-    except Exception:  # noqa: BLE001
-        return None, None, True, ""
-    dims: tuple = ()
-    closed_high, src = True, ""
-    try:
-        gd = registry.get(str(embodiment_id)).gripper_dims
-        dims = tuple(int(d) for d in (gd or ()) if int(d) < a.shape[1])
-        if dims:
-            src = "registry"
-    except Exception:  # noqa: BLE001  未注册本体 → 看档案
-        dims = ()
-    if not dims:
-        try:
-            g = (json.loads(str(semantics_extras) or "{}") or {}).get("gripper") or {}
-            dims = tuple(int(d) for d in (g.get("dims") or ()) if int(d) < a.shape[1])
-            if dims:
-                src = "profile"
-                closed_high = str(g.get("closed", "high")).lower() != "low"
-        except Exception:  # noqa: BLE001
-            dims = ()
-    if not dims:
-        # 老缓存/别的读取器只带 layout 没带 gripper 段:退到布局识别出的夹爪列(极性同布局)
-        try:
-            lay = (json.loads(str(semantics_extras) or "{}") or {}).get("layout") or {}
-            dims = tuple(int(d) for d in (lay.get("gripper_dims") or ()) if int(d) < a.shape[1])
-            if dims:
-                src = "layout"
-                closed_high = str(lay.get("gripper_closed", "high")).lower() != "low"
-        except Exception:  # noqa: BLE001
-            dims = ()
-    if not dims:
-        return None, None, True, ""
-    return a[:, dims], np.asarray(timestamps, dtype=float), closed_high, src
-
-
-def _result_dtype():
-    from daft import DataType
-
-    return DataType.struct({"passed": DataType.bool(), "score": DataType.float64(),
-                            "detail": DataType.string()})
-
-
-def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
-    """checks.task_success.arbitration 段 → 取证仲裁链的注入依赖包;关掉返回 None。
-
-    enable: false(或整段留空后显式关)= 完全退回没有仲裁链的行为 —— 返回 None 后
-    管线一行仲裁代码都不会执行,这是规格要求的"逐字节等价"性质的实现方式。
-    构造只拼 URL/闭包不发网络 IO;构造失败=配置问题,由调用方打印警告后按"仲裁
-    不可用"继续(仲裁链的故障永远不许拖垮判定主链)。
-
-    ``gates`` (v2): the planner's gate sizes (``arbitration`` / ``guard_caption``);
-    without them both follow the episode concurrency exactly as before.
-    """
-    acfg = dict(cfg["checks"]["task_success"].get("arbitration") or {})
-    if not acfg.get("enable", True):
-        return None
-    consensus = str(acfg.get("consensus", "strict"))
-    if consensus != "strict":
-        # 实验版还有 majority/confident 口径,生产只落了拍板的 strict;
-        # 配错要炸在这里(被调用方转成警告),不能静默换口径
-        raise ValueError(f"arbitration.consensus 仅支持 strict,got {consensus!r}")
-    from ..adapters.vlm_client import (SharedGate, make_evidence_judge,
-                                      make_grounder, make_intent_comparer,
-                                      make_question_writer, timeout_for)
-    from ..dataset_level.caption import make_vlm_captioner
-
-    vcfg = cfg["checks"]["task_success"]["vlm"]
-    ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
-    thinking = cfg.get("pipeline", {}).get("thinking")
-    # 仲裁链的对冲闸门:一条 episode 内链是串行的 ⇒ 结构并发 = episode 并发;
-    # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)。
-    # ⚠️ 必须是 SharedGate 不能是裸 threading.Semaphore:这四个闭包最终进 task_check
-    # 这个 daft UDF,裸锁不可 cloudpickle —— 2026-08-18 生产完整质检因此直接崩在
-    # check_serializable(--lite 探测不到,e2e 单测又被 ignore,故漏到线上)。
-    _epc = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
-    gates = gates or {}
-    arb_gate = SharedGate(int(gates.get("arbitration", _epc)))
-    t_arb = timeout_for("arbitration", vcfg)
-    from ..adapters.video_vlm import make_video_assessor
-    return {
-        "video_judge": make_video_assessor(ep, model, tag="arbitration", timeout_s=t_arb,
-                                            api_key_env=key, thinking=thinking,
-                                            fps=float((vcfg.get("video") or {}).get("fps", 5)),
-                                            max_in_flight=int(gates.get("arbitration", _epc))),
-        "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
-                                                api_key_env=key, gate=arb_gate, thinking=thinking),
-        "grounder": make_grounder(ep, model, timeout_s=t_arb,
-                                  api_key_env=key, gate=arb_gate, thinking=thinking),
-        "judge": make_evidence_judge(ep, model, timeout_s=t_arb,
-                                     api_key_env=key, gate=arb_gate, thinking=thinking),
-        "same_task": make_intent_comparer(ep, model, timeout_s=t_arb,
-                                          api_key_env=key, gate=arb_gate, thinking=thinking),
-        "captioner": make_vlm_captioner(ep, model,
-                                        timeout_s=timeout_for("caption", vcfg),
-                                        api_key_env=key,
-                                        max_in_flight=int(gates.get("guard_caption", _epc)),
-                                        video_options=vcfg.get("video"), thinking=thinking),
-        "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
-        "params": {
-            "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
-            "n_votes": int(acfg.get("n_votes", 3)),
-            "crop_pad": float(acfg.get("crop_pad", 0.15)),
-            "upscale": int(acfg.get("upscale", 3)),
-            "transient_offset_s": float(acfg.get("transient_offset_s", 1.0)),
-            # 取证路数上限:不写默认复用复核层的相机上限(同一批解码帧,同一顶)
-            "max_cams": int(acfg.get("max_cams",
-                                     cfg.get("pipeline", {}).get("max_endstate_cams", 4))),
-        },
-    }
-
-
-def build_endstate_voter(cfg: dict, gates: dict | None = None):
-    """The per-camera review voter of the VLM stage (hedging gate = structural concurrency).
-
-    Without ``gates`` the capacity is v1's: episode concurrency x 2 (never below 2).
-    """
-    from ..adapters.vlm_client import timeout_for
-    from ..adapters.video_vlm import make_video_assessor
-
-    vcfg_t = cfg["checks"]["task_success"]["vlm"]
-    # 对冲闸门容量 = 结构并发(episode 并发 × 每机位双问 2),不许更低
-    _epc_es = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
-    cap = int((gates or {}).get("endstate", max(2, _epc_es * 2)))
-    return make_video_assessor(vcfg_t["endpoint"], vcfg_t["model"], tag="endstate",
-                               timeout_s=timeout_for("endstate", vcfg_t),
-                               api_key_env=vcfg_t.get("api_key_env"),
-                               max_in_flight=cap,
-                               fps=float((vcfg_t.get("video") or {}).get("fps", 5)),
-                               thinking=cfg.get("pipeline", {}).get("thinking"))
-
-
-# 进度显示已抽到 pipeline/progress.py(M7 在 run.py 里也要用,不该 import funnel 私有名)
-
-# 并发探针(仅 CURATION_DEBUG_CONCURRENCY=1 时启用):量 VLM 段真实在飞条数。
-# 单进程单事件循环内 += 无竞态(协程间无抢占点),故不需要锁——加锁反而不可 pickle。
-_INFLIGHT: dict = {"n": 0, "max": 0, "t0": 0.0}
-
-# episode 级并发闸门。⚠️ 2026-07-22 实测:daft 0.7.16 的 `max_concurrency=` 对 async
-# **行级** UDF 不限在飞协程数——设 1/2/4/12 实测峰值一律 = morsel 全部行数(12/12)。
-# 即在飞数 = morsel 行数,乘帧级并发后可达数百,会砸穿服务端配额。故闸门必须自己装。
-# 放在模块级:UDF 闭包只按引用捞它(与 _PROGRESS 同理),不进 cloudpickle。
-_EPISODE_SEM: dict = {}
+def result_to_struct(res: CheckResult) -> dict:
+    """A check's result as the stage records it: ``detail`` serialized to a JSON string."""
+    return {"passed": res.passed, "score": res.score,
+            "detail": json.dumps(res.detail, ensure_ascii=False, default=str)}
 
 
 def sync_plot_worthy(mode: str, det: dict) -> bool:
@@ -219,18 +51,6 @@ def sync_plot_worthy(mode: str, det: dict) -> bool:
                 or det.get("abstained_cameras"))
 
 
-def _episode_gate(limit: int):
-    """取当前事件循环上的 episode 并发信号量(懒建,按 loop 缓存)。
-
-    懒建的原因:Semaphore 必须绑在**运行中的** loop 上,而 UDF 定义期还没有 loop。
-    协程从进入到首个 await 之间不会被抢占,故这里的检查-创建无竞态,不需要锁。
-    """
-    import asyncio
-
-    loop = asyncio.get_running_loop()
-    if _EPISODE_SEM.get("loop") is not loop or _EPISODE_SEM.get("limit") != limit:
-        _EPISODE_SEM.update(loop=loop, limit=limit, sem=asyncio.Semaphore(limit))
-    return _EPISODE_SEM["sem"]
 
 
 def _default_decode(path, from_ts, to_ts, **kw):
@@ -586,90 +406,16 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
 
 @dataclass(frozen=True)
 class TaskDeps:
-    """What one task_success judgement calls out to: the model clients and the decoder.
-
-    v1 builds one and shares it across episodes; the v2 shell builds one per episode
-    whose callables record execution incidents (D33) before re-raising.
-    """
+    """What one task_success judgement calls out to: the video assessor (design doc 13), wrapped per episode so
+    that a failed call is recorded as an execution incident (D33) before it re-raises."""
 
     vlm_completion: Callable
-    cam_voter: Callable | None
-    arb_deps: dict | None
-    decode: Callable | None = None
 
 
-def _caption_now(arb_deps, cam_frames) -> str:
-    """用已解码的 cam_frames 现打一条自产 caption(不碰视频);unclear/异常 → ""。"""
-    groups = []
-    for name, fr in cam_frames.items():
-        idx = np.unique(np.linspace(0, len(fr) - 1,
-                                    min(arb_deps["caption_n_frames"], len(fr)),
-                                    dtype=int))
-        groups.append((name, [fr[i] for i in idx]))
-    try:
-        cap = str(arb_deps["captioner"](groups)).strip().strip('."')
-        # unclear = captioner 诚实弃权(caption.py 同款归一)
-        if cap and not cap.lower().startswith("unclear"):
-            return cap
-    except Exception:  # noqa: BLE001
-        pass
-    return ""
 
 
-def _label_guard(arb_deps, res, cam_frames, task_desc):
-    """判废前护栏(2026-09-02 ep000029):指令来自原始标注的判废条目,先拿自产
-    caption 与标注比对,不是同一任务就不杀转人工(判定本体在
-    core.hold_kill_on_label_conflict 纯函数)。护栏自身异常只留痕,不拖垮主链。"""
-    from ..core.checks.task_success import hold_kill_on_label_conflict
-    try:
-        hold_kill_on_label_conflict(
-            res, annotation=str(task_desc), caption=_caption_now(arb_deps, cam_frames),
-            same_task=arb_deps["same_task"])
-    except Exception as e:  # noqa: BLE001
-        res.detail["label_check"] = {"outcome": f"error:{type(e).__name__}"}
 
 
-def _arbitrate(arb_deps, registry, res, cam_frames, cam_ts, task_desc, task_src,
-               action, timestamps, embodiment_id, cam_hints=None, cam_roles=None,
-               semantics_extras=""):
-    """弃权条目 → 取证仲裁链(判定本体在 core.arbitration_review 纯函数)。
-
-    意图 = 原始标注(有)否则自产 caption(2026-09-02 与打分/复核对齐)。标注条目
-    仍现打一条 caption —— 只用于"标注与画面描述是否一致"的留痕,**复用已解码的
-    cam_frames**,不再碰视频。
-    仲裁链自身的任何异常只写进留痕,绝不拖垮判定主链。
-    """
-    from ..core.checks.task_success import arbitration_review
-    try:
-        src = str(task_src)
-        if src == "自产caption":
-            caption, cap_src = str(task_desc), "自产caption(漏斗前)"
-        elif (res.detail.get("label_check") or {}).get("caption"):
-            # 判废护栏刚打过一条,直接复用,不再烧一次 caption
-            caption = str(res.detail["label_check"]["caption"])
-            cap_src = "自产caption(判废护栏)"
-        else:
-            # caption 只用于标注一致性留痕;意图按标注问(2026-09-02)
-            caption, cap_src = _caption_now(arb_deps, cam_frames), "自产caption(仲裁时)"
-        annotation = str(task_desc) if src == "原始标注" else ""
-        # 夹爪信号:列下标先走 registry 的 gripper_dims,本体未注册再退到数据集档案
-        # (semantics_extras.gripper,含极性);都没有 → None,core 侧自选兜底帧
-        gr, gts, closed_high, gsrc = gripper_signal(
-            action, timestamps, embodiment_id, semantics_extras, registry)
-        arbitration_review(
-            res, caption=caption, caption_source=cap_src,
-            annotation=annotation, cam_frames=cam_frames, cam_ts=cam_ts,
-            gripper=gr, gripper_ts=gts, gripper_closed_high=closed_high,
-            question_writer=arb_deps["question_writer"],
-            grounder=arb_deps["grounder"], judge=arb_deps["judge"],
-            same_task=arb_deps["same_task"], cam_hints=cam_hints,
-            spec=res.detail.get("arb_spec") or None, cam_roles=cam_roles,
-            **arb_deps["params"])
-        if gsrc and isinstance(res.detail.get("arbitration"), dict):
-            res.detail["arbitration"]["gripper_source"] = gsrc
-    except Exception as e:  # noqa: BLE001
-        res.detail["arbitration"] = {
-            "applied": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def internal_error_struct(e: BaseException) -> dict:
@@ -694,113 +440,15 @@ def internal_error_struct(e: BaseException) -> dict:
                 "internal_error": True}))   # 展示层按它区分「系统坏了」与「证据不足」
 
 
-def task_check_episode(cfg: dict, registry, deps: TaskDeps, video, task_desc, task_src,
-                       fps, action, timestamps, embodiment_id, semantics_extras=""):
-    """One episode through the v7 task-success protocol -> result struct (may raise).
+def task_check_episode(cfg: dict, deps: TaskDeps, video, task_desc, task_src, semantics_extras="") -> dict:
+    """One episode's task-success judgement from its continuous multi-camera videos -> result struct (may raise).
 
-    Scoring, per-camera review, the kill guard and evidence arbitration, in v1's
-    order; ``deps`` carries the model clients and the decoder.
-    """
-    from ..core.contract import CheckResult
+    One request answers for the whole episode and every camera (D71); there is no label guard (D73)."""
+    from .video_task import judge_video_episode
 
-    if getattr(deps.vlm_completion, "media_input", None) == "video":
-        from .video_task import judge_video_episode
-
-        # D73: no label guard - ``deps.arb_deps`` is v1's bundle and plays no part here
-        return result_to_struct(judge_video_episode(
-            cfg, video, task_desc, deps.vlm_completion,
-            task_src=str(task_src), hints=str(semantics_extras or "")))
-
-    pcfg = cfg.get("pipeline", {})
-    interval = pcfg.get("frame_sample_interval_s", 0.5)
-    max_side = pcfg.get("frame_max_side", 448)
-    # 终态复核纳入的相机路数上限(主相机优先)。默认 4 覆盖现有数据集(DROID 3 / Bridge 4);
-    # 图片数 = 路数 × endstate_frames,过多会干扰模型且涨 token,故封顶而非无限。
-    max_endstate_cams = pcfg.get("max_endstate_cams", 4)
-    # 二值复核每路取几帧(全程均匀,含中段)。8 帧经 ep34 消融验证足够;首尾2帧会漏掉
-    # 阶跃型任务(倒/放/开关)的动作瞬间证据。图片总数 = 路数 × 本值。
-    endstate_frames = pcfg.get("endstate_frames", 8)
-    p_task = cfg["checks"]["task_success"].get("params", {})
-    vlm_completion, cam_voter, arb_deps = deps.vlm_completion, deps.cam_voter, deps.arb_deps
-    decode_window = deps.decode or _default_decode
-
-    # v7.2 多视角:全部相机(封顶 max_endstate_cams)一次解码,打分与复核共用。
-    # 打分层帧 = [(相机名, 图), ...](同一时刻各路,标签随数据走,由
-    # make_multiview_completion 消费);复核层逐机位独立投票。
-    cam_frames = {}
-    cam_ts = {}         # 帧相对时间(仲裁链选取证时刻用;同一次解码顺手留下)
-    for cam in sorted(video.keys())[:max_endstate_cams]:
-        v = video[cam]
-        try:
-            fr, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                    sample_interval_s=interval, max_side=max_side)
-            if fr:
-                short = cam.split(".")[-1]    # 标签用短名(去 observation.images. 前缀)
-                cam_frames[short] = fr
-                cam_ts[short] = fts
-        except Exception:  # noqa: BLE001
-            continue                          # 解码失败=少一路视角,不中断
-    if not cam_frames:
-        res = CheckResult(name="task_success", passed=None,
-                          detail={"reason": "所有相机解码失败,无帧可判"})
-        res.detail["task_desc"] = str(task_desc)[:80]
-        res.detail["task_desc_source"] = str(task_src)
-        return result_to_struct(res)
-    nmin = min(len(f) for f in cam_frames.values())    # 各路对齐到最短(同步误差≤1帧)
-    names = list(cam_frames)
-    # 相机朝向提示(2026-09-02 左右镜像):任务含左右词时按 profile 声明的朝向,把一句
-    # 提示挂在该相机的标签上,打分/复核/仲裁三层同一份(core/checks/camera_view.py)
-    from ..core.checks.camera_view import camera_hints, label_hints
-    try:
-        _views = (json.loads(str(semantics_extras) or "{}") or {}).get("cameras") or {}
-    except Exception:  # noqa: BLE001
-        _views = {}
-    cam_hints = camera_hints(_views, str(task_desc), names)    # 仲裁核验题只挂左右提示
-    # 打分/复核标签:左右提示 + 全腕部提示(2026-09-18 umi:相机全在夹爪上,"物体在
-    # 夹爪里、已离开原位"就是进度证据,题目默认口径会把它当机械臂动作扔掉)
-    lbl_hints = label_hints(_views, str(task_desc), names)
-    _lbl = {n: (f"{n}; {lbl_hints[n]}" if n in lbl_hints else n) for n in names}
-    mv = [[(_lbl[n], cam_frames[n][i]) for n in names] for i in range(nmin)]
-    # 任务类型(2026-09-18 方案 2):意图确定时判一次,三层共用。规则判不出才问
-    # 出题器,问过的 spec 交给仲裁复用(不再重问)。瞬时任务打分题换成"物体是否
-    # 已被拿起/取出",打分规则看峰值不看末态(core.task_success)。
-    from ..core import task_type as _tt
-    _qw = arb_deps["question_writer"] if arb_deps is not None else None
-    tt, tt_spec, tt_src = _tt.resolve(str(task_desc), _qw)
-    _vlm_ep = vlm_completion
-    if tt == _tt.TRANSIENT:
-        def _vlm_ep(ref, fr, ins, _v=vlm_completion):
-            try:
-                return _v(ref, fr, ins, task_type="transient")
-            except TypeError:          # 注入的假打分器不认 task_type:按老签名调
-                return _v(ref, fr, ins)
-    res = task_success(mv, task_desc, _vlm_ep, task_type=tt, **p_task)
-    res.detail["task_desc"] = str(task_desc)[:80]
-    res.detail["task_desc_source"] = str(task_src)
-    res.detail["task_type"] = tt
-    res.detail["task_type_source"] = tt_src
-    if tt_spec:
-        res.detail["arb_spec"] = tt_spec
-    res.detail["cams"] = names
-    # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
-    # 复核层异常只留痕(与判废护栏/仲裁链同款纪律):保留打分层结论,不拖垮主链。
-    try:
-        res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
-                              endstate_frames=endstate_frames,
-                              cam_hints=lbl_hints or None)
-    except Exception as e:  # noqa: BLE001
-        res.detail["endstate_review"] = {
-            "applied": False, "error": f"{type(e).__name__}: {e}"}
-    # ---- 判废护栏(2026-09-02):指令来自原始标注的判废,先核标注是不是错题 ----
-    if arb_deps is not None and res.passed is False and str(task_src) == "原始标注":
-        _label_guard(arb_deps, res, cam_frames, task_desc)
-    # ---- 取证仲裁链:**仅当打分+复核后仍弃权**才触发(老判决不许翻案;护栏
-    #      拦下的疑似标注错也走这里的双意图核验),复用已解码的 cam_frames ----
-    if arb_deps is not None and res.passed is None:
-        _arbitrate(arb_deps, registry, res, cam_frames, cam_ts, task_desc, task_src,
-                   action, timestamps, embodiment_id, cam_hints or None,
-                   cam_roles=_views or None, semantics_extras=semantics_extras)
-    return result_to_struct(res)
+    return result_to_struct(judge_video_episode(
+        cfg, video, task_desc, deps.vlm_completion,
+        task_src=str(task_src), hints=str(semantics_extras or "")))
 
 
 def arbitration_stats(task_structs) -> dict:
@@ -827,289 +475,6 @@ def arbitration_stats(task_structs) -> dict:
         else:
             _arb_cnt["abstained"] += 1
     return _arb_cnt
-
-
-def run_funnel(
-    df,
-    cfg: dict,
-    registry,                                     # EmbodimentRegistry(M2)
-    vlm_completion: Callable | None = None,       # M4c 依赖注入(生产=vLLM 端点;None=跳过)
-) -> tuple["object", dict]:
-    """输入 M1 DataFrame → 输出 (带 check_*/verdict 列的 DataFrame, 漏斗统计)。"""
-    from .frame_cache import _cache_scope
-    from .config import validate_config
-    validate_config(cfg)
-    with _cache_scope() as cache_key:
-        from .streaming import _execute_funnel
-        return _execute_funnel(df, cfg, registry, vlm_completion, cache_key=cache_key)
-
-
-def _run_funnel_legacy(df, cfg, registry, vlm_completion, cache_key=None):
-    import daft
-    from daft import col, lit
-    from functools import partial
-    from .frame_cache import _decode_cached
-    decode = partial(_decode_cached, cache_key) if cache_key else None
-
-    stats = {"input": df.count_rows()}
-    pcfg = cfg.get("pipeline", {})
-    # VLM 段的 episode 级并发。VLM 段占端到端 ~97%,且几乎全是等服务端响应 → 唯一有效提速手段。
-    # 2026-07-22 实测 10 条 DROID(VLM 段墙钟):1→447s、2→221s(2.0×)、4→117s(3.8×)、8→84s(5.3×),
-    # 均延迟恒定 ~21s(服务端零排队)。默认 8;闸门见下方 _episode_gate。
-    episode_concurrency = pcfg.get("vlm_episode_concurrency", 8)
-    hard_cols: list[str] = []
-
-    # ---------- 第一段:纯数值检查(最便宜) ----------
-    # 进度:三个检查是三个独立 UDF,每条 episode 会过 3 次 → 只在**最后一个启用的**
-    # 检查里 tick,否则计数变 3 倍(10 条显示 30/30)。标签同样按实际启用拼,
-    # --only/--skip 时不会还写着没跑的检查名。
-    _NUMERIC_CN = {"timestamp_check": "时间戳", "kinematic_limits": "运动学极限",
-                   "motion_quality": "运动质量"}
-    _numeric_on = [n for n in _NUMERIC_CN if enabled(cfg, n)]
-    _pk_num = None
-    if _numeric_on:
-        _pk_num = _progress_init(
-            "numeric", stats["input"],
-            "数值检查(" + " + ".join(_NUMERIC_CN[n] for n in _numeric_on) + ")",
-            quiet_before_s=3.0)      # 快就只留一行完成汇总;慢(十万条)才逐步报
-
-    if enabled(cfg, "timestamp_check"):
-        ts_check = daft.func(return_dtype=_result_dtype())(make_timestamp_check(cfg))
-        df = df.with_column("check_timestamp_check", ts_check(col("timestamps"), col("fps")))
-        hard_cols.append("check_timestamp_check")
-
-    if enabled(cfg, "kinematic_limits"):
-        kin_check = daft.func(return_dtype=_result_dtype())(
-            make_kinematic_check(cfg, registry))
-        aspace = col("action_space") if "action_space" in df.column_names else lit("joint")
-        df = df.with_column("check_kinematic_limits",
-                            kin_check(col("action"), col("embodiment_id"), col("fps"), aspace,
-                                      col("control_mode") if "control_mode" in df.column_names
-                                      else lit("unknown"),
-                                      col("proprio_state"),
-                                      col("proprio_space") if "proprio_space" in df.column_names
-                                      else lit("joint")))
-        hard_cols.append("check_kinematic_limits")
-
-    if enabled(cfg, "motion_quality"):
-        motion_check = daft.func(return_dtype=_result_dtype())(
-            make_motion_check(cfg, registry))
-        df = df.with_column("check_motion_quality",
-                            motion_check(col("action"), col("proprio_state"), col("fps"),
-                                         col("action_space") if "action_space" in df.column_names
-                                         else lit("joint"),
-                                         col("control_mode") if "control_mode" in df.column_names
-                                         else lit("unknown"),
-                                         col("proprio_space") if "proprio_space" in df.column_names
-                                         else lit("joint"),
-                                         col("embodiment_id"),
-                                         col("stuck_strategy") if "stuck_strategy" in df.column_names
-                                         else lit("auto"),
-                                         col("semantics_extras") if "semantics_extras"
-                                         in df.column_names else lit("{}")))
-
-    # 数值段计数:单独一个 UDF 挂在段末,而不是往三个检查里插 tick。
-    # 理由:kin/motion 有多处 early return(弃权分支),逐个插必漏;且启用组合随
-    # --only/--skip 变,"哪个是最后一个"会漂。独立 UDF 与检查逻辑解耦,组合怎么变都对。
-    # daft 会把相邻投影融进同一条流水线,故每行是"过完三个检查再 tick",计数语义
-    # 仍是"已完成"。开销=每行一次函数调用,相对解码/VLM 可忽略。
-    if _pk_num is not None:
-        @daft.func(return_dtype=daft.DataType.bool())
-        def _numeric_progress(_eid):
-            _progress_tick(_pk_num)
-            return True
-
-        df = df.with_column("_numeric_done", _numeric_progress(col("episode_id")))
-
-    # ⚡ 物化一次:daft 惰性,每个 count_rows/to_pydict 都会从头重算整条检查链。
-    # 数值段建完后 collect(),后续统计/过滤都基于物化结果 → 检查只跑一遍(2026-07-10 修
-    # "懒重算8次"效率bug:此前 timestamp 等被重复调用 8×)。
-    df = df.collect()
-    if _pk_num is not None:
-        df = df.exclude("_numeric_done")     # 计数用的临时列,不进后续 schema/交付
-
-    # 硬门 filter ①(纯数值段短路,后面贵的不再算)
-    stats["hard_killed"] = []
-
-    def _capture_killed(df_in, gate_cols):
-        """硬门过滤前捕获被杀行:episode 级判决记录不能只剩统计数(demo/审计要逐条)。
-        df_in 已物化 → filter/to_pydict 不再重跑检查。"""
-        for c in gate_cols:
-            d = df_in.filter(~(col(c)["passed"].is_null() | col(c)["passed"])) \
-                     .select("episode_id", c).to_pydict()
-            for eid, res in zip(d.get("episode_id", []), d.get(c, [])):
-                stats["hard_killed"].append({
-                    "episode_id": eid, "check": c.replace("check_", ""),
-                    "detail": (res or {}).get("detail", "")})
-            df_in = df_in.filter(col(c)["passed"].is_null() | col(c)["passed"])
-        return df_in
-
-    df = _capture_killed(df, hard_cols).collect()
-    stats["after_numeric_gates"] = df.count_rows()
-
-    # ---------- 第二段:抽帧检查 ----------
-    frame_hard: list[str] = []
-    if enabled(cfg, "visual_quality") or enabled(cfg, "video_action_sync"):
-        do_visual, do_sync, sync_plots_mode = frame_modes(cfg)
-        # 同步曲线暂存策略(2026-07-15 用户定,证据附件第一块):flagged=只存
-        # 值得留意的条目(非对齐/任一路有标注,人工会看的那批,内存有界);
-        # all=全存(小数据集/演示);off=不存
-
-        # 标签用**语义化检查名**,不是实现机制(2026-07-22 用户反馈:"抽帧检查(解码+光流)"
-        # 让人以为视觉质量/运动学没跑——机制名把纪律"用户界面只用语义名"开了个后门)。
-        # 括号里点明两者共用一次解码,解释了它们为何合成一个阶段、无法分开报进度。
-        _frame_names = (["视觉质量"] if do_visual else []) + (["视频动作同步"] if do_sync else [])
-        _frame_label = (" + ".join(_frame_names)
-                        + ("(共用一次解码)" if len(_frame_names) > 1 else "(需解码视频)"))
-        _pk_frame = _progress_init("frame", stats["after_numeric_gates"], _frame_label)
-        _frame_body = make_frame_checks(cfg, registry, decode=decode)
-
-        @daft.func(return_dtype=daft.DataType.struct({
-            "visual": _result_dtype(), "sync": _result_dtype(),
-            "curves": daft.DataType.string()}))
-        def frame_checks(video, proprio_state, timestamps, fps,
-                         proprio_space, embodiment_id):
-            out = _frame_body(video, proprio_state, timestamps, fps,
-                              proprio_space, embodiment_id)
-            _progress_tick(_pk_frame)
-            return out
-
-        df = df.with_column("_frame_checks", frame_checks(
-            col("video"), col("proprio_state"), col("timestamps"), col("fps"),
-            col("proprio_space") if "proprio_space" in df.column_names else lit("joint"),
-            col("embodiment_id")))
-        if do_visual:
-            df = df.with_column("check_visual_quality", col("_frame_checks")["visual"])
-        if do_sync:
-            df = df.with_column("check_video_action_sync", col("_frame_checks")["sync"])
-            frame_hard.append("check_video_action_sync")
-            if sync_plots_mode != "off":
-                df = df.with_column("_sync_curves", col("_frame_checks")["curves"])
-        df = df.exclude("_frame_checks")
-        df = df.collect()                     # ⚡ 物化:抽帧检查(解码+光流,贵)只跑一遍
-
-    df = _capture_killed(df, frame_hard).collect()
-    stats["survivors_for_vlm"] = df.count_rows()
-
-    # ---------- 第三段:VLM 任务成败(只跑幸存者) ----------
-    if enabled(cfg, "task_success") and vlm_completion is not None:
-        _pk_vlm = _progress_init("vlm", stats["survivors_for_vlm"], "VLM 任务成败判定")
-        try:
-            cam_voter = build_endstate_voter(cfg)
-        except Exception as _e:  # noqa: BLE001
-            cam_voter = None
-            # 不静默:构造失败=配置问题(它不做网络IO,只拼URL/闭包)。若无此提示,
-            # 现场会看到判定一片弃权却不知复核压根没启动。
-            print(f"[curation] ⚠️ 复核投票器不可用({type(_e).__name__}:{_e}),"
-                  "task_success 将仅凭打分层单判据判定(失败候选降弃权)", flush=True)
-        try:
-            arb_deps = build_arbitration_deps(cfg)
-        except Exception as _e:  # noqa: BLE001
-            arb_deps = None
-            # 同复核投票器:构造失败要出声,否则弃权条目静默维持人工,看不出仲裁没启动
-            print(f"[curation] ⚠️ 取证仲裁链不可用({type(_e).__name__}:{_e}),"
-                  "弃权条目维持进人工", flush=True)
-        deps = TaskDeps(vlm_completion=vlm_completion, cam_voter=cam_voter,
-                        arb_deps=arb_deps, decode=decode)
-
-        def _task_check_sync(video, task_desc, task_src, fps,
-                             action, timestamps, embodiment_id, semantics_extras=""):
-            out = task_check_episode(cfg, registry, deps, video, task_desc, task_src, fps,
-                                     action, timestamps, embodiment_id, semantics_extras)
-            _progress_tick(_pk_vlm)
-            return out
-
-        def _internal_error_struct(e: BaseException) -> dict:
-            out = internal_error_struct(e)
-            try:
-                _progress_tick(_pk_vlm)   # 异常路径也如实报进度,别让进度条假死
-            except Exception:  # noqa: BLE001
-                pass
-            return out
-
-        # ---- async 壳:让 daft 并发跑多条 episode(2026-07-22)----
-        # 为什么这么套:VLM 段单条约 30s,其中绝大部分是**等方舟响应**(网络阻塞),CPU 闲着。
-        # daft 的并发只对 async UDF 生效(同步 UDF 会明确报 "has no effect"),而把 async
-        # 一路传染进 core/ 会破坏"检查=框架无关纯函数"的红线。故只在最外层套 async,
-        # 内部同步工作交给 asyncio.to_thread → **core/ 与 vlm_client 零改动**。
-        #
-        # ⚠️⚠️ 闸门是自己的信号量,不是 daft 的 `max_concurrency=`(2026-07-22 血泪):
-        # 该参数对 async 行级 UDF **完全不限在飞数**——设 1/2/4/12 实测峰值一律等于
-        # morsel 全部行数。误信它会导致:①以为在跑串行基线,其实是全并发(白测一轮);
-        # ②上规模时在飞数随 morsel 涨,乘帧级并发后砸穿服务端配额。故不再传该参数。
-        # 在飞上限不是一个数:打分、复核、仲裁各有一把独立的闸门(见 default.yaml 的
-        # vlm_episode_concurrency 注释,2026-09-07 吞吐诊断),episode 闸门只管这一层。
-        _INFLIGHT.update(n=0, max=0, t0=time.time())
-
-        @daft.func(return_dtype=_result_dtype())
-        async def task_check(video, task_desc, task_src, fps,
-                             action, timestamps, embodiment_id, semantics_extras=""):
-            import asyncio
-            import os
-            import sys
-            import time
-
-            async with _episode_gate(episode_concurrency):
-                # 兜底纪律:单条轨迹判决的任何异常都不得外泄(见 _internal_error_struct)。
-                if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
-                    try:
-                        return await asyncio.to_thread(
-                            _task_check_sync, video, task_desc, task_src, fps,
-                            action, timestamps, embodiment_id, semantics_extras)
-                    except Exception as e:  # noqa: BLE001
-                        return _internal_error_struct(e)
-
-                from ..adapters.vlm_client import http_stats
-
-                _INFLIGHT["n"] += 1
-                _INFLIGHT["max"] = max(_INFLIGHT["max"], _INFLIGHT["n"])
-                t_in = time.time()
-                try:
-                    return await asyncio.to_thread(
-                        _task_check_sync, video, task_desc, task_src, fps,
-                        action, timestamps, embodiment_id, semantics_extras)
-                except Exception as e:  # noqa: BLE001
-                    return _internal_error_struct(e)   # finally 照常跑,在飞计数不漏
-                finally:
-                    _INFLIGHT["n"] -= 1
-                    n_req, s_req = http_stats()
-                    wall = time.time() - _INFLIGHT["t0"]
-                    print(f"[并发探针] 出 t={wall:6.1f}s 本条={time.time() - t_in:5.1f}s "
-                          f"在飞={_INFLIGHT['n']} 峰值={_INFLIGHT['max']} | "
-                          f"累计请求={n_req} Σ请求耗时={s_req:.0f}s "
-                          f"有效并发={s_req / max(wall, 1e-9):.1f} "
-                          f"均延迟={s_req / max(n_req, 1):.1f}s",
-                          file=sys.stderr, flush=True)
-
-        df = df.with_column("check_task_success", task_check(
-            col("video"),
-            col("task_desc") if "task_desc" in df.column_names else col("instruction"),
-            col("task_desc_source") if "task_desc_source" in df.column_names
-            else lit("原始标注"),
-            col("fps"), col("action"), col("timestamps"), col("embodiment_id"),
-            col("semantics_extras") if "semantics_extras" in df.column_names else lit("{}")))
-        df = df.collect()                     # ⚡ 物化:task_success(VLM,最贵)只跑一遍
-
-        if arb_deps is not None:
-            # 仲裁触发计数(验收:成本可见,报告里要能看出触发了多少条)。
-            # 纯读已物化的 detail,零重算;enable:false 时不产生这个统计键(逐字节等价)。
-            stats["arbitration"] = arbitration_stats(
-                df.select("check_task_success").to_pydict().get("check_task_success", []))
-
-    # ---------- verdict(daft.func 需固定签名,六个已知检查逐一传,缺的传 None) ----------
-    from .config import KNOWN_CHECKS
-
-    @daft.func(return_dtype=daft.DataType.string())
-    def verdict_col(ts_r, kin_r, motion_r, visual_r, sync_r, task_r):
-        raw = dict(zip(KNOWN_CHECKS, (ts_r, kin_r, motion_r, visual_r, sync_r, task_r)))
-        checks = {k: dict(v) for k, v in raw.items() if v is not None}
-        return json.dumps(episode_verdict(checks, cfg), ensure_ascii=False)
-
-    present = set(df.column_names)
-    args = [col(f"check_{n}") if f"check_{n}" in present else lit(None) for n in KNOWN_CHECKS]
-    df = df.with_column("verdict", verdict_col(*args)).collect()  # ⚡ 终物化:run.py 取结果不再重算
-    stats["output"] = df.count_rows()
-    return df, stats
 
 
 def result_to_struct_none() -> dict:

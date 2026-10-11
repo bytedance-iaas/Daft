@@ -42,20 +42,6 @@ def test_pair_comparer_raises_on_bad_structure():
         same("a", "b")
 
 
-def test_intent_comparer_factory_wraps_pair_judge(monkeypatch):
-    """仲裁工厂不再自带短提示:走 make_llm_ask → 单对判官;闸门透传。"""
-    import curation.adapters.vlm_client as vc
-    seen = {}
-
-    def fake_llm_ask(endpoint, model, **kw):
-        seen.update(kw)
-        return _llm("different")
-    monkeypatch.setattr(vc, "make_llm_ask", fake_llm_ask)
-    same = vc.make_intent_comparer("http://x", "m", timeout_s=7.0, gate="G")
-    assert same("a", "b") is False
-    assert seen["timeout_s"] == 7.0 and seen["gate"] == "G"
-
-
 def _detail(verdict, *, rules=(), label_check=None, arbitration=None):
     d = {"verdict": verdict, "rules": list(rules)}
     if label_check:

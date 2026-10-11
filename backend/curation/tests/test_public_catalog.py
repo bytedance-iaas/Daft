@@ -241,25 +241,6 @@ def test_resolve_by_name_id_url_or_tail():
 
 # ── runner 侧规则 ───────────────────────────────────────────────────────────
 
-def test_runner_never_borrows_public_bucket_and_public_output_default(tmp_path, monkeypatch):
-    from curation.ui import runner
-    pc.apply_config(_cfg())
-    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
-    monkeypatch.delenv("TOS_BUCKET", raising=False)
-    local = str(tmp_path / "data" / "deliveries")
-    assert runner.borrowed_output_url(f"tos://{BKT}/dataset/libero", local) == ""
-    assert runner.borrowed_output_url("tos://their-bucket/x", local) == "tos://their-bucket/deliveries"
-    assert runner.public_output_default(local) == ("", runner.PUBLIC_READONLY_NOTE)
-    monkeypatch.setenv("TOS_BUCKET", "mine")
-    assert runner.public_output_default(local) == ("tos://mine/deliveries", "")
-
-
-def test_runner_tos_list_datasets_on_public_root_uses_catalog():
-    from curation.ui import runner
-    pc.apply_config(_cfg())
-    assert runner.tos_list_datasets(f"tos://{BKT}/dataset", "cn-beijing", store=_store()) \
-        == ["aloha_sim", "broken_info", "libero"]
-
 
 # ── 界面 ────────────────────────────────────────────────────────────────────
 
@@ -272,20 +253,3 @@ def site(tmp_path):
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
-
-def test_cli_public_lists_json_or_says_unconfigured(tmp_path, site, capsys, monkeypatch):
-    from curation import cli
-    monkeypatch.setattr(pc, "catalog", lambda **kw: [
-        {"name": "libero", "id": "HuggingFaceVLA/libero", "version": "v3.0",
-         "episodes": 1693, "files": 3, "url": f"tos://{BKT}/dataset/libero"}])
-    assert cli.main(["public", "--config", site, "--json"]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["count"] == 1 and data["datasets"][0]["name"] == "libero"
-    assert data["root"] == f"tos://{BKT}/dataset" and data["region"] == "cn-beijing"
-    assert cli.main(["public", "--config", site]) == 0
-    txt = capsys.readouterr().out
-    assert "libero" in txt and "--input-region cn-beijing" in txt
-    empty = tmp_path / "empty.yaml"
-    empty.write_text("{}\n", encoding="utf-8")
-    pc.reset()
-    assert cli.main(["public", "--config", str(empty)]) == 2

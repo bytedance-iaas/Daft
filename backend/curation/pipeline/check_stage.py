@@ -37,8 +37,7 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry_mod
 from . import funnel
-from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, wrap_decode,
-                        wrap_voter)
+from .incidents import IncidentLog, camera_names, wrap_call, wrap_decode
 from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error,
                       latest_results, passes_funnel,
                       module_dir, pid_alive, read_inflight, record_from_struct, two_blocks,
@@ -89,8 +88,6 @@ class TaskClients:
     """The VLM stage's model clients, built once per process (inside the policy)."""
 
     vlm_completion: Callable
-    cam_voter: Callable | None
-    arb_deps: dict | None
     #: the picture-defect request an episode without a task text gets instead of a judgement (D73)
     cameras: Callable | None = None
 
@@ -405,12 +402,8 @@ class StageRun:
         if problem is not None:
             return self._picture_only(ep, row, log), {}
         clients = self.o.task_clients
-        deps = funnel.TaskDeps(
-            vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
-                                     call_kind="probe"),
-            cam_voter=wrap_voter(clients.cam_voter, log),
-            arb_deps=wrap_arbitration(clients.arb_deps, log),
-            decode=wrap_decode(funnel._default_decode, log, camera_names(row.get("video"))))
+        deps = funnel.TaskDeps(vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
+                                                        call_kind="probe"))
         # D39 recorded how a human relabel is judged again ("v1": v1's rejudge, scoring plus
         # the per-camera vote; "full": the first run's flow). Under the one protocol (D71) there
         # is nothing left to choose between: both judge the relabel in the single request.
@@ -419,9 +412,7 @@ class StageRun:
         try:
             protocol_src = "原始标注" if src == "人工改标" else src
             struct = funnel.task_check_episode(
-                self.o.cfg, self.registry, deps, row["video"], text, protocol_src,
-                row["fps"], row["action"], row["timestamps"], row["embodiment_id"],
-                column(row, "semantics_extras", "{}"))
+                self.o.cfg, deps, row["video"], text, protocol_src, column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = funnel.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}")

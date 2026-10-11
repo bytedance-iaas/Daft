@@ -1,15 +1,30 @@
 {
   "about": "A-class files adopted with a known difference from the freeze commit, or whose removal was adopted (design doc 10, section 2.1). A difference pins the file's git blob hash, a removal pins \"removed\": true; each entry says why. The guard lets exactly that through, and any further edit is caught again.",
   "files": {
+    "core/checks/camera_view.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the camera-view hints of the frame-probe prompts; the video judge names the cameras itself"
+    },
     "core/checks/task_success.py": {
-      "blob": "a36e02551a2437d7ff65fd2b8bddc1117203d679",
-      "since": "6193e8370",
-      "why": "design 13 (video-native judgement): the frame-probe path, kept for old deliveries and injected tests, asks its probes in time order instead of shuffled; comments follow"
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the frame-probe task-success judge (probes, end-state votes, arbitration); v2 judges task success from the continuous videos (pipeline/video_task.py, design 13)"
+    },
+    "core/task_type.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the persistent / transient task classification of the frame-probe prompts"
     },
     "dataset_level/caption.py": {
-      "blob": "631c431ca0ec46d9c4500dae3ded29d6fec24d47",
-      "since": "6193e8370",
-      "why": "design 13 (video-native judgement): captions read the continuous videos (video captioner, media_protocol=video-caption/1 cache boundary); an 'unclear' caption counts as none"
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the v1 caption pass (one caption per episode for the skill profile and the label audit)"
+    },
+    "dataset_level/decisions.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the human-decision CSVs of v1's review page and `curation rejudge`; v2 adjudicates through the Daemon (adjudicate-apply)"
     },
     "dataset_level/profile.py": {
       "removed": true,
@@ -20,6 +35,11 @@
       "removed": true,
       "since": "jinxin_drop_skill_profile (2026-10-06)",
       "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
+    },
+    "dataset_level/stuck_events.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the stuck-event list v1's run built for its report"
     },
     "dataset_level/taxonomy.py": {
       "removed": true,
@@ -40,6 +60,21 @@
       "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
       "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",
       "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes)"
+    },
+    "ingest/schema.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the column-name constants of v1's Daft DataFrame (no v2 module imports them)"
+    },
+    "pipeline/verdict.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - v1's hard-gate / soft-score verdict; v2 judges by policy over findings (pipeline/policy.py, pipeline/verdicts.py, design 17)"
+    },
+    "registry/fk.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - a forward-kinematics wrapper for a self-collision check that never shipped (nothing imported it)"
     },
     "vlm_call_kinds.py": {
       "blob": "9fb6e82b2749fe0fe0d462179489dfd521461b1d",

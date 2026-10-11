@@ -91,10 +91,8 @@ def test_failures_are_counted_per_logical_call():
     entries = [_entry("logical", "a"), _entry("logical", "b", status=500),
                _entry("logical", "c", exc="requests.exceptions.ReadTimeout"),
                _entry("direct", "d", exc="requests.exceptions.ConnectionError"),
-               _entry("direct", "d"),
-               {"seq": 9, "kind": "llm_failure", "exc_type": "ValueError"}]
-    assert [e["hash"] if "hash" in e else e["kind"] for e in T.tape_failures(entries)] == \
-        ["b", "c", "llm_failure"]
+               _entry("direct", "d")]
+    assert [e["hash"] for e in T.tape_failures(entries)] == ["b", "c"]
 
 
 def test_entries_round_trip_to_response_and_exception():
@@ -108,26 +106,23 @@ def test_entries_round_trip_to_response_and_exception():
     assert isinstance(odd, requests.exceptions.ConnectionError)
 
 
-# -- hooks against a stand-in for v1's vlm_client ----------------------------
+# -- hooks against a stand-in for vlm_client ---------------------------------
 
 def _fake_client():
-    """Minimal stand-in: a hedged path and a text path, both via requests.post."""
+    """Minimal stand-in: the hedged path; a direct call is a plain requests.post (_text_call)."""
     mod = types.SimpleNamespace()
 
     def hedged_request(send, *, tag, timeout_s, gate=None):
         return send(timeout_s)
 
-    def make_llm_ask(url):
-        def llm_ask(prompt):
-            r = requests.post(url, json={"model": "m", "messages": [
-                {"role": "user", "content": prompt}]}, timeout=5)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
-        return llm_ask
-
     mod.hedged_request = hedged_request
-    mod.make_llm_ask = make_llm_ask
     return mod
+
+
+def _text_call(url, prompt):
+    r = requests.post(url, json={"model": "m", "messages": [{"role": "user", "content": prompt}]}, timeout=5)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
 
 
 def _vision_call(mod, url, img=PNG_A):
@@ -157,8 +152,7 @@ def test_record_then_replay_serves_the_same_answers(tmp_path):
     hooks = T.TapeHooks("record", tape_out=tape, transport=_transport({}))
     hooks.install(mod)
     try:
-        ask = mod.make_llm_ask(URL)
-        assert _vision_call(mod, URL) == "7" and ask("hello") == "7"
+        assert _vision_call(mod, URL) == "7" and _text_call(URL, "hello") == "7"
     finally:
         hooks.uninstall()
     header, entries = T.read_tape(tape)
@@ -172,8 +166,7 @@ def test_record_then_replay_serves_the_same_answers(tmp_path):
     replay = T.TapeHooks("replay", replay_entries=entries)
     replay.install(mod)
     try:
-        ask = mod.make_llm_ask(URL)
-        assert _vision_call(mod, URL) == "7" and ask("hello") == "7"
+        assert _vision_call(mod, URL) == "7" and _text_call(URL, "hello") == "7"
         with pytest.raises(requests.exceptions.ConnectionError):
             _vision_call(mod, URL, img=PNG_B)          # never recorded
     finally:
@@ -206,26 +199,8 @@ def test_replay_record_fills_the_gaps_and_writes_a_complete_tape(tmp_path):
     assert not T.tape_failures(out)
 
 
-def test_text_call_that_finally_fails_leaves_a_marker(tmp_path):
-    mod = _fake_client()
-    tape = str(tmp_path / "t.jsonl.gz")
-
-    def post(url, *a, **kw):
-        raise requests.exceptions.ConnectionError("down")
-
-    hooks = T.TapeHooks("record", tape_out=tape, transport={"post": post, "get": post})
-    hooks.install(mod)
-    try:
-        with pytest.raises(requests.exceptions.ConnectionError):
-            mod.make_llm_ask(URL)("hello")
-    finally:
-        hooks.uninstall()
-    _, entries = T.read_tape(tape)
-    assert [e["kind"] for e in T.tape_failures(entries)] == ["llm_failure"]
-
-
 def test_hooked_functions_pickle_by_reference():
-    """daft cloudpickles v1's UDF closures; our replacements must survive that."""
+    """A client holding a replacement still pickles."""
     import pickle
 
     mod = _fake_client()
@@ -233,8 +208,6 @@ def test_hooked_functions_pickle_by_reference():
     hooks.install(mod)
     try:
         assert pickle.loads(pickle.dumps(mod.hedged_request)) is T.hooked_hedged_request
-        wrapped = mod.make_llm_ask(URL)
-        assert isinstance(wrapped, T.LlmAskWrapper)
     finally:
         hooks.uninstall()
 

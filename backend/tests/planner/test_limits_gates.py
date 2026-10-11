@@ -58,35 +58,6 @@ def test_v1_keys_exist_in_factory_config():
         assert isinstance(node, int)
 
 
-def test_v1_objects_hold_those_gates():
-    """Cross-check by running v1's factories: the SharedGates they build have these capacities."""
-    pytest.importorskip("daft")
-    from curation.adapters import vlm_client
-    from curation.pipeline import funnel
-
-    def capacities(fn, depth: int = 4, seen=None) -> set[int]:
-        seen = set() if seen is None else seen
-        out: set[int] = set()
-        if depth < 0 or id(fn) in seen:
-            return out
-        seen.add(id(fn))
-        for cell in getattr(fn, "__closure__", None) or ():
-            value = cell.cell_contents
-            if isinstance(value, vlm_client.SharedGate):
-                out.add(value.capacity)
-            elif callable(value):
-                out |= capacities(value, depth - 1, seen)
-        return out
-
-    cfg = v1_source.factory_config()
-    derived = derive_gates(64)
-    assert capacities(vlm_client.vlm_completion_from_config(cfg)) == {derived["probe"]}
-    deps = funnel.build_arbitration_deps(cfg)
-    for name in ("question_writer", "grounder", "judge"):
-        assert capacities(deps[name]) == {derived["arbitration"]}
-    assert capacities(deps["captioner"]) == {derived["guard_caption"]}
-
-
 # ---------------------------------------------------------------- derive_gates
 
 @pytest.mark.parametrize("n", range(1, 257))

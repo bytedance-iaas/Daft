@@ -212,37 +212,6 @@ def test_ros2_compound_format_reads(tmp_path):
     r = read_mcap_rows(str(d))[0]
     with av.open(r["video"]["observation.images.cam0"]["path"]) as c:
         assert sum(1 for _ in c.decode(c.streams.video[0])) == N
-def test_review_page_uses_mcap_mapping(tmp_path, monkeypatch):
-    """P2 回归(2026-09-21 审查):run 用 mcap_mapping 能读的数据,review-page 带
-    同一份 --config 也要能读;不带配置则如实报输入错误(退出码 2)。"""
-    import yaml
-
-    from curation.cli import main
-
-    d = tmp_path / "custom"
-    d.mkdir()
-    _write_mcap(str(d / "episode_0.mcap"),
-                topics={"action": "/cmd", "state": "/prop",
-                        "task": "/instr", "cam": "/camera/rgb"})
-    cfg = tmp_path / "site.yaml"
-    cfg.write_text(yaml.safe_dump({"ingest": {"mcap_mapping": {
-        "action": "/cmd", "state": "/prop", "task": "/instr",
-        "video_prefix": "/camera/"}}}), encoding="utf-8")
-    # 片段编码打桩(与 test_review_page 同款:不真编码视频)
-    import curation.export.evidence as ev
-    monkeypatch.setattr(ev, "write_audit_clips",
-                        lambda flagged_ids, videos, out_dir, **kw: (
-                            os.makedirs(os.path.join(out_dir, "details",
-                                                     "audit_clips"),
-                                        exist_ok=True) or 0))
-    out = tmp_path / "site"
-    assert main(["review-page", "--input", str(d), "--output", str(out),
-                 "--config", str(cfg)]) == 0
-    assert (out / "index.html").exists()
-    assert main(["review-page", "--input", str(d),
-                 "--output", str(tmp_path / "site2")]) == 2   # 不带配置认不出
-
-
 def test_mapping_override_and_unknown_topic_error(tmp_path):
     """客户自定义 topic:默认认不出要列出实见 topic;mapping 覆盖后能读
     (JointState 形状的 .position 同样按形状认——这里用 data 字段版覆盖)。"""

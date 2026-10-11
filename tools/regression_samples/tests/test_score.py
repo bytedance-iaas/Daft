@@ -331,7 +331,7 @@ def test_map_uses_codes_the_platform_writes():
     motion = _source("curation", "core", "checks", "motion_quality.py")
     visual = _source("curation", "core", "checks", "visual_quality.py") + _source("curation", "pipeline", "funnel.py")
     sync = _source("curation", "core", "checks", "video_action_sync.py")
-    task = _source("curation", "core", "checks", "task_success.py") + _source("curation", "pipeline", "run.py")
+    task = _source("curation", "pipeline", "video_task.py") + _source("curation", "pipeline", "findings.py")
     # the EEF module's outcomes of records before registry 5.0 (design doc 12 C.9; 5.0 writes findings only, design
     # doc 25 §7): the old run directories this map reads still carry them
     eef = "PASS REJECT HUMAN pass reject human opinion"

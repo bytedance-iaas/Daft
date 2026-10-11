@@ -26,37 +26,6 @@ _LAT_ALL = {
 }
 
 
-def _report_md(lat=None) -> str:
-    from curation.export.report import to_markdown
-    return to_markdown({"数据集": "x", "dataset": {
-        "input_episodes": 1, "hard_gate_filtered": 0, "verdict_keep": 1,
-        "verdict_drop": 0, "dedup_removed": 0, "delivered": 1,
-        "hard_fail_breakdown": {},
-        "stuck": {"flagged_episodes": 0, "note": "", "episodes": []},
-        "vlm_latency": dict(_LAT_ALL if lat is None else lat)},
-        "episodes": {"dropped": []}, "skills": {"n_episodes": 1, "families": {}}})
-
-
-def test_single_source_shared_by_ui_and_report():
-    """★同源判据:界面标签就是 vlm_call_kinds 那个 dict 对象;改一处两边都变。
-
-    若有人在 manifest 或 report 里重新抄一份名字表(哪怕内容一样),对象同一性
-    或下面的改名联动就会破 —— 这条先红,不用等两边慢慢漂移。
-    """
-    from curation.ui import manifest
-    assert manifest.LATENCY_LABELS is CALL_KIND_LABELS
-
-
-def test_rename_once_changes_both_ui_and_report(monkeypatch):
-    """改显示名只改 vlm_call_kinds 一处 ⇒ 报告与界面同时变。"""
-    monkeypatch.setitem(CALL_KIND_LABELS, "probe", "改名验证打分")
-    md = _report_md()
-    assert "改名验证打分" in md and "任务完成度打分" not in md
-    from curation.ui.manifest import latency_rows
-    rows = latency_rows({"latency": {"probe": dict(_LAT_ALL["probe"])}})
-    assert rows[0][0] == "改名验证打分"
-
-
 def test_display_names_and_flow_order():
     """显示名定案 + 流程顺序定案(方案 B):打分→复核→仲裁→打标→归纳。"""
     assert CALL_KIND_ORDER == ["probe", "endstate", "arbitration", "caption", "llm"]
@@ -65,32 +34,6 @@ def test_display_names_and_flow_order():
                                 "llm": "技能归纳"}
     # CSV 埋点标签是数据契约:显示名怎么改,键一个字不许动(老交付要读得回来)
     assert set(CALL_KIND_NOTES) == set(CALL_KIND_LABELS) == set(CALL_KIND_ORDER)
-
-
-def test_report_uses_new_names_in_flow_order_with_notes():
-    """报告:五个显示名按流程顺序、表下带五条解释、旧名字一个不留。"""
-    md = _report_md()
-    labels = [CALL_KIND_LABELS[t] for t in CALL_KIND_ORDER]
-    positions = [md.index(lab) for lab in labels]
-    assert positions == sorted(positions), "报告延时表没按流程顺序排"
-    for tag in CALL_KIND_ORDER:                      # 解释与界面同一份文案
-        assert CALL_KIND_NOTES[tag] in md, tag
-    for banned in ("渐变问询", "画像 caption", "归纳/审计 LLM", "二值复核",
-                   "任务判定探针", "终态复核", "体系归纳"):
-        assert banned not in md, f"内部旧说法泄漏进客户报告:{banned}"
-
-
-def test_report_without_latency_block_has_no_notes():
-    """没跑 VLM 的报告不该凭空多出五条解释(解释跟着延时表走)。"""
-    from curation.export.report import to_markdown
-    md = to_markdown({"数据集": "x", "dataset": {
-        "input_episodes": 1, "hard_gate_filtered": 0, "verdict_keep": 1,
-        "verdict_drop": 0, "dedup_removed": 0, "delivered": 1,
-        "hard_fail_breakdown": {},
-        "stuck": {"flagged_episodes": 0, "note": "", "episodes": []}},
-        "episodes": {"dropped": []}, "skills": {"n_episodes": 1, "families": {}}})
-    assert "## 模型调用延时" not in md
-    assert CALL_KIND_NOTES["probe"] not in md
 
 
 def test_notes_pin_three_facts():
@@ -110,14 +53,6 @@ def test_notes_pin_three_facts():
     assert "连续视频" in probe and "联合" in probe
     assert "打乱" not in probe
     assert "逐帧" not in probe
-
-
-def test_ui_kind_note_not_duplicated_text():
-    """界面的 LATENCY_KIND_NOTE 是由事实源拼出来的,不是手抄第二份。"""
-    from curation.ui.manifest import LATENCY_KIND_NOTE
-    for tag in CALL_KIND_ORDER:
-        assert CALL_KIND_NOTES[tag] in LATENCY_KIND_NOTE, tag
-        assert f"**{CALL_KIND_LABELS[tag]}**" in LATENCY_KIND_NOTE, tag
 
 
 def test_bold_markers_actually_render_in_chinese_text():

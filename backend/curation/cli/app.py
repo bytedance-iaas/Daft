@@ -1,9 +1,9 @@
-"""The ``curation`` entry point: v2 commands, and v1 commands handed to the legacy CLI.
+"""The ``curation`` entry point: the atomic commands, the REST client and the ops commands.
 
-v2 commands (design doc 02): ``preflight``, ``snapshot``, ``verify`` and the
-REST client ``task``. The v1 subcommands (``run``, ``rejudge``, ``ls``, ...)
-keep working unchanged through :mod:`curation.cli.legacy` until their
-functions move into atomic commands (doc 10, section 2.3).
+The atomic commands (design doc 02: ``preflight``, ``plan``, ``snapshot``, ``check``, ``aggregate``,
+``report``, ``adjudicate-apply``, ``verify``, ...) print one C2 document with ``--json``; ``task`` is the
+REST client. The ops commands ``ls``, ``prune``, ``fetch`` (:mod:`curation.cli.ops`, design doc 27, D89)
+are for a person at a terminal and print text.
 """
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ from . import (adjudicate, aggregate, check, plan, preflight,
 from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
 
-#: Handed to the v1 command line as they are.
-LEGACY_COMMANDS = ("run", "rejudge", "review-page", "prune", "ls", "fetch", "backends",
-                   "public")
+from .ops import OPS_COMMANDS
 
 _SECRET_OPTION = re.compile(r"key|secret|password|passwd|token|credential", re.I)
 
@@ -64,8 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="curation",
         description="Curator: quality checks for robot datasets. Each command does one thing; "
                     "--json gives machines one JSON document on stdout.",
-        epilog="v1 commands, unchanged (help in Chinese: curation <command> --help):\n"
-               f"  {', '.join(LEGACY_COMMANDS)}\n\n"
+        epilog="Ops commands for a person at a terminal (text output, help in Chinese: "
+               "curation <command> --help):\n"
+               f"  {', '.join(OPS_COMMANDS)}\n\n"
                "Credentials come from the environment only: CURATION_INPUT_TOS_ACCESS_KEY / "
                "_SECRET_KEY,\nCURATION_OUTPUT_TOS_ACCESS_KEY / _SECRET_KEY (TOS_ACCESS_KEY / "
                "TOS_SECRET_KEY\nwhen unset), CURATOR_USER / CURATOR_PASSWORD for curation task.",
@@ -109,10 +108,10 @@ def scrub(tokens: list[str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     process_entry = argv is None
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in LEGACY_COMMANDS:
-        from . import legacy
+    if argv and argv[0] in OPS_COMMANDS:
+        from . import ops
 
-        return legacy.main(argv)
+        return ops.main(argv)
     json_mode = "--json" in argv
     try:
         args, extras = build_parser().parse_known_args(argv)

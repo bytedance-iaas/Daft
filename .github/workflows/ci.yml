@@ -1,4 +1,4 @@
-# Curator v2 CI: v1 unit tests, parity tools, the A-class guard and the image.
+# Curator v2 CI: the test suites, the A-class guard, the frontend and the image.
 name: curator-ci
 
 on:
@@ -30,11 +30,10 @@ jobs:
       - name: Install
         id: install
         run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-      - name: v1 unit tests
+      - name: Core unit tests (algorithms, readers, VLM client)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        # test_environment checks a GPU host (torch, nvidia-smi); not available here
-        run: bash ../.github/scripts/pytest-summary.sh -q -rfE curation/tests --ignore=curation/tests/test_environment.py
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE curation/tests
       - name: Contracts (C1-C5 tests and the drift lock)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
@@ -65,10 +64,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/orchestr
-      - name: Opt-in execution optimizations (streaming funnel, checkpoints, frame cache)
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: backend
-        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/optimizations
       - name: Image and deployment-contract checks (W11)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend

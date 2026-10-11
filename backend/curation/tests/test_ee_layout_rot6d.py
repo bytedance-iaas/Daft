@@ -4,8 +4,6 @@
 饱和/卡顿判不适用;④路径效率只在平移列上算。老数据集(有档案)走老规则,数值不变。"""
 from __future__ import annotations
 
-import json
-
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation

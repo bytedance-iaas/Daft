@@ -5,17 +5,7 @@ latency_summary 按标签出分位数;报告渲染成表;错误也计数不丢�
 """
 from __future__ import annotations
 
-import json
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-import numpy as np
-
-from curation.adapters.vlm_client import (latency_record, latency_reset,
-                                          latency_rows, latency_summary,
-                                          make_endstate_voter,
-                                          read_latency_csv)
-from curation.export.report import to_markdown
+from curation.adapters.vlm_client import latency_record, latency_reset, latency_rows, latency_summary, read_latency_csv
 
 
 def test_wall_clock_beats_sum_when_calls_overlap():
@@ -54,26 +44,6 @@ def test_wall_clock_counts_failed_calls_and_needs_timestamps():
     latency_reset()
 
 
-def test_latency_csv_roundtrip_and_legacy_three_column(tmp_path):
-    """CSV 读回复算:四列有墙钟;**三列老 CSV** 读得进去但没有墙钟(如实降级)。"""
-    new = tmp_path / "new.csv"
-    new.write_text("call_type,seconds,ok,started_at\n"
-                   "probe,10.0,1,1700000000.0\n"
-                   "probe,10.0,1,1700000002.0\n", encoding="utf-8")
-    s = latency_summary(read_latency_csv(str(new)))["probe"]
-    assert s["n"] == 2 and s["wall_s"] == 12.0
-    old = tmp_path / "old.csv"                        # 2026-07-30 之前的交付
-    old.write_text("call_type,seconds,ok\nprobe,10.0,1\nprobe,10.0,1\n",
-                   encoding="utf-8")
-    s_old = latency_summary(read_latency_csv(str(old)))["probe"]
-    assert s_old["n"] == 2 and s_old["mean_s"] == 10.0
-    assert "wall_s" not in s_old
-    # 老 CSV 复算出的档案喂给界面 → 不画图,只给一句说明(绝不退回均值×次数)
-    from curation.ui.manifest import NO_WALL_NOTE, latency_bar_html
-    html = latency_bar_html({"latency": {"probe": s_old}})
-    assert NO_WALL_NOTE in html and "margin:8px 0" not in html
-
-
 def test_summary_percentiles_and_errors():
     latency_reset()
     for i in range(1, 101):                       # 1..100 秒,分位数一眼可验
@@ -90,61 +60,6 @@ def test_summary_percentiles_and_errors():
     assert latency_summary() == {} and latency_rows() == []
 
 
-def test_endstate_judge_records_tagged_latency():
-    """真 HTTP 走一遍:二值复核的请求应落在 endstate 桶。"""
-    class H(BaseHTTPRequestHandler):
-        def do_POST(self):
-            self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            body = json.dumps({"choices": [{"message": {"content": "yes"}}]}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *a):
-            pass
-
-    srv = HTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        latency_reset()
-        voter = make_endstate_voter(f"http://127.0.0.1:{srv.server_port}/v1", "m")
-        frame = np.zeros((8, 8, 3), dtype=np.uint8)
-        voter([frame], [frame], "camera A (cam)", "task")
-        s = latency_summary()
-        assert "endstate" in s and s["endstate"]["n"] >= 2   # 双问法=至少两请求
-        assert s["endstate"]["errors"] == 0
-        # 真调用路径必须把发出时刻记上(否则界面画不出墙钟)
-        assert s["endstate"]["wall_s"] >= s["endstate"]["max_s"]
-    finally:
-        srv.shutdown()
-        latency_reset()
-
-
-def test_report_renders_latency_table():
-    """报告延时表:显示名走 vlm_call_kinds 单一事实源;老快照(无对冲字段)按
-    「发起次数 = n+errors、补发未记录标 -、没等到回应 = errors」降级,不编数。"""
-    report = {"数据集": "x", "dataset": {
-        "input_episodes": 1, "hard_gate_filtered": 0, "verdict_keep": 1,
-        "verdict_drop": 0, "dedup_removed": 0, "delivered": 1,
-        "hard_fail_breakdown": {}, "stuck": {"flagged_episodes": 0, "note": "", "episodes": []},
-        "vlm_latency": {
-            "probe": {"n": 512, "errors": 0, "mean_s": 21.4, "p50_s": 20.1,
-                      "p90_s": 30.2, "p99_s": 41.0, "max_s": 55.3},
-            "caption": {"n": 0, "errors": 3}}},
-        "episodes": {"dropped": []}, "skills": {"n_episodes": 1, "families": {}}}
-    md = to_markdown(report)
-    assert "## 模型调用延时" in md
-    assert "任务完成度打分" in md and "21.4" in md
-    assert "| 技能打标 | 3 | - | 3 | - | - | - | - | - |" in md   # 全错误的桶也可见
-    # 新口径快照:发起次数含补发,补发数与没等到回应各占一列
-    report["dataset"]["vlm_latency"]["probe"].update(
-        {"attempts": 515, "hedged": 2, "retried": 1, "unanswered": 0,
-         "unanswered_timeout": 0})
-    md2 = to_markdown(report)
-    assert "| 任务完成度打分 | 515 | 3 | 0 |" in md2
-
-
 def test_cli_import_quiets_daft_terminal_noise(monkeypatch):
     """cli 导入即默认关闭 Daft 引擎动画/QueryID(setdefault:用户显式设 1 仍能打开)。"""
     import importlib
@@ -159,3 +74,15 @@ def test_cli_import_quiets_daft_terminal_noise(monkeypatch):
     monkeypatch.setenv("DAFT_PROGRESS_BAR", "1")       # 用户显式要看 → 不覆盖
     importlib.reload(_cli)
     assert _os.environ["DAFT_PROGRESS_BAR"] == "1"
+
+
+def test_latency_csv_roundtrip(tmp_path):
+    """CSV 读回复算:带 started_at 有墙钟;缺 call_id/attempt 的行按首发算。"""
+    p = tmp_path / "vlm_latency.csv"
+    p.write_text("call_type,seconds,ok,started_at\n"
+                 "probe,10.0,1,1700000000.0\n"
+                 "probe,10.0,1,1700000002.0\n", encoding="utf-8")
+    rows = read_latency_csv(str(p))
+    assert [r[5] for r in rows] == [0, 0]
+    s = latency_summary(rows)["probe"]
+    assert s["n"] == 2 and s["wall_s"] == 12.0

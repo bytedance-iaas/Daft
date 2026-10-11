@@ -8,15 +8,15 @@ opencv-python-headless==4.12.0.88   # 光流/图像;headless 免 GUI 依赖
 av==15.1.0              # 视频解码(自带 ffmpeg)
 requests==2.34.2
 PyYAML==6.0.3
-matplotlib==3.10.9      # 同步曲线证据图(可选依赖,缺失时自动跳过绘图)
+pillow==12.3.0          # 深度图转 PNG(curation/viz/depth.py)与 EEF 的图像适配
 huggingface_hub==0.36.2 # 仅下载脚本用;火山上从 hf-mirror.com 拉公开数据集(pod 需 hostNetwork 借节点公网)
 tos==2.9.2              # 火山对象存储 SDK:数据集从 TOS 读入、交付产物写回 TOS(2026-07-19 接入)
-rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/rrd_writer)。
+rerun-sdk==0.35.0       # RRD 输入格式的读端(ingest/rrd_reader;总开关缺省关)。
                         # ⚠️ **pin 死到补丁号**:我们用的是 rerun.experimental 下的
                         # RrdReader/LazyChunkStream/Chunk,experimental = 不受任何 API
                         # 稳定性承诺保护,且组件列名("Scalars:scalars" 之类)是我们
                         # 认数据的依据,小版本改名就会静默读错。升级前先跑
-                        # test_rrd_reader.py + test_rrd_writer.py 全绿。
+                        # test_rrd_reader.py 全绿。
 pylance==8.0.0          # lance(lerobot-lance-convert ≥0.3.0 三表布局)输入格式的读端
                         # (ingest/lance_reader,v1 PR #155)。懒导入:不装它 LeRobot/mcap
                         # 路径照常;质检 lance 数据才必需。
@@ -25,7 +25,7 @@ mcap-ros2-support==0.5.7  # mcap 里 cdr(ROS2)编码消息的解码器;纯 json 
                         # mcap 不需要它,含 cdr 通道时缺了会报可照抄的安装命令。
 mcap-protobuf-support==0.5.4  # mcap 里 protobuf(foxglove)编码消息的解码器
                         # (2026-09-21 客户真数据实证:UMI das_gripper 录制全 protobuf)。
-bcrypt==4.3.0          # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
+bcrypt==4.3.0          # Daemon 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
                         # htpasswd -B 的缺省输出)。apr1 是纯标准库实现,不需要它。
 fastapi==0.141.1        # API Daemon (W4); brings starlette 1.6.0, pydantic 2, anyio
 uvicorn==0.53.0         # python -m daemon / curator-daemon

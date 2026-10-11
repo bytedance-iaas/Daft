@@ -11,7 +11,6 @@ import pytest
 
 from curation.adapters.video_input import VideoClip, prepare_videos
 from curation.adapters.video_vlm import make_video_assessor, parse_assessment
-from curation.adapters.vlm_client import vlm_completion_from_config
 from curation.pipeline.video_task import judge_video_episode
 
 
@@ -275,49 +274,6 @@ def test_the_request_timeout_grows_with_the_video_sent(monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: pytest.fail("not through the hedge"))
     video_vlm.make_video_assessor("http://test/v1", "m", timeout_s=60.0, fps=5.0)(droid, "pick")
     assert seen["timeout_s"] == 135.0
-
-
-def test_production_factory_wrapper_and_rerun_use_video(monkeypatch, video):
-    from curation.pipeline.funnel import TaskDeps, build_endstate_voter, task_check_episode
-    from curation.pipeline.incidents import IncidentLog, wrap_call, wrap_voter
-    from curation.pipeline.rejudge import rerun_task_success
-
-    cfg = {"checks": {"task_success": {"vlm": {"endpoint": "http://test/v1", "model": "m"}}}}
-    # the judgement is ONE request answering for every camera (D71); v1's own rejudge takes the
-    # same path for video input, so it is one request too
-    sent = mock_transport(monkeypatch, [json.dumps(judged()), json.dumps(judged())])
-    scorer = wrap_call(vlm_completion_from_config(cfg), IncidentLog(), step="probe", call_kind="probe")
-    deps = TaskDeps(scorer, None, None, lambda *a, **kw: pytest.fail("sparse decode called"))
-    result = task_check_episode(cfg, None, deps, video, "pick", "原始标注", 10, None, None, "")
-    assert result["passed"] is True
-    assert len(sent) == 1
-    voter = wrap_voter(build_endstate_voter(cfg), IncidentLog())
-    assert rerun_task_success(cfg, video, "pick", scorer, voter).passed is True
-    assert len(sent) == 2
-    assert all(any(c["type"] == "video_url" for c in p["messages"][0]["content"]) for p in sent)
-
-
-def test_caption_uses_continuous_video_with_wrapped_client(monkeypatch, video):
-    from curation.dataset_level.caption import caption_episodes, make_vlm_captioner
-    from curation.pipeline.incidents import IncidentLog, wrap_call
-
-    sent = mock_transport(monkeypatch, ["pick up object"])
-    monkeypatch.setattr("curation.adapters.decode.decode_window", lambda *a, **kw: pytest.fail("sparse decode"))
-    capper = wrap_call(make_vlm_captioner("http://test/v1", "m"), IncidentLog(), step="caption", call_kind="caption")
-    assert caption_episodes([{"episode_id": "ep0", "video": video}], capper) == ["pick up object"]
-    assert any(c["type"] == "video_url" for c in sent[0]["messages"][0]["content"])
-
-
-def test_video_caption_does_not_reuse_old_image_caption(monkeypatch, video):
-    from curation.dataset_level.caption import VideoCaptionCache, caption_episodes, make_vlm_captioner
-
-    sent = mock_transport(monkeypatch, ["new video caption"])
-    capper = make_vlm_captioner("http://test/v1", "m")
-    rows = [{"episode_id": "ep0", "video": video}]
-    assert caption_episodes(rows, capper, precomputed={"ep0": "old image caption"}) == ["new video caption"]
-    assert len(sent) == 1
-    assert caption_episodes(rows, capper, precomputed=VideoCaptionCache({"ep0": "cached video"})) == ["cached video"]
-    assert len(sent) == 1
 
 
 @pytest.mark.parametrize("video_opts", [{"fps": 0}, {"fps": float("nan")}, {"fps": True},

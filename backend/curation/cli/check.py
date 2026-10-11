@@ -273,7 +273,6 @@ def _merge_strategy(ctx, plan_stage, cfg, modules):
 
 
 def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
-    from ..pipeline import funnel
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
     from ..pipeline.rows import index_of
     from ..pipeline.tasktext import TaskText
@@ -330,15 +329,15 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
             from ..adapters.vlm_client import camera_check_from_config, vlm_completion_from_config
 
             # D71 / D73: the judgement answers for every camera in its one request; there is no
-            # review client and no label guard (the slots stay for v1's shape of TaskClients).
-            # An episode without a task text gets the picture-defect request instead.
+            # review client and no label guard. An episode without a task text gets the
+            # picture-defect request instead.
             vlm_completion = vlm_completion_from_config(cfg) if has_task else None
             cameras = camera_check_from_config(cfg) if has_task else None
         except BaseException:
             if session is not None:
                 session.__exit__(*sys.exc_info())
             raise
-        clients = TaskClients(vlm_completion, None, None, cameras=cameras)
+        clients = TaskClients(vlm_completion, cameras=cameras)
         if cache is not None:
             cache["vlm"] = {"gates": gates, "cfg": cfg, "task_text": task_text,
                             "session": session, "clients": clients, "eef": judge}

@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -72,61 +71,7 @@ def test_probe_classifies_by_status(kw, kind):
     assert tos_store.probe_writable("tos://bkt/p", store=_store(**kw))["kind"] == kind
 
 
-def test_writable_verdict_wording_distinguishes_three_causes():
-    from curation.ui import runner
-    texts = {}
-    for kind in ("missing", "forbidden", "readonly", "leftover", "ok", "error"):
-        ok, why = runner.writable_verdict(
-            "tos://ai-infra/deliveries", "cn-beijing",
-            probe=lambda u, r, k=kind: {"kind": k, "detail": "d"})
-        texts[kind] = (ok, why)
-    assert texts["ok"] == (True, "")
-    assert texts["leftover"][0] is True and "0 字节" in texts["leftover"][1]
-    assert texts["missing"][0] is False and "不存在" in texts["missing"][1]
-    assert texts["forbidden"][0] is False and "权限" in texts["forbidden"][1]
-    assert texts["readonly"][0] is False and "只读" in texts["readonly"][1]
-    assert texts["error"][0] is False
-    for ok, why in texts.values():
-        if not ok:
-            assert "ai-infra" in why, "原因里必须点名是哪个桶"
-
-
-def test_writable_verdict_swallows_probe_exceptions_into_text():
-    from curation.ui import runner
-
-    def boom(u, r):
-        raise RuntimeError("no creds")
-    ok, why = runner.writable_verdict("tos://bkt/p", probe=boom)
-    assert ok is False and "no creds" in why
-
-
-def test_borrowed_output_url(tmp_path, monkeypatch):
-    from curation.ui import runner
-    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
-    local = str(tmp_path / "data" / "deliveries")
-    # 没桶的实例:借数据集所在的桶
-    monkeypatch.delenv("TOS_BUCKET", raising=False)
-    assert runner.borrowed_output_url("tos://their-bucket/dataset-1", local) \
-        == "tos://their-bucket/deliveries"
-    assert runner.borrowed_output_url("/data/datasets", local) == ""      # 数据集不是 tos
-    assert runner.borrowed_output_url("", local) == ""
-    assert runner.borrowed_output_url("tos://", local) == ""              # 解析不了
-    # 有自己桶的实例:永远用自己的
-    monkeypatch.setenv("TOS_BUCKET", "herbucket")
-    assert runner.borrowed_output_url("tos://their-bucket/dataset-1", local) \
-        == "tos://herbucket/deliveries"
-
-
 # ── 读侧探针 + 地区找桶(2026-08-21 用户问"桶地址和地区对不上会不会跳出来提示")────────
-
-@pytest.mark.parametrize("kw, kind", [
-    ({}, "ok"), ({"list_status": 404}, "missing"), ({"list_status": 301}, "missing"),
-    ({"list_status": 403}, "forbidden"), ({"list_status": 500}, "error"),
-])
-def test_probe_readable_classifies_list_only(kw, kind):
-    st = _store(**kw)
-    assert tos_store.probe_readable("tos://bkt/p", store=st)["kind"] == kind
-    assert st._c.put_keys == [], "读侧探针绝不写"
 
 
 def test_locate_bucket_tries_other_regions_and_skips_current():
@@ -144,46 +89,3 @@ def test_locate_bucket_tries_other_regions_and_skips_current():
     assert tos_store.locate_bucket("bkt", ("a", "b"), make=lambda b, r: (_ for _ in ()).throw(RuntimeError("x"))) is None
 
 
-def test_missing_bucket_text_names_the_region_it_found():
-    from curation.ui import runner
-    t = runner.missing_bucket_text("bkt", "cn-beijing", "NoSuchBucket",
-                                   locate=lambda b, skip: "cn-shanghai")
-    assert "不在 cn-beijing" in t and "它在 cn-shanghai" in t and "改成 cn-shanghai" in t
-    t2 = runner.missing_bucket_text("bkt", "cn-beijing", locate=lambda b, skip: None)
-    assert "不存在" in t2 and "不在 cn-beijing" in t2 and "其他地区也没找到" in t2
-    t3 = runner.missing_bucket_text("bkt", "cn-beijing")          # 没给 locate:不出网,也不瞎说
-    assert "不存在" in t3 and "其他地区" not in t3
-
-    def boom(b, skip):
-        raise RuntimeError("no creds")
-    assert "不存在" in runner.missing_bucket_text("bkt", None, locate=boom)
-
-
-def test_readable_and_writable_verdicts_share_region_hint():
-    from curation.ui import runner
-    loc = lambda b, skip: "ap-southeast-1"  # noqa: E731
-    ok, why = runner.readable_verdict("tos://bkt/ds", "cn-beijing",
-                                      probe=lambda u, r: {"kind": "missing", "detail": "d"}, locate=loc)
-    assert ok is False and "它在 ap-southeast-1" in why
-    ok, why = runner.writable_verdict("tos://bkt/out", "cn-beijing",
-                                      probe=lambda u, r: {"kind": "missing", "detail": "d"}, locate=loc)
-    assert ok is False and "它在 ap-southeast-1" in why
-    ok, why = runner.readable_verdict("tos://bkt/ds", probe=lambda u, r: {"kind": "forbidden", "detail": "d"})
-    assert ok is False and "读权限" in why
-    assert runner.readable_verdict("tos://bkt/ds", probe=lambda u, r: {"kind": "ok", "detail": ""}) == (True, "")
-    assert runner.readable_verdict("not-a-url")[0] is False
-
-
-def test_mounted_bucket_region_and_mismatch_text(monkeypatch):
-    from curation.ui import runner
-    monkeypatch.delenv("TOS_REGION", raising=False)
-    monkeypatch.delenv("TOS_ENDPOINT", raising=False)
-    assert runner.mounted_bucket_region({"endpoint": "https://tos-s3-cn-beijing.ivolces.com"}) == "cn-beijing"
-    assert runner.mounted_bucket_region({}) is None, "推不出就不硬猜"
-    monkeypatch.setenv("TOS_REGION", "cn-shanghai")
-    assert runner.mounted_bucket_region({}) == "cn-shanghai"
-    t = runner.mount_region_mismatch("curation", "cn-beijing", "cn-guangzhou")
-    assert "curation 在 cn-beijing" in t and "不在 cn-guangzhou" in t and "改回 cn-beijing" in t
-    assert runner.mount_region_mismatch("curation", "cn-beijing", "cn-beijing") == ""
-    assert runner.mount_region_mismatch("curation", None, "cn-guangzhou") == ""
-    assert runner.mount_region_mismatch("curation", "cn-beijing", None) == ""

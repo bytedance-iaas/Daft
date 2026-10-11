@@ -239,7 +239,8 @@ def _python(*args, env=None, **kw):
 def test_python_m_entry_help_and_version():
     r = _python("--help")
     assert r.returncode == 0
-    assert "preflight" in r.stdout and "run, rejudge" in r.stdout      # v1 commands listed
+    assert "preflight" in r.stdout and "ls, prune, fetch" in r.stdout   # the ops commands listed
+    assert "rejudge" not in r.stdout
     r = _python("--version")
     assert r.returncode == 0 and r.stdout.startswith("curation ")
 
@@ -252,15 +253,16 @@ def test_console_script_target_is_still_curation_cli_main():
     assert main(["--version"]) == 0
 
 
-def test_v1_commands_are_handed_to_the_legacy_cli(tmp_path, capsys):
+def test_ops_commands_are_handed_to_the_ops_parser(tmp_path, capsys):
     from curation.cli import main
 
     (tmp_path / "a.txt").write_text("hello")
     capsys.readouterr()
     assert main(["ls", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "a.txt" in out and "共 0 个目录、1 个文件" in out      # v1's own wording
-    assert "reprofile" not in str(main(["--help"]) or "")           # retired with the skill profile
+    assert "a.txt" in out and "共 0 个目录、1 个文件" in out
+    assert main(["run", "--input", str(tmp_path)]) == 2             # v1's run is gone (D89)
+    assert "invalid choice: 'run'" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------- signals (subprocess)

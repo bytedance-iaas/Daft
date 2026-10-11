@@ -17,10 +17,7 @@ import os
 import shutil
 import threading
 
-import pytest
 import requests
-
-from curation.pipeline.records import module_dir
 
 from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, comparable, read_jsonl, results, run, verdict_of
@@ -42,21 +39,6 @@ def _vlm_check(vlm_stage, run_dir: str, url: str, *extra):
 
 def _posts(server: FakeVlmServer) -> list[dict]:
     return [c for c in server.calls if c["path"].endswith("/chat/completions")]
-
-
-def _fail_first(n: int, status: int = 503, needle: str = ""):
-    """Fail the first ``n`` requests (containing ``needle``) with ``status``."""
-    seen = {"n": 0}
-    lock = threading.Lock()
-
-    def fail(text, payload):
-        if needle not in text:
-            return None
-        with lock:
-            seen["n"] += 1
-            return status if seen["n"] <= n else None
-
-    return fail
 
 
 def _fail_once_each(n: int, status: int = 503):
@@ -142,35 +124,6 @@ def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
     posts = _posts(vlm)
     assert posts and all(c["payload"]["reasoning_effort"] == "minimal" for c in posts)
     assert requests.post is before                      # restored after each command
-
-
-def test_text_calls_are_one_request_with_v1s_body(tmp_path):
-    """v1's text client tries four times on its own; under the CLI a text call is one
-    request, the outer retry adds tries, and the request body is v1's."""
-    from curation.adapters import vlm_client
-    from curation.pipeline.vlm_policy import TransportPolicy, installed
-    from curation.planner.retry import RetryPolicy
-
-    with FakeVlmServer() as vlm:
-        assert vlm_client.make_llm_ask(vlm.url, "fake-vlm")("ping") == "pong"
-        with installed(TransportPolicy()):
-            assert vlm_client.make_llm_ask(vlm.url, "fake-vlm")("ping") == "pong"
-    v1_call, v2_call = _posts(vlm)
-    assert v1_call["payload"] == v2_call["payload"]
-    assert v2_call["payload"]["messages"] == [{"role": "user", "content": "ping"}]
-
-    with FakeVlmServer(fail=_fail_first(1)) as vlm:
-        with installed(TransportPolicy()):
-            ask = vlm_client.make_llm_ask(vlm.url, "fake-vlm")
-            with pytest.raises(requests.HTTPError) as caught:
-                ask("ping")
-        assert caught.value.curation_failure["attempts"] == 1
-        assert len(_posts(vlm)) == 1                           # v1 alone would try 4 times
-    with FakeVlmServer(fail=_fail_first(1)) as vlm:
-        policy = TransportPolicy(retry=RetryPolicy(max_retries=1), sleep=lambda s: None)
-        with installed(policy):
-            assert vlm_client.make_llm_ask(vlm.url, "fake-vlm")("ping") == "pong"
-        assert len(_posts(vlm)) == 2 and policy.stats.rescued == 1
 
 
 # ---------------------------------------------------------------- D33

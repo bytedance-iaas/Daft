@@ -9,8 +9,7 @@
 """
 from __future__ import annotations
 
-from curation.export.report import container_findings, to_markdown
-from curation.ui.manifest import overview_markdown
+from curation.export.report import container_findings
 
 _ROBOT_HIT = {"robot_type": "so101", "embodiment_id": "so101",
               "registry_profile": "so101", "quality": "verified"}
@@ -176,69 +175,4 @@ def test_lerobot_given_embodiment_not_in_registry_names_it():
 
 # ───────────────────────── 渲染:报告 + UI ─────────────────────────
 
-def _report_md(container: dict | None) -> str:
-    d = {"input_episodes": 1, "hard_gate_filtered": 0, "verdict_keep": 1,
-         "verdict_drop": 0, "dedup_removed": 0, "delivered": 1,
-         "hard_fail_breakdown": {}}
-    if container:
-        d["container"] = container
-    return to_markdown({
-        "数据集": "d", "机器人": {}, "生成时间": "t", "代码版本": "v",
-        "dataset": d, "skills": {}, "config": {},
-        "episodes": {"results": [], "dropped": []},
-    })
 
-
-def test_report_renders_container_section():
-    info = {"fps": 30.0, "time_source": "config", "has_task_text": False,
-            "recording_name": ""}
-    md = _report_md({"format": "rrd",
-                     "findings": container_findings("rrd", info, _ROBOT_HIT,
-                                                    rrd_fps_arg=30.0)})
-    assert "## 数据包完整性(RRD(rerun) 输入)" in md
-    assert "机器人型号" in md and "缺失(已补)" in md
-    assert "不是数据内容" in md                       # 前言:体检对象是容器
-    # 小节必须出现在总览之前 —— 读任何数字之前先知道容器状态
-    assert md.index("数据包完整性") < md.index("## 总览")
-
-
-def test_report_omits_section_when_clean():
-    md = _report_md(None)
-    assert "数据包完整性" not in md
-
-
-def test_overview_markdown_one_liner():
-    info = {"fps": 30.0, "time_source": "config", "has_task_text": False}
-    m = {"name": "d", "robot": "so101", "generated_at": "t", "code_version": "v",
-         "dataset": {"delivered": 1, "input_episodes": 1,
-                     "container": {"format": "rrd",
-                                   "findings": container_findings(
-                                       "rrd", info, _ROBOT_HIT, rrd_fps_arg=30.0)}},
-         "episodes": {}, "audit_queue": []}
-    md = overview_markdown(m)
-    assert "数据包完整性" in md
-    assert "机器人型号" in md and "详见质检报告" in md
-
-
-def test_overview_markdown_silent_when_absent():
-    m = {"name": "d", "robot": "so101", "generated_at": "t", "code_version": "v",
-         "dataset": {"delivered": 1, "input_episodes": 1},
-         "episodes": {}, "audit_queue": []}
-    assert "数据包完整性" not in overview_markdown(m)
-
-
-def test_overview_robot_dict_renders_human_readable():
-    """机器人字段是 dict 时不能把原始 dict 打在页面上(2026-08-10 发现的存量毛病)。
-
-    2026-08-25 用户点名精简:概览只留机器人名,规格表/质量括注全删(与名字重复、
-    行话)——本用例当时漏更,钉的还是括注版(2026-08-28 pod 全量跑出来才现形)。
-    现在钉两件事:不漏原始 dict,名字在。"""
-    m = {"name": "d", "generated_at": "t", "code_version": "v",
-         "robot": {"robot_type": "so101", "embodiment_id": "so101",
-                   "registry_profile": "so101", "quality": "approximate"},
-         "dataset": {"delivered": 1, "input_episodes": 1},
-         "episodes": {}, "audit_queue": []}
-    md = overview_markdown(m)
-    assert "{" not in md and "robot_type" not in md
-    assert "so101" in md
-    assert "规格表" not in md and "approximate" not in md

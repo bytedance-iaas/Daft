@@ -14,7 +14,6 @@
 """
 from __future__ import annotations
 
-import inspect
 import threading
 import time
 
@@ -310,58 +309,6 @@ def test_read_timeout_gets_exactly_one_serial_retry():
     assert abs(calls[1] - 0.5) < 0.1, "重发应带全新 1×timeout 预算"
 
 
-def test_llm_timeout_retries_are_serial_and_bounded(monkeypatch):
-    """文本 LLM 最多请求四次,不叠加对冲,每次都记录耗时。"""
-    from curation.adapters.vlm_client import make_llm_ask
-    calls, waits = [], []
-    def fake_post(url, json=None, headers=None, timeout=None):
-        calls.append(timeout)
-        raise requests.exceptions.Timeout("服务端排队")
-    monkeypatch.setattr("requests.post", fake_post)
-    monkeypatch.setattr("curation.adapters.vlm_client._time.sleep", waits.append)
-    with pytest.raises(requests.exceptions.Timeout):
-        make_llm_ask("http://example.test/v1", "m", timeout_s=0.2)("归纳一下")
-    assert calls == [0.2] * 4
-    assert waits == [1, 2, 4]
-    rows = latency_rows()
-    assert len(rows) == 4 and len({r[4] for r in rows}) == 1
-    assert [r[5] for r in rows] == [0, 1, 2, 3]
-    assert all(r[6] == "timeout" and not r[2] for r in rows)
-
-
-def test_default_timeouts_per_kind():
-    """分类型默认超时(2026-08-15 用户定):投票四类 60s、技能归纳 120s。
-
-    同时钉工厂签名默认值——有人把某个工厂改回 600 而忘了别处,这里先红。
-    """
-    from curation.adapters.vlm_client import (make_endstate_voter,
-                                              make_evidence_judge,
-                                              make_grounder,
-                                              make_intent_comparer,
-                                              make_llm_ask,
-                                              make_multiview_completion,
-                                              make_question_writer,
-                                              make_vlm_completion)
-    from curation.dataset_level.caption import make_vlm_captioner
-
-    assert DEFAULT_TIMEOUTS_S == {"probe": 60.0, "endstate": 60.0,
-                                  "arbitration": 60.0, "caption": 60.0,
-                                  "llm": 120.0}
-
-    def _default(fn):
-        return inspect.signature(fn).parameters["timeout_s"].default
-
-    assert _default(make_vlm_completion) == 60.0
-    assert _default(make_multiview_completion) == 60.0
-    assert _default(make_endstate_voter) == 60.0
-    for factory in (make_question_writer, make_grounder,
-                    make_evidence_judge, make_intent_comparer):
-        assert _default(factory) == 60.0, factory.__name__
-    assert _default(make_llm_ask) == 120.0
-    # captioner 默认 None = 构造期取 DEFAULT_TIMEOUTS_S["caption"](与其余同源)
-    assert _default(make_vlm_captioner) is None
-
-
 def test_timeouts_site_config_override(monkeypatch):
     """站点配置 checks.task_success.vlm.timeouts_s 能覆盖,且走既有配置深合并路。"""
     vcfg = {"timeouts_s": {"probe": 30, "llm": 300}}
@@ -397,34 +344,6 @@ def test_default_yaml_timeouts_match_code_defaults():
         cfg = yaml.safe_load(f)
     ts = cfg["checks"]["task_success"]["vlm"]["timeouts_s"]
     assert {k: float(v) for k, v in ts.items()} == DEFAULT_TIMEOUTS_S
-
-
-def test_latency_csv_roundtrip_with_hedge_columns(tmp_path):
-    """新七列 CSV 读回后,对冲口径与内存明细一致(事后复算不丢补发信息);
-    UI 独立实现与管道实现对拍(UI 不 import 管道的红线下,两份算法必须同数)。"""
-    import csv
-
-    from curation.adapters.vlm_client import (LATENCY_CSV_HEADER,
-                                              read_latency_csv)
-    from curation.ui.manifest import _recompute_latency
-
-    latency_reset()
-    latency_record("probe", 1.0, False, 10.0, call_id="a", attempt=0,
-                   fail_kind="timeout")
-    latency_record("probe", 0.2, True, 10.6, call_id="a", attempt=1)
-    latency_record("probe", 0.3, True, 12.0, call_id="b")
-    p = tmp_path / "vlm_latency.csv"
-    with open(p, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(LATENCY_CSV_HEADER)
-        for tag, dt, ok, st, cid, att, fk in latency_rows():
-            w.writerow([tag, dt, int(ok), "" if st is None else st,
-                        cid or "", att, fk or ""])
-    mem = latency_summary()["probe"]
-    assert mem["hedged"] == 1 and mem["attempts"] == 3
-    back = latency_summary(read_latency_csv(str(p)))["probe"]
-    assert back == mem
-    assert _recompute_latency(str(p))["probe"] == mem
 
 
 def test_summary_hedge_stats_from_rows():

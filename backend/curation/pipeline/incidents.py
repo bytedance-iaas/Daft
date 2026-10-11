@@ -15,7 +15,6 @@ votes and arbitration votes on its own thread pools).
 """
 from __future__ import annotations
 
-import re
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -95,57 +94,6 @@ def wrap_call(fn: Callable | None, log: IncidentLog, *, step: str,
     return wrapped
 
 
-def label_camera(cam_label: str) -> str:
-    """``camera A (wrist); hint`` (core's review label) -> ``wrist``."""
-    head = str(cam_label).split(";")[0].strip()
-    m = re.search(r"\(([^()]*)\)$", head)
-    return m.group(1) if m else head
-
-
-def wrap_voter(voter: Callable | None, log: IncidentLog) -> Callable | None:
-    """The per-camera review voter answers ``unavail`` exactly when one of its two
-    questions failed (``vlm_client.make_endstate_voter``); note that as an incident,
-    with the cause the transport recorded for the failed question."""
-    if voter is None:
-        return None
-    if getattr(voter, "media_input", None) == "video":
-        return wrap_call(voter, log, step="endstate", call_kind="endstate")
-
-    def wrapped(start_frames, end_frames, cam_label, instruction):
-        from .vlm_policy import failures
-
-        with failures() as seen:
-            vote = voter(start_frames, end_frames, cam_label, instruction)
-        if vote == "unavail":
-            info = seen[-1] if seen else {}
-            log.add("endstate", call_kind="endstate", camera=label_camera(cam_label),
-                    cause=info.get("cause") or "call_failed", attempts=info.get("attempts"))
-        return vote
-
-    return wrapped
-
-
-def wrap_arbitration(arb_deps: dict | None, log: IncidentLog) -> dict | None:
-    """The arbitration dependencies with every model call wrapped."""
-    if arb_deps is None:
-        return None
-    out = dict(arb_deps)
-    if arb_deps.get("video_judge") is not None:
-        out["video_judge"] = wrap_call(arb_deps["video_judge"], log, step="arbitration",
-                                       call_kind="arbitration")
-    out["question_writer"] = wrap_call(arb_deps["question_writer"], log, step="arbitration",
-                                       call_kind="arbitration")
-    out["grounder"] = wrap_call(arb_deps["grounder"], log, step="arbitration",
-                                call_kind="arbitration")
-    out["judge"] = wrap_call(arb_deps["judge"], log, step="arbitration",
-                             call_kind="arbitration")
-    out["same_task"] = wrap_call(arb_deps["same_task"], log, step="label_guard",
-                                 call_kind="llm")
-    out["captioner"] = wrap_call(arb_deps["captioner"], log, step="guard_caption",
-                                 call_kind="caption")
-    return out
-
-
 def camera_names(video: dict | None) -> dict[str, str]:
     """``{video path: short camera name}`` of an episode's video pointers."""
     out: dict[str, str] = {}
@@ -167,89 +115,3 @@ def wrap_decode(decode: Callable, log: IncidentLog, cameras: dict[str, str]) -> 
             raise
 
     return wrapped
-
-
-# ---------------------------------------------------------------- decode inside A-class code
-
-_TLS = threading.local()
-
-
-def current_decode_log() -> tuple[IncidentLog, dict] | None:
-    return getattr(_TLS, "log", None)
-
-
-class decode_watch:
-    """Context manager: decode failures on *this thread* go to ``log``.
-
-    For A-class code that imports the decoder itself (``caption_episodes``): the
-    shell patches ``adapters.decode.decode_window`` once (:func:`install_decode_watch`)
-    and calls such code for one episode at a time on one thread.
-    """
-
-    def __init__(self, log: IncidentLog, cameras: dict[str, str]):
-        self.log, self.cameras = log, cameras
-
-    def __enter__(self):
-        self._prev = getattr(_TLS, "log", None)
-        _TLS.log = (self.log, self.cameras)
-        return self
-
-    def __exit__(self, *exc):
-        _TLS.log = self._prev
-        return False
-
-
-class _DecodeWatch:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._users = 0
-        self._orig: Callable | None = None
-
-    def install(self) -> None:
-        from ..adapters import decode as decode_mod
-
-        with self._lock:
-            self._users += 1
-            if self._users > 1:
-                return
-            self._orig = decode_mod.decode_window
-            orig = self._orig
-
-            def watched(path, from_ts, to_ts, **kwargs):
-                try:
-                    return orig(path, from_ts, to_ts, **kwargs)
-                except Exception as exc:
-                    cur = current_decode_log()
-                    if cur is not None:
-                        log, cameras = cur
-                        log.add("decode", camera=cameras.get(str(path),
-                                                             str(path).rsplit("/", 1)[-1]),
-                                cause=f"{type(exc).__name__}: {exc}")
-                    raise
-
-            decode_mod.decode_window = watched
-
-    def uninstall(self) -> None:
-        from ..adapters import decode as decode_mod
-
-        with self._lock:
-            self._users -= 1
-            if self._users > 0 or self._orig is None:
-                return
-            decode_mod.decode_window = self._orig
-            self._orig = None
-
-
-_WATCH = _DecodeWatch()
-
-
-class installed_decode_watch:
-    """``with installed_decode_watch(): ...`` - the decoder patch for a stage's duration."""
-
-    def __enter__(self):
-        _WATCH.install()
-        return self
-
-    def __exit__(self, *exc):
-        _WATCH.uninstall()
-        return False

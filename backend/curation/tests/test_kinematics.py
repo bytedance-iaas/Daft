@@ -112,34 +112,6 @@ def test_clean_real_pusht_zero_false_positive(reg):
         f"干净 pusht 误报: {[r.detail['violations'][:2] for r in results if not r.passed][:2]}"
 
 
-def test_extreme_spike_killed_not_unit_mismatch():
-    """单帧极端毛刺(≈20×限值)必须硬杀并给证据,不得被单位错配守卫弃权。
-
-    2026-07-14 注入实测抓出的 bug:B1 守卫用 max 做量级比,单帧 9999 被误判成
-    "单位错配"弃权,放走了坏数据。守卫改用 p95(单位错配=整条缩放,毛刺≠错配)。
-    """
-    import copy
-    import os
-
-    import pytest
-
-    if not os.path.exists("/data03/hao/data/pusht/meta/info.json"):
-        pytest.skip("无 pusht 数据")
-    from curation.ingest.lerobot_reader import read_lerobot_rows, rows_to_daft
-    from curation.pipeline.config import apply_check_selection, load_config
-    from curation.pipeline.funnel import run_funnel
-    from curation.registry.registry import EmbodimentRegistry
-
-    r = copy.deepcopy(read_lerobot_rows("/data03/hao/data/pusht", max_episodes=1,
-                                        embodiment_id="pusht")[0])
-    r["action"][50, 0] = 9999.0                     # 单帧毛刺(限 [0,512])
-    cfg = apply_check_selection(load_config(), only="kinematic_limits")
-    _, stats = run_funnel(rows_to_daft([r]), cfg, EmbodimentRegistry())
-    killed = {k["episode_id"]: k for k in stats["hard_killed"]}
-    assert r["episode_id"] in killed                # 硬杀,不是弃权
-    assert "joint_limit" in killed[r["episode_id"]]["detail"]   # 证据带违规定位
-
-
 # ---------------- EE 规格检查(2026-07-14,不做 IK) ----------------
 
 def _franka():
@@ -168,7 +140,6 @@ def test_ee_clean_passes():
 
 
 def test_ee_out_of_reach_killed_with_location():
-    import numpy as np
     from curation.core.checks.kinematics import ee_limits
     pose = _clean_ee()
     pose[60, :3] = [1.5, 0.0, 0.5]              # 手掌出现在 1.58m 处(臂展 0.855)
@@ -201,7 +172,6 @@ def test_ee_pi_wrap_not_false_positive():
 
 
 def test_ee_real_fast_rotation_killed():
-    import numpy as np
     from curation.core.checks.kinematics import ee_limits
     pose = _clean_ee()
     pose[60:, 4] += 1.2                          # pitch 单帧真转 1.2rad@15fps=18rad/s(限2.5)
@@ -225,28 +195,6 @@ def test_ee_sustained_out_abstains():
     pose[:, 0] += 1.6                            # 全程 ~2.1m(阈 1.19×1.25=1.49)
     res = ee_limits(pose, _franka(), 15.0)
     assert res.passed is None and "错位嫌疑" in res.detail["reason"]
-
-
-def test_ee_funnel_dispatch_droid():
-    """漏斗分派:droid(EE 数据 × franka 关节表)→ 走 EE 规格真判,不再弃权。"""
-    import os
-
-    import pytest
-    if not os.path.exists("/data03/hao/data/droid_lerobot/meta"):
-        pytest.skip("无 droid 数据")
-    import json
-    from curation.ingest.lerobot_reader import read_lerobot_rows, rows_to_daft
-    from curation.pipeline.config import apply_check_selection, load_config
-    from curation.pipeline.funnel import run_funnel
-    from curation.registry.registry import EmbodimentRegistry
-    rows = read_lerobot_rows("/data03/hao/data/droid_lerobot", max_episodes=2,
-                             skip_missing=True)
-    cfg = apply_check_selection(load_config(), only="kinematic_limits")
-    df, _ = run_funnel(rows_to_daft(rows), cfg, EmbodimentRegistry())
-    out = df.select("check_kinematic_limits").to_pydict()["check_kinematic_limits"]
-    for c in out:
-        assert c["passed"] is True
-        assert json.loads(c["detail"])["mode"] == "ee"
 
 
 def test_head_frames_out_of_limit_abstains_not_kills():

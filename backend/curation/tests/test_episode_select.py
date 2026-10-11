@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
@@ -85,79 +84,7 @@ def test_reconcile_all_out_of_range_raises():
 
 # ── CLI 层(洞⑦ + review-page 株连③;校验必须先于任何重活)────────────────
 
-def test_cli_run_rejects_zero_and_negative_max(tmp_path, capsys):
-    """洞⑦:--max-episodes 0 此前在 run 里静默空跑;负数落进 iloc[:-N] 变成
-    "去掉末尾 N 条"的意外语义。校验在碰输入之前,故意给不存在的路径。"""
-    from curation.cli import main
-    for bad in ("0", "-3"):
-        rc = main(["run", "--input", "/no/such/dataset",
-                   "--output", str(tmp_path / "o"), "--max-episodes", bad])
-        assert rc == 2
-        assert "正整数" in capsys.readouterr().err
-
-
-def test_cli_run_rejects_bad_expressions_early(tmp_path, capsys):
-    from curation.cli import main
-    for bad, kw in (("-5", "不能为负"), ("1-999999999", "跨度")):
-        rc = main(["run", "--input", "/no/such/dataset",
-                   "--output", str(tmp_path / "o"), "--episodes", bad])
-        assert rc == 2
-        assert kw in capsys.readouterr().err
-
-
-def test_cli_review_page_same_guards(tmp_path, capsys):
-    """洞③⑦:review-page 与 run 同判据 —— 0 此前被真值判断当"没给"(跑全部),
-    表达式语法错此前裸 traceback。"""
-    from curation.cli import main
-    rc = main(["review-page", "--input", "/no/such/dataset",
-               "--output", str(tmp_path / "o"), "--max-episodes", "0"])
-    assert rc == 2
-    assert "正整数" in capsys.readouterr().err
-    rc = main(["review-page", "--input", "/no/such/dataset",
-               "--output", str(tmp_path / "o"), "--episodes", "abc"])
-    assert rc == 2
-    assert "解析失败" in capsys.readouterr().err
-
-
 # ── 管道层接线(洞①②④;有真数据集才跑,pod/H200 各有一份 pusht)──────────
-
-def test_pipeline_reconciles_before_running(tmp_path, capsys):
-    pusht = _pusht()
-    if not pusht:
-        pytest.skip("没有 pusht 真数据集")
-    from curation.pipeline.run import run_pipeline
-    # 全超界:开跑前就死,绝不产出空交付
-    with pytest.raises(EpisodesOutOfRange, match="全部不存在"):
-        run_pipeline(None, pusht, str(tmp_path / "o1"), embodiment_id="pusht",
-                     episode_indices={99999}, only_checks="timestamp_check")
-    assert not (tmp_path / "o1" / "passed.json").exists()
-    # 部分超界:跑交集,日志印实跑数(洞②:此前印请求数)
-    s = run_pipeline(None, pusht, str(tmp_path / "o2"), embodiment_id="pusht",
-                     episode_indices={0, 99999}, only_checks="timestamp_check")
-    txt = capsys.readouterr().out
-    assert "2 条里有 1 条不存在" in txt and "只跑存在的 1 条" in txt
-    assert "实跑 1 条" in txt
-    assert s["stats"].get("input") == 1
 
 
 # ── UI 开跑闸帮手(洞⑧ + 洞①的前哨;判据同源)─────────────────────────────
-
-def test_ui_episode_helpers(tmp_path):
-    from curation.ui import runner
-    # 手滑类:N=0/非数字/负数、表达式语法错,全部字段名开头说人话
-    assert "正整数" in runner.episodes_input_error("", "0")
-    assert "正整数" in runner.episodes_input_error("", "-3")
-    assert "正整数" in runner.episodes_input_error("", "abc")
-    assert "解析失败" in runner.episodes_input_error("-5", "")
-    assert "跨度" in runner.episodes_input_error("1-999999999", "")
-    assert runner.episodes_input_error("3,10-12", "5") == ""
-    # 全超界前哨:total_episodes 来自 meta;读不到→放行交给管道
-    ds = tmp_path / "tiny"
-    (ds / "meta").mkdir(parents=True)
-    (ds / "meta" / "info.json").write_text(
-        json.dumps({"total_episodes": 5}), encoding="utf-8")
-    err = runner.episodes_range_error("10-20", str(tmp_path), ["tiny"])
-    assert "共 5 条" in err and "0-4" in err
-    assert runner.episodes_range_error("3-20", str(tmp_path), ["tiny"]) == ""
-    assert runner.episodes_range_error("10-20", str(tmp_path), ["nosuch"]) == ""
-    assert runner.episodes_range_error("", str(tmp_path), ["tiny"]) == ""

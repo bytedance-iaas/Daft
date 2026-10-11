@@ -13,11 +13,10 @@ import shutil
 import numpy as np
 import requests
 
-from curation.adapters import vlm_client
 from parity.fakevlm import FakeVlm
 
 from .fakevlm_server import FakeVlmServer
-from .pipeline import comparable, read_jsonl, results, run, verdict_of
+from .pipeline import comparable, results, run, verdict_of
 
 SCORE_PROMPT = "Rate this robot episode from 0 to 100. Score:"
 ANNOTATION = "pick up the red block and place it in the bin"
@@ -26,6 +25,16 @@ ANNOTATION = "pick up the red block and place it in the bin"
 def _frame(width: int = 128, height: int = 96, seed: int = 0) -> np.ndarray:
     rng = np.random.default_rng(seed)
     return rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
+
+
+def _data_uri(frame: np.ndarray, quality: int) -> str:
+    import base64
+
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, quality])
+    assert ok
+    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
 
 
 def _payload(*urls: str, text: str = SCORE_PROMPT) -> dict:
@@ -37,7 +46,7 @@ def _payload(*urls: str, text: str = SCORE_PROMPT) -> dict:
 
 def test_the_server_answers_a_re_encoded_request_alike():
     frame = _frame(seed=7)
-    urls = [vlm_client._frame_to_data_uri(frame, quality=q) for q in (95, 85, 30)]
+    urls = [_data_uri(frame, q) for q in (95, 85, 30)]
     assert len(set(urls)) == 3                            # other bytes ...
     with FakeVlmServer() as vlm:
         got = [requests.post(vlm.url + "/chat/completions", json=_payload(u), timeout=10)
@@ -46,26 +55,15 @@ def test_the_server_answers_a_re_encoded_request_alike():
     assert len({FakeVlm.answer_key(_payload(u)) for u in urls}) == 1
 
 
-def test_video_run_does_not_encode_sparse_jpeg_inputs(vlm_stage, tmp_path,
-                                                              monkeypatch):
-    """The VLM stage with every frame encoded at another JPEG quality: the requests
-    carry other bytes, the records are the reference's."""
+def test_video_run_sends_video_inputs(vlm_stage, tmp_path):
+    """The VLM stage sends the episode's videos, not sampled frames, and the records are the reference's."""
     rd = str(tmp_path / "run")
     shutil.copytree(vlm_stage["base"], rd)
-    encode = vlm_client._frame_to_data_uri
-    encoded = []
-
-    def other_quality(frame, quality: int = 85):
-        encoded.append(quality)
-        return encode(frame, quality=60)
-
-    monkeypatch.setattr(vlm_client, "_frame_to_data_uri", other_quality)
     with FakeVlmServer() as vlm:
         res = run("check", "--modules", "task_success", "--input", vlm_stage["dataset"],
                   "--run-dir", rd, "--episodes", vlm_stage["episodes"],
                   "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
     assert res.rc == 0, res.doc
-    assert not encoded                                    # video-native model inputs
     assert any(c["type"] == "video_url" for call in vlm.calls
                for m in call["payload"].get("messages", []) if isinstance(m.get("content"), list)
                for c in m["content"])

@@ -536,30 +536,6 @@ def test_cli_wiring_passes_all_flags(monkeypatch, tmp_path):
     assert "checks" in got["cfg"], "配置要走 load_config(含出厂默认)"
 
 
-def _fetch_help() -> str:
-    from curation.cli.legacy import build_parser
-    # argparse 子命令的 help 要从 subparser 上拿;从 _subparsers action 里翻出来
-    p = build_parser()
-    for action in p._actions:
-        if hasattr(action, "choices") and action.choices and "fetch" in action.choices:
-            return action.choices["fetch"].format_help()
-    raise AssertionError("没找到 fetch 子命令")
-
-
-def test_help_names_oniond_in_source_and_no_other_jargon():
-    """帮助措辞两条纪律一起钉:① --source 的说明里**要**点名 oniond(界面语义化、
-    实现照实交代,用户得知道 ai-infra 走的是哪条通道);② 除此之外不许出现内部
-    黑话 —— M 编号(m4a 之类,同「编号不进 CLI」纪律)、aria2、BUCKET 这类
-    实现细节都不进帮助。"""
-    text = _fetch_help()
-    assert "oniond" in text
-    assert "ai-infra" in text
-    import re
-    assert not re.search(r"\b[Mm]\d+[a-c]?\b", text), "M 编号不进 CLI"
-    assert "aria2" not in text
-    assert "BUCKET" not in text
-
-
 # ── 分批下载 + 下载/入库重叠(2026-08-18 改造)──────────────────────────
 
 def _six_files(n_bytes: int = 100) -> dict[str, bytes]:

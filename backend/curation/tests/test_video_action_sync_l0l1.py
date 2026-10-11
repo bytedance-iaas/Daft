@@ -10,9 +10,6 @@ import pytest
 from curation.core.checks.video_action_sync import (
     camera_reading,
     global_lag,
-    joint_speed,
-    optical_flow_energy,
-    sync_check_result,
     timestamp_check,
 )
 from curation.tests import corrupt
@@ -136,75 +133,3 @@ def pusht_rows():
     return read_lerobot_rows(PUSHT, max_episodes=N_EP + 1)[1:]
 
 
-def _measure_lag(row):
-    from curation.adapters.frames import extract_frames
-
-    frames, ft = extract_frames(row["video"]["observation.image"])
-    flow = optical_flow_energy(frames)
-    speed = joint_speed(row["proprio_state"], row["fps"])
-    return global_lag(flow, ft[1:], speed, row["timestamps"][1:],
-                      corr_min=0.25)   # pusht 相关性天花板 ~0.68(spike2),阈值放 0.25
-
-
-@pusht_needed
-def test_l1_clean_pusht_low_false_positive(pusht_rows):
-    results = [_measure_lag(r) for r in pusht_rows]
-    decided = [r for r in results if r.passed is not None]
-    undecidable_ratio = 1 - len(decided) / len(results)
-    fp = np.mean([r.passed is False for r in decided]) if decided else 0.0
-    print(f"\n干净 pusht: 不可判率 {undecidable_ratio:.0%}, 误报率 {fp:.0%}")
-    assert fp < 0.05 or (fp * len(decided)) <= 1   # <5%(小样本允许 0-1 条)
-    assert undecidable_ratio <= 0.4                # 不可判率如实报告且不失控
-
-
-@pusht_needed
-@pytest.mark.parametrize("shift", [5, 10, -5, -10])
-def test_l1_shift_video_detected(pusht_rows, shift):
-    caught, errors = [], []
-    for row in pusht_rows[:8]:
-        bad, _ = corrupt.shift_video(row, shift_frames=shift)
-        r = _measure_lag(bad)
-        if r.passed is None:
-            continue                                # 不可判条目不计入检出分母(如实报告)
-        est_frames = r.detail["lag_s"] * FPS
-        # 视频窗口后移 shift 帧 → 画面内容相对动作提前 → lag = -shift
-        errors.append(abs(est_frames - (-shift)))
-        caught.append(r.passed is False)
-    assert len(caught) >= 5, "可判样本过少"
-    assert np.mean(caught) > 0.9, f"shift={shift} 检出率 {np.mean(caught):.0%}"
-    assert np.median(errors) <= 2.0, f"shift={shift} lag 中位误差 {np.median(errors):.1f} 帧"
-
-
-@pusht_needed
-@pytest.mark.parametrize("shift", [5, 10, -5, -10])
-def test_l1_shift_video_episode_level_needs_all_cameras(pusht_rows, shift):
-    """判定层扩展(2026-08-07):**测量**照旧要检出注入位移(上一条已钉),但**判废**
-    现在只发生在"所有可信相机一致指向同一个 Δ"。
-
-    pusht 只有一路相机 → 用同一条 episode 的读数装配两种多机位场景:
-    ① 三路同时移(整库转换错行的样子)→ 必须判废;
-    ② 只有一路移、另两路干净(某一路机位/链路异常)→ 只标注该路,整条照收。
-    """
-    n, agree = 0, 0
-    for row in pusht_rows[:8]:
-        bad, _ = corrupt.shift_video(row, shift_frames=shift)
-        r_bad = camera_reading(_measure_lag(bad))
-        r_ok = camera_reading(_measure_lag(row))
-        if not r_bad["trusted"]:
-            continue                      # 这一路本来就测不准 → 不计入分母(如实报告)
-        n += 1
-        lag = float(r_bad["lag_s"])
-        # 正负不对称:正滞后有良性解释(相机链路延迟)→ 门槛 0.5s;负滞后无良性解释
-        # (数据装配错误)→ 容差量级 0.25s 即定罪。判废期望按该条实测幅度算,
-        # 不按注入帧数硬套(±2 帧的估计误差是方法固有的,已由上一条测试钉住)。
-        bar = 0.25 if lag < 0 else 0.5
-        res3 = sync_check_result({"cam0": r_bad, "cam1": dict(r_bad),
-                                  "cam2": dict(r_bad)}, 3)
-        agree += (res3.passed is False) == (abs(lag) >= bar)
-        # 只有一路移、另两路干净 → 永远只标注该路,整条照收
-        if r_ok["trusted"] and r_ok["code"] == "aligned":
-            res1 = sync_check_result({"cam0": r_bad, "cam1": r_ok, "cam2": dict(r_ok)}, 3)
-            assert res1.passed is True, f"单路异常不得判废(shift={shift})"
-            assert res1.detail["flagged_cameras"] == ["cam0"]
-    assert n >= 5, "可判样本过少"
-    assert agree == n, f"shift={shift} 三路同证的判废与幅度门槛不一致({agree}/{n})"

@@ -61,7 +61,6 @@ def test_set_override_wins_after_backend():
     assert "ark.cn-beijing" in v["endpoint"]             # 预设其余保留
 
 
-
 # ───────── 硬件描述字段(2026-07-30,性能剖析页签的数据通路)─────────
 #
 # hardware / service_type 只描述、不参与请求;它们必须**随预设整组切换**并进入
@@ -105,51 +104,3 @@ def test_direct_endpoint_override_clears_hardware():
 # ───────── runtime 信息块(run.collect_runtime / container_limits)─────────
 
 
-def test_container_limits_parses_cgroup_v2(tmp_path, monkeypatch):
-    """cgroup v2 的 cpu.max='1600000 100000' → 16 核;memory.max 字节原样。"""
-    from curation.pipeline import run as run_mod
-    files = {"/sys/fs/cgroup/cpu.max": "1600000 100000",
-             "/sys/fs/cgroup/memory.max": "34359738368"}
-    monkeypatch.setattr(run_mod, "_read_first",
-                        lambda *ps: next((files[p] for p in ps if p in files), None))
-    lim = run_mod.container_limits()
-    assert lim["cpu_limit_cores"] == 16.0
-    assert lim["memory_limit_bytes"] == 34359738368
-
-
-def test_container_limits_none_when_unlimited_or_absent(monkeypatch):
-    """无配额('max')/读不到 → 一律 None(界面写"未记录",绝不编数字)。"""
-    from curation.pipeline import run as run_mod
-    monkeypatch.setattr(run_mod, "_read_first",
-                        lambda *ps: {"/sys/fs/cgroup/cpu.max": "max"}.get(ps[0]))
-    assert run_mod.container_limits() == {"cpu_limit_cores": None,
-                                          "memory_limit_bytes": None}
-    monkeypatch.setattr(run_mod, "_read_first", lambda *ps: None)
-    assert run_mod.container_limits() == {"cpu_limit_cores": None,
-                                          "memory_limit_bytes": None}
-
-
-def test_collect_runtime_takes_hardware_from_config(monkeypatch):
-    """runtime 块的硬件来自**生效配置**(站点文件声明),不是代码里的映射表。"""
-    from curation.pipeline import run as run_mod
-    cfg = apply_vlm_backend(_cfg(), "ark")
-    cfg["checks"]["task_success"]["vlm"]["hardware"] = "NVIDIA H20"
-    monkeypatch.setenv("NODE_NAME", "node-7")
-    rt = run_mod.collect_runtime(cfg)
-    b = rt["vlm_backend"]
-    assert b["hardware"] == "NVIDIA H20" and b["model"]
-    assert b["episode_concurrency"] == cfg["pipeline"]["vlm_episode_concurrency"]
-    assert b["frame_concurrency"] == cfg["checks"]["task_success"]["vlm"]["max_concurrency"]
-    assert rt["environment"]["node"] == "node-7"
-    assert rt["environment"]["node_source"] == "NODE_NAME"
-
-
-def test_collect_runtime_falls_back_to_hostname(monkeypatch):
-    """没注入 NODE_NAME → 退回 hostname,并**标明**取的是 hostname(不冒充节点名)。"""
-    import socket
-
-    from curation.pipeline import run as run_mod
-    monkeypatch.delenv("NODE_NAME", raising=False)
-    rt = run_mod.collect_runtime(_cfg())
-    assert rt["environment"]["node"] == socket.gethostname()
-    assert rt["environment"]["node_source"] == "hostname"

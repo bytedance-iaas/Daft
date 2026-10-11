@@ -138,22 +138,6 @@ def test_all_aligned_is_aligned():
     assert r.detail["flagged_cameras"] == []
 
 
-def test_undecidable_never_enters_manual_review_queue():
-    """裁决层回归:同步是硬门,passed=None 会被 episode_verdict 记进 undecidable
-    → review.json → 人工队列。改造后无论测不准还是矛盾都必须 passed=True,队列里
-    不该出现同步条目(用户明确否掉的那条路径)。"""
-    from curation.pipeline.verdict import episode_verdict
-
-    cfg = {"checks": {"video_action_sync": {"enable": True, "gate": "hard"}},
-           "verdict": {"soft_threshold": 0.5}}
-    for cams, n in [({"a": _cam(code="low_corr", trusted=False)}, 1),
-                    ({"a": _mis(0.9), "b": _ali(0.0)}, 2),
-                    ({"a": _mis(1.2)}, 1)]:
-        res = sync_check_result(cams, n)
-        v = episode_verdict({"video_action_sync": {"passed": res.passed, "score": None}}, cfg)
-        assert v["verdict"] == "keep" and v["undecidable"] == []
-
-
 # ---------- 两条实测样本的纸面推演(读数来自 2026-08-06 /mnt/tos 实测) ----------
 
 def test_droid_ep4_paper_replay_is_not_killed():
@@ -588,29 +572,6 @@ def test_sync_health_itemizes_leftover_abstained_cameras():
     assert [x["episode_id"] for x in h["noisy_episodes"]] == ["ep2"]
 
 
-def test_sync_plot_worthy_matches_ui_filter_yardstick():
-    """flagged 档出图判据 = UI 筛选判据,同一把尺子(2026-09-01 用户抓出口径
-    分裂:筛选认弃权路而出图不认,默认档下这批条目根本无图可筛)。"""
-    from curation.pipeline.funnel import sync_plot_worthy
-    clean = {"verdict": "aligned", "flagged_cameras": [], "abstained_cameras": []}
-    abst = {"verdict": "aligned", "flagged_cameras": [],
-            "abstained_cameras": ["cam_a"]}
-    undec = {"verdict": "undecidable", "flagged_cameras": [],
-             "abstained_cameras": ["cam_a"]}
-    flag = {"verdict": "annotated", "flagged_cameras": ["cam_b"],
-            "abstained_cameras": []}
-    assert not sync_plot_worthy("flagged", clean)
-    assert sync_plot_worthy("flagged", abst)        # 弃权路也值得留意(修复点)
-    assert sync_plot_worthy("flagged", undec)
-    assert sync_plot_worthy("flagged", flag)
-    assert all(sync_plot_worthy("all", d) for d in (clean, abst))
-    assert not any(sync_plot_worthy("off", d) for d in (abst, undec, flag))
-    # 与 UI 筛选口径互钉:同一份 detail 两边结论一致(state/ep 参数走新契约路径)
-    from curation.ui.manifest import _sync_flagged
-    for d in (clean, abst, undec, flag):
-        assert sync_plot_worthy("flagged", d) == _sync_flagged({}, d, "通过")
-
-
 def test_blurry_motion_diagnosis_speaks_precision_not_flatness():
     """逐相机诊断的峰宽措辞:说"定位精度不够/相似程度彼此接近",不说
     "怎么错开都差不多"(对贴线案言过其实——半高全宽的定义就是区间边缘
@@ -732,19 +693,6 @@ def test_sync_health_without_any_trusted_reading():
 # ---------- 交付层:旁挂 meta/curation_camera_health.json ----------
 # ---------- 报告层:相机流健康度一节 ----------
 
-def test_report_renders_camera_health_section():
-    from curation.export.report import build_report, to_markdown
-
-    eps = {"ep000001": sync_verdict({"ext": _mis(-0.6), "wrist": _mis(-0.62)}, 2),
-           "ep000002": sync_verdict({"ext": _mis(-0.58), "wrist": _mis(-0.6)}, 2)}
-    rep = build_report({}, {"input": 2, "output": 2}, [], {}, "cfg")
-    rep["dataset"]["sync_health"] = sync_health(eps)
-    md = to_markdown(rep)
-    assert "## 相机流健康度" in md
-    assert "整库标定" in md                 # 同号同量 → 建议标定
-    assert "负滞后" in md                   # 负滞后必须单列告警
-    assert "只标注不废弃" in md or "只标注" in md
-
 
 # ---------- 接口契约(UI 并行开发,字段名/枚举一个字都不许漂)----------
 
@@ -800,13 +748,6 @@ def test_camera_reading_only_emits_contract_codes():
             assert word not in rd["note"], (rd["code"], word, rd["note"])
 
 
-def test_check_display_name_is_pinned():
-    """报告/UI 里的显示名是既有契约(带连字符),任何改名都会让 UI 取不到 detail。"""
-    from curation.export.report import CHECK_CN
-
-    assert CHECK_CN["video_action_sync"] == "视频-动作同步"
-
-
 def test_sync_health_matches_report_contract():
     eps = {"ep000001": sync_verdict({"ext": _mis(0.9), "wrist": _ali(0.0)}, 2)}
     h = sync_health(eps)
@@ -815,46 +756,6 @@ def test_sync_health_matches_report_contract():
         assert set(s) == {"n", "median_lag_s", "iqr_s", "n_flagged",
                           "n_suspect", "n_noisy", "n_abstained"}
     assert isinstance(h["advice"], str) and isinstance(h["negative_lag_episodes"], list)
-
-
-def test_sync_plot_written_via_local_tmp(tmp_path, monkeypatch):
-    """曲线图不许 savefig 直写交付目录——FSX 直写会静默产出零填充坏 PNG。
-
-    2026-08-07 生产实锤:5 张坏 3 张,字节数正常、PNG 签名全零,浏览器空白、
-    服务端零报错。这里盯的是"写到哪儿",不是画得对不对。
-    """
-    import json as _json
-
-    matplotlib = pytest.importorskip("matplotlib")
-    matplotlib.use("Agg")
-    pytest.importorskip("scipy")
-    from matplotlib.figure import Figure
-
-    from curation.export import sync_plots
-
-    seen: list = []
-    real = Figure.savefig
-
-    def spy(self, fname, *a, **kw):
-        seen.append(str(fname))
-        return real(self, fname, *a, **kw)
-
-    monkeypatch.setattr(Figure, "savefig", spy)
-
-    out = tmp_path / "plots"
-    t = [i * 0.1 for i in range(24)]
-    wave = [float((i % 6) - 2) for i in range(24)]
-    curves = {"tol_s": 0.25, "verdict": "aligned",
-              "cameras": {"cam0": {"t": t, "flow": wave, "speed": wave,
-                                   "lag_s": 0.0, "corr_peak": 0.9}}}
-    written = sync_plots.render_sync_plots([("ep000000", _json.dumps(curves))],
-                                           str(out))
-
-    assert written == ["ep000000_sync.png"], written
-    dst = out / "ep000000_sync.png"
-    assert dst.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"      # 落地的是真 PNG
-    assert seen, "根本没调用 savefig"
-    assert all(str(out) not in p for p in seen), f"savefig 直写了交付目录:{seen}"
 
 
 def test_noisy_episodes_are_accounted_at_dataset_level():

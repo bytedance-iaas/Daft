@@ -23,9 +23,10 @@
 `vlm_watchdog.py`、`frames.py`；共享文件里只有 v1 走得到的函数（`pipeline/funnel.py` 的 `run_funnel` 一系与 v2 走不到的帧探针判定路径、
 `adapters/vlm_client.py` 的 v1 工厂、`export/report.py` 除 `container_findings` 以外的全部、`export/sync_plots.py` 的出图、
 `export/evidence.py` 的审片片段、`tos_store.py` 里 v1 的镜像与暂存）；整份只有 v1 用的 A 类文件（`pipeline/verdict.py`、
-`dataset_level/caption.py`、`decisions.py`、`stuck_events.py`、`ingest/schema.py`、`registry/fk.py`，以及只为 `.rrd` 输入存在的
-`ingest/rrd_reader.py` 与依赖 `rerun-sdk`）；v1 专用的配置键（`skill_profile.*`、`checks.task_success.arbitration.*`、`verdict.soft_threshold`、
-`checks.*.gate / weight`、`export.*`、`ingest.rrd_*`、`dedup`、v1 的超时键）。v1 的单测与 `tests/optimizations/` 一起删，共享部分的用例挪走。
+`dataset_level/caption.py`、`decisions.py`、`stuck_events.py`、`ingest/schema.py`、`registry/fk.py`，以及帧探针判定的
+`core/checks/task_success.py`、`camera_view.py`、`core/task_type.py`）；v1 专用的配置键（`skill_profile.*`、`checks.task_success.arbitration.*`、
+`verdict.soft_threshold`、`checks.*.gate / weight`、`export.*`、`dedup`、v1 的超时键）。v1 的单测与 `tests/optimizations/` 一起删，共享部分的
+用例挪走。`ingest/rrd_reader.py`（连同 `ingest.rrd_*` 与依赖 `rerun-sdk`）留着：A 类的 `lerobot_reader.py` 靠它认出并拒掉 `.rrd` 输入。
 
 **留下、改成 v2 的运维子命令**：`curation ls`、`curation prune`、`curation fetch`。
 

@@ -1,10 +1,7 @@
 """数据集语义层验收:profile 命中/未知回退/新增数据集零改动/velocity stuck。"""
 from __future__ import annotations
 
-import os
-
 import numpy as np
-import pytest
 
 from curation.core.checks.motion_quality import motion_quality
 from curation.ingest import dataset_semantics as DS

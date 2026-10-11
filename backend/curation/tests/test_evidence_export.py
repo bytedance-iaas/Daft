@@ -7,35 +7,13 @@
 """
 from __future__ import annotations
 
-import json
-import os
-
-import pytest
-
 import numpy as np
 
 from curation.export.evidence import (flagged_for_evidence, probe_indices,
                                       render_task_evidence)
-from curation.pipeline.run import check_entry
 
 
 # ───────── check_entry:detail 保全 ─────────
-
-def test_check_entry_keeps_detail_on_reject():
-    """被拒条目的 VLM 证据必须进报告(旧逻辑只在弃权时保留 → 已修)。"""
-    e = check_entry({"passed": False, "score": None,
-                     "detail": '{"verdict": "failure", "reason": "末态 0.1"}'})
-    assert "failure" in e["detail"]
-
-
-def test_check_entry_keeps_detail_on_pass_and_abstain():
-    assert "detail" in check_entry({"passed": True, "score": None, "detail": '{"voc": 0.9}'})
-    assert "detail" in check_entry({"passed": None, "score": None, "detail": '{"reason": "x"}'})
-
-
-def test_check_entry_drops_empty_placeholder():
-    assert "detail" not in check_entry({"passed": True, "score": None, "detail": "{}"})
-    assert "detail" not in check_entry({"passed": None, "score": 0.9, "detail": ""})
 
 
 # ───────── flagged 选择 ─────────
@@ -123,25 +101,3 @@ def test_render_respects_cap_and_off(tmp_path):
                                 mode="off", decode_fn=_fake_decode) == {}
 
 
-def test_audit_clip_encode_faststart(tmp_path):
-    """片段编码:能写出可开箱的 mp4,且 moov 在文件头部(faststart——moov 在尾部时
-    浏览器 <video> 会无报错地永久转圈,2026-08-03 人工审片工具实锤)。"""
-    pytest.importorskip("av")
-    import numpy as np
-
-    from curation.export.evidence import _encode_mp4
-    frames = [np.full((33, 47, 3), i * 8, dtype=np.uint8) for i in range(12)]  # 奇数宽高
-    dst = tmp_path / "c.mp4"
-    _encode_mp4(frames, str(dst), fps=4)
-    head = dst.read_bytes()[:2048]
-    assert b"moov" in head, "moov 不在头部:faststart 失效,浏览器播不了"
-
-
-def test_write_audit_clips_skips_bad_video(tmp_path):
-    """坏视频指针静默跳过(少一路不断链),好条目照写。"""
-    pytest.importorskip("av")
-    from curation.export.evidence import write_audit_clips
-    n = write_audit_clips(["epX"], {"epX": {"cam": {"path": "/no/such.mp4",
-                                                    "from_ts": 0, "to_ts": 1}}},
-                          str(tmp_path))
-    assert n == 0 and not (tmp_path / "details" / "audit_clips").exists()

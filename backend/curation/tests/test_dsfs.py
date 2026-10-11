@@ -260,16 +260,6 @@ def test_remote_decode_reopens_with_fresh_signature(monkeypatch):
     assert calls == {"sign": 0, "open": 1}
 
 
-def test_dataset_format_and_clip_need_on_tos(bucket):
-    from curation.ui import runner
-    root, _ = bucket
-    _v2(root)
-    assert runner.dataset_format("tos://bkt/datasets/arm") == {
-        "kind": "lerobot", "version": "v2.0", "needs_clips": False}
-    assert runner.dataset_format("tos://bkt/datasets/nope")["kind"] == "unknown"
-    assert runner.datasets_needing_clips("tos://bkt/datasets", ["arm"]) == []
-
-
 def test_browser_media_source_passes_local_and_signs_remote(bucket):
     """浏览器媒体源:本地原样;远端走 browser_url(公网端点那条签名通道)。"""
     root, client = bucket

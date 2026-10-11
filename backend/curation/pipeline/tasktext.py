@@ -1,6 +1,6 @@
 """The task text each episode is judged and delivered with (design doc 02 §3.4, 06 §4.3).
 
-Two sources (``run.judge_text_and_source``, annotation first):
+Two sources, the human one first:
 
 * the original annotation of the dataset (``原始标注``);
 * a human relabel applied by ``adjudicate-apply`` replaces it (``人工改标``).
@@ -15,7 +15,6 @@ import json
 import os
 
 from .records import ADJUDICATION_DIR
-from .run import judge_text_and_source
 
 LABELS_FILE = f"{ADJUDICATION_DIR}/labels.json"
 SRC_ORIGINAL = "原始标注"
@@ -67,7 +66,7 @@ class TaskText:
             return self.relabels[idx], SRC_HUMAN, None
         instruction = self.instructions.get(idx, "")
         if str(instruction or "").strip():
-            return judge_text_and_source(instruction, "") + (None,)
+            return str(instruction).strip(), SRC_ORIGINAL, None
         return "", SRC_NONE, "no task text: the dataset has no annotation for this episode"
 
     def delivered(self, episode_index: int) -> dict | None:
