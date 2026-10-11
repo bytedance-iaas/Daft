@@ -281,7 +281,7 @@ def test_purge_needs_the_exact_path_and_removes_the_batch_and_latest(api, tmp_pa
     r = c.post(f"{API}/tasks/{t.id}/purge-artifacts", headers=JSON, json={"confirm_path": path})
     assert r.status_code == 202, r.text
     assert r.json() == {"path": path, "bytes": 100, "latest_removed": True}
-    # the purge runs in the background: wait for the objects to go
+    # the purge runs in the background, latest first: wait for the objects to go
     deadline = time.monotonic() + 10
     while batch.exists() and time.monotonic() < deadline:
         time.sleep(0.05)

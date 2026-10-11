@@ -642,10 +642,10 @@ class Orchestrator:
             try:
                 with open_delivery(task.output_uri, local_root=self.cfg.local_delivery_root,
                                    svc=self.svc, key=key, region=region) as d:
+                    if latest_removed:          # first: latest never names a batch half gone
+                        d.delete("latest")
                     for rel in sorted(listing):
                         d.delete(rel)
-                    if latest_removed:
-                        d.delete("latest")
                 wd = WorkDir(self.work_root, task_id)
                 forget_sync(wd.sync_state)
                 wd.ensure()
