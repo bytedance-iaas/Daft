@@ -1928,7 +1928,7 @@ export interface components {
             }[];
             /** @description every stage, the CPU block's first */
             stages: components["schemas"]["RegistryStage"][];
-            /** @description stages that need the whole selection at once; empty now that exact dedup streams like the other checks, kept for a future module that needs it */
+            /** @description stages that need the whole selection at once; empty (every check streams), kept for a future module that needs it */
             full_set_stages: components["schemas"]["RegistryStage"][];
             /** @description stages that start on their own in their block rather than after the stage before (5.2.0: vlm_prep, beside the CPU block's other stages) */
             root_stages?: components["schemas"]["RegistryStage"][];
@@ -2004,7 +2004,7 @@ export interface components {
          * @description a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
          * @enum {unknown}
          */
-        RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "vlm_prep" | "autolabel" | "vlm" | "profile";
+        RegistryStage: "integrity" | "numeric" | "frame" | "duplicate" | "vlm_prep" | "autolabel" | "vlm" | "profile";
         /** @enum {unknown} */
         FindingLevel: "blocking" | "review" | "info";
         /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-4 */
@@ -2415,14 +2415,14 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @description two-block plans: integrity, numeric, frame, dedup, vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
+            /** @description two-block plans: integrity, numeric, frame, duplicate (6.0.0, the duplicate check), vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages */
             id: string;
             /**
              * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
              * @enum {unknown}
              */
             block?: "cpu" | "vlm";
-            /** @description a whole-set stage: it starts once the earlier stages of its block are done. No stage is one any more - exact dedup streams like the other checks - but a task planned before that change still carries it */
+            /** @description a whole-set stage: it starts once the earlier stages of its block are done. No stage is one today */
             full_set?: boolean;
             /** @enum {unknown} */
             state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
@@ -2665,6 +2665,8 @@ export interface components {
                 integrity?: number;
                 numeric?: number;
                 frame?: number;
+                /** @description 6.0.0: the duplicate check */
+                duplicate?: number;
                 /** @description 5.3.2: a model module's CPU half (the stage since 5.2.0) */
                 vlm_prep?: number;
                 vlm?: number;
@@ -2793,13 +2795,12 @@ export interface components {
                 corr: number;
             };
         };
-        /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (2.0: finding, human, execution_error, duplicate; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed */
+        /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (2.0: finding, human, execution_error; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed */
         EpisodeNote: {
             module: components["schemas"]["ModuleId"];
             kind?: string;
             text: string;
             priority?: string;
-            duplicate_of?: number;
             /** @description 2.0: the finding code (registry 2.x) */
             code?: string;
             /** @description 2.0: the taxonomy item of the code (C6), null for a code without one */
@@ -2849,8 +2850,6 @@ export interface components {
             line: components["schemas"]["ReviewLineId"];
             source_module: components["schemas"]["ModuleId"];
             reason: string;
-            /** @description an appeal of a dedup reject: the episode it duplicates */
-            duplicate_of?: number | null;
             annotation?: string | null;
             caption?: string | null;
             /** @description a task text the model read off the video: what a person may send back as new_label */
@@ -4384,7 +4383,7 @@ export interface components {
             }[];
         };
         stage: {
-            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern */
+            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, duplicate, vlm_prep; vlm) and final - autolabel and profile only in plans made while those stages existed, vlm_prep in plans made since a model module's CPU part has a stage of its own (the CPU block's second root); stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";
@@ -4406,7 +4405,7 @@ export interface components {
             block?: "cpu" | "vlm";
             /** @description 2.0: the stage before it in its block; a block's first stage and a second root (vlm_prep) have none. The one edge across the blocks: vlm after vlm_prep when a module of vlm ran its CPU part there - an episode reaches vlm once vlm_prep is done with it */
             after?: string;
-            /** @description 2.0: needs the whole selection at once; plans made now never set it (exact dedup streams like the other checks, and the skill profile is retired) */
+            /** @description 2.0: needs the whole selection at once; plans made now never set it (every check streams) */
             full_set?: boolean;
         } & (unknown & unknown);
         stage_2: {
@@ -4450,7 +4449,7 @@ export interface components {
         };
         /**
          * curation plan --json / plan.json (schema 2.0; 1.0 still read)
-         * @description The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); full-set stages (dedup, profile) start once the earlier stages of their block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).
+         * @description The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); a full-set stage (none today) would start once the earlier stages of its block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).
          */
         "plan.schema": {
         } & (components["schemas"]["plan_2"] | components["schemas"]["plan_1"]);
@@ -4481,11 +4480,11 @@ export interface components {
             };
             /** @description passed / total; held is neither */
             pass_rate: number | null;
-            /** @description rejected episodes per blocking reason: a finding (module, code, item), a person or a duplicate; an episode with several blocking findings counts under each */
+            /** @description rejected episodes per blocking reason: a finding (module, code, item) or a person; an episode with several blocking findings counts under each */
             reject_reasons: {
                 module: components["schemas"]["module_id"];
                 /** @enum {unknown} */
-                kind: "finding" | "human" | "duplicate";
+                kind: "finding" | "human";
                 code?: components["schemas"]["finding_code"];
                 item?: components["schemas"]["item_id"] | null;
                 count: number;
@@ -6793,6 +6792,7 @@ export interface operations {
     getTaskLogs: {
         parameters: {
             query?: {
+                /** @description one stage, or several separated by commas (6.0.0) */
                 stage?: string;
                 /** @description absent = everything, empty = main run only, an id = that subtask only */
                 subtask?: string;
@@ -7396,7 +7396,7 @@ export interface operations {
                 source?: components["schemas"]["ModuleId"];
                 /** @description by card status, the same on both tabs: pending = not answered yet (on the appeals tab too, although appeals never count in AdjudicationCounts.pending) or answered unsure; decided; unapplied = answered but not executed yet */
                 status?: "pending" | "decided" | "unapplied" | "all";
-                /** @description appeals lists rejects attributed to an appealable module (registry `appealable`; today task_success alone and dedup); physical and structural gates and soft scores are final */
+                /** @description appeals lists rejects attributed to an appealable module (registry `appealable`; today task_success alone); physical and structural gates and soft scores are final */
                 tab?: "review" | "appeals";
                 /** @description opaque, from next_cursor */
                 cursor?: components["parameters"]["Cursor"];

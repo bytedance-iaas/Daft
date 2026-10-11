@@ -4,6 +4,7 @@
 // nothing here knows a module. Pure functions, unit tested.
 import type { EpisodeFinding, Finding, ModuleRegistry, ModuleSpec, Report, ReportModuleSectionV2, ReportV2 } from '../api/types';
 import { zh } from '../locales/zh';
+import { progressStageLabel } from './taskView';
 
 export type Level = 'blocking' | 'review' | 'info';
 export const LEVELS: readonly Level[] = ['blocking', 'review', 'info'];
@@ -70,11 +71,9 @@ export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, pres
   return levels.has('blocking') ? 'blocking' : levels.has('review') ? 'review' : 'info';
 }
 
-/** «CPU 块 · 数值档»: where a module runs (registry 2.0 blocks and stages). */
-export function placeLabel(reg: ModuleRegistry | undefined, m: Pick<ModuleSpec, 'block' | 'stage'> | undefined): string {
-  if (!m) return '';
-  const block = reg?.blocks.find((b) => b.id === m.block)?.title_zh ?? m.block;
-  return `${block} · ${zh.stage[m.stage] ?? m.stage}`;
+/** «CPU 检查»: where a module runs - the group of its stage, as progress shows it (design doc 26 §2, D88). */
+export function placeLabel(m: Pick<ModuleSpec, 'stage'> | undefined): string {
+  return m ? progressStageLabel(m.stage) : '';
 }
 
 // ------------------------------------------------------------------ the coverage matrix

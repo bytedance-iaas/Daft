@@ -69,9 +69,8 @@ export function offered(m: ModuleSpec): boolean {
   return !m.rides_on;
 }
 
-/** The selection after ticking or unticking `id`. (F5.6 ticked the modules a module re-examined along with
- * it, reading every module id in `depends_on` that way - which also tied 技能画像 to 精确去重, whose
- * `dedup` entry only orders the stages; the EEF review is gone since D49 and so is the rule.) */
+/** The selection after ticking or unticking `id`: one module, nothing else comes along (F5.6's rule of ticking
+ * what a module depends on is gone with its last user). */
 export function toggleModule(selected: string[], id: string): string[] {
   return selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
 }

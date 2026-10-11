@@ -640,12 +640,6 @@ body {
   border-color: var(--c-warning);
 }
 
-.dup-compare {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
 .adj-bar {
   position: sticky;
   top: 60px;

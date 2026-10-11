@@ -137,7 +137,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.click(screen.getByRole('tab', { name: '被拒复议' }));
     const list = await screen.findByTestId('appeals');
     await within(list).findByTestId('card-6');
-    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45, 44]);
+    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45]);
     // One filter on the page, the appeals tab's: the appealable modules only.
     expect(screen.getAllByRole('combobox', { name: '来源模块' })).toHaveLength(1);
     await user.click(screen.getByRole('combobox', { name: '来源模块' }));
@@ -146,7 +146,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
       if (!o.length) throw new Error('no options');
       return o;
     });
-    expect(names).toEqual(['任务成败判定', '精确去重']);                  // the EEF module rejects nothing since registry 5.0 (D81)
+    expect(names).toEqual(['任务成败判定']);                  // the EEF module rejects nothing since registry 5.0 (D81), duplicates neither (D87)
     expect(screen.queryByText(/这里列出可复议模块拒掉的条目/)).toBeNull();
   });
 
@@ -194,17 +194,17 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.click(screen.getByRole('tab', { name: '被拒复议' }));
     const list = await screen.findByTestId('appeals');
     await within(list).findByTestId('card-6');
-    // task_success rejects and the dedup reject (D42).
-    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45, 44]);
+    // task_success rejects (D42); a duplicate is no reject to appeal (D87).
+    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45]);
     // Appeals are optional: the cards say so and the pending count does not move.
     expect(within(card(6)).getByTestId('status-6')).toHaveTextContent('可复议');
     await user.click(screen.getByText('为什么有的被拒条目不在这里'));
     const final = await screen.findByTestId('final-rejects');
     expect(final).toHaveTextContent('时间戳检查：1 条');
-    // dedup is appealable now: not among the final ones.
-    expect(final).not.toHaveTextContent('精确去重');
+    // this task ran before exact dedup was removed (D87): its reject is final, named by its id
+    expect(final).toHaveTextContent('dedup：1 条');
     expect(final).not.toHaveTextContent('任务成败判定');
-    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定、精确去重');
+    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定');
     // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
     const q = within(card(6)).getByTestId('q-6-reject_appeal');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
@@ -212,28 +212,6 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.click(within(q).getByText('恢复为可用'));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 6, line: 'reject_appeal', decision: 'restore' }]));
     expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 8 条');
-  });
-
-  it('a dedup appeal names the episode it duplicates and shows both side by side (D42)', async () => {
-    const seen = recordRequests();
-    const { user } = renderApp(`${PAGE}?tab=appeals&source=dedup`);
-    const c = await screen.findByTestId('card-44');
-    // ?source=dedup filters on the server: only the dedup card.
-    expect(shownCards(screen.getByTestId('appeals'))).toEqual([44]);
-    const lists = seen.filter((r) => r.method === 'GET' && r.path === `/tasks/${MAIN_TASK}/adjudication`);
-    expect([lists.at(-1)?.query.get('tab'), lists.at(-1)?.query.get('source')]).toEqual(['appeals', 'dedup']);
-    expect(c).toHaveTextContent('来源：精确去重');
-    expect(within(c).getByTestId('duplicate-44')).toHaveTextContent('与 episode 43 字节级完全重复');
-    const compare = within(c).getByTestId('compare-44');
-    expect(compare).toHaveTextContent('ep 44（本条，被判重复）');
-    expect(compare).toHaveTextContent('ep 43（保留的那条）');
-    // Both episodes' videos: the rejected one from the source, the kept one from the delivery.
-    expect(await within(compare).findByTestId('media-44')).toBeInTheDocument();
-    expect(await within(compare).findByTestId('media-43')).toBeInTheDocument();
-    const q = within(c).getByTestId('q-44-reject_appeal');
-    await user.click(within(q).getByText('维持拒绝'));
-    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 44, line: 'reject_appeal', decision: 'keep_rejected' }]));
-    expect(within(c).getByTestId('status-44')).toHaveTextContent('已裁');
   });
 
   it('a line without a dedicated view renders from the registry catalog, and counts as pending as the catalog says (D43)', async () => {

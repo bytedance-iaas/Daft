@@ -69,26 +69,6 @@ function CardMedia({ taskId, ep, rev, skip = [], modules = [] }: { taskId: strin
   );
 }
 
-/** A dedup appeal: this episode and the one it duplicates, side by side (07 §6, D42). */
-function CompareMedia({ taskId, ep, other, rev }: { taskId: string; ep: number; other: number; rev: number }) {
-  return (
-    <div className="dup-compare" data-testid={`compare-${ep}`}>
-      <div>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-          {zh.adjudication.thisEpisode(ep)}
-        </div>
-        <CardMedia taskId={taskId} ep={ep} rev={rev} />
-      </div>
-      <div>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-          {zh.adjudication.keptEpisode(other)}
-        </div>
-        <CardMedia taskId={taskId} ep={other} rev={rev} />
-      </div>
-    </div>
-  );
-}
-
 /** Who decided and when (the server's record), 已执行 once applied, or 已保存 for this session's click. */
 function DecidedNote({ latest, effective }: { latest: Decision | null | undefined; effective: EffectiveDecision | null }) {
   if (effective?.applied) return <Tag size="small">{zh.adjudication.applied}</Tag>;
@@ -256,16 +236,11 @@ function EefQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index
   );
 }
 
-/** 被拒复议 (D42): why it was rejected — for dedup, which episode it duplicates; for the EEF module, its windows. */
+/** 被拒复议 (D42): why it was rejected — for the EEF module, its windows. */
 function AppealQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {
   return (
     <div className="question" data-testid={`q-${view.ep}-reject_appeal`}>
       <QuestionHead index={index} q={q} catalog={catalog} />
-      {q.duplicate_of !== null && q.duplicate_of !== undefined ? (
-        <div style={{ margin: '4px 0' }} data-testid={`duplicate-${view.ep}`}>
-          {zh.adjudication.duplicateOf(q.duplicate_of)}
-        </div>
-      ) : null}
       <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         {q.reason}
       </div>
@@ -304,9 +279,9 @@ function GenericQuestion({ index, view, q, catalog, onDecide }: { index: number;
 }
 
 /**
- * One card per episode (07 §6): the source modules, the videos once (both episodes for a dedup
- * appeal), then every question — task_verdict, reject_appeal and eef_check with their own views, any
- * other line from the registry catalog (D43); 「其它原因，整条弃用」 where the lines offer it.
+ * One card per episode (07 §6): the source modules, the videos once, then every question — task_verdict,
+ * reject_appeal and eef_check with their own views, any other line from the registry catalog (D43);
+ * 「其它原因，整条弃用」 where the lines offer it.
  */
 export function EpisodeCard({
   taskId,
@@ -326,7 +301,6 @@ export function EpisodeCard({
   const decide: Decide = async (line, d, label) => (repeats(answerOn(view, line), d, label ?? null) ? true : onDecide(line, d, label));
   const priority = view.questions.find((q) => q.priority)?.priority;
   const annotation = view.questions.find((q) => q.annotation)?.annotation;
-  const duplicateOf = view.questions.find((q) => q.duplicate_of !== null && q.duplicate_of !== undefined)?.duplicate_of;
   const statusKey = view.optional && view.status === 'pending' ? 'optional' : view.status;
   const discardLine = view.discardOn ?? view.discardLine;
   const eefShown = view.questions.some((q) => q.line === 'eef_check' || (q.line === 'reject_appeal' && q.source_module === EEF));
@@ -351,11 +325,7 @@ export function EpisodeCard({
       }
     >
       <LazyVisible placeholder={<div style={{ height: 120 }} />}>
-        {duplicateOf !== undefined && duplicateOf !== null ? (
-          <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} />
-        ) : (
-          <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} modules={view.sources} />
-        )}
+        <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} modules={view.sources} />
       </LazyVisible>
       {view.questions.map((q, i) => {
         const props = { index: i, view, q, catalog, onDecide: decide };

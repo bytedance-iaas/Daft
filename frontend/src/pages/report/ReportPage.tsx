@@ -281,7 +281,7 @@ function ScopeCard({ report, v2, onJump, onCollapseAll, onExpandAll }: { report:
           const role = moduleRole(spec, preset, v2?.overview.policy.version);
           return (
             <Space size={4} wrap>
-              <span className="nowrap">{placeLabel(reg.data, spec)}</span>
+              <span className="nowrap">{placeLabel(spec)}</span>
               <Tag size="small" color={LEVEL_TAG[role]}>
                 {zh.findings.role[role]}
               </Tag>

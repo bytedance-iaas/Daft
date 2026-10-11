@@ -19,7 +19,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     expect(screen.getByText('判废原因分布（按检测项）')).toBeInTheDocument();
     await waitFor(() => {
       const charts = screen.getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
-      expect(charts.find((l) => l.startsWith('判废原因分布（按检测项）'))).toMatch(/TASK-4 .+ 5，SET-1 .+ 1，STRM-5 .+ 1/);
+      expect(charts.find((l) => l.startsWith('判废原因分布（按检测项）'))).toMatch(/TASK-4 .+ 5，STRM-5 .+ 1/);
     });
   });
 
@@ -27,7 +27,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
     const { user } = renderApp(REPORT);
     const scope = await screen.findByTestId('report-scope');
     const ts = (await within(scope).findByRole('button', { name: '时间戳检查' })).closest('tr') as HTMLElement;
-    expect(ts).toHaveTextContent('CPU 块 · 数值档');
+    expect(ts).toHaveTextContent('CPU 检查');                          // its group (design doc 26 §2)
     expect(ts).toHaveTextContent('可判废');
     expect(ts).toHaveTextContent('1 / 50 条');
     expect(within(scope).getByText('所在块')).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
   it('every section starts with the findings statistics; a module\'s own view follows', async () => {
     renderApp(REPORT);
     const ts = await screen.findByTestId('section-task_success');
-    expect(await within(ts).findByText('VLM 块 · VLM 档')).toBeInTheDocument();
+    expect(await within(ts).findByText('模型检查')).toBeInTheDocument();
     const stats = within(ts).getByTestId('findings-task_success');
     expect(within(stats).getByTestId('level-count-task_success-blocking')).toHaveTextContent('5');
     expect(within(stats).getByTestId('level-count-task_success-review')).toHaveTextContent('10');   // 弃权 and the suspected label conflicts
@@ -68,9 +68,9 @@ describe('质检报告 of a task of the policy verdicts (design doc 17 §5.2)', 
   });
 
   it('?section= opens the report on a module (the task detail\'s 去报告)', async () => {
-    renderApp(`${REPORT}?section=dedup`);
-    await screen.findByTestId('section-dedup');
-    expect(currentLocation()).toContain('section=dedup');
+    renderApp(`${REPORT}?section=duplicate_check`);
+    await screen.findByTestId('section-duplicate_check');
+    expect(currentLocation()).toContain('section=duplicate_check');
   });
 });
 
@@ -103,7 +103,7 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     await waitFor(() => expect(screen.queryByTestId('vz-mini')).toBeNull());
     // the module block says what it found, not a verdict
     expect(within(screen.getByTestId('episode-module-task_success')).getByTestId('level-blocking')).toBeInTheDocument();
-    expect(within(screen.getByTestId('episode-module-dedup')).getByText('无发现')).toBeInTheDocument();
+    expect(within(screen.getByTestId('episode-module-duplicate_check')).getByText('无发现')).toBeInTheDocument();
   });
 
   it('a review finding with an open question has 去裁决; what a module could not assess is said in its block', async () => {
@@ -134,16 +134,21 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
 });
 
 describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
-  it('one 详细进度 beside the tokens: both blocks in one chart, autolabel first, the full-set steps and 生成报告 & 产物交付 below (2026-10-04)', async () => {
+  it('one 详细进度 beside the tokens: CPU 检查 and 模型检查 in one chart, 生成报告 below (design doc 26 §2)', async () => {
     renderApp(`/tasks/${FINDINGS_TASK}`);
     const stages = await screen.findByTestId('stages');
-    // both blocks' per-episode stages in the one chart: a card each and a row of the run timeline
+    // the episodes' stages in their groups in the one chart: a card each and a row of the run timeline
     const chart = within(stages).getByTestId('pipeline-activity');
-    expect([...chart.querySelectorAll('.pipeline-layer')].map((e) => e.getAttribute('data-testid'))).toEqual(['stage-numeric', 'stage-frame', 'stage-vlm']);
+    expect([...chart.querySelectorAll('.pipeline-layer')].map((e) => e.getAttribute('data-testid'))).toEqual(['stage-cpu', 'stage-model']);
+    expect(within(chart).getByTestId('stage-cpu')).toHaveTextContent('CPU 检查');
+    expect(within(chart).getByTestId('stage-cpu')).toHaveTextContent('50 / 50');
+    expect([...chart.querySelectorAll('.pipeline-time-row')].map((e) => e.textContent)).toEqual(['CPU 检查', '模型检查']);
     expect(within(chart).getByTestId('pipeline-overlap')).toBeInTheDocument();
-    // then the bars: autolabel first, the full-set steps, 生成报告 & 产物交付
+    // then the one bar after both blocks
     const rows = [...stages.querySelectorAll('[data-testid^="stage-"]')].filter((e) => !chart.contains(e)).map((e) => e.getAttribute('data-testid'));
-    expect(rows).toEqual(['stage-autolabel', 'stage-dedup', 'stage-profile', 'stage-report_delivery']);
+    expect(rows).toEqual(['stage-report']);
+    expect(within(stages).getByTestId('stage-report')).toHaveTextContent('生成报告');
+    expect(stages).not.toHaveTextContent(/产物交付|数值档|帧档/);
     expect(stages.closest('.grid-2')).toHaveTextContent('Token 消耗');
     expect(screen.queryByTestId('block-cpu')).toBeNull();
     expect(screen.queryByText('判决与交付')).toBeNull();
@@ -154,7 +159,7 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
     const seen = recordRequests();
     const { user } = renderApp(`/tasks/${FINDINGS_TASK}`);
     const card = await screen.findByTestId('pipeline-episodes');
-    // ep 44: the duplicate the dedup module rejected (the newest 15 rows are eps 35-49)
+    // ep 44: a duplicate of ep 43, reported only (D87) (the newest 15 rows are eps 35-49)
     await user.click(await within(card).findByRole('button', { name: 'ep 44' }));
     const mini = await screen.findByTestId('vz-mini');
     await waitFor(() => expect(seen.some((r) => r.path === `/tasks/${FINDINGS_TASK}/episodes/44`)).toBe(true));

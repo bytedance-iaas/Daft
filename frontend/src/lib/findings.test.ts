@@ -29,12 +29,14 @@ describe('the findings views read the registry and the report 2.0', () => {
     expect(isReportV2(null)).toBe(false);
   });
 
-  it('names items from the taxonomy and modules by block and stage', () => {
+  it('names items from the taxonomy and modules by the group they run in (design doc 26 §2)', () => {
     expect(itemLabel(reg, 'STRM-5')).toMatch(/^STRM-5 /);
     expect(itemLabel(reg, null)).toBe('平台自有项');
     expect(itemLabel(reg, 'XX-9')).toBe('XX-9');
-    expect(placeLabel(reg, spec('timestamp_check'))).toBe('CPU 块 · 数值档');
-    expect(placeLabel(reg, spec('task_success'))).toBe('VLM 块 · VLM 档');
+    expect(placeLabel(spec('data_integrity'))).toBe('数据完整性');
+    expect(placeLabel(spec('timestamp_check'))).toBe('CPU 检查');
+    expect(placeLabel(spec('duplicate_check'))).toBe('CPU 检查');
+    expect(placeLabel(spec('task_success'))).toBe('模型检查');
   });
 
   it('a module rejects, asks or only reports by its codes; under report_only only data integrity rejects', () => {

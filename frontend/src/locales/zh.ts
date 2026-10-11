@@ -138,7 +138,7 @@ export const zh = {
     frame: '帧档',
     vlm: 'VLM 档',
     verdict: '判决',
-    dedup: '去重',
+    duplicate: '重复检测',
     // registry 5.3 (design doc 23 §1): the CPU halves of model modules, the CPU block's second root
     vlm_prep: '模型准备档',
     profile: '技能画像',
@@ -150,9 +150,12 @@ export const zh = {
     post_verdict: '判决之后',
   } as Record<string, string>,
 
-  /** Stages that progress views show as one (sixth round): 终判、报告、导出、交付核验. */
+  /** The groups progress views show the stages in (design doc 26 §2, D88). */
   stageGroup: {
-    report_delivery: '生成报告 & 产物交付',
+    integrity: '数据完整性',
+    cpu: 'CPU 检查',
+    model: '模型检查',
+    report: '生成报告',
   } as Record<string, string>,
 
   stageState: {
@@ -831,7 +834,7 @@ export const zh = {
     flagged_cameras: '被标注的相机',
     abstain_reasons: '弃权原因分布',
     groups: '重复组',
-    removed: '剔除',
+    duplicated: '涉及条数',
     covered: '覆盖条数',
     families: '技能族',
     subskills: '子技能',
@@ -860,20 +863,19 @@ export const zh = {
       batch: (n: number) => `第 ${n} 批`,
       entered: (n: number) => `新进入 ${n} 条`,
       waiting: '等待新条目进入',
-      // sixth round: the next layer's queue is full, so this one hands nothing out
-      waitingDownstream: (layer: string) => `等待下游——${layer}`,
-      timeline: (n: number) => `${['', '一', '两', '三', '四'][n] ?? n}层运行时间线`,
+      // sixth round: the next group's queue is full, so this one hands nothing out
+      waitingDownstream: (group: string) => `等待下游——${group}`,
+      timeline: '运行时间线',
       mean: (seconds: string) => `平均每条 ${seconds} s`,
       slowest: (seconds: string) => `最慢 ${seconds} s`,
-      note: '实色为处理，斜纹为等待；刻线表示最近批次进入。每层独立接收条目，批次无需同步。',
-      noteOld: '横条包含处理与等待；刻线表示最近批次进入。每层独立接收条目，批次无需同步。',
+      note: '实色为处理，斜纹为等待；刻线表示最近批次进入。两组各自接收条目，批次无需同步。',
+      noteOld: '横条包含处理与等待；刻线表示最近批次进入。两组各自接收条目，批次无需同步。',
     },
     processingElapsed: '处理耗时',
     perEpisode: (seconds: string) => `${seconds} s / 条`,
     wholeStage: (elapsed: string) => `${elapsed}（整体）`,
     pipelineEpisodes: {
       title: 'Episode 流水线',
-      stage: { integrity: '完整性验证', numeric: '数值验证', frame: '视频验证', vlm_prep: '模型准备', vlm: '模型验证', done: '已完成' },
       verdict: { keep: '漏斗保留', drop: '漏斗拒绝', held: '待补跑' },
       /** a two-block run (design doc 17 §3.3): the policy on the findings so far; the final verdict is the report's */
       provisional: { keep: '暂判保留', drop: '暂判拒绝', held: '待补跑' } as Record<string, string>,
@@ -881,13 +883,14 @@ export const zh = {
       final: { keep: '通过', drop: '拒绝', held: '待补跑' } as Record<string, string>,
       missing: '源文件缺失',
       finished: '已完成',
-      waiting: (stage: string) => `等待${stage}`,
+      // a space before a name that starts in Latin letters (「等待 CPU 检查」)
+      waiting: (stage: string) => (/^[A-Za-z]/.test(stage) ? `等待 ${stage}` : `等待${stage}`),
       count: (finished: number, total: number | string) => `${finished} / ${total} 条已完成逐条验证`,
       note: '耗时按每条 episode 的实际处理累计，不含排队和等待 CPU；尚未执行的阶段显示 —。',
       episode: (index: number) => `ep ${index}`,
       columnEpisode: 'Episode',
       columnStage: '最近阶段',
-      processingStage: { integrity: '完整性处理', numeric: '数值处理', frame: '帧处理', vlm_prep: '模型准备处理', vlm: 'VLM 处理' } as Record<string, string>,
+      processingStage: { integrity: '完整性', cpu: 'CPU', model: '模型' } as Record<string, string>,
       processingTotal: '累计处理耗时',
       columnResult: '当前结果',
       latest: '最新',
@@ -950,7 +953,7 @@ export const zh = {
     tokenNote: '重试花掉的也算在合计里。没拿到用量的请求（429、超时、对冲里输掉的那一发）不估算，只计次数。',
     mainRun: '主流程',
     colModule: '模块',
-    colStage: '所属档',
+    colStage: '分组',
     colState: '状态',
     colTotal: '处理条数',
     colElapsed: '耗时',
@@ -999,7 +1002,7 @@ export const zh = {
     cpuBoundBy: { task: '任务上限', planner: '可用核数 − 2' } as Record<string, string>,
     // a stage's CPU concurrency is this task's cap: the Daemon's CPU pool decides what it gets (D54)
     planCpu: (n: number) => `CPU 上限 ${n}`,
-    planCols: { stage: '档', block: '所在块', kind: '类型', modules: '模块', episodes: '处理哪些条目', concurrency: '并发 / 闸门' },
+    planCols: { stage: '分组', kind: '类型', modules: '模块', episodes: '处理哪些条目', concurrency: '并发 / 闸门' },
     planEpisodes: { selected: '选中的条目', unlabeled: '没有任务标注的条目', keep: '判决放行的条目', 'keep-minus-duplicates': '去重后的条目' } as Record<string, string>,
     planSurvivors: (stage: string) => `${stage}放行的条目`,
     planEstimate: (req: number, wall: string) => `计划估算：VLM 请求约 ${req} 次，耗时约 ${wall}`,
@@ -1021,7 +1024,6 @@ export const zh = {
     planNoteRoughBlocks: (seconds: string, use: string, since: string) =>
       `粗估：选中的条目都要过两块（两块同时跑），每个请求按 ${seconds} 秒、闸门占用 ${use} 计（图像请求在 v1 上 ${since} 实测，视频请求的延迟还没校准）`,
     planNoteDecode: '数据完整性的解码测试（decode_test）开着时没有计入：大约要把每一帧多解码一遍',
-    planBlock: (block: string, fullSet: boolean) => (fullSet ? `${block} · 全量步骤` : block),
     planNoteTaskSuccess: '任务成败判定的判废护栏调用视数据而定，没有计入',
     planNoteUnlabeled: (n: string) => `${n} 条没有任务标注：不判任务成败，只看画面缺陷（各一次请求），其余检查照常`,
     planNoteTaskSuccessTwoPass: '任务成败判定的取证仲裁和判废护栏调用视数据而定，没有计入',
@@ -1221,7 +1223,7 @@ export const zh = {
       status: '状态',
       verdict: '判决',
       text_source: '任务文本来源',
-      duplicate_of: '重复于',
+      same_as: '同组的其他条',
       group: '组',
       family: '技能族',
       subskill: '子技能',
@@ -1351,7 +1353,7 @@ export const zh = {
     syncVerdicts: (misaligned: number, annotated: number) => `错位判废 ${misaligned} 条，已标注 ${annotated} 条`,
     families: (n: number) => `${n} 个技能族`,
     disagreements: (n: number) => `标注分歧 ${n} 条`,
-    removed: (n: number) => `剔除 ${n} 条`,
+    duplicated: (groups: number, eps: number) => (groups ? `重复 ${groups} 组、涉及 ${eps} 条` : '没有重复'),
     candidates: (n: number) => `候选 ${n} 条`,
     mean: (v: string) => `平均分 ${v}`,
     fail: (n: number) => `判废 ${n} 条`,
@@ -1376,7 +1378,6 @@ export const zh = {
     decode_failed: '视频解码失败',
     count_mismatch: '帧数对不上',
     cut_off: '录制中断',
-    duplicate_content: '与另一条完全相同',
     stream_missing: '缺一路流',
     rate_outlier: '频率明显偏低',
     decode_concealed: '解码器掩盖了错误',
@@ -1531,14 +1532,13 @@ export const zh = {
       none: '没有发现问题',
       note: '判废只落在文件有问题的 episode 上；可疑的留在通过清单并照常交付，同时在人工裁决「完整性存疑」里确认。',
     },
-    dedup: {
-      checkedFoot: '判决放行的条目',
+    duplicate_check: {
       groups: '重复组',
-      removed: '剔除',
+      duplicated: '涉及条数',
+      duplicatedFoot: '每一条都写明和哪几条相同，只报告、不判废',
       sizes: '重复组大小',
       size: (n: string) => `${n} 条一组`,
       none: '没有发现重复的条目',
-      note: '去重固定单线程：并发会让同一份数据两次跑出不同的保留对象。',
     },
     skill: {
       covered: '覆盖条数',
@@ -1966,7 +1966,7 @@ export const zh = {
       videoEvidence: (camera: string, start: string, end: string) => `${camera} · ${start}–${end} 秒`,
       taskType: { persistent: '持久任务', transient: '瞬时任务' } as Record<string, string>,
     },
-    dedup: { none: '无重复', dupOf: '与', dupOfSuffix: '字节级完全重复' },
+    duplicate: { none: '无重复', same: '与', sameSuffix: '完全相同（动作与各路画面字节一致）' },
     integrity: {
       findings: '发现',
       level: { reject: '判废', suspect: '可疑' } as Record<string, string>,
@@ -2070,9 +2070,6 @@ export const zh = {
     watch: '看视频',
     restore: '恢复为可用',
     keepRejected: '维持拒绝',
-    duplicateOf: (ep: number) => `与 episode ${ep} 字节级完全重复`,
-    thisEpisode: (ep: number) => `ep ${ep}（本条，被判重复）`,
-    keptEpisode: (ep: number) => `ep ${ep}（保留的那条）`,
   },
 
   credentials: {

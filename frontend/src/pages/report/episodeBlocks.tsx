@@ -364,17 +364,23 @@ function TaskBlock({ record }: BlockProps) {
   );
 }
 
-function DedupBlock({ record, onEpisode }: BlockProps) {
+/** 重复检测 (D87): the other episodes of this one's group, each a link; reported only. */
+function DuplicateBlock({ record, onEpisode }: BlockProps) {
   const d = details(record);
-  const dup = num(d.duplicate_of);
-  if (dup === null) return <div className="muted">{E().dedup.none}</div>;
+  const same = (Array.isArray(d.same_as) ? d.same_as : []).map(num).filter((e): e is number => e !== null);
+  if (!same.length) return <div className="muted">{E().duplicate.none}</div>;
   return (
-    <div className="episode-line bad" data-testid="duplicate-of">
-      {E().dedup.dupOf}{' '}
-      <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => onEpisode(dup)}>
-        {zh.report.episode(dup)}
-      </Button>{' '}
-      {E().dedup.dupOfSuffix}
+    <div className="episode-line warn" data-testid="same-as">
+      {E().duplicate.same}{' '}
+      {same.map((ep, i) => (
+        <span key={ep}>
+          {i ? '、' : null}
+          <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => onEpisode(ep)}>
+            {zh.report.episode(ep)}
+          </Button>
+        </span>
+      ))}{' '}
+      {E().duplicate.sameSuffix}
     </div>
   );
 }
@@ -589,7 +595,7 @@ export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
   video_action_sync: SyncBlock,
   task_success: TaskBlock,
   camera_defects: CameraDefectsBlock,
-  dedup: DedupBlock,
+  duplicate_check: DuplicateBlock,
   eef_video_consistency: EefBlock,
 };
 

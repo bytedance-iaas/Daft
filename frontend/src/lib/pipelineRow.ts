@@ -1,28 +1,46 @@
 // One row of the Episode 流水线 card (C4 PipelineEpisode). A two-block run (design doc 17 §3.3) gives every
 // per-episode stage's state over both blocks and a provisional verdict - the policy on the findings so far; a
-// funnel run (a task made before) gives its position in the funnel.
+// funnel run (a task made before) gives its position in the funnel. The card shows the stages in their groups
+// (design doc 26 §2, D88): 数据完整性, CPU 检查, 模型检查.
 import type { PipelineEpisode } from '../api/types';
 import { zh } from '../locales/zh';
+import { STAGE_GROUPS, progressStageLabel } from './taskView';
 
 const copy = zh.taskDetail.pipelineEpisodes;
-const STAGE: Record<string, string> = copy.stage;
-/** The per-episode stages of the two blocks, as the card lists them. */
-const CPU_STAGES = ['integrity', 'numeric', 'frame'];
-/** A model module's CPU half, then its model half (registry 5.3, design doc 23 §1): one chain across the blocks. */
-const MODEL_STAGES = ['vlm_prep', 'vlm'];
-const ORDER = [...CPU_STAGES, ...MODEL_STAGES];
+/** The groups of the episodes' stages, as the card lists them. */
+export const ROW_GROUPS = STAGE_GROUPS.filter((g) => g.perEpisode);
+/** The groups of each block: the CPU block's, then the model block's (a group of the other block may wait on it). */
+const CPU_GROUPS = ['integrity', 'cpu'];
 const MARK: Record<string, string> = { done: '✓', error: '✗', running: '…', waiting: '…' };
 
 type Row = Pick<PipelineEpisode, 'stages' | 'next_stage' | 'last_stage' | 'verdict' | 'reason' | 'provisional'>;
 
 const open = (state: string | undefined) => state === 'waiting' || state === 'running';
 
-/** The stages a two-block row waits for: the first unfinished one of each block. */
-export function waitingStages(row: Row): string[] {
+/** A group's state on a row: under way while any of its stages is; then an error if any had one; else done. */
+function groupState(stages: Record<string, string>, members: readonly string[]): string | undefined {
+  const states = members.filter((id) => id in stages).map((id) => stages[id]);
+  if (!states.length) return undefined;
+  if (states.some((s) => s === 'running')) return 'running';
+  if (states.some(open)) return states.some((s) => s === 'done' || s === 'error') ? 'running' : 'waiting';
+  return states.includes('error') ? 'error' : 'done';
+}
+
+/** Each group of the row with its state, in order (groups the row has no stage of left out). */
+export function rowGroups(row: Row): { key: string; label: string; state: string }[] {
   const s = row.stages ?? {};
-  const cpu = CPU_STAGES.find((id) => open(s[id]));
-  const model = MODEL_STAGES.find((id) => open(s[id]));
-  return [cpu, model].filter((id): id is string => Boolean(id));
+  return ROW_GROUPS.flatMap((g) => {
+    const state = groupState(s, g.members);
+    return state ? [{ key: g.key, label: zh.stageGroup[g.key], state }] : [];
+  });
+}
+
+/** The groups a two-block row waits for: the first unfinished one of each block. */
+export function waitingStages(row: Row): string[] {
+  const groups = rowGroups(row).filter((g) => open(g.state));
+  const cpu = groups.find((g) => CPU_GROUPS.includes(g.key));
+  const model = groups.find((g) => !CPU_GROUPS.includes(g.key));
+  return [cpu, model].filter((g): g is NonNullable<typeof g> => Boolean(g)).map((g) => g.label);
 }
 
 export function rowFinished(row: Row): boolean {
@@ -34,18 +52,24 @@ export function rowFinished(row: Row): boolean {
 export function rowState(row: Row): string {
   if (row.reason === 'missing') return copy.missing;
   if (row.stages) {
-    if (!rowFinished(row)) return copy.waiting(waitingStages(row).map((id) => STAGE[id] ?? id).join('、'));
+    if (!rowFinished(row)) return copy.waiting(waitingStages(row).join('、'));
     // provisional while anything runs; once the run is over the Daemon gives the current results' verdict (C4 5.3.2)
     const labels = row.provisional === false ? copy.final : copy.provisional;
     return (row.verdict && labels[row.verdict]) || copy.finished;
   }
   if (row.next_stage === 'done') return (copy.verdict as Record<string, string>)[row.verdict ?? ''] ?? copy.finished;
-  return copy.waiting(STAGE[row.next_stage ?? ''] ?? row.next_stage ?? '');
+  return copy.waiting(row.next_stage ? progressStageLabel(row.next_stage) : '');
 }
 
-/** The 最近阶段 column: a funnel row's last stage; a two-block row's stages, each marked done / error / not yet. */
+/** The 最近阶段 column: a funnel row's last stage; a two-block row's groups, each marked done / error / not yet. */
 export function rowStages(row: Row): string {
-  const s = row.stages;
-  if (!s) return STAGE[row.last_stage ?? ''] ?? row.last_stage ?? '—';
-  return ORDER.filter((id) => id in s).map((id) => `${STAGE[id] ?? id} ${MARK[s[id]] ?? ''}`.trim()).join(' · ');
+  if (!row.stages) return row.last_stage ? progressStageLabel(row.last_stage) : '—';
+  return rowGroups(row).map((g) => `${g.label} ${MARK[g.state] ?? ''}`.trim()).join(' · ');
+}
+
+/** The seconds a row's episode spent in a group: its stages' added up (none yet: null). */
+export function groupSeconds(row: Pick<PipelineEpisode, 'stage_processing_s'>, members: readonly string[]): number | null {
+  const took = (row.stage_processing_s ?? {}) as Record<string, number | undefined>;
+  const times = members.map((id) => took[id]).filter((x): x is number => x !== null && x !== undefined);
+  return times.length ? times.reduce((a, x) => a + x, 0) : null;
 }

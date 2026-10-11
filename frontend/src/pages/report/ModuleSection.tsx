@@ -5,6 +5,7 @@ import { moduleById, moduleName, useModules } from '../../api/queries';
 import type { ReportModuleSection, ReportModuleSectionV2, Subtask } from '../../api/types';
 import { FindingsView } from '../../features/findings/FindingsView';
 import { LEVEL_TAG, moduleRole, placeLabel } from '../../lib/findings';
+import { isAppealable } from '../../lib/registry';
 import { formatValue, subtaskName } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
@@ -81,8 +82,9 @@ export function ModuleSection({
       </Link>
     )
   ) : null;
-  // D42: rejects attributed to this module that a person may appeal (optional, not pending).
-  const appealable = section.adjudication?.appealable ?? 0;
+  // D42: rejects attributed to this module that a person may appeal (optional, not pending) - only while the registry
+  // still has the module appealable: a report of exact dedup, run before it was removed (D87), offers none
+  const appealable = reg.data && !isAppealable(spec) ? 0 : (section.adjudication?.appealable ?? 0);
   const appeal = appealable ? (
     readOnly ? (
       <Tooltip content={zh.report.historyDisabled}>
@@ -109,7 +111,7 @@ export function ModuleSection({
           {v2 ? (
             <>
               <span className="muted" style={{ fontSize: 12 }}>
-                {placeLabel(reg.data, spec)}
+                {placeLabel(spec)}
               </span>
               <Tag size="small" color={LEVEL_TAG[role]}>
                 {zh.findings.role[role]}

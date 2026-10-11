@@ -6,7 +6,7 @@ describe('which review items the Episode tab links to the adjudication page (D43
   it('questions of the lines a module declares, and appeals of appealable modules', () => {
     expect(askable(registry, { module: 'task_success', kind: 'task_verdict' })).toBe(true);
     expect(askable(registry, { module: 'task_success', kind: 'reject_appeal' })).toBe(true);
-    expect(askable(registry, { module: 'dedup', kind: 'reject_appeal' })).toBe(true);
+    expect(askable(registry, { module: 'duplicate_check', kind: 'reject_appeal' })).toBe(false);    // reported only (D87)
   });
 
   it("another module's abstention is shown, never linked", () => {

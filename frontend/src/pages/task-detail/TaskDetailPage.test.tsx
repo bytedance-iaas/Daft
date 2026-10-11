@@ -158,11 +158,11 @@ describe('任务详情 (07 §4.2)', () => {
     });
     expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/);
     expect(screen.getByTestId('stages-subtask')).toHaveTextContent('子任务 · 重试 #2');
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('1 / 2');
-    expect(screen.getByTestId('stage-report_delivery')).toHaveTextContent('生成报告 & 产物交付 等待中');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('1 / 2');
+    expect(screen.getByTestId('stage-report')).toHaveTextContent('生成报告 等待中');
     // Its stages arrive as plain progress events while it runs: they are the subtask's.
     act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 2, total: 2 }));
-    await waitFor(() => expect(screen.getByTestId('stage-vlm')).toHaveTextContent('2 / 2'));
+    await waitFor(() => expect(screen.getByTestId('stage-model')).toHaveTextContent('2 / 2'));
     // It fails: the task keeps its own state (the parent never goes back, 01 §3) and the main
     // run's stages were never touched.
     finishSubtask(MAIN, 'failed');
@@ -172,7 +172,7 @@ describe('任务详情 (07 §4.2)', () => {
     });
     await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^错误$/));
     expect(screen.queryByTestId('stages-subtask')).toBeNull();
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('49 / 49');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('50 / 50');
     release();
   });
 
@@ -211,15 +211,14 @@ describe('任务详情 (07 §4.2)', () => {
     await waitFor(() => expect(screen.getByTestId('live-mode')).toHaveAttribute('data-mode', 'sse'));
   });
 
-  it('stage bars explain why the total dropped; module errors expand to the episodes', async () => {
+  it('stage bars by group carry their notes; module errors expand to the episodes', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
-    expect(await screen.findByTestId('stage-frame')).toHaveTextContent('数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条');
-    // 终判、报告、导出、交付核验 read as one bar (sixth round; requester item 11 had two).
-    expect(screen.getByTestId('stage-report_delivery')).toHaveTextContent(/^生成报告 & 产物交付 已完成2 \/ 2 · 用时 7 秒/);
-    expect(screen.getByTestId('stage-report_delivery')).toHaveTextContent('主流程结束时没有可交付的条目，没有导出');
-    expect(screen.queryByTestId('stage-report_generation')).toBeNull();
-    expect(screen.queryByTestId('stage-delivery')).toBeNull();
-    for (const raw of ['final', 'report', 'export', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
+    // the stages in their groups (design doc 26 §2): CPU 检查, 模型检查, 生成报告
+    expect(await screen.findByTestId('stage-cpu')).toHaveTextContent(/^CPU 检查 已完成50 \/ 50/);
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('2 条出错（ep 7、ep 31），暂不交付，等待补跑');
+    expect(screen.getByTestId('stage-report')).toHaveTextContent(/^生成报告 已完成3 \/ 3 · 用时 16 秒/);
+    for (const raw of ['numeric', 'frame', 'duplicate', 'vlm', 'final', 'export', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
+    expect(screen.getByTestId('stages')).not.toHaveTextContent(/档|产物交付/);
     const table = screen.getByTestId('modules-table');
     await user.click(await within(table).findByRole('button', { name: /2 条待补跑/ }));
     const list = await screen.findByTestId('error-episodes');
@@ -255,9 +254,9 @@ describe('任务详情 (07 §4.2)', () => {
     // The text shows clamped on the node, in full in a popover.
     const pause = nodes[2] as HTMLElement;
     const text = pause.querySelector('.htl-text') as HTMLElement;
-    expect(text).toHaveTextContent('Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条');
+    expect(text).toHaveTextContent('Daemon 升级（v2.0.3 → v2.0.4），模型检查停在 21 / 49 条');
     await user.hover(text);
-    expect(await screen.findByText('Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条。不是用户操作，不需要处理。', { selector: '.htl-popover' })).toBeInTheDocument();
+    expect(await screen.findByText('Daemon 升级（v2.0.3 → v2.0.4），模型检查停在 21 / 49 条。不是用户操作，不需要处理。', { selector: '.htl-popover' })).toBeInTheDocument();
   });
 
   it('详细进度 and Token 消耗 sit side by side; Token 明细 by module or by subtask with a 合计 row, and no money (D12)', async () => {
@@ -334,7 +333,7 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.queryByRole('button', { name: '去被拒复议' })).toBeNull();
     await user.click(screen.getByRole('tab', { name: '被拒复议' }));
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication?tab=appeals`));
-    expect(await within(await screen.findByTestId('appeals', {}, { timeout: 5000 })).findByTestId('card-44', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(await screen.findByTestId('appeals', {}, { timeout: 5000 })).findByTestId('card-6', {}, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it('a task without a result has no 人工裁决 in its header', async () => {
@@ -395,28 +394,32 @@ describe('任务详情 (07 §4.2)', () => {
   it('the running task shows the header actions by state', async () => {
     const { user } = renderApp(`/tasks/${RUNNING}`);
     await screen.findByRole('heading', { name: /umi_640 全量质检/ });
-    // 详细进度 gives counts and time used, never an estimate (requester item 20).
-    expect(screen.getByTestId('stage-autolabel')).toHaveTextContent('640 / 640 · 用时 10 分 12 秒');
+    // 详细进度 gives counts, never an estimate (requester item 20).
     expect(screen.getByTestId('stages')).not.toHaveTextContent('预计');
-    // The streaming layers are drawn as the pipeline activity: in flight, queued, done.
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('410 / 631');
-    expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('32');
+    // The episodes' stages are drawn as the pipeline activity, a card per group (design doc 26 §2): in flight, queued, done.
+    expect(screen.getByTestId('stage-cpu')).toHaveTextContent('640 / 640');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('410 / 640');
+    expect(screen.getByTestId('inflight-model')).toHaveTextContent('32');
+    // a group's time per episode adds up its stages' (0.06 + 13 + 0.02 s)
+    expect(screen.getByTestId('stage-cpu')).toHaveTextContent('平均每条 13.08 s');
     // sixth round: the data integrity layer is a low strip on top - progress and time per episode
     // only, no card, not on the timeline; the timeline hatches the waits under the solid work
     const strip = screen.getByTestId('stage-integrity');
     expect(strip).toHaveClass('pipeline-strip');
-    expect(strip).toHaveTextContent(/^完整性档640 \/ 640平均每条 2\.65 s$/);
+    expect(strip).toHaveTextContent(/^数据完整性640 \/ 640平均每条 2\.65 s$/);
     expect(strip.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#00B42A' });   // green
     expect(screen.queryByTestId('inflight-integrity')).toBeNull();
     const timeline = screen.getByTestId('pipeline-overlap');
-    expect(timeline).toHaveTextContent('三层运行时间线');
+    expect(timeline).toHaveTextContent('运行时间线');
     expect(screen.queryByTestId('timeline-integrity')).toBeNull();
-    const frameRow = screen.getByTestId('timeline-frame');
-    expect(frameRow.querySelectorAll('.pipeline-time-bar.is-waiting')).toHaveLength(1);
-    expect(frameRow.querySelectorAll('.pipeline-time-bar:not(.is-waiting)')).toHaveLength(3);
+    // a row per group: the group's run hatched, its stages' spans with episodes out solid over it
+    const cpuRow = screen.getByTestId('timeline-cpu');
+    expect(cpuRow.querySelectorAll('.pipeline-time-bar.is-waiting')).toHaveLength(1);
+    expect(cpuRow.querySelectorAll('.pipeline-time-bar:not(.is-waiting)')).toHaveLength(6 + 3 + 1);
+    expect(screen.getByTestId('timeline-model')).toBeInTheDocument();
     expect(timeline).toHaveTextContent('实色为处理，斜纹为等待');
     // 终判 … 交付核验 are one row; 判决 (about a second) has none
-    expect(screen.getByTestId('stage-report_delivery')).toHaveTextContent('生成报告 & 产物交付 等待中');
+    expect(screen.getByTestId('stage-report')).toHaveTextContent('生成报告 等待中');
     expect(screen.queryByTestId('stage-verdict')).toBeNull();
     expect(screen.getByTestId('stages')).not.toHaveTextContent('判决');
     // On the detail page 「查看」 makes no sense: 暂停 becomes the primary action.
@@ -482,21 +485,21 @@ describe('SSE and the polling fallback (03 §5, F3.2 ②)', () => {
       processing: { count: 2, total_s: 8, mean_s: 4, min_s: 3, max_s: 5 } };
     act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 2, total: 7, pipeline }));
     expect(await screen.findByTestId('pipeline-activity')).toBeInTheDocument();
-    expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('3条在途');
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('2 条待进入');
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('平均每条 4.00 s');
-    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('第 4 批');
-    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('ep 6');
+    expect(screen.getByTestId('inflight-model')).toHaveTextContent('3条在途');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('2 条待进入');
+    expect(screen.getByTestId('stage-model')).toHaveTextContent('平均每条 4.00 s');
+    expect(screen.getByTestId('arrival-model')).toHaveTextContent('第 4 批');
+    expect(screen.getByTestId('arrival-model')).toHaveTextContent('ep 6');
     expect(screen.getByTestId('pipeline-overlap')).toBeInTheDocument();
     act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 3, total: 7,
       pipeline: { ...pipeline, inflight: 4, queued: 0, dispatches: 5,
         recent: [...pipeline.recent, { number: 5, count: 2, episodes: [7, 8], at: at + 1 }] } }));
-    await waitFor(() => expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('4条在途'));
-    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('第 5 批');
-    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('新进入 2 条');
+    await waitFor(() => expect(screen.getByTestId('inflight-model')).toHaveTextContent('4条在途'));
+    expect(screen.getByTestId('arrival-model')).toHaveTextContent('第 5 批');
+    expect(screen.getByTestId('arrival-model')).toHaveTextContent('新进入 2 条');
   });
 
-  it('a layer the next one holds back says 等待下游——<that layer> instead of 0 in flight (sixth round)', async () => {
+  it('a group the other one holds back says 等待下游——<that group> instead of 0 in flight (sixth round)', async () => {
     findTask(RUNNING)!.progress.stages.find((s) => s.id === 'frame')!.state = 'running';
     setEventSourceFactory((url) => new FakeEventSource(url) as unknown as EventSource);
     renderApp(`/tasks/${RUNNING}`);
@@ -508,13 +511,13 @@ describe('SSE and the polling fallback (03 §5, F3.2 ②)', () => {
       started_at: at - 10000, finished_at: null, updated_at: at, processing: { count: 2, total_s: 8, mean_s: 4, min_s: 3, max_s: 5 },
       busy: [{ start: at - 10000, end: at - 6000 }] };
     act(() => es.emit('progress', { id: 'frame', state: 'running', done: 2, total: 7, pipeline: { ...base, inflight: 0, queued: 33, held_by_downstream: true } }));
-    await waitFor(() => expect(screen.getByTestId('inflight-frame')).toHaveTextContent(/^等待下游——VLM 档$/));
+    await waitFor(() => expect(screen.getByTestId('inflight-cpu')).toHaveTextContent(/^等待下游——模型检查$/));
     // episodes out again: the count is back
     act(() => es.emit('progress', { id: 'frame', state: 'running', done: 2, total: 7, pipeline: { ...base, inflight: 2, queued: 31, held_by_downstream: true } }));
-    await waitFor(() => expect(screen.getByTestId('inflight-frame')).toHaveTextContent('2条在途'));
+    await waitFor(() => expect(screen.getByTestId('inflight-cpu')).toHaveTextContent('2条在途'));
     // nothing out and not held (waiting for the layer before): still 0 in flight
     act(() => es.emit('progress', { id: 'frame', state: 'running', done: 2, total: 7, pipeline: { ...base, inflight: 0, queued: 0, held_by_downstream: false } }));
-    await waitFor(() => expect(screen.getByTestId('inflight-frame')).toHaveTextContent('0条在途'));
+    await waitFor(() => expect(screen.getByTestId('inflight-cpu')).toHaveTextContent('0条在途'));
   });
 
   it('falls back to 5 s polling when EventSource is not available at all', async () => {
@@ -541,7 +544,7 @@ describe('SSE and the polling fallback (03 §5, F3.2 ②)', () => {
     expect(gets()).toBe(quiet);
     // A progress event updates the stage bar in place.
     act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 500, total: 631, elapsed_s: 1200, eta_s: 300 }));
-    await waitFor(() => expect(screen.getByTestId('stage-vlm')).toHaveTextContent('500 / 631'));
+    await waitFor(() => expect(screen.getByTestId('stage-model')).toHaveTextContent('500 / 631'));
     act(() => es.emit('usage', { prompt_tokens: 9_990_000, completion_tokens: 1, reasoning_tokens: 1, cached_tokens: 1, requests: 1, requests_unknown_usage: 0 }));
     await waitFor(() => expect(screen.getByTestId('token-totals')).toHaveTextContent('9.99M'));
     // The stream drops: polling takes over until it is back.

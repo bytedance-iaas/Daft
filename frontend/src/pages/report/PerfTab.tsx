@@ -9,7 +9,7 @@ import { PageError } from '../../components/PageError';
 import { StatCell } from '../../components/StatCell';
 import { compactNumber, percent } from '../../lib/format';
 import { callKindLabel, fieldLabel, formatValue, seconds, subtaskName, usageByCallKind } from '../../lib/reportView';
-import { stageLabel } from '../../lib/taskView';
+import { groupsOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const { Row, Col } = Grid;
@@ -35,6 +35,25 @@ function objectRows(o: Record<string, unknown> | undefined): { label: string; va
 
 type Scope = { kind: 'all' } | { kind: 'main' } | { kind: 'subtask'; id: string };
 
+
+type PerfStage = { id: string; wall_s: number; share?: number };
+
+/**
+ * The stage table in the groups progress views use (design doc 26 §2): the stages of a group of the episodes run
+ * side by side, so the group took as long as its longest stage; the steps after both blocks add up.
+ */
+export function perfStages(stages: readonly PerfStage[]): { id: string; label: string; wall_s: number; share?: number }[] {
+  return groupsOf(stages.map((s) => s.id)).map((g) => {
+    const members = stages.filter((s) => g.members.includes(s.id));
+    if (g.perEpisode) {
+      const longest = members.reduce((a, s) => (s.wall_s > a.wall_s ? s : a));
+      return { id: g.key, label: g.label, wall_s: longest.wall_s, ...(longest.share !== undefined ? { share: longest.share } : {}) };
+    }
+    const shares = members.map((s) => s.share).filter((x): x is number => x !== undefined);
+    return { id: g.key, label: g.label, wall_s: members.reduce((a, s) => a + s.wall_s, 0), ...(shares.length ? { share: shares.reduce((a, x) => a + x, 0) } : {}) };
+  });
+}
+
 /**
  * 性能剖析 (07 §5, 06 §6.1): latency by call kind (v1 labels verbatim, wall-clock, never
  * count × mean), effective concurrency, stage wall shares, retries and merging, interrupted
@@ -49,6 +68,7 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
   });
   const usage = useQuery({ queryKey: qk.usage(taskId), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: taskId } } })) });
   const p = perf.data;
+  const stages = perfStages(p?.stages ?? []);
   const radioValue = scope.kind === 'subtask' ? 'subtask' : scope.kind;
   const tokens = usageByCallKind(usage.data?.actual ?? [], scope.kind, subtaskId);
   return (
@@ -132,16 +152,16 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
             <Stat label={zh.report.redone} value={String(p.redone_after_interruption ?? 0)} foot={zh.report.redoneFoot} />
           </div>
           <Card title={zh.report.perfStages}>
-            {p.stages.length ? (
+            {stages.length ? (
               <Row gutter={24}>
                 <Col span={14}>
                   <Chart
                     option={barOption(
-                      p.stages.map((s) => ({ name: stageLabel(s.id), value: s.wall_s })),
+                      stages.map((s) => ({ name: s.label, value: s.wall_s })),
                       { horizontal: true },
                     )}
-                    summary={chartSummary(p.stages.map((s) => ({ name: stageLabel(s.id), value: s.wall_s })))}
-                    height={Math.max(160, p.stages.length * 30)}
+                    summary={chartSummary(stages.map((s) => ({ name: s.label, value: s.wall_s })))}
+                    height={Math.max(160, stages.length * 30)}
                   />
                 </Col>
                 <Col span={10}>
@@ -149,10 +169,10 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
                     rowKey="id"
                     size="small"
                     pagination={false}
-                    data={p.stages}
+                    data={stages}
                     data-testid="perf-stages"
                     columns={[
-                      { title: zh.taskDetail.colStage, dataIndex: 'id', render: (v: string) => stageLabel(v) },
+                      { title: zh.taskDetail.colStage, dataIndex: 'label' },
                       { title: zh.report.colWall, dataIndex: 'wall_s', render: (v: number) => seconds(v) },
                       { title: zh.report.colShare, dataIndex: 'share', render: (v?: number) => percent(v ?? null, 0) },
                     ]}

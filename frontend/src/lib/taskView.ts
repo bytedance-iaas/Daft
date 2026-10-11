@@ -45,44 +45,61 @@ export function currentStage<T extends { state: string }>(stages: readonly T[]):
   return started[started.length - 1] ?? stages[0];
 }
 
-/** The funnel's stages in order (the streaming pipeline's layers); integrity is the data integrity
- * module's, first (design doc 14); vlm_prep the CPU halves of model modules (registry 5.3). */
-export const FUNNEL_STAGES: readonly string[] = ['integrity', 'numeric', 'frame', 'vlm_prep', 'vlm'];
-
 /** A stage's own name, as the CLI output, the log filter and the execution plan use it. */
 export function stageLabel(id: string): string {
   return zh.stage[id] ?? id;
 }
 
-export function stagePercent(s: StageProgress | undefined): number {
+export function stagePercent(s: Pick<StageProgress, 'done' | 'total'> | undefined): number {
   if (!s || !s.total) return 0;
   return Math.min(100, Math.round((s.done / s.total) * 100));
 }
 
 type StageState = StageProgress['state'];
 
+export type StageGroupKey = 'integrity' | 'cpu' | 'model' | 'report';
+
 /**
- * Stages that progress views show as one: 终判、报告、交付核验 read as 「生成报告 & 产物交付」
- * (sixth round; requester item 11 had made them two rows). A task that ran before the export was
- * retired (D69) also has an `export` stage, which joins the same group. The log filter and the
- * execution plan keep the raw stages, which mirror the CLI output.
+ * The groups every progress view shows (design doc 26 §2, D88): 数据完整性 alone, then CPU 检查 - every stage that
+ * runs on the CPU, the model modules' CPU halves (vlm_prep) included - and 模型检查, the stages of the episodes;
+ * then 生成报告, the steps after both blocks (终判、报告、交付核验; a task that ran before the export was retired,
+ * D69, also has `export`). The backend's stages stay as they are; the console groups them. A stage of no group
+ * (one a new module adds, or a stage of a task made before) is shown on its own.
  */
-export const STAGE_GROUPS: readonly { key: string; members: readonly string[] }[] = [
-  { key: 'report_delivery', members: ['final', 'report', 'export', 'verify'] },
+export const STAGE_GROUPS: readonly { key: StageGroupKey; members: readonly string[]; perEpisode: boolean }[] = [
+  { key: 'integrity', members: ['integrity'], perEpisode: true },
+  { key: 'cpu', members: ['numeric', 'frame', 'duplicate', 'vlm_prep'], perEpisode: true },
+  { key: 'model', members: ['vlm'], perEpisode: true },
+  { key: 'report', members: ['final', 'report', 'export', 'verify'], perEpisode: false },
 ];
 
-/** Stages progress views leave out: the verdict takes about a second (sixth round). The log
+/** The stages each episode goes through (the streaming pipeline's layers), in order. */
+export const EPISODE_STAGES: readonly string[] = STAGE_GROUPS.filter((g) => g.perEpisode).flatMap((g) => g.members);
+
+/** Stages progress views leave out: a funnel run's verdict takes about a second (sixth round). The log
  * filter and the execution plan still list it. */
 export const HIDDEN_STAGES: readonly string[] = ['verdict'];
 
-function groupOf(stageId: string) {
+export function stageGroupOf(stageId: string) {
   return STAGE_GROUPS.find((g) => g.members.includes(stageId));
 }
 
 /** The name a stage goes by where progress is shown: its group's name, else its own. */
 export function progressStageLabel(stageId: string): string {
-  const g = groupOf(stageId);
+  const g = stageGroupOf(stageId);
   return g ? zh.stageGroup[g.key] : stageLabel(stageId);
+}
+
+/**
+ * The groups of `stageIds` in group order, each with its members present there, then every stage of no group
+ * (the log filter's options, the execution plan's rows).
+ */
+export function groupsOf(stageIds: readonly string[]): { key: string; label: string; members: string[]; perEpisode: boolean }[] {
+  const grouped = STAGE_GROUPS.map((g) => ({ key: g.key as string, label: zh.stageGroup[g.key], members: g.members.filter((m) => stageIds.includes(m)), perEpisode: g.perEpisode })).filter(
+    (g) => g.members.length,
+  );
+  const rest = stageIds.filter((id) => !stageGroupOf(id)).map((id) => ({ key: id, label: stageLabel(id), members: [id], perEpisode: false }));
+  return [...grouped, ...rest];
 }
 
 /** One row of a progress view: a stage, or a group of stages shown as one. */
@@ -138,17 +155,39 @@ function single(s: StageProgress): StageView {
   };
 }
 
+/** The time a group of stages took: the union of the members' runs where they say when they ran (stages of a block
+ * overlap), else the longest member's time - or, for steps one after the other, the sum. */
+function groupElapsed(members: readonly StageProgress[], perEpisode: boolean): number | null {
+  const times = members.map((m) => m.elapsed_s).filter((x): x is number => x !== null && x !== undefined);
+  if (!perEpisode) return times.length ? times.reduce((a, x) => a + x, 0) : null;
+  const runs = members.map((m) => m.pipeline).filter((p) => p && p.started_at !== null);
+  if (runs.length && runs.length === members.filter((m) => m.state !== 'pending' && m.state !== 'skipped').length) {
+    const spans = runs.map((p) => [p!.started_at as number, p!.finished_at ?? p!.updated_at] as const).sort((x, y) => x[0] - y[0]);
+    let total = 0;
+    let [from, to] = spans[0];
+    for (const [a, z] of spans.slice(1)) {
+      if (a > to) {
+        total += to - from;
+        [from, to] = [a, z];
+      } else to = Math.max(to, z);
+    }
+    return (total + to - from) / 1000;
+  }
+  return times.length ? Math.max(...times) : null;
+}
+
 /**
- * Stages as progress views show them (requester item 11): the members of a STAGE_GROUPS entry
- * become one row where the first of them stands. Counts and times add up; the bar weighs every
- * member not skipped the same, so it only moves forward; notes are joined.
+ * Stages as progress views show them (design doc 26 §2): the members of a STAGE_GROUPS entry become one row
+ * where the first of them stands. A group of the episodes' stages has done the episodes every member has done
+ * (each stage takes every selected episode), out of its total; the steps after both blocks add up. The bar
+ * weighs every member not skipped the same, so it only moves forward; notes are joined.
  */
 export function groupStages(stages: readonly StageProgress[]): StageView[] {
   const out: StageView[] = [];
   const merged = new Set<string>();
   for (const s of stages) {
     if (HIDDEN_STAGES.includes(s.id)) continue;
-    const g = groupOf(s.id);
+    const g = stageGroupOf(s.id);
     if (!g) {
       out.push(single(s));
       continue;
@@ -157,17 +196,20 @@ export function groupStages(stages: readonly StageProgress[]): StageView[] {
     merged.add(g.key);
     const members = stages.filter((x) => g.members.includes(x.id));
     const counted = members.filter((m) => m.state !== 'skipped');
-    const times = members.map((m) => m.elapsed_s).filter((x): x is number => x !== null && x !== undefined);
     const notes = members.map((m) => m.note).filter((x): x is string => Boolean(x));
+    const done = g.perEpisode
+      ? counted.length ? Math.min(...counted.map((m) => m.done)) : 0
+      : members.reduce((a, m) => a + m.done, 0);
+    const total = g.perEpisode ? Math.max(0, ...members.map((m) => m.total)) : members.reduce((a, m) => a + m.total, 0);
     out.push({
       key: g.key,
       label: zh.stageGroup[g.key],
       members: members.map((m) => m.id),
       state: mergedStageState(members.map((m) => m.state)),
-      done: members.reduce((a, m) => a + m.done, 0),
-      total: members.reduce((a, m) => a + m.total, 0),
+      done,
+      total,
       percent: counted.length ? Math.round((counted.reduce((a, m) => a + barFraction(m), 0) / counted.length) * 100) : 0,
-      elapsed_s: times.length ? times.reduce((a, x) => a + x, 0) : null,
+      elapsed_s: groupElapsed(members, g.perEpisode),
       ...(notes.length ? { note: notes.join('；') } : {}),
     });
   }

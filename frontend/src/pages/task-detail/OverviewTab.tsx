@@ -15,7 +15,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel, type StageView } from '../../lib/taskView';
+import { EPISODE_STAGES, activeSubtask, groupStages, isTerminalState, progressStageLabel, progressStages, stageLabel, subtaskLabel, type StageView } from '../../lib/taskView';
 import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
@@ -101,17 +101,15 @@ function SubtaskTag({ task, subtasks }: { task: Task; subtasks: readonly Subtask
 }
 
 /**
- * 详细进度 (07 §4.2; 分档进度 until 2026-10-10): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
- * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
- * runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the
- * per-episode stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart
- * (the integrity strip, a card per stage, the run timeline) and the other stages keep their bars. A
- * two-block run (design doc 17 §5.3) is shown the same way (requester, 2026-10-04): both blocks' stages
- * in the one chart, autolabel first among the bars, then the full-set steps and 生成报告 & 产物交付.
+ * 详细进度 (07 §4.2; 分档进度 until 2026-10-10): the stages in their groups (design doc 26 §2, D88) - 数据完整性,
+ * CPU 检查, 模型检查, 生成报告 - one bar each, with counts and time used; no time estimate (item 20). While a
+ * subtask runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the episodes'
+ * stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart (the integrity
+ * strip, a card per group, the run timeline) and 生成报告 keeps its bar.
  */
 function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
   const { active, raw } = stageSource(task, subtasks);
-  const lanes = raw.filter((s) => FUNNEL_STAGES.includes(s.id));
+  const lanes = raw.filter((s) => EPISODE_STAGES.includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
   const rest = showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw;
   const stages = groupStages([...rest.filter((s) => s.id === 'autolabel'), ...rest.filter((s) => s.id !== 'autolabel')]);
@@ -271,7 +269,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   // only the summary column gives way.
   const columns: ColumnProps<ModuleState>[] = [
     { title: zh.taskDetail.colModule, dataIndex: 'name', width: 140, render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
-    { title: zh.taskDetail.colStage, key: 'stage', dataIndex: 'id', width: 100, render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
+    { title: zh.taskDetail.colStage, key: 'stage', dataIndex: 'id', width: 100, render: (_: unknown, m) => progressStageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
     {
       title: zh.taskDetail.colState,
       dataIndex: 'state',
@@ -291,7 +289,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
       render: (_: unknown, m) => {
         const stage = reg.data?.modules.find((x) => x.id === m.id)?.stage;
         const mean = task.progress.stages.find((s) => s.id === stage)?.pipeline?.processing?.mean_s;
-        if (stage && FUNNEL_STAGES.includes(stage)) {
+        if (stage && EPISODE_STAGES.includes(stage)) {
           return <span className="nowrap">{mean != null ? zh.taskDetail.perEpisode(mean.toFixed(2)) : '—'}</span>;
         }
         return <span className="nowrap">{m.elapsed_s != null ? zh.taskDetail.wholeStage(zh.time.duration(m.elapsed_s)) : '—'}</span>;
@@ -449,6 +447,11 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
   if (plan.isLoading) return <Spin />;
   if (!plan.data) return <Typography.Text type="error">{errorMessage(plan.error)}</Typography.Text>;
   const p = plan.data;
+  // a group's name on its first step only (design doc 26 §2): the steps of a group read as one block of rows
+  const groupLabel = (s: Plan['stages'][number], k: number) => {
+    const name = progressStageLabel(s.id);
+    return k > 0 && progressStageLabel(p.stages[k - 1].id) === name ? '' : name;
+  };
   const limit = (l: { value: number; bound_by: string }, labels: Record<string, string> = {}) =>
     `${l.value}（${labels[l.bound_by] ?? zh.taskDetail.boundBy[l.bound_by] ?? l.bound_by}）`;
   const episodes = (ref: string | undefined) => {
@@ -465,18 +468,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
         pagination={false}
         data={p.stages}
         columns={[
-          { title: zh.taskDetail.planCols.stage, dataIndex: 'id', render: (v: string) => stageLabel(v) },
-          // a plan of the two blocks (2.0, design doc 17 §3): the block of a stage, and its full-set steps
-          ...(p.stages.some((s) => s.block)
-            ? [
-                {
-                  title: zh.taskDetail.planCols.block,
-                  dataIndex: 'block',
-                  render: (_: unknown, s: Plan['stages'][number]) =>
-                    s.block ? zh.taskDetail.planBlock(reg.data?.blocks.find((b) => b.id === s.block)?.title_zh ?? s.block, Boolean(s.full_set)) : '—',
-                },
-              ]
-            : []),
+          { title: zh.taskDetail.planCols.stage, dataIndex: 'id', render: (_: string, s: Plan['stages'][number], k: number) => groupLabel(s, k) },
           { title: zh.taskDetail.planCols.modules, dataIndex: 'modules', render: (v?: string[]) => (v?.length ? v.map((m) => moduleName(reg.data, m)).join('、') : '—') },
           { title: zh.taskDetail.planCols.episodes, dataIndex: 'episodes', render: (v?: string) => episodes(v) },
           {

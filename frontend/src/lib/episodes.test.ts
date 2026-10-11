@@ -62,16 +62,16 @@ describe('preflight → availability and reasons', () => {
   it('presets follow availability', () => {
     const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
     expect(availability(r, 'motion_quality')).toBe('unsupported');
-    expect(presetSelection('full', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup']);
-    expect(presetSelection('quick', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
+    expect(presetSelection('full', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
+    expect(presetSelection('quick', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'duplicate_check']);
     expect(presetSelection('full', registry, preflightFor(rrd, {}))).toEqual([]);
-    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'dedup']);
+    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'duplicate_check']);
   });
 
-  it('ticking a module ticks that module only: 任务成败判定 does not drag 精确去重 along', () => {
+  it('ticking a module ticks that module only', () => {
     expect(toggleModule(['timestamp_check'], 'task_success')).toEqual(['timestamp_check', 'task_success']);
-    expect(toggleModule(['dedup', 'task_success'], 'dedup')).toEqual(['task_success']);
-    expect(toggleModule(['dedup'], 'dedup')).toEqual([]);
+    expect(toggleModule(['duplicate_check', 'task_success'], 'duplicate_check')).toEqual(['task_success']);
+    expect(toggleModule(['duplicate_check'], 'duplicate_check')).toEqual([]);
   });
 
   it('the EEF module is opted into by hand, never by a preset (F5.5, still so after D49)', () => {

@@ -6,6 +6,8 @@ import {
   activeSubtask,
   currentStage,
   displayState,
+  EPISODE_STAGES,
+  groupsOf,
   groupStages,
   hasResult,
   mergedStageState,
@@ -14,7 +16,6 @@ import {
   presetOf,
   progressStageLabel,
   progressStages,
-  stageLabel,
 } from './taskView';
 
 const all = registry.modules.map((m) => m.id);
@@ -31,10 +32,10 @@ describe('presetOf (07 §4.1 preset line, derived from the registry)', () => {
   });
 
   it('anything else is 自选', () => {
-    expect(presetOf(without('dedup'), registry)).toBe('custom');
+    expect(presetOf(without('duplicate_check'), registry)).toBe('custom');
     expect(presetOf(without('task_success'), registry)).toBe('custom');
     expect(presetOf(['task_success'], registry)).toBe('custom');
-    expect(presetOf(nonVlm.filter((id) => id !== 'dedup'), registry)).toBe('custom');
+    expect(presetOf(nonVlm.filter((id) => id !== 'duplicate_check'), registry)).toBe('custom');
     expect(presetOf([], registry)).toBe('custom');
     expect(presetOf(all, undefined)).toBe('custom');
   });
@@ -53,14 +54,21 @@ describe('stages and export', () => {
   });
 });
 
-describe('merged stages (requester item 11)', () => {
-  it('终判、报告、导出、交付核验 read as 生成报告 & 产物交付; other stages keep their names', () => {
-    for (const id of ['final', 'report', 'export', 'verify']) expect(progressStageLabel(id)).toBe('生成报告 & 产物交付');
-    expect(progressStageLabel('vlm')).toBe('VLM 档');
+describe('stages in groups (design doc 26 §2, D88)', () => {
+  it('数据完整性, CPU 检查, 模型检查, 生成报告; a stage of no group keeps its name', () => {
+    expect(progressStageLabel('integrity')).toBe('数据完整性');
+    for (const id of ['numeric', 'frame', 'duplicate', 'vlm_prep']) expect(progressStageLabel(id)).toBe('CPU 检查');
+    expect(progressStageLabel('vlm')).toBe('模型检查');
+    for (const id of ['final', 'report', 'export', 'verify']) expect(progressStageLabel(id)).toBe('生成报告');
     expect(progressStageLabel('brand_new_stage')).toBe('brand_new_stage');
-    // The raw names stay for the log filter and the execution plan.
-    expect(stageLabel('final')).toBe('终判');
-    expect(stageLabel('verify')).toBe('交付核验');
+    expect(EPISODE_STAGES).toEqual(['integrity', 'numeric', 'frame', 'duplicate', 'vlm_prep', 'vlm']);
+    // the log filter's options: the groups present, each with its stages, then the rest
+    expect(groupsOf(['numeric', 'frame', 'duplicate', 'vlm', 'final', 'report', 'system'])).toEqual([
+      { key: 'cpu', label: 'CPU 检查', members: ['numeric', 'frame', 'duplicate'], perEpisode: true },
+      { key: 'model', label: '模型检查', members: ['vlm'], perEpisode: true },
+      { key: 'report', label: '生成报告', members: ['final', 'report'], perEpisode: false },
+      { key: 'system', label: 'system', members: ['system'], perEpisode: false },
+    ]);
   });
 
   it('merged state: failed > running > completed_with_errors, then pending / succeeded / under way', () => {
@@ -74,7 +82,30 @@ describe('merged stages (requester item 11)', () => {
     expect(mergedStageState(['skipped', 'skipped'])).toBe('skipped');
   });
 
-  it('groups where the first member stands, in any stage order, adding counts, times and notes', () => {
+  it('a group of the episodes has done what all its stages have; its time is the union of their runs', () => {
+    const run = (from: number, to: number | null) => ({ inflight: 0, queued: 0, capacity: 1, dispatches: 1, recent: [], started_at: from * 1000, finished_at: to === null ? null : to * 1000, updated_at: (to ?? 500) * 1000 });
+    const views = groupStages([
+      { ...stage('integrity', 'succeeded', 50, 50), elapsed_s: 30 },
+      { ...stage('numeric', 'succeeded', 50, 50), elapsed_s: 20, pipeline: run(0, 20) },
+      { ...stage('frame', 'running', 31, 50), elapsed_s: 300, pipeline: run(5, null) },
+      { ...stage('duplicate', 'running', 30, 50), elapsed_s: 290, pipeline: run(15, null) },
+      { ...stage('vlm', 'completed_with_errors', 50, 50), elapsed_s: 600, note: '2 条出错' },
+      stage('final', 'pending'),
+    ]);
+    expect(views.map((v) => [v.key, v.label, v.members.join('+'), v.state])).toEqual([
+      ['integrity', '数据完整性', 'integrity', 'succeeded'],
+      ['cpu', 'CPU 检查', 'numeric+frame+duplicate', 'running'],
+      ['model', '模型检查', 'vlm', 'completed_with_errors'],
+      ['report', '生成报告', 'final', 'pending'],
+    ]);
+    // 30 of 50: the slowest stage's; the runs 0-20, 5-500 and 15-500 s overlap into 0-500 s
+    expect(views[1]).toMatchObject({ done: 30, total: 50, elapsed_s: 500 });
+    expect(views[2]).toMatchObject({ elapsed_s: 600, note: '2 条出错' });
+    // without the runs' times: the longest stage's
+    expect(groupStages([{ ...stage('numeric', 'succeeded', 5, 5), elapsed_s: 2 }, { ...stage('frame', 'succeeded', 5, 5), elapsed_s: 9 }])[0].elapsed_s).toBe(9);
+  });
+
+  it('生成报告 adds its steps up and is placed where the first of them stands', () => {
     const views = groupStages([
       stage('vlm', 'succeeded', 49, 49),
       { ...stage('final', 'succeeded', 1, 1), elapsed_s: 1 },
@@ -82,10 +113,9 @@ describe('merged stages (requester item 11)', () => {
       { ...stage('report', 'succeeded', 1, 1), elapsed_s: 6 },
       stage('verify', 'skipped'),
     ]);
-    // sixth round: 终判、报告、导出、交付核验 are one row
-    expect(views.map((v) => [v.key, v.label, v.members.join('+'), v.state])).toEqual([
-      ['vlm', 'VLM 档', 'vlm', 'succeeded'],
-      ['report_delivery', '生成报告 & 产物交付', 'final+export+report+verify', 'succeeded'],
+    expect(views.map((v) => [v.key, v.members.join('+'), v.state])).toEqual([
+      ['model', 'vlm', 'succeeded'],
+      ['report', 'final+export+report+verify', 'succeeded'],
     ]);
     expect(views[1]).toMatchObject({ done: 2, total: 2, percent: 100, elapsed_s: 7, note: '主流程结束时没有可交付的条目，没有导出' });
   });
@@ -96,28 +126,26 @@ describe('merged stages (requester item 11)', () => {
     expect(at(stage('final', 'pending'), stage('report', 'pending'))).toMatchObject({ state: 'pending', percent: 0 });
     expect(at(stage('final', 'running', 0, 1), stage('report', 'pending'))).toMatchObject({ state: 'running', percent: 0 });
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'pending'))).toMatchObject({ state: 'running', percent: 50 });
-    expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'running', 0, 1))).toMatchObject({ state: 'running', percent: 50 });
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'succeeded', 1, 1))).toMatchObject({ state: 'succeeded', percent: 100 });
     const delivery = groupStages([stage('export', 'succeeded', 0, 0), stage('verify', 'running', 120, 300)])[0];
-    expect(delivery).toMatchObject({ key: 'report_delivery', state: 'running', done: 120, total: 300, percent: 70 });
-    const all = (...states: StageProgress['state'][]) => groupStages(['final', 'report', 'export', 'verify'].map((id, k) => stage(id, states[k], states[k] === 'succeeded' ? 1 : 0, 1)))[0];
-    expect(all('succeeded', 'succeeded', 'running', 'pending')).toMatchObject({ state: 'running', percent: 50 });
-    expect(all('succeeded', 'succeeded', 'succeeded', 'succeeded')).toMatchObject({ state: 'succeeded', percent: 100 });
+    expect(delivery).toMatchObject({ key: 'report', state: 'running', done: 120, total: 300, percent: 70 });
     // A stage that failed shows how far it got.
-    expect(groupStages([stage('frame', 'failed', 3, 20)])[0]).toMatchObject({ state: 'failed', percent: 15 });
+    expect(groupStages([stage('frame', 'failed', 3, 20)])[0]).toMatchObject({ key: 'cpu', state: 'failed', percent: 15 });
   });
 
-  it('the whole task: every stage not skipped weighs the same, the current one by its bar', () => {
+  it('the whole task: every group not skipped weighs the same, the current one by its bar', () => {
     const running = [
-      stage('autolabel', 'succeeded', 640, 640),
+      stage('integrity', 'succeeded', 640, 640),
       stage('numeric', 'succeeded', 640, 640),
-      stage('frame', 'succeeded', 631, 631),
-      stage('vlm', 'running', 410, 631),
-      ...['verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'].map((id) => stage(id, 'pending')),
+      stage('frame', 'succeeded', 640, 640),
+      stage('duplicate', 'succeeded', 640, 640),
+      stage('vlm', 'running', 410, 640),
+      ...['final', 'report', 'verify'].map((id) => stage(id, 'pending')),
     ];
-    // 7 rows once 终判 … 交付核验 are one and 判决 is left out (sixth round): (3 + 0.65) / 7
-    expect(overallPercent(groupStages(running))).toBe(52);
-    expect(groupStages(running).map((v) => v.key)).not.toContain('verdict');
+    // four rows: (2 + 0.64) / 4
+    expect(overallPercent(groupStages(running))).toBe(66);
+    // a funnel run's verdict is left out (sixth round)
+    expect(groupStages([...running, stage('verdict', 'pending')]).map((v) => v.key)).not.toContain('verdict');
     expect(overallPercent(groupStages([stage('numeric', 'succeeded', 5, 5), stage('frame', 'skipped'), stage('vlm', 'pending')]))).toBe(50);
     expect(overallPercent(groupStages(allDoneStages()))).toBe(100);
     expect(overallPercent([])).toBe(0);
@@ -157,7 +185,7 @@ describe('display state while a subtask runs (D46)', () => {
 });
 
 function allDoneStages(): StageProgress[] {
-  return ['autolabel', 'numeric', 'frame', 'vlm', 'verdict', 'dedup', 'profile_vlm', 'final', 'export', 'report', 'verify'].map((id) => stage(id, 'succeeded', 1, 1));
+  return ['numeric', 'frame', 'duplicate', 'vlm', 'final', 'report', 'verify'].map((id) => stage(id, 'succeeded', 1, 1));
 }
 
 describe('actionsFor (07 §4.1)', () => {

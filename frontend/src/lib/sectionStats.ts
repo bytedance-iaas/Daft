@@ -99,7 +99,7 @@ export function eefOpinionOnly(s: Summary): boolean {
 /**
  * One line for tables (本次质检范围, the task detail's 判决摘要): the essence of a section,
  * read from the keys it has - «错位判废 0 条，已标注 3 条», «6 个技能族，标注分歧 5 条»,
- * «剔除 1 条», «平均分 0.84», «判废 5 条，转人工 6 条，出错 2 条». Null without counts.
+ * «重复 1 组、涉及 2 条», «平均分 0.84», «判废 5 条，转人工 6 条，出错 2 条». Null without counts.
  */
 export function sectionDigest(s: Summary): string | null {
   const c = countsOf(s);
@@ -113,8 +113,8 @@ export function sectionDigest(s: Summary): string | null {
   } else if (num(s.families) !== null) {
     parts.push(Z.families(num(s.families)!));
     if (num(s.label_disagreements) !== null) parts.push(Z.disagreements(num(s.label_disagreements)!));
-  } else if (num(s.removed) !== null) {
-    parts.push(Z.removed(num(s.removed)!));
+  } else if (num(s.groups) !== null && num(s.duplicated) !== null) {
+    parts.push(Z.duplicated(num(s.groups)!, num(s.duplicated)!));
   } else if (Array.isArray(s.labels)) {
     // the EEF module from registry 5.0 on (design doc 25 §7): opinions with a confidence, a conflict the only question
     const by = Object.fromEntries((s.labels as { name: string; count: number }[]).map((x) => [x.name, x.count]));

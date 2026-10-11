@@ -122,7 +122,7 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     await user.click(screen.getByText('快速质检'));
     await waitFor(() => expect(screen.queryByText('模型配置')).toBeNull());
     expect(within(screen.getByTestId('module-task_success')).getByRole('checkbox')).not.toBeChecked();
-    await user.click(within(screen.getByTestId('module-dedup')).getByRole('checkbox'));
+    await user.click(within(screen.getByTestId('module-duplicate_check')).getByRole('checkbox'));
     expect(within(screen.getByRole('radiogroup', { name: '质检范围' })).getByRole('radio', { name: '自选' })).toBeChecked();
   });
 });
@@ -168,7 +168,7 @@ describe('新建任务 · 两屏与提交', () => {
     const body = create?.body as Record<string, unknown>;
     expect(body.input).toEqual({ dataset_id: expect.stringMatching(/^ds-[a-z]{9}$/) });
     expect(body.output).toEqual({ uri: 'tos://pai-kit-deliveries/new-set-0921', region: 'cn-beijing', credential: 'prod-tos' });
-    expect(body.modules).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', { id: 'video_action_sync', params: { sync_plots: 'all' } }, 'dedup']);
+    expect(body.modules).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', { id: 'video_action_sync', params: { sync_plots: 'all' } }, 'duplicate_check']);
     expect(body).not.toHaveProperty('vlm');
     expect((body.params as Record<string, unknown>).start_now).toBe(false);
     expect(seen.some((s) => s.method === 'POST' && /\/tasks\/[^/]+\/actions\/start$/.test(s.path))).toBe(true);
@@ -184,7 +184,7 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/ts-only');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByRole('button', { name: '清空' }));
-    await user.click(within(screen.getByTestId('module-dedup')).getByRole('checkbox'));
+    await user.click(within(screen.getByTestId('module-duplicate_check')).getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     expect(within(s2()).getByTestId('nothing-to-set')).toHaveTextContent('开启的模块都不需要额外设置，可以直接创建。');
@@ -444,7 +444,7 @@ describe('新建任务 · 两屏与提交', () => {
           compatible: false,
           incompatibilities: [
             { field: 'episodes', reason_code: 'episodes_out_of_range', reason: '前 150 条超出了范围：数据集现在只有 120 条' },
-            { field: 'modules', module: 'dedup', reason_code: 'module_unsupported', reason: '精确去重现在不可用' },
+            { field: 'modules', module: 'duplicate_check', reason_code: 'module_unsupported', reason: '重复检测现在不可用' },
           ],
           task: t,
         });
@@ -466,7 +466,7 @@ describe('新建任务 · 两屏与提交', () => {
     expect(list).toHaveTextContent('前 150 条超出了范围');
     await waitFor(() => expect(s1()).toBeVisible());
     expect(within(s1()).getByText('前 150 条超出了范围：数据集现在只有 120 条')).toBeInTheDocument();
-    expect(screen.getByTestId('module-dedup')).toHaveClass('marked');
+    expect(screen.getByTestId('module-duplicate_check')).toHaveClass('marked');
     expect(currentLocation()).toMatch(/^\/tasks\/new\?edit=task-[a-z]{9}\b/);
   });
 

@@ -103,7 +103,7 @@ describe('adjudication rules (06 §5.1)', () => {
     expect(lineDecisions(undefined, 'task_verdict', ['success', 'failure']).map((d) => d.title)).toEqual(['判成功', '判失败']);
     expect([countsAsPending(catalog, 'reject_appeal'), countsAsPending(catalog, 'grip_check'), countsAsPending(undefined, 'reject_appeal')]).toEqual([false, true, false]);
     expect([offersDiscard(catalog, 'grip_check'), offersDiscard(catalog, 'reject_appeal'), offersDiscard(undefined, 'task_verdict')]).toEqual([true, false, true]);
-    const appeal: AdjudicationQuestion = { line: 'reject_appeal', source_module: 'dedup', reason: '重复', duplicate_of: 43, latest_decision: null };
+    const appeal: AdjudicationQuestion = { line: 'reject_appeal', source_module: 'task_success', reason: '任务失败', latest_decision: null };
     const a = viewCard({ episode_index: 44, status: 'pending', questions: [appeal] }, {}, catalog);
     expect([a.optional, a.discardLine]).toEqual([true, null]);
     const g = viewCard({ episode_index: 12, status: 'pending', questions: [{ line: 'grip_check', source_module: 'motion_quality', reason: 'r', latest_decision: null }] }, {}, catalog);
@@ -125,8 +125,8 @@ describe('adjudication rules (06 §5.1)', () => {
     expect(statusQuery('unapplied')).toEqual({ status: 'unapplied', onlyUnsure: false });
     expect(statusQuery('whatever')).toEqual({ status: 'pending', onlyUnsure: false });
     const c = card([verdictQ, eefQ], 'unsure');
-    expect(keepCard(c, { sources: ['task_success', 'dedup'], line: '', onlyUnsure: false })).toBe(true);
-    expect(keepCard(c, { sources: ['dedup'], line: '', onlyUnsure: false })).toBe(false);
+    expect(keepCard(c, { sources: ['task_success', 'eef_video_consistency'], line: '', onlyUnsure: false })).toBe(true);
+    expect(keepCard(c, { sources: ['camera_defects'], line: '', onlyUnsure: false })).toBe(false);
     expect(keepCard(c, { sources: [], line: 'reject_appeal', onlyUnsure: false })).toBe(false);
     expect(keepCard(c, { sources: [], line: '', onlyUnsure: true })).toBe(true);
     expect(keepCard({ ...c, status: 'pending' }, { sources: [], line: '', onlyUnsure: true })).toBe(false);

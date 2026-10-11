@@ -2,7 +2,7 @@ import { Popover, Spin } from '@arco-design/web-react';
 import { useState } from 'react';
 import { useModules, useTask } from '../../api/queries';
 import type { ModuleRegistry, ModuleState, TaskListItem } from '../../api/types';
-import { moduleProblems, presetLabel, presetOf, stageLabel } from '../../lib/taskView';
+import { groupsOf, moduleProblems, presetLabel, presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 export const MODULE_STATE_COLOR: Record<string, string> = {
@@ -24,16 +24,17 @@ interface Row {
   state?: string;
 }
 
-/** Modules grouped by stage (registry order), problems first inside each group. */
-export function groupModules(reg: ModuleRegistry, selected: readonly string[], states?: readonly ModuleState[]): { stage: string; rows: Row[] }[] {
+/** Modules grouped as progress groups their stages (design doc 26 §2), problems first inside each group. */
+export function groupModules(reg: ModuleRegistry, selected: readonly string[], states?: readonly ModuleState[]): { key: string; label: string; rows: Row[] }[] {
   const rows: Row[] = selected
     .map((id) => reg.modules.find((m) => m.id === id))
     .filter((m): m is NonNullable<typeof m> => Boolean(m))
     .map((m) => ({ id: m.id, name: m.name_zh, stage: m.stage, state: states?.find((s) => s.id === m.id)?.state }));
-  return reg.stages
-    .map((stage) => ({
-      stage,
-      rows: rows.filter((r) => r.stage === stage).sort((a, b) => (PROBLEM_RANK[a.state ?? 'pending'] ?? 9) - (PROBLEM_RANK[b.state ?? 'pending'] ?? 9)),
+  return groupsOf(reg.stages)
+    .map((g) => ({
+      key: g.key,
+      label: g.label,
+      rows: rows.filter((r) => g.members.includes(r.stage)).sort((a, b) => (PROBLEM_RANK[a.state ?? 'pending'] ?? 9) - (PROBLEM_RANK[b.state ?? 'pending'] ?? 9)),
     }))
     .filter((g) => g.rows.length);
 }
@@ -46,9 +47,9 @@ function ModuleList({ item, reg, hovered }: { item: TaskListItem; reg: ModuleReg
       <div style={{ fontWeight: 500, marginBottom: 6 }}>{zh.taskList.modulePopoverTitle}</div>
       {detail.isLoading ? <Spin size={14} tip={zh.taskList.modulePopoverLoading} /> : null}
       {groups.map((g) => (
-        <div key={g.stage} style={{ marginBottom: 6 }}>
+        <div key={g.key} style={{ marginBottom: 6 }}>
           <div className="muted" style={{ fontSize: 12 }}>
-            {stageLabel(g.stage)}
+            {g.label}
           </div>
           {g.rows.map((r) => (
             <div key={r.id} style={{ lineHeight: '22px' }}>

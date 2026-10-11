@@ -3,9 +3,10 @@
 // the approved mockups (frontend/mockups/README.md): «droid 前 50 条质检» is the task that the
 // detail, report and adjudication pages tell the whole story of.
 //
-// That task ran before the skill profile was retired (registry 3.0), so its frozen plan, records,
-// report sections and logs still carry skill_profile and the profile_vlm stage: the pages must keep
-// rendering such a task, and here they are exercised on it. Its adjudication cards, by contrast, are
+// That task ran before the skill profile was retired (registry 3.0), so its records, report sections and
+// logs still carry skill_profile (and exact dedup, retired by D87): the report pages must keep rendering
+// such a task, and here they are exercised on it. Its progress and plan are today's two blocks (design
+// doc 26 §2: the console shows them in groups). Its adjudication cards, by contrast, are
 // read live and follow the current contract - one card, one question per line.
 import { cameraRows, canGenerate, shortName } from '../lib/declaration';
 import { db } from './db';
@@ -763,19 +764,19 @@ export function buildTask(s: TaskSeed): Task {
   };
 }
 
-const allDone = (total: number, withProfile = true): StageProgress[] => [
-  stage('autolabel', 'succeeded', Math.round(total * 0.4), Math.round(total * 0.4), 46),
-  stage('numeric', 'succeeded', total, total, 3),
-  stage('frame', 'succeeded', total, total, 144),
-  stage('vlm', 'succeeded', total, total, 408),
-  stage('verdict', 'succeeded', 1, 1, 1),
-  stage('dedup', 'succeeded', total, total, 11),
-  ...(withProfile ? [stage('profile_vlm', 'succeeded', total, total, 131)] : []),
+/** A finished two-block run (design doc 17 §3): the CPU block's stages and the model's, then the steps after both. */
+const allDone = (total: number, withModel = true): StageProgress[] => [
+  stage('numeric', 'succeeded', total, total, 3, { block: 'cpu' }),
+  stage('frame', 'succeeded', total, total, 144, { block: 'cpu' }),
+  stage('duplicate', 'succeeded', total, total, 11, { block: 'cpu' }),
+  ...(withModel ? [stage('vlm', 'succeeded', total, total, 408, { block: 'vlm' })] : []),
   stage('final', 'succeeded', 1, 1, 1),
-  stage('export', 'succeeded', total, total, 64),
   stage('report', 'succeeded', 1, 1, 6),
   stage('verify', 'succeeded', 1, 1, 9),
 ];
+
+/** The steps after both blocks, not reached yet. */
+const AFTER = ['final', 'report', 'verify'] as const;
 
 export function seedTasks(now: number): Task[] {
   const seeds: TaskSeed[] = [
@@ -806,7 +807,7 @@ export function seedTasks(now: number): Task[] {
       selected: ALL_MODULES,
       episodes: { mode: 'all' },
       total: 2048,
-      stages: [stage('autolabel', 'pending', 0, 0, null)],
+      stages: [],
       modules: Object.fromEntries(ALL_MODULES.map((id) => [id, { state: 'pending' as const }])),
       embodiment: 'widowx',
     },
@@ -822,39 +823,41 @@ export function seedTasks(now: number): Task[] {
       episodes: { mode: 'all' },
       total: 640,
       stages: [
-        stage('autolabel', 'succeeded', 640, 640, 612),
-        // streaming funnel activity (the task page's PipelineActivity): per layer what is in flight,
+        // streaming pipeline activity (the task page's PipelineActivity): per layer what is in flight,
         // the latest batch handed on and the time per episode; `busy` the spans with episodes out
         // (the rest of a layer's run is waiting, C4 1.18)
-        stage('integrity', 'succeeded', 640, 640, 190, {
+        stage('integrity', 'succeeded', 640, 640, 190, { block: 'cpu',
           pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 80, recent: [{ number: 80, count: 8, episodes: [632, 633, 634, 635, 636, 637, 638, 639], at: now - 47 * MIN }],
             started_at: now - 50 * MIN, finished_at: now - 47 * MIN, updated_at: now - 47 * MIN, processing: { count: 640, total_s: 1696, mean_s: 2.65, min_s: 0.8, max_s: 3.66 },
             busy: [{ start: now - 50 * MIN, end: now - 47 * MIN }], held_by_downstream: false },
         }),
-        stage('numeric', 'succeeded', 640, 640, 5, {
+        stage('numeric', 'succeeded', 640, 640, 5, { block: 'cpu',
           pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 80, recent: [{ number: 80, count: 8, episodes: [632, 633, 634, 635, 636, 637, 638, 639], at: now - 46 * MIN }],
             started_at: now - 49 * MIN, finished_at: now - 46 * MIN, updated_at: now - 46 * MIN, processing: { count: 640, total_s: 38.4, mean_s: 0.06, min_s: 0.02, max_s: 0.41 },
             busy: [0, 1, 2, 3, 4, 5].map((k) => ({ start: now - 49 * MIN + k * 30_000, end: now - 49 * MIN + k * 30_000 + 6_000 })), held_by_downstream: false },
         }),
-        stage('frame', 'succeeded', 631, 631, 1033, { note: '数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条',
-          pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 79, recent: [{ number: 79, count: 7, episodes: [630, 631, 633, 634, 636, 638, 639], at: now - 21 * MIN }],
-            started_at: now - 48 * MIN, finished_at: now - 21 * MIN, updated_at: now - 21 * MIN, processing: { count: 631, total_s: 8203, mean_s: 13, min_s: 6.2, max_s: 31.5 },
+        stage('frame', 'succeeded', 640, 640, 1033, { block: 'cpu',
+          pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 80, recent: [{ number: 80, count: 8, episodes: [632, 633, 634, 635, 636, 637, 638, 639], at: now - 21 * MIN }],
+            started_at: now - 48 * MIN, finished_at: now - 21 * MIN, updated_at: now - 21 * MIN, processing: { count: 640, total_s: 8320, mean_s: 13, min_s: 6.2, max_s: 31.5 },
             busy: [{ start: now - 48 * MIN, end: now - 40 * MIN }, { start: now - 37 * MIN, end: now - 30 * MIN }, { start: now - 26 * MIN, end: now - 21 * MIN }], held_by_downstream: false },
         }),
-        stage('vlm', 'running', 410, 631, 1102, { eta_s: 1440,
-          pipeline: { inflight: 32, queued: 189, capacity: 32, dispatches: 52, recent: [{ number: 52, count: 8, episodes: [441, 442, 443, 444, 445, 446, 447, 448], at: now - 4000 }],
+        stage('duplicate', 'succeeded', 640, 640, 1020, { block: 'cpu',
+          pipeline: { inflight: 0, queued: 0, capacity: 1, dispatches: 80, recent: [{ number: 80, count: 8, episodes: [632, 633, 634, 635, 636, 637, 638, 639], at: now - 21 * MIN + 2000 }],
+            started_at: now - 48 * MIN + 20_000, finished_at: now - 21 * MIN + 3000, updated_at: now - 21 * MIN + 3000, processing: { count: 640, total_s: 13, mean_s: 0.02, min_s: 0.01, max_s: 0.4 },
+            busy: [{ start: now - 48 * MIN + 20_000, end: now - 21 * MIN + 3000 }], held_by_downstream: false },
+        }),
+        stage('vlm', 'running', 410, 640, 1102, { eta_s: 1440, block: 'vlm',
+          pipeline: { inflight: 32, queued: 198, capacity: 32, dispatches: 52, recent: [{ number: 52, count: 8, episodes: [441, 442, 443, 444, 445, 446, 447, 448], at: now - 4000 }],
             started_at: now - 47 * MIN, finished_at: null, updated_at: now - 4000, processing: { count: 410, total_s: 17630, mean_s: 43, min_s: 12.8, max_s: 118.6 },
             busy: [{ start: now - 47 * MIN, end: null }], held_by_downstream: false },
         }),
-        ...notYet('verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        ...notYet(...AFTER),
       ],
       modules: {
         kinematic_limits: { availability: 'unsupported', unavailable_reason: '机器人型号 umi_dual_handheld_gripper 不在规格库，整项跳过', state: 'skipped' },
-        task_success: { state: 'running', episodes_total: 631 },
-        dedup: { state: 'pending', episodes_total: 0 },
-        skill_profile: { state: 'pending', episodes_total: 0 },
-        visual_quality: { episodes_total: 631 },
-        video_action_sync: { episodes_total: 631 },
+        task_success: { state: 'running', episodes_total: 640 },
+        visual_quality: { episodes_total: 640 },
+        video_action_sync: { episodes_total: 640 },
       },
       usage: usageTotals(1_700_000, 120_000, 70_000, 812_000, 1210, 12),
     },
@@ -872,17 +875,13 @@ export function seedTasks(now: number): Task[] {
       total: 50,
       runId: '20260920-130514',
       stages: [
-        stage('autolabel', 'succeeded', 22, 22, 46),
-        stage('numeric', 'succeeded', 50, 50, 9),
-        stage('frame', 'succeeded', 49, 49, 144, { note: '数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条' }),
-        stage('vlm', 'completed_with_errors', 49, 49, 542, { note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑' }),
-        stage('verdict', 'succeeded', 1, 1, 1),
-        stage('dedup', 'succeeded', 42, 42, 11),
-        stage('profile_vlm', 'succeeded', 41, 41, 131),
+        stage('numeric', 'succeeded', 50, 50, 9, { block: 'cpu' }),
+        stage('frame', 'succeeded', 50, 50, 144, { block: 'cpu' }),
+        stage('duplicate', 'succeeded', 50, 50, 11, { block: 'cpu' }),
+        stage('vlm', 'completed_with_errors', 50, 50, 542, { block: 'vlm', note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑' }),
         stage('final', 'succeeded', 1, 1, 1),
-        stage('export', 'skipped', 0, 0, null, { note: '主流程结束时没有可交付的条目，没有导出' }),
         stage('report', 'succeeded', 1, 1, 6),
-        stage('verify', 'skipped', 0, 0, null),
+        stage('verify', 'succeeded', 1, 1, 9),
       ],
       modules: {
         kinematic_limits: { availability: 'needs_input', unavailable_reason: '预检未读到机器人型号，创建时选择跳过', state: 'skipped' },
@@ -891,8 +890,7 @@ export function seedTasks(now: number): Task[] {
         visual_quality: { episodes_total: 49, elapsed_s: 144 },
         video_action_sync: { episodes_total: 49, elapsed_s: 144 },
         task_success: { state: 'completed_with_errors', episodes_total: 49, episodes_error: 2, elapsed_s: 542, error: null },
-        dedup: { episodes_total: 42, elapsed_s: 11 },
-        skill_profile: { episodes_total: 41, elapsed_s: 131 },
+        duplicate_check: { episodes_total: 50, elapsed_s: 11 },
       },
       summary: { total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82 },
       usage: usageTotals(2_010_000, 67_500, 42_900, 931_800, 886, 41),
@@ -951,13 +949,13 @@ export function seedTasks(now: number): Task[] {
       episodes: { mode: 'all' },
       total: 430,
       stages: [
-        stage('autolabel', 'succeeded', 120, 120, 300),
-        stage('numeric', 'succeeded', 430, 430, 4),
-        stage('frame', 'succeeded', 430, 430, 700),
-        stage('vlm', 'running', 180, 430, 900),
-        ...notYet('verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        stage('numeric', 'succeeded', 430, 430, 4, { block: 'cpu' }),
+        stage('frame', 'succeeded', 430, 430, 700, { block: 'cpu' }),
+        stage('duplicate', 'succeeded', 430, 430, 690, { block: 'cpu' }),
+        stage('vlm', 'running', 180, 430, 900, { block: 'vlm' }),
+        ...notYet(...AFTER),
       ],
-      modules: { task_success: { state: 'running' }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
+      modules: { task_success: { state: 'running' } },
       usage: usageTotals(640_000, 20_000, 9_000, 300_000, 400),
       embodiment: 'widowx',
     },
@@ -974,12 +972,13 @@ export function seedTasks(now: number): Task[] {
       episodes: { mode: 'all' },
       total: 3200,
       stages: [
-        stage('autolabel', 'succeeded', 800, 800, 1900),
-        stage('numeric', 'succeeded', 3200, 3200, 30),
-        stage('frame', 'running', 1216, 3200, 4100),
-        ...notYet('vlm', 'verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        stage('numeric', 'succeeded', 3200, 3200, 30, { block: 'cpu' }),
+        stage('frame', 'running', 1216, 3200, 4100, { block: 'cpu' }),
+        stage('duplicate', 'running', 1210, 3200, 4080, { block: 'cpu' }),
+        stage('vlm', 'running', 960, 3200, 4100, { block: 'vlm' }),
+        ...notYet(...AFTER),
       ],
-      modules: { visual_quality: { state: 'running' }, video_action_sync: { state: 'running' }, task_success: { state: 'pending', episodes_total: 0 }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
+      modules: { visual_quality: { state: 'running' }, video_action_sync: { state: 'running' }, duplicate_check: { state: 'running' }, task_success: { state: 'running' } },
       usage: usageTotals(910_000, 30_000, 12_000, 400_000, 800),
       embodiment: 'agibot',
     },
@@ -995,8 +994,8 @@ export function seedTasks(now: number): Task[] {
       selected: ALL_MODULES,
       episodes: { mode: 'head', n: 20 },
       total: 20,
-      stages: [stage('autolabel', 'succeeded', 20, 20, 30), stage('numeric', 'succeeded', 20, 20, 1), stage('frame', 'failed', 3, 20, 12)],
-      modules: { visual_quality: { state: 'failed', error: 'InvalidAccessKeyId' }, video_action_sync: { state: 'failed' }, task_success: { state: 'pending', episodes_total: 0 }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
+      stages: [stage('numeric', 'succeeded', 20, 20, 1, { block: 'cpu' }), stage('frame', 'failed', 3, 20, 12, { block: 'cpu' }), stage('duplicate', 'pending', 0, 20, null, { block: 'cpu' }), stage('vlm', 'succeeded', 20, 20, 40, { block: 'vlm' })],
+      modules: { visual_quality: { state: 'failed', error: 'InvalidAccessKeyId' }, video_action_sync: { state: 'failed' }, duplicate_check: { state: 'pending', episodes_total: 0 } },
       usage: usageTotals(28_000, 1_500, 800, 11_000, 20),
       embodiment: 'franka',
       resultRev: 0,
@@ -1012,8 +1011,8 @@ export function seedTasks(now: number): Task[] {
       selected: ALL_MODULES,
       episodes: { mode: 'all' },
       total: 480,
-      stages: [stage('autolabel', 'succeeded', 200, 200, 400), stage('numeric', 'succeeded', 480, 480, 5), stage('frame', 'succeeded', 470, 470, 900), stage('vlm', 'pending', 0, 470, null)],
-      modules: { task_success: { state: 'pending', episodes_total: 0 }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
+      stages: [stage('numeric', 'succeeded', 480, 480, 5, { block: 'cpu' }), stage('frame', 'succeeded', 480, 480, 900, { block: 'cpu' }), stage('duplicate', 'succeeded', 480, 480, 880, { block: 'cpu' }), stage('vlm', 'running', 120, 480, 600, { block: 'vlm' })],
+      modules: { task_success: { state: 'running', episodes_total: 120 } },
       usage: usageTotals(300_000, 9_000, 3_000, 100_000, 200),
       embodiment: 'aloha',
       resultRev: 0,
@@ -1151,7 +1150,7 @@ export function mainTimeline(now: number): TimelineEntry[] {
   return [
     { at: t0, kind: 'created', text: '创建并开始。开始前检查通过：数据集能读（readonly-tos）、交付目录能写（prod-tos）、模型能调通（ark-prod）。', state: 'queued', subtask_id: null, revision: null },
     { at: t0 + 2000, kind: 'started', text: '结果目录 20260920-130514，源文件清单 204 个对象已固化。', state: 'running', subtask_id: null, revision: null },
-    { at: t0 + 6 * MIN, kind: 'system_pause', text: 'Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条。不是用户操作，不需要处理。', state: 'paused', subtask_id: null, revision: null },
+    { at: t0 + 6 * MIN, kind: 'system_pause', text: 'Daemon 升级（v2.0.3 → v2.0.4），模型检查停在 21 / 49 条。不是用户操作，不需要处理。', state: 'paused', subtask_id: null, revision: null },
     { at: t0 + 8 * MIN, kind: 'system_resume', text: '新版本起来后自动续跑。中断时在飞的 3 条（ep 26、27、30）重新调用了一次，服务端可能已为丢掉的那次计费，这部分 Token 统计不到。', state: 'running', subtask_id: null, revision: null },
     { at: t0 + 17 * MIN, kind: 'finished', text: '主流程结束：技能画像整体失败（方舟返回 429，额度用尽，开头 20 条同类失败后熔断），任务成败判定另有 2 条出错。没有可交付的条目，这次没有导出。', state: 'completed_with_errors', subtask_id: null, revision: 1 },
     { at: t0 + 17 * MIN + 1000, kind: 'revision', text: '结果版本 r0001：通过 0 · 拒绝 7 · 待补跑 43', state: null, subtask_id: null, revision: 1 },
@@ -1163,17 +1162,15 @@ export function mainTimeline(now: number): TimelineEntry[] {
 
 export function mainPlan(): Plan {
   return {
-    schema_version: '1.0',
+    schema_version: '2.0',
     vlm_parallelism: 64,
     limits: { cpu_concurrency: { value: 30, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
+    // the two blocks side by side (design doc 17 §3), every stage on every selected episode
     stages: [
-      { id: 'autolabel', kind: 'vlm', command: 'autolabel', episodes: 'unlabeled', gates: { caption: 32 } },
-      { id: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected', hard_gates: ['timestamp_check'] },
-      { id: 'frame', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'survivors:numeric', hard_gates: ['video_action_sync'] },
-      { id: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success'], episodes: 'survivors:frame', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
-      { id: 'verdict', kind: 'aggregate', command: 'aggregate', phase: 'funnel' },
-      { id: 'dedup', kind: 'cpu', command: 'check', concurrency: 1, modules: ['dedup'], episodes: 'keep' },
-      { id: 'profile_vlm', kind: 'vlm', command: 'check', modules: ['skill_profile'], episodes: 'keep-minus-duplicates', gates: { caption: 32, llm: 16, audit: 16 }, merge: { strategy: 'none', groups: [] } },
+      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected' },
+      { id: 'frame', block: 'cpu', after: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'selected' },
+      { id: 'duplicate', block: 'cpu', after: 'frame', kind: 'cpu', command: 'check', concurrency: 1, modules: ['duplicate_check'], episodes: 'selected' },
+      { id: 'vlm', block: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success'], episodes: 'selected', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
       { id: 'final', kind: 'aggregate', command: 'aggregate', phase: 'final' },
     ],
     // as backend/curation/planner/estimates.py writes them (English; the page translates)
@@ -1183,7 +1180,6 @@ export function mainPlan(): Plan {
       notes: [
         'rough estimate: every selected episode is assumed to pass the hard gates; 22.7 s per request at 67% gate use (v1, 2026-09-07)',
         'task_success arbitration and label-guard calls depend on the data and are not counted',
-        'skill_profile text calls (taxonomy, label audit) are per dataset and not counted',
       ],
     },
   };
@@ -1493,7 +1489,7 @@ export function episodeView(ep: number, revision: number): EpisodeView {
   if (modules.skill_profile) modules.skill_profile.elapsed_s = null;
   const reasons: NonNullable<EpisodeView['reasons']> = [];
   if (ep === 18) reasons.push({ module: 'timestamp_check', kind: 'hard_gate', text: '未通过「时间戳检查」:全长只有 0.50 秒(不足 1 秒,疑似采集中断的碎片)' });
-  if (ep === 44) reasons.push({ module: 'dedup', kind: 'duplicate', text: '与 ep000043 字节级完全重复', duplicate_of: 43 });
+  if (ep === 44) reasons.push({ module: 'dedup', kind: 'duplicate', text: '与 ep000043 字节级完全重复' });
   if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', kind: 'hard_gate', text: `未通过「任务成败判定」:${String((modules.task_success?.details as Record<string, unknown>)?.reason ?? '')}` });
   if (HELD.includes(ep)) reasons.push({ module: 'task_success', kind: 'execution_error', text: '「任务成败判定」执行出错:arbitration timeout 60s(3 次),待补跑' });
   const review: NonNullable<EpisodeView['review']> = [];
@@ -1621,6 +1617,8 @@ export function sampleSummary(id: string, total: number): Record<string, unknown
       return { counts: counts(n, { pass: n - part(0.04) - part(0.03), fail: part(0.04), abstain: part(0.03) }), arbitration: { triggered: part(0.06), adopted_success: part(0.02), adopted_failure: part(0.01), abstained: part(0.03), skipped: 0 }, abstain_reasons: { '末态物证在灰区,证据不足以硬判': part(0.03) }, abstain_reason_counts: series([['末态物证 … 在灰区', part(0.03)]]), judgements: series([['success', n - part(0.1)], ['endstate_success', part(0.03)], ['failure', part(0.04)], ['uncertain', part(0.03)]]), abstain_by_judgement: series([['uncertain', part(0.03)]]), text_sources: series([['原始标注', part(0.8)], ['自产caption', n - part(0.8)]]), layers: series([['probe', n], ['endstate', part(0.9)], ['label_guard', part(0.02)], ['arbitration', part(0.06)]]) };
     case 'dedup':
       return { counts: counts(n, { pass: n - part(0.01), fail: part(0.01) }), collision_groups: part(0.01), removed: part(0.01), group_sizes: series([['2', part(0.01)]]) };
+    case 'duplicate_check':
+      return { counts: counts(n, { pass: n - 2, fail: 2 }), groups: 1, duplicated: 2, group_sizes: series([['2', 1]]) };
     case 'skill_profile':
       return { counts: counts(n, { pass: n }), families: 3, subskills: 5, undersampled: ['擦拭'], family_distribution: series([['抓取搬运', part(0.6)], ['开合', part(0.35)], ['擦拭', n - part(0.6) - part(0.35)]]), family_tree: [{ name: '抓取搬运', count: part(0.6), pct: 60, undersampled: false, subskills: series([['放置', part(0.4)], ['堆叠', part(0.2)]]) }, { name: '开合', count: part(0.35), pct: 35, undersampled: false, subskills: series([['开抽屉', part(0.2)], ['关门', part(0.15)]]) }, { name: '擦拭', count: n - part(0.6) - part(0.35), pct: 5, undersampled: true, subskills: series([['擦拭', n - part(0.6) - part(0.35)]]) }], label_disagreements: part(0.02), disagreement_high: part(0.01), disagreement_review: part(0.01), unstable: 0, grouping_sources: series([['原始标注', part(0.8)], ['自产caption', n - part(0.8)]]) };
     default:
@@ -1813,6 +1811,11 @@ export function tableRows(table: string): Record<string, unknown>[] {
       return eps.filter((ep) => ep !== 18).flatMap((ep) => CAMERAS.map((camera, k) => ({ episode_index: ep, camera, lag_s: Number((((ep + k) % 7) * 0.02 - 0.05).toFixed(2)), corr_peak: Number((0.55 + ((ep * 3 + k) % 8) * 0.05).toFixed(2)), status: ep === 3 && k === 1 ? 'flagged' : 'aligned' })));
     case 'task_success':
       return eps.filter((ep) => ep !== 18).map((ep) => ({ episode_index: ep, verdict: HELD.includes(ep) ? 'error' : TS_REJECTS.includes(ep) ? 'fail' : VERDICT_REVIEW.includes(ep) ? 'abstain' : 'pass', text_source: taskText(ep).source }));
+    case 'duplicate_groups':
+      return [
+        { episode_index: 43, same_as: '44' },
+        { episode_index: 44, same_as: '43' },
+      ];
     case 'dedup_groups':
       return [
         { episode_index: 43, duplicate_of: null, group: 1 },
@@ -1846,13 +1849,13 @@ export function mainPerf(scope: Perf['scope'], subtask: string | null, revision:
     latency: [lat('probe', 392, 3.1, 6.4, 11.2, 402, 4, 9), lat('endstate', 294, 2.7, 5.2, 9.8, 388, 2, 5), lat('arbitration', 78, 11.6, 27.3, 58.9, 391, 8, 3), lat('caption', 83, 4.2, 7.9, 12.5, 173), lat('llm', 39, 18.2, 31.4, 44.0, 118)],
     effective_concurrency: 11.4,
     stages: [
-      { id: 'autolabel', wall_s: Math.round(46 * k), share: 0.05 },
       { id: 'numeric', wall_s: Math.round(9 * k), share: 0.01 },
-      { id: 'frame', wall_s: Math.round(144 * k), share: 0.14 },
-      { id: 'vlm', wall_s: Math.round(542 * k), share: 0.55 },
-      { id: 'dedup', wall_s: Math.round(11 * k), share: 0.01 },
-      { id: 'profile_vlm', wall_s: Math.round(131 * k), share: 0.13 },
+      { id: 'frame', wall_s: Math.round(144 * k), share: 0.21 },
+      { id: 'duplicate', wall_s: Math.round(140 * k), share: 0.2 },
+      { id: 'vlm', wall_s: Math.round(542 * k), share: 0.78 },
+      { id: 'final', wall_s: Math.round(1 * k), share: 0.001 },
       { id: 'report', wall_s: Math.round(6 * k), share: 0.01 },
+      { id: 'verify', wall_s: Math.round(9 * k), share: 0.01 },
     ],
     retries: { outer_attempts: Math.round(12 * k), rescued: Math.round(9 * k) },
     merge: { requests: 0, estimated_unmerged: 0 },
@@ -1923,20 +1926,6 @@ export function appealQuestions(): Map<number, AdjudicationCard['questions']> {
   for (const ep of TS_REJECTS) {
     out.set(ep, [{ line: 'reject_appeal', source_module: 'task_success', reason: chains[ep], annotation: taskText(ep).text, caption: null, suggestion: null, priority: null, latest_decision: null }]);
   }
-  // D42: a dedup reject can be appealed too; the card names the episode it duplicates.
-  out.set(44, [
-    {
-      line: 'reject_appeal',
-      source_module: 'dedup',
-      reason: '动作数据与视频字节级完全一致；保留遍历顺序里先出现的那一条',
-      duplicate_of: 43,
-      annotation: taskText(44).text,
-      caption: null,
-      suggestion: null,
-      priority: null,
-      latest_decision: null,
-    },
-  ]);
   return out;
 }
 

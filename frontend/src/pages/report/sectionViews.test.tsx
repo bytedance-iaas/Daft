@@ -75,7 +75,7 @@ const INTEGRITY = {
   integrity_codes: [
     { code: 'file_truncated', name: '文件被截断', level: 'reject', count: 2 },
     { code: 'row_invalid', name: '数据不合规', level: 'reject', count: 1 },
-    { code: 'duplicate_content', name: '与另一条的文件完全相同', level: 'suspect', count: 2 },
+    { code: 'stream_missing', name: '缺一路其他条都有的流', level: 'suspect', count: 2 },
   ],
   integrity_files: { files: 600, bytes: 3.85e9, crc_files: 0 },
   integrity_tiers: { L1: true, L2: true, L3: false },
@@ -85,12 +85,12 @@ const INTEGRITY = {
 describe('the report sections (06 §6.2, F6.2)', () => {
   it('has a view for v1\'s seven modules, the EEF module and the data integrity module', () => {
     expect(Object.keys(SECTION_VIEWS).sort()).toEqual(
-      ['data_integrity', 'dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
+      ['data_integrity', 'duplicate_check', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
     );
   });
 
   const cases: [string, Record<string, unknown>][] = [
-    ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
+    ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
     ['eef_video_consistency', EEF],
     ['data_integrity', INTEGRITY],
   ];
@@ -286,7 +286,7 @@ describe('the report sections (06 §6.2, F6.2)', () => {
   it('digests a section into one line for the scope table', () => {
     expect(sectionDigest(sampleSummary('video_action_sync', 100))).toBe('错位判废 1 条，已标注 6 条');
     expect(sectionDigest(sampleSummary('skill_profile', 100))).toBe('3 个技能族，标注分歧 2 条');
-    expect(sectionDigest(sampleSummary('dedup', 100))).toBe('剔除 1 条');
+    expect(sectionDigest(sampleSummary('duplicate_check', 100))).toBe('重复 1 组、涉及 2 条');
     expect(sectionDigest(sampleSummary('motion_quality', 100))).toBe('平均分 0.82');
     expect(sectionDigest({ counts: { total: 49, pass: 36, fail: 5, abstain: 6, scored: 0, error: 2 } })).toBe('判废 5 条，转人工 6 条，出错 2 条');
     expect(sectionDigest({ counts: { total: 8, pass: 8, fail: 0, abstain: 0, scored: 0, error: 0 } })).toBe('8 条全部通过');

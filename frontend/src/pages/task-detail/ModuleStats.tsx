@@ -108,7 +108,7 @@ export function ModuleStatCards({ task, plan, v2 }: { task: Task; plan: Plan | u
           )}
           <b>{moduleName(reg.data, m.id) || m.name}</b>
           <span className="muted nowrap" style={{ fontSize: 12 }}>
-            {placeLabel(reg.data, spec)}
+            {placeLabel(spec)}
           </span>
           <span className="nowrap">
             <span className="dot" style={{ background: MODULE_STATE_COLOR[m.state] }} />

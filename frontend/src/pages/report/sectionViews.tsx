@@ -402,19 +402,20 @@ function taskModel(s: Summary, section: ReportModuleSection): ViewModel {
   return { stats, charts, blocks, fresh: hasAny(s, ['judgements', 'layers']) };
 }
 
-function dedupModel(s: Summary): ViewModel {
-  const Z = S().dedup;
+/** 重复检测 (design doc 26 §1, D87): the groups of identical episodes and how many episodes they hold - reported
+ * only, nothing removed. */
+function duplicateModel(s: Summary): ViewModel {
+  const Z = S().duplicate_check;
   const c = countsOf(s);
   const stats: StatSpec[] = [];
-  if (c) stats.push({ label: S().checked, value: c.total, foot: Z.checkedFoot });
-  if (num(s.collision_groups) !== null) stats.push({ label: Z.groups, value: num(s.collision_groups) });
-  if (num(s.removed) !== null) stats.push({ label: Z.removed, value: num(s.removed), tone: num(s.removed) ? 'warn' : undefined });
+  if (c) stats.push({ label: S().checked, value: c.total });
+  if (num(s.groups) !== null) stats.push({ label: Z.groups, value: num(s.groups) });
+  if (num(s.duplicated) !== null) stats.push({ label: Z.duplicated, value: num(s.duplicated), foot: Z.duplicatedFoot, tone: num(s.duplicated) ? 'warn' : undefined });
   const charts: ChartSpec[] = [];
   const sizes = seriesOf(s.group_sizes, Z.size);
   if (anyValue(sizes)) charts.push({ key: 'sizes', title: Z.sizes, items: sizes });
   const notes: ReactNode[] = [];
-  if (sizes && !sizes.length) notes.push(Z.none);
-  notes.push(<span className="muted">{Z.note}</span>);
+  if (!num(s.groups)) notes.push(Z.none);
   return { stats, charts, notes, fresh: hasAny(s, ['group_sizes']) };
 }
 
@@ -672,7 +673,7 @@ export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   visual_quality: view('visual_quality', visualModel),
   video_action_sync: view('video_action_sync', syncModel),
   task_success: view('task_success', taskModel, { abstain: false }),
-  dedup: view('dedup', dedupModel),
+  duplicate_check: view('duplicate_check', duplicateModel),
   // the opinion asks nobody: an episode it could not look at has its own figure (没问模型), no abstention chart
   eef_video_consistency: view('eef_video_consistency', eefModel, { abstain: (s) => !eefOpinionOnly(s) }),
 };

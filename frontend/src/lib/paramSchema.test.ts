@@ -49,7 +49,7 @@ describe('param_schema → form fields (C1, D38)', () => {
 
   it('modules without parameters produce no fields; the judgement lines count (F12.5)', () => {
     const without = registry.modules.filter((m) => !hasParams(m.param_schema)).map((m) => m.id);
-    expect(without).toEqual(['kinematic_limits', 'camera_defects', 'dedup']);
+    expect(without).toEqual(['kinematic_limits', 'camera_defects', 'duplicate_check']);
     const onlyLines = registry.modules.filter((m) => hasParams(m.param_schema) && paramFields(m.param_schema).every((f) => f.advanced)).map((m) => m.id);
     expect(onlyLines).toEqual(['timestamp_check', 'motion_quality', 'visual_quality']);
   });
@@ -103,7 +103,7 @@ describe('param_schema → form fields (C1, D38)', () => {
   it('sends only the values that differ from the defaults', () => {
     expect(changedParams(schemaOf('video_action_sync'), { sync_plots: 'flagged' })).toEqual({});
     expect(changedParams(schemaOf('video_action_sync'), { sync_plots: 'all' })).toEqual({ sync_plots: 'all' });
-    expect(changedParams(schemaOf('dedup'), { anything: 1 })).toEqual({});
+    expect(changedParams(schemaOf('duplicate_check'), { anything: 1 })).toEqual({});
   });
 
   it('a deprecated parameter is not offered (registry 5.1: the declaration says it)', () => {

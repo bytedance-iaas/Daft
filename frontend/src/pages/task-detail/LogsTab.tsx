@@ -8,18 +8,22 @@ import type { LogLine, Subtask, Task } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { absoluteTime } from '../../lib/format';
 import { readPrefs, writePrefs } from '../../lib/prefs';
-import { stageLabel } from '../../lib/taskView';
+import { groupsOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const RANK: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
 
 /**
- * 日志 (07 §4.2, 03 §11): the command-line text as is (English), filtered by stage, run and
- * level. The first page is the newest; 「加载更早的日志」 walks back with the cursor. While
+ * 日志 (07 §4.2, 03 §11): the command-line text as is (English), filtered by stage group (design doc 26 §2:
+ * the groups progress shows, each asking for its stages), run and level. The first page is the newest; 「加载更早的日志」 walks back with the cursor. While
  * following, SSE lines are appended live, or the newest page is re-read every 5 s without SSE.
  */
 export function LogsTab({ task, subtasks, mode, live }: { task: Task; subtasks: Subtask[]; mode: EventMode; live: boolean }) {
-  const [stage, setStage] = useState('');
+  const [group, setGroup] = useState('');
+  const groups = groupsOf([...task.progress.stages.map((s) => s.id), 'system']);
+  // the stages of the chosen group, as the API takes them: comma-separated (C4 6.0.0)
+  const members = groups.find((g) => g.key === group)?.members ?? [];
+  const stage = members.join(',');
   const [scope, setScope] = useState('all');
   const [level, setLevel] = useState('');
   const [follow, setFollow] = useState(readPrefs().followLogs ?? true);
@@ -52,24 +56,24 @@ export function LogsTab({ task, subtasks, mode, live }: { task: Task; subtasks: 
     const stored = [...(q.data?.pages ?? [])].reverse().flatMap((p) => p.items ?? []);
     if (!follow || scope !== 'all') return stored;
     const seen = new Set(stored.map((l) => `${l.stage}|${l.msg}`));
-    const extra = (liveLogs.data ?? []).filter((l) => (!stage || l.stage === stage) && (!level || RANK[l.level] <= RANK[level]) && !seen.has(`${l.stage}|${l.msg}`));
+    const extra = (liveLogs.data ?? []).filter((l) => (!stage || members.includes(l.stage)) && (!level || RANK[l.level] <= RANK[level]) && !seen.has(`${l.stage}|${l.msg}`));
     return [...stored, ...extra];
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `members` is `stage`, split
   }, [q.data, liveLogs.data, follow, scope, stage, level]);
 
   useEffect(() => {
     if (follow && box.current) box.current.scrollTop = box.current.scrollHeight;
   }, [lines.length, follow]);
 
-  const stageIds = [...new Set([...task.progress.stages.map((s) => s.id), 'system'])];
   return (
     <Card>
       <Space wrap style={{ marginBottom: 12 }}>
         <Select
           style={{ width: 160 }}
-          value={stage}
-          onChange={setStage}
+          value={group}
+          onChange={setGroup}
           aria-label={zh.taskDetail.logsStage}
-          options={[{ label: zh.taskDetail.logsAllStages, value: '' }, ...stageIds.map((s) => ({ label: s === 'system' ? zh.taskDetail.logsSystem : stageLabel(s), value: s }))]}
+          options={[{ label: zh.taskDetail.logsAllStages, value: '' }, ...groups.map((g) => ({ label: g.key === 'system' ? zh.taskDetail.logsSystem : g.label, value: g.key }))]}
         />
         <Select
           style={{ width: 180 }}

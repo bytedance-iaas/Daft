@@ -88,15 +88,15 @@ describe('质检报告 (07 §5)', () => {
     const ts = await screen.findByTestId('section-task_success');
     expect(within(ts).getByRole('link', { name: '去裁决（6）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
     expect(within(ts).getByRole('link', { name: '可复议（5）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`);
+    // this task ran exact dedup before it was removed (D87): its section asks nothing and offers no appeal
     const dedup = screen.getByTestId('section-dedup');
-    // Nothing pending for dedup, one reject a person may appeal.
-    expect(within(dedup).queryByRole('link', { name: /去裁决/ })).toBeNull();
-    await user.click(within(dedup).getByRole('link', { name: '可复议（1）' }));
-    await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=dedup`));
+    await waitFor(() => expect(within(dedup).queryByRole('link', { name: /去裁决|可复议/ })).toBeNull());
+    await user.click(within(ts).getByRole('link', { name: '可复议（5）' }));
+    await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`));
     // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
     const list = await screen.findByTestId('appeals', {}, { timeout: 5000 });
-    expect(await within(list).findByTestId('card-44', {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(within(list).queryByTestId('card-6')).toBeNull();
+    expect(await within(list).findByTestId('card-6', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(within(list).queryByTestId('card-44')).toBeNull();
     expect(screen.getByRole('tab', { name: '被拒复议' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -147,7 +147,6 @@ describe('质检报告 (07 §5)', () => {
       expect.stringContaining('各层判定条数：打分层 47'),
       expect.stringContaining('出错停在哪一步：取证仲裁 2'),
     ]);
-    expect(charts('dedup')).toEqual([expect.stringContaining('重复组大小：2 条一组 1')]);
     // skill_profile left the registry (3.0): this task ran before, so its section falls back to the
     // generic view - no key figures of its own, and no raw keys either.
     for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup']) {
@@ -176,7 +175,7 @@ describe('质检报告 (07 §5)', () => {
     for (const id of ['timestamp_check', 'task_success', 'dedup']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
     expect(screen.getByTestId('report-equation')).toBeInTheDocument(); // the overview never folds
     // Jumping from 本次质检范围 unfolds the section it jumps to.
-    await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: '精确去重' }));
+    await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: 'dedup' }));   // a module the registry no longer names (D87)
     expect(await screen.findByTestId('summary-dedup')).toBeInTheDocument();
     await second.user.click(screen.getByRole('button', { name: '全部展开' }));
     for (const id of ['timestamp_check', 'visual_quality', 'dedup']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
@@ -232,7 +231,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(screen.getByTestId('episode-module-visual_quality')).getByTestId('episode-visual')).toHaveTextContent('wrist_image_left');
     expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('sync-badge')).toHaveTextContent('同步正常');
     expect(screen.getByTestId('episode-module-skill_profile')).toHaveTextContent('技能族放置');
-    expect(screen.getByTestId('episode-module-dedup')).toHaveTextContent('无重复');
+    expect(screen.getByTestId('episode-module-dedup')).toBeInTheDocument();       // run before exact dedup was removed (D87)
     const frame = await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/);
     expect(frame).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
     // a click shows it large (requester 2026-10-10)
@@ -398,7 +397,7 @@ describe('质检报告 (07 §5)', () => {
         tiers: { L1: true, L2: true, L3: false },
         findings: [
           { level: 'reject', code: 'file_truncated', tier: 'L1', message: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失', file: 'videos/chunk-000/observation.images.wrist/episode_000012.mp4', camera: 'wrist', span_s: [2.667, null] },
-          { level: 'suspect', code: 'duplicate_content', tier: 'dataset', message: 'exterior 相机的视频与 ep 7 的内容完全相同', file: 'videos/chunk-000/observation.images.exterior/episode_000012.mp4', camera: 'exterior' },
+          { level: 'suspect', code: 'stream_missing', tier: 'peers', message: '缺 exterior 相机这一路，其他条都有', camera: 'exterior' },
         ],
         files: [
           { file: 'data/chunk-000/episode_000012.parquet', size: 81234, tiers: ['L1', 'L2'], crc: null, rows: 75 },
@@ -412,7 +411,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('episode-integrity')).toHaveTextContent('文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失');
     const findings = within(block).getByTestId('integrity-findings');
     expect(findings).toHaveTextContent('判废文件被截断wrist');
-    expect(findings).toHaveTextContent('可疑与另一条完全相同exterior');
+    expect(findings).toHaveTextContent('可疑缺一路流exterior');
     const files = within(block).getByTestId('integrity-files');
     expect(files).toHaveTextContent('data/chunk-000/episode_000012.parquet');
     expect(files).toHaveTextContent('1.2 MB');
@@ -487,14 +486,10 @@ describe('质检报告 (07 §5)', () => {
     expect(options.every((o) => o.textContent?.includes('待裁'))).toBe(true);
   });
 
-  it('Episode 明细: a duplicate links to the episode it copies; a sync reading worth a look has its curves', async () => {
-    const { user } = renderApp(`${REPORT}?ep=44#episodes`);
+  it('Episode 明细: a sync reading worth a look has its curves', async () => {
+    const { user } = renderApp(`${REPORT}?ep=43#episodes`);
     // the Episode tab renders the whole report first: give it the same room as the steps below
-    const dup = await screen.findByTestId('duplicate-of', {}, { timeout: 4000 });
-    expect(dup).toHaveTextContent('与 ep 43 字节级完全重复');
-    expect(screen.getByTestId('episode-summary')).toHaveTextContent('精确去重 · 与 ep000043 字节级完全重复');
-    await user.click(within(dup).getByRole('button', { name: 'ep 43' }));
-    await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=43#episodes`), { timeout: 4000 });
+    await screen.findByTestId('episode-summary', {}, { timeout: 4000 });
     // ep 12: one camera 0.38 s late, flagged; the curves come from the sync-curves endpoint.
     await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '12');
     await user.click(await screen.findByRole('option', { name: /^ep 12/ }, { timeout: 4000 }));

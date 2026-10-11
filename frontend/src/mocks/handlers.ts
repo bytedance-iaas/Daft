@@ -14,6 +14,7 @@ import type {
   InputRef,
   ModuleChoice,
   Overview,
+  PipelineEpisode,
   PreflightResult,
   ReasoningLevel,
   Report,
@@ -1143,13 +1144,17 @@ function revisionOf(t: Task, url: URL): number | Response {
   return n;
 }
 
-function pipelineMockRow(ep: number, revision: number) {
+/** A row of a two-block run (design doc 17 §3.3): every stage's state, the time in each, the verdict - final once
+ * the run is over (C4 5.3.2), provisional while it runs. */
+function pipelineMockRow(ep: number, revision: number, finished: boolean): PipelineEpisode {
   const view = episodeView(ep, revision);
   const records = Object.values(view.modules).map((r) => asLegacyRecord(r, registry));
   const verdict = records.some((r) => r.verdict === 'fail') ? 'drop'
     : records.some((r) => r.verdict === 'error') ? 'held' : 'keep';
-  return { episode_index: ep, last_stage: ep === 18 ? 'numeric' : 'vlm',
-    next_stage: 'done', reason: ep === 18 ? 'gate' : null, verdict,
+  const took = { numeric: 0.18, frame: 2.9 + (ep % 7) * 0.1, duplicate: 0.02, vlm: 11.2 + (ep % 5) };
+  return { episode_index: ep, reason: null, verdict, provisional: !finished,
+    stages: { numeric: 'done', frame: 'done', duplicate: 'done', vlm: verdict === 'held' ? 'error' : 'done' },
+    stage_processing_s: took, processing_s: Object.values(took).reduce((a, x) => a + x, 0),
     verdict_reason: verdict === 'drop' ? view.reasons?.[0]?.text ?? null : null };
 }
 
@@ -1169,7 +1174,7 @@ const report = [
       return HttpResponse.json({ items: rows, next_cursor: indexes.length > limit ? rows.at(-1)!.episode_index : null,
         started: completed, finished: completed, modules: findingsModuleCounts() });
     }
-    const items = indexes.slice(0, limit).map((ep) => pipelineMockRow(ep, t.result_rev || 1));
+    const items = indexes.slice(0, limit).map((ep) => pipelineMockRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'));
     return HttpResponse.json({ items, next_cursor: indexes.length > limit ? items.at(-1)!.episode_index : null,
       started: completed, finished: completed });
   }),
@@ -1179,7 +1184,7 @@ const report = [
     const ep = Number(params.index);
     if (!Number.isInteger(ep) || ep < 0) return err(404, 'not_found', 'episode 不存在');
     if (t.id === FINDINGS_TASK) return HttpResponse.json({ ...findingsPipelineRow(ep), modules: findingsView(ep, 1).modules });
-    return HttpResponse.json({ ...pipelineMockRow(ep, t.result_rev || 1),
+    return HttpResponse.json({ ...pipelineMockRow(ep, t.result_rev || 1, t.result_rev > 0 && t.state !== 'running'),
       modules: episodeView(ep, t.result_rev || 1).modules });
   }),
   http.get(`${API}/tasks/:id/report`, ({ request, params }) => {

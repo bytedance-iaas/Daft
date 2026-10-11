@@ -22,7 +22,6 @@ import type {
 import {
   ALL_MODULES,
   CAMERAS,
-  DUPLICATE_OF,
   HELD,
   LABEL_REVIEW,
   STUCK,
@@ -43,6 +42,14 @@ export const FINDINGS_TASK = 'task_01HXT6F2';
 const MIN = 60_000;
 const EPISODES = Array.from({ length: 50 }, (_, ep) => ep);
 const SELECTED = ALL_MODULES.filter((id) => id !== 'kinematic_limits' && id !== 'data_integrity');
+
+/** ep 44 is a copy of ep 43: the duplicate check names each in the other's record and rejects neither (D87). */
+export const SAME_AS: Record<number, number[]> = { 43: [44], 44: [43] };
+/** The findings task's lists: the main task's, except that the copy (ep 44) is no longer rejected (D87). */
+export function findingsList(ep: number): EpisodeView['list'] {
+  return ep === 44 ? 'passed' : episodeList(ep);
+}
+const sameText = (others: number[]) => `与 ${others.map((e) => `ep${String(e).padStart(6, '0')}`).join('、')} 完全相同（动作与各路画面字节一致）`;
 
 const spec = (module: string): ModuleSpec => registry.modules.find((m) => m.id === module)!;
 const codeOf = (module: string, code: string) => spec(module).codes.find((c) => c.code === code)!;
@@ -81,9 +88,9 @@ function findingsOf(module: string, ep: number, rec: ResultRecord | undefined): 
       if (VERDICT_REVIEW.includes(ep)) out.push(finding(module, 'uncertain', '证据不足，弃权：末态物证在灰区'));
       return out;
     }
-    case 'dedup': {
-      const dup = DUPLICATE_OF[ep];
-      return dup === undefined ? [] : [finding(module, 'duplicate', `与 ep${String(dup).padStart(6, '0')} 字节级完全重复`, { readings: { duplicate_of: dup, group_id: dup } })];
+    case 'duplicate_check': {
+      const same = SAME_AS[ep];
+      return same ? [finding(module, 'duplicate', sameText(same), { readings: { same_as: same, group_id: Math.min(ep, ...same) } })] : [];
     }
     default:
       return [];
@@ -92,7 +99,8 @@ function findingsOf(module: string, ep: number, rec: ResultRecord | undefined): 
 
 /** A record of the story as a record 2.0: what it found, what it assessed (motion quality cannot assess actuator saturation here). */
 function recordV2(module: string, ep: number, rec: ResultRecord | undefined): ResultRecordV2 {
-  const base = { episode_index: ep, module, details: rec?.details ?? {}, evidence: rec?.evidence ?? [], elapsed_s: rec?.elapsed_s ?? 0.4 };
+  const details = module === 'duplicate_check' ? (SAME_AS[ep] ? { same_as: SAME_AS[ep], group_id: Math.min(ep, ...SAME_AS[ep]), reason: sameText(SAME_AS[ep]) } : {}) : (rec?.details ?? {});
+  const base = { episode_index: ep, module, details, evidence: rec?.evidence ?? [], elapsed_s: rec?.elapsed_s ?? 0.4 };
   if (rec?.verdict === 'error') return { ...base, status: 'error', findings: [], assessed: [], unassessable: [], readings: {}, error: rec.error };
   const unassessable =
     module === 'motion_quality' ? [{ item: 'ACT-4', reason: 'not_applicable', message_zh: '速度型指令和位置读数含义不同，执行器饱和无从比较' }] : [];
@@ -135,27 +143,26 @@ export function findingsView(ep: number, revision: number): EpisodeView {
     .filter((f) => f.level === 'blocking')
     .map((f) => ({
       module: f.module,
-      kind: f.module === 'dedup' ? 'duplicate' : 'finding',
+      kind: 'finding',
       text: f.finding.message_zh,
       code: f.finding.code,
       item: f.finding.item,
       appealable: f.appealable,
-      ...(f.module === 'dedup' ? { duplicate_of: DUPLICATE_OF[ep] } : {}),
     }));
   for (const r of old.reasons ?? []) if (r.kind === 'execution_error') reasons.push({ ...r, text: '「任务成败判定」执行出错（arbitration: timeout 60s，3 次），待补跑' } as (typeof reasons)[number]);
   // like review.json: a reject whose blocking findings may all be appealed is asked on the appeals tab
   const appeal = findings.filter((f) => f.level === 'blocking');
   const review = [...(old.review ?? [])];
   if (appeal.length && appeal.every((f) => f.appealable)) review.push({ module: appeal[0].module, kind: 'reject_appeal', text: appeal[0].finding.message_zh });
-  return { ...old, reasons, review, modules: records, findings };
+  return { ...old, list: findingsList(ep), reasons, review, modules: records, findings };
 }
 
 /** The episode list of the findings task: the main task's lists with the items and levels of each one's findings. */
 export function findingsEpisodes(openQuestions: Map<number, string[]>): TaskEpisode[] {
   return EPISODES.map((ep) => {
     const { items, levels } = itemsAndLevels(graded(recordsOf(ep)));
-    const list = episodeList(ep);
-    const reason = list === 'reject' ? [ep === 18 ? 'timestamp_check' : ep === 44 ? 'dedup' : 'task_success'] : list === 'held' ? ['task_success'] : [];
+    const list = findingsList(ep);
+    const reason = list === 'reject' ? [ep === 18 ? 'timestamp_check' : 'task_success'] : list === 'held' ? ['task_success'] : [];
     return { episode_index: ep, list, review: openQuestions.has(ep), reason_modules: reason, review_modules: openQuestions.get(ep) ?? [], items, levels };
   });
 }
@@ -177,7 +184,18 @@ export function findingsReport(): ReportV2 {
       byItem.set(f.finding.item, e);
     }
   }
-  const sections = r1.modules.map((s) => {
+  // the main task (1.0) ran exact dedup; this one ran the duplicate check (D87): one group of two, reported only
+  const asDuplicateCheck = (s: Report['modules'][number]): Report['modules'][number] =>
+    s.id !== 'dedup'
+      ? s
+      : ({
+          ...s,
+          id: 'duplicate_check',
+          summary: { counts: { total: 50, pass: 48, fail: 2, abstain: 0, scored: 0, error: 0 }, groups: 1, duplicated: 2, group_sizes: [{ name: '2', value: 1 }] },
+          tables: [{ id: 'duplicate_groups', rows: 2, file: 'tables/duplicate_groups.parquet' }],
+          adjudication: null,
+        } as Report['modules'][number]);
+  const sections = r1.modules.map(asDuplicateCheck).map((s) => {
     const { gate: _gate, summary, ...rest } = s as typeof s & { gate?: string };
     const judged = all.filter((x) => x.records[s.id]?.status === 'ok');
     const codes = new Map<string, { item: string | null; level: string; eps: Set<number>; cams: Map<string, Set<number>> }>();
@@ -221,17 +239,15 @@ export function findingsReport(): ReportV2 {
     revision: 1,
     overview: {
       ...r1.overview,
-      counts: { total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0 },
-      pass_rate: 0.82,
+      counts: { total: 50, passed: 42, rejected: 6, held: 2, review: 10, skipped: 0 },
+      pass_rate: 0.84,
       run: { ...r1.overview.run, revision: 1 },
       reject_reasons: [
         { module: 'task_success', kind: 'finding', code: 'failure', item: 'TASK-4', count: 5 },
         { module: 'timestamp_check', kind: 'finding', code: 'fragment', item: 'STRM-5', count: 1 },
-        { module: 'dedup', kind: 'duplicate', code: 'duplicate', item: 'SET-1', count: 1 },
       ],
       reject_items: [
         { item: 'TASK-4', count: 5 },
-        { item: 'SET-1', count: 1 },
         { item: 'STRM-5', count: 1 },
       ],
       policy: { preset: 'default', version: '1' },
@@ -258,8 +274,7 @@ export function withCodes(questions: Map<number, AdjudicationCard['questions']>)
       ep,
       qs.map((q) => {
         if (q.line === 'reject_appeal') {
-          const pair = q.source_module === 'dedup' ? ['duplicate', 'SET-1'] : ['failure', 'TASK-4'];
-          return { ...q, codes: [pair[0]], items: [pair[1]] };
+          return { ...q, codes: ['failure'], items: ['TASK-4'] };
         }
         if (q.line !== 'task_verdict') return q;
         // one question, both findings: the suspected label conflict and the abstention
@@ -274,13 +289,15 @@ export function withCodes(questions: Map<number, AdjudicationCard['questions']>)
 
 /** A row of the live episode page of a two-block run (C4 2.2.0): every stage done, the provisional verdict. */
 export function findingsPipelineRow(ep: number): PipelineEpisode {
-  const list = episodeList(ep);
+  const list = findingsList(ep);
   const view = findingsView(ep, 1);
   const verdict = list === 'reject' ? 'drop' : list === 'held' ? 'held' : 'keep';
   return {
     episode_index: ep,
     reason: null,
-    stages: { numeric: 'done', frame: 'done', vlm: HELD.includes(ep) ? 'error' : 'done' },
+    stages: { numeric: 'done', frame: 'done', duplicate: 'done', vlm: HELD.includes(ep) ? 'error' : 'done' },
+    stage_processing_s: { numeric: 0.18, frame: 2.9, duplicate: 0.02, vlm: 11.2 },
+    processing_s: 14.3,
     provisional: true,
     verdict,
     verdict_reason: verdict === 'drop' ? view.reasons?.[0]?.text ?? null : verdict === 'held' ? '待补跑：「任务成败判定」执行出错' : null,
@@ -306,9 +323,8 @@ export function findingsPlan(): Plan {
     stages: [
       { id: 'numeric', kind: 'cpu', command: 'check', block: 'cpu', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected' },
       { id: 'frame', kind: 'cpu', command: 'check', block: 'cpu', after: 'numeric', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'selected' },
-      { id: 'dedup', kind: 'cpu', command: 'check', block: 'cpu', after: 'frame', full_set: true, concurrency: 1, modules: ['dedup'], episodes: 'selected' },
-      { id: 'autolabel', kind: 'vlm', command: 'autolabel', block: 'vlm', episodes: 'unlabeled', gates: { caption: 32 } },
-      { id: 'vlm', kind: 'vlm', command: 'check', block: 'vlm', after: 'autolabel', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
+      { id: 'duplicate', kind: 'cpu', command: 'check', block: 'cpu', after: 'frame', concurrency: 1, modules: ['duplicate_check'], episodes: 'selected' },
+      { id: 'vlm', kind: 'vlm', command: 'check', block: 'vlm', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
       { id: 'final', kind: 'aggregate', command: 'aggregate', phase: 'final' },
     ],
     estimates: {
@@ -335,7 +351,7 @@ function lane(now: number, last: number, mean: number, from: number, to: number)
 
 /** The findings task: the main task's dataset and selection, a finished two-block run (one revision). */
 export function findingsTask(now: number): Task {
-  const blocks = (s: StageProgress, block: 'cpu' | 'vlm', fullSet = false): StageProgress => ({ ...s, block, ...(fullSet ? { full_set: true } : {}) });
+  const blocks = (s: StageProgress, block: 'cpu' | 'vlm'): StageProgress => ({ ...s, block });
   const t = buildTask({
     id: FINDINGS_TASK,
     name: 'droid 前 50 条质检（两块并行）',
@@ -354,12 +370,9 @@ export function findingsTask(now: number): Task {
       // the per-episode stages report their streaming activity, as the Daemon's two blocks do (C4 1.18)
       blocks(stage('numeric', 'succeeded', 50, 50, 9, { pipeline: lane(now, 50, 0.18, 170, 162) }), 'cpu'),
       blocks(stage('frame', 'succeeded', 50, 50, 146, { pipeline: lane(now, 49, 2.9, 170, 146) }), 'cpu'),
-      blocks(stage('dedup', 'succeeded', 50, 50, 12), 'cpu', true),
-      blocks(stage('autolabel', 'succeeded', 22, 22, 46), 'vlm'),
+      blocks(stage('duplicate', 'succeeded', 50, 50, 146, { pipeline: lane(now, 50, 0.02, 170, 146) }), 'cpu'),
       blocks(stage('vlm', 'completed_with_errors', 50, 50, 560, { note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑', pipeline: lane(now, 50, 11.2, 169, 158) }), 'vlm'),
-      blocks(stage('profile', 'succeeded', 50, 50, 140), 'vlm', true),
       stage('final', 'succeeded', 1, 1, 1),
-      stage('export', 'succeeded', 41, 41, 64),
       stage('report', 'succeeded', 1, 1, 6),
       stage('verify', 'succeeded', 1, 1, 9),
     ],
@@ -367,7 +380,7 @@ export function findingsTask(now: number): Task {
       kinematic_limits: { availability: 'needs_input', unavailable_reason: '预检未读到机器人型号，创建时选择跳过', state: 'skipped' },
       task_success: { state: 'completed_with_errors', episodes_error: 2, elapsed_s: 560, error: null },
     },
-    summary: { total: 50, passed: 41, rejected: 7, held: 2, review: 10, pass_rate: 0.82 },
+    summary: { total: 50, passed: 42, rejected: 6, held: 2, review: 10, pass_rate: 0.84 },
     usage: usageTotals(2_090_000, 70_100, 44_000, 950_000, 912, 12),
     pending: 10,
     resultRev: 1,

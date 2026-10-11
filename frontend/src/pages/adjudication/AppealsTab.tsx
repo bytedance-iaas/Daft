@@ -14,7 +14,7 @@ import { isAppealable } from '../../lib/registry';
 
 /**
  * 被拒复议 (07 §6, rule 2, D42): rejects attributed to an appealable module (registry
- * `appealable`: today task_success — rejects attributed to it alone — and dedup), one card each.
+ * `appealable`: today task_success alone — rejects attributed to it alone), one card each.
  * The page explains why the other rejects are final (physical and structural gates, soft scores);
  * the server checks the rule again. Appeals are optional and never count as pending.
  */

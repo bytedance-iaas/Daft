@@ -7,10 +7,10 @@ import { qk } from '../../api/queries';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
 import type { operations } from '../../api/schema';
 import type { EpisodeView, PipelineEpisode, Task } from '../../api/types';
-import { rowStages, rowState } from '../../lib/pipelineRow';
+import { groupSeconds, ROW_GROUPS, rowStages, rowState } from '../../lib/pipelineRow';
 
 type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
-import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
+import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const copy = zh.taskDetail.pipelineEpisodes;
@@ -41,11 +41,10 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
 export const PIPELINE_PAGE = 15;
 
 /**
- * Column widths (requester 2026-10-05): 最近阶段 holds four stages on one line (「完整性验证 ✓ · 数值验证 ✓ ·
- * 视频验证 ✓ · 模型验证 …」is 335 px), and one more stage's room for each beyond four - EEF's 模型准备 makes five
- * (2026-10-11: they ran into the next column); the time columns are only as wide as their heads; 当前结果 takes the rest.
+ * Column widths (requester 2026-10-05): 最近阶段 holds the three groups on one line (「数据完整性 ✓ · CPU 检查 ✓ ·
+ * 模型检查 …」, design doc 26 §2); the time columns are only as wide as their heads; 当前结果 takes the rest.
  */
-const COL = { episode: 84, stages: 372, extraStage: 92, time: 96, total: 108, resultMin: 200 };
+const COL = { episode: 84, stages: 280, time: 96, total: 108, resultMin: 200 };
 
 /**
  * The mini player of a pipeline row: the episode's findings as chips and bands, read from the task's
@@ -80,12 +79,14 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     placeholderData: keepPreviousData,
   });
   const rows = page.data?.items ?? [];
-  // the funnel's first layer sees every selected episode (data integrity when selected, else numeric)
-  const funnel = FUNNEL_STAGES.filter((id) => task.progress.stages.some((s) => s.id === id));
-  const total = task.progress.stages.find((s) => s.id === funnel[0])?.total
-    ?? task.summary?.total ?? 0;
-  const timeCols = funnel.length || FUNNEL_STAGES.length - 1;
-  const stagesW = COL.stages + Math.max(0, timeCols - 4) * COL.extraStage;
+  // the groups the task has stages of (data integrity only when selected); every stage takes every selected episode
+  const ids = task.progress.stages.map((s) => s.id);
+  const present = ROW_GROUPS.filter((g) => g.members.some((id) => ids.includes(id)));
+  const groups = present.length ? present : ROW_GROUPS.filter((g) => g.key !== 'integrity');
+  const total = Math.max(0, ...task.progress.stages.filter((s) => groups.some((g) => g.members.includes(s.id))).map((s) => s.total))
+    || task.summary?.total || 0;
+  const stagesW = COL.stages;
+  const timeCols = groups.length;
   return (
     <Card
       title={copy.title}
@@ -116,14 +117,14 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
                 </Button>
               ) },
               { title: copy.columnStage, dataIndex: 'last_stage', width: stagesW, render: (_: unknown, row: PipelineEpisode) => <span className="nowrap">{rowStages(row)}</span> },
-              ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
-                title: copy.processingStage[stage] ?? stage,
-                dataIndex: 'stage_processing_s.' + stage,
+              ...groups.map((g) => ({
+                title: copy.processingStage[g.key] ?? g.key,
+                dataIndex: 'stage_processing_s.' + g.key,
                 width: COL.time,
                 align: 'right' as const,
                 className: 'pipeline-num',
                 render: (_: unknown, row: PipelineEpisode) => {
-                  const took = (row.stage_processing_s as Record<string, number | undefined> | undefined)?.[stage];
+                  const took = groupSeconds(row, g.members);
                   return took != null ? took.toFixed(2) + ' s' : '—';
                 },
               })),

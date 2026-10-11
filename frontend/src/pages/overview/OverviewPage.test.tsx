@@ -23,7 +23,7 @@ describe('概览 (07 §4.3, D36; F6.1)', () => {
     expect(screen.getByTestId('run-queued').closest('a')).toBeNull();
     const active = screen.getByTestId('active-tasks');
     expect(within(active).getByRole('link', { name: 'umi_640 全量质检' })).toBeInTheDocument();
-    expect(active).toHaveTextContent('VLM 档 410 / 631');
+    expect(active).toHaveTextContent('模型检查 410 / 640');
     expect(document.querySelectorAll('.overview-cards > *')).toHaveLength(2);
     expect(screen.getByText('运行情况')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: '时间范围' }).closest('.arco-select')).toHaveTextContent('近 7 天');

@@ -36,14 +36,14 @@ describe('任务列表 (07 §4.1)', () => {
     renderApp('/tasks');
     await screen.findByRole('link', { name: 'umi_640 全量质检' });
     const umi = row('umi_640 全量质检');
-    expect(within(umi).getByTestId('progress-stage')).toHaveTextContent('VLM 档410 / 631');
-    // 4 of 8 rows done (终判 … 交付核验 count once, 判决 is left out; sixth round) plus 410 / 631 of the current one.
-    expect(within(umi).getByTestId('progress-overall')).toHaveTextContent('总进度58%');
+    expect(within(umi).getByTestId('progress-stage')).toHaveTextContent('模型检查410 / 640');
+    // the four groups (design doc 26 §2): 数据完整性 and CPU 检查 done, plus 410 / 640 of 模型检查
+    expect(within(umi).getByTestId('progress-overall')).toHaveTextContent('总进度66%');
     expect(umi).not.toHaveTextContent(/剩余|预计/);
     // A paused task keeps both lines (its bars turn gray).
     const widowx = row('widowx 回归');
-    expect(within(widowx).getByTestId('progress-stage')).toHaveTextContent('VLM 档180 / 430');
-    expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度49%');
+    expect(within(widowx).getByTestId('progress-stage')).toHaveTextContent('模型检查180 / 430');
+    expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度47%');
   });
 
   it('重试 shows 运行中 at once; the list polls while it runs and flips to the recomputed state when it ends (D46)', async () => {
