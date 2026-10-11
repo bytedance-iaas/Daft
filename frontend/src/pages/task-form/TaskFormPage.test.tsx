@@ -49,7 +49,7 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     const { user } = renderApp('/tasks/new');
     await screen.findByText('基本信息');
     expect(requiredFieldLabels(s1())).toEqual(
-      expect.arrayContaining(['任务名称', '数据来源', '数据集地址', '地域', '访问密钥 管理', '交付目录（质检报告与交付数据集的写入位置）', '访问密钥']),
+      expect.arrayContaining(['任务名称', '数据来源', '数据集地址', '地域', '访问密钥 管理', '交付目录（质检报告与结果清单的写入位置）', '访问密钥']),
     );
     // nothing to sum up before the preflight knows the episodes (fourth round)
     expect(screen.queryByTestId('footer-summary')).toBeNull();

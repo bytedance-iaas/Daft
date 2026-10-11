@@ -499,7 +499,7 @@ export const zh = {
     noCredential: '还没有访问密钥',
     addCredential: '去添加',
     outputUri: '交付目录',
-    outputHelp: '质检报告与交付数据集的写入位置',
+    outputHelp: '质检报告与结果清单的写入位置',
     outputRoot: '交付根目录',
     outputPlaceholder: 'tos://存储桶名/目录',
     datasetUriPlaceholderShort: 'tos://存储桶名/前缀/数据集名',
