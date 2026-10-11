@@ -16,6 +16,11 @@
       "since": "feat/curator-v2 (2026-10-11)",
       "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the persistent / transient task classification of the frame-probe prompts"
     },
+    "dataset_level/audit.py": {
+      "removed": true,
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D90): the label-conflict queue it built came from the label guard's holds, gone since D73; the merged label audit and label_audit.json went with it, and nothing else read the file"
+    },
     "dataset_level/caption.py": {
       "removed": true,
       "since": "feat/curator-v2 (2026-10-11)",
@@ -77,9 +82,14 @@
       "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - a forward-kinematics wrapper for a self-collision check that never shipped (nothing imported it)"
     },
     "vlm_call_kinds.py": {
-      "blob": "9fb6e82b2749fe0fe0d462179489dfd521461b1d",
-      "since": "6193e8370",
-      "why": "design 13 (video-native judgement): the call-kind notes describe the continuous-video requests"
+      "blob": "445653cdb03807fd35d155f9f1680b118c8f10ca",
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89, D90): only the call kinds v2 sends are named - probe (task_success's one request) and eef_review; v1's endstate, arbitration, caption and llm went with v1"
+    },
+    "ingest/dataset_profiles/_README.md": {
+      "blob": "6cf1a5d07eec64effb418742876f72f27c8e6683",
+      "since": "feat/curator-v2 (2026-10-11)",
+      "why": "design 27 (D89): the profile fields are described by what v2 reads; the arbitration and camera_view.py readers went with v1 (documentation only)"
     }
   }
 }

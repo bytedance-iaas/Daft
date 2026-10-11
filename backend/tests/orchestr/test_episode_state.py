@@ -1,6 +1,8 @@
 """Durable episode handoff and bounded SQL lookups."""
 from __future__ import annotations
 
+import math
+
 from curation.pipeline.episode_state import EpisodeState, state_path
 from curation.pipeline.records import latest_results
 from curation.pipeline.timing import processing_times
@@ -22,71 +24,62 @@ def test_episode_processing_time_counts_shared_layer_once():
     assert processing_times({"dedup": {"elapsed_s": 3.0}, "timestamp_check": {"elapsed_s": 0.3}}) == {"numeric": 0.3}
 
 
+#: the blocks of a run (design doc 17 §3.3): each block's streaming stages in order, with their modules
+CHAINS = {"cpu": [("numeric", ["timestamp_check"]), ("frame", ["visual_quality"])],
+          "vlm": [("vlm", ["task_success"])]}
+
+
+def _store(tmp_path) -> EpisodeState:
+    store = EpisodeState(state_path(tmp_path))
+    store.set_blocks(CHAINS)
+    return store
+
+
 def test_episode_resume_state_is_durable_with_nonfinite_details(tmp_path):
+    """Records and positions survive a reopen; a failure stops nothing (D57): every judged episode goes on."""
     path = state_path(tmp_path)
-    store = EpisodeState(path)
+    store = _store(tmp_path)
     store.bootstrap(str(tmp_path), ["timestamp_check", "task_success"])
-    scored = {"module": "timestamp_check", "episode_index": 7,
-              "verdict": "scored", "details": {"value": float("nan")}}
-    store.finish("numeric", 7, {"timestamp_check": scored}, "vlm")
+    scored = {"module": "timestamp_check", "episode_index": 7, "status": "ok", "findings": [],
+              "details": {"value": float("nan")}, "error": None}
+    store.finish("numeric", 7, {"timestamp_check": scored}, "frame")
     store.close()
 
     reopened = EpisodeState(path)
     try:
-        assert reopened.progress_for([7]) == {7: "vlm"}
+        assert reopened.blocks == {b: [(sid, mods) for sid, mods in chain] for b, chain in CHAINS.items()}
+        assert reopened.positions([7], "cpu") == {7: "frame"} and reopened.positions([7], "vlm") == {}
         assert reopened.counts("timestamp_check") == (1, 0)
         assert reopened.survivors(["timestamp_check"]) == [7]
-        assert latest_results(str(tmp_path), "timestamp_check", [7])[7]["verdict"] == "scored"
-        failed = {"module": "task_success", "episode_index": 7,
-                  "verdict": "fail", "details": {}}
+        assert math.isnan(latest_results(str(tmp_path), "timestamp_check", [7])[7]["details"]["value"])
+        failed = {"module": "task_success", "episode_index": 7, "status": "error", "findings": [],
+                  "details": {}, "error": {"kind": "execution", "incidents": []}}
         reopened.finish("vlm", 7, {"task_success": failed}, "done")
-        assert reopened.progress_for([7]) == {7: "done"}
-        assert reopened.survivors(["task_success"]) == []
+        assert reopened.positions([7], "vlm") == {7: "done"}
+        assert reopened.counts("task_success") == (1, 1)
+        assert reopened.survivors(["task_success"]) == [7]                # an error stops nothing either
+        assert reopened.stage_states(7) == {"numeric": "done", "frame": "waiting", "vlm": "error"}
     finally:
         reopened.close()
 
 
 def test_recent_episodes_follow_completion_order_and_cursor(tmp_path):
-    store = EpisodeState(state_path(tmp_path))
+    store = _store(tmp_path)
     try:
         store.forward("numeric", [1, 9], "frame")
-        store.forward("frame", [1], "vlm")
+        store.forward("frame", [1], "done")
         recent = store.recent(limit=2)
         assert [row["episode_index"] for row in recent] == [1, 9]
+        assert recent[0]["blocks"]["cpu"]["next_stage"] == "done" and not recent[0]["done"]   # the vlm block is not
         older = store.recent(before=recent[0]["updated_seq"], limit=2)
         assert [row["episode_index"] for row in older] == [9]
     finally:
         store.close()
 
 
-def test_failed_gate_recovery_preserves_missing_and_downstream_results(tmp_path):
-    path = state_path(tmp_path)
-    store = EpisodeState(path)
-    try:
-        for ep in (0, 1):
-            store.finish("frame", ep, {"visual_quality": {"verdict": "fail"}}, "vlm")
-        store.missing("frame", 2)
-        store.finish("vlm", 1, {"task_success": {"verdict": "fail"}}, "done")
-        store.fail_stage("frame", "injected")
-    finally:
-        store.close()
-    store = EpisodeState(path)
-    try:
-        assert store.failed_stages() == {"frame": "injected"}
-        assert store.reopen_gate("frame", "vlm") == [0]
-        assert store.progress_for([0, 1, 2]) == {0: "vlm", 1: "done", 2: "done"}
-        assert store.reopen_gate("frame", "vlm") == []
-    finally:
-        store.close()
-
-
-def test_module_counts_so_far_and_a_store_made_before_them(tmp_path):
-    """The live module cards (design doc 17 §5.3): per module the episodes judged, failed on and with a
-    finding; a store written before the findings column gets it filled on opening."""
-    import sqlite3
-
-    path = state_path(tmp_path)
-    store = EpisodeState(path)
+def test_module_counts_so_far(tmp_path):
+    """The live module cards (design doc 17 §5.3): per module the episodes judged, failed on and with a finding."""
+    store = _store(tmp_path)
     try:
         ok = {"module": "visual_quality", "status": "ok", "findings": [], "error": None}
         found = {**ok, "findings": [{"code": "frozen", "item": "IMG-1", "severity": "low", "message_zh": "冻结"}]}
@@ -97,14 +90,5 @@ def test_module_counts_so_far_and_a_store_made_before_them(tmp_path):
             "visual_quality": {"judged": 3, "error": 1, "flagged": 2},
             "task_success": {"judged": 0, "error": 0, "flagged": 0}}
         assert store.module_counts([]) == {}
-    finally:
-        store.close()
-    db = sqlite3.connect(str(path))
-    db.execute("ALTER TABLE results DROP COLUMN findings")
-    db.commit()
-    db.close()
-    store = EpisodeState(path)
-    try:
-        assert store.module_counts(["visual_quality"])["visual_quality"] == {"judged": 3, "error": 1, "flagged": 2}
     finally:
         store.close()

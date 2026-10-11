@@ -16,7 +16,7 @@ from .repo import protocol as P
 from .repo.extras import dataset_format
 from .viz.status import mapping_info, viz_status
 
-_STAGE_KEYS = ("id", "block", "full_set", "state", "done", "total", "elapsed_s", "eta_s", "note",
+_STAGE_KEYS = ("id", "block", "state", "done", "total", "elapsed_s", "eta_s", "note",
                "pipeline")
 _SUMMARY_KEYS = ("total", "passed", "rejected", "held", "review", "pass_rate")
 _PARAM_KEYS = ("start_now", "batch_size", "vlm_retry", "vlm_hedge",
@@ -143,7 +143,7 @@ def module_counts(rows: list[P.TaskModule]) -> dict:
 
 def subtask(s: P.Subtask) -> dict:
     scope = {k: v for k, v in (s.scope or {}).items()
-             if k in ("modules", "episodes", "relabel_rerun")}
+             if k in ("modules", "episodes")}
     return {"id": s.id, "task_id": s.task_id, "kind": s.kind, "scope": scope, "state": s.state,
             "state_reason": s.state_reason, "progress": s.progress, "created_at": s.created_at,
             "started_at": s.started_at, "finished_at": s.finished_at, "result_rev": s.result_rev}

@@ -3,7 +3,7 @@
 Callers never submit a plan (D5). What they can do is lower two numbers:
 
 * the CPU concurrency of the numeric and frame stages, and
-* the VLM parallelism N the eight VLM gates are derived from.
+* the VLM parallelism N the VLM gates are derived from.
 
 Each number is the smallest of the bounds that apply, and the plan records
 which layer won (``plan.json`` ``limits.*.bound_by``):
@@ -26,11 +26,13 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 #: Planner defaults when neither the site nor the task says anything.
-DEFAULT_VLM_PARALLELISM = 64      # v1's factory defaults are the gates of N=64 (04 §2.2)
+DEFAULT_VLM_PARALLELISM = 64      # 04 §2.2
 RESERVED_CORES = 2                # P4: left to the Daemon and the web console
 
 #: ``concurrency`` keys of site settings before D54: read, ignored, warned about
 RETIRED_SITE_KEYS = ("cpu", "cpuMax", "cpu_max")
+#: ``vlm.gates`` of v1's requests (gone with them, D89): read, ignored, warned about
+RETIRED_GATES = ("endstate", "arbitration", "guard_caption", "caption", "llm", "audit")
 
 #: When several bounds tie, the one reported is the first in this order: the layers
 #: a user can change come first, so ``bound_by`` answers "which of my settings is in effect".
@@ -66,11 +68,14 @@ def available_cpu_workers(cores: int | None = None) -> int:
 
 
 def retired_site_keys(data: Mapping[str, Any] | None) -> list[str]:
-    """``concurrency.cpu`` / ``cpuMax`` still written in old site settings (ignored since D54)."""
-    conc = (data or {}).get("concurrency") if isinstance(data, Mapping) else None
-    if not isinstance(conc, Mapping):
-        return []
-    return [f"concurrency.{k}" for k in RETIRED_SITE_KEYS if conc.get(k) is not None]
+    """Keys old site settings may still carry, read and ignored: ``concurrency.cpu`` / ``cpuMax`` (D54) and
+    the ``vlm.gates`` of v1's requests (D89)."""
+    data = data if isinstance(data, Mapping) else {}
+    conc = data.get("concurrency")
+    out = [f"concurrency.{k}" for k in RETIRED_SITE_KEYS if isinstance(conc, Mapping) and conc.get(k) is not None]
+    gates = (data.get("vlm") or {}).get("gates") if isinstance(data.get("vlm"), Mapping) else None
+    out += [f"vlm.gates.{g}" for g in RETIRED_GATES if isinstance(gates, Mapping) and gates.get(g) is not None]
+    return out
 
 
 def _pick(candidates: list[tuple[str, int]]) -> Limit:
@@ -185,7 +190,7 @@ class SiteConfig:
             vlm_parallelism=one(conc, "vlmParallelism", "vlm_parallelism"),
             vlm_parallelism_max=one(conc, "vlmParallelismMax", "vlm_parallelism_max"),
             merge_enabled=merge.get("enabled", True),
-            gate_overrides=dict(vlm.get("gates") or {}),
+            gate_overrides={k: v for k, v in dict(vlm.get("gates") or {}).items() if k not in RETIRED_GATES},
             merge_limits={k: v for k, v in merge.items() if k != "enabled"},
         )
 

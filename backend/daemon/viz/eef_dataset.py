@@ -129,8 +129,8 @@ def make_bundle(svc, src, plan: dict, index: int | None, out: Path, *, version: 
             root = str(Access(svc.rt, src).local_root()) if src.is_local else src.uri
             with _bound(src, st):
                 if plan["kind"] == derive.MCAP_DERIVE:
-                    gen = derive_mcap.Derived(root=root, numbering=numbering, calibration=None, out_dir=tmp,
-                                              dataset_id=name, calibration_doc=plan["hh"])
+                    gen = derive_mcap.Derived(root=root, numbering=numbering, out_dir=tmp, dataset_id=name,
+                                              calibration_doc=plan["hh"])
                 else:
                     gen = declared.GeneratedMcap(decl, root=root, numbering=numbering, out_dir=tmp, dataset_id=name,
                                                  cameras=sources, sizes=_sizes(svc, src, decl), version=version)

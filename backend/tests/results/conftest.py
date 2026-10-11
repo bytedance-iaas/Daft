@@ -15,8 +15,8 @@ ep    what happens                                            where it ends (r1)
 1     timestamp fragment (a blocking finding)                 reject - final
 2     task_success judges it failed                           reject - appealable
 3     task_success abstains                                   passed + review (verdict)
-4     label conflict (the kill guard)                         passed + review (verdict)
-5     label conflict, a second one                            passed + review (verdict)
+4     task_success abstains, for another reason               passed + review (verdict)
+5     task_success abstains, like 4                           passed + review (verdict)
 6     task_success execution error                            held
 7     byte-for-byte duplicate of ep 0                         passed (both get SET-1, D87)
 8     motion_quality cannot score it                          passed (no review item, C2 1.4)
@@ -58,7 +58,8 @@ SHORT = ("wrist", "exterior_1")
 EPISODES = range(9)
 MIN = 60_000
 TEXT = {ep: f"put block {ep} in the bin" for ep in EPISODES}
-CAPTION = {4: "wipe the table with the cloth", 5: "open the drawer"}
+#: the task texts a person rewrites episodes 4 and 5 to
+RELABEL = {4: "wipe the table with the cloth", 5: "open the drawer"}
 
 
 def record(module: str, ep: int, verdict: str, *, score=None, details=None, evidence=(),
@@ -71,7 +72,7 @@ def record(module: str, ep: int, verdict: str, *, score=None, details=None, evid
     error = None
     if verdict == "error":
         error = {"kind": "execution",
-                 "incidents": incidents or [{"step": "arbitration", "call_kind": "arbitration",
+                 "incidents": incidents or [{"step": "probe", "call_kind": "probe",
                                              "cause": "timeout 60s", "attempts": 3}]}
     return record_v2(module, ep, passed, score, details or {}, error=error, evidence=list(evidence),
                      elapsed_s=0.25)
@@ -113,13 +114,10 @@ def cli(*argv):
 
 
 def task_details(ep: int, verdict: str) -> dict:
-    d = {"verdict": {"pass": "success", "fail": "failure"}.get(verdict, "review_conflict"),
+    d = {"verdict": {"pass": "success", "fail": "failure"}.get(verdict, "uncertain"),
          "task_desc": TEXT[ep], "task_desc_source": "原始标注", "rules": ["probe"]}
     if verdict == "abstain":
-        d["reason"] = "两层证据矛盾，进人工"
-    if ep in (4, 5):                       # the kill guard's suspected label conflict
-        d["verdict"] = "label_conflict_suspect"
-        d["label_check"] = {"annotation": TEXT[ep], "caption": CAPTION.get(ep, TEXT[ep])}
+        d["reason"] = "看不清积木最后是否放进箱子" if ep in (4, 5) else "两层证据矛盾，进人工"
     if verdict == "fail":
         d["reason"] = "3 路复核一致判未完成"
     return d
@@ -230,8 +228,8 @@ def main_latency() -> list[tuple]:
     return [("probe", 2.0, True, t + 60, "c1", 0, ""), ("probe", 4.0, True, t + 61, "c2", 0, ""),
             ("probe", 60.0, False, t + 62, "c3", 0, "timeout"),
             ("probe", 3.0, True, t + 92, "c3", 1, ""),
-            ("endstate", 5.0, True, t + 120, "c4", 0, ""),
-            ("arbitration", 60.0, False, t + 200, "c5", 0, "timeout")]
+            ("eef_review", 5.0, True, t + 120, "c4", 0, ""),
+            ("example_grasp", 60.0, False, t + 200, "c5", 0, "timeout")]      # a module's own kind (C3 1.1)
 
 
 #: the modules whose rejects can be appealed (C2 1.4), and the reason kind
@@ -345,7 +343,7 @@ class World:
         from daemon.results import Queue, store_of
 
         rows = Queue(store_of(self.rt), self.repo, self.task()).executable()
-        doc = {"schema_version": "1.0", "decisions": [
+        doc = {"schema_version": "2.0", "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
              "new_label": a.new_label, "note": a.note, "decided_by": a.decided_by,
              "decided_at": a.decided_at} for a in rows]}

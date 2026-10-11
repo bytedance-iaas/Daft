@@ -10,34 +10,26 @@ only the soft-score rejects are gone.
 **Every module judges every episode** (D57): the two blocks run side by side and no stage stops an
 episode, so an episode needs a judgement of every selected module (:func:`expected`) - one without is held.
 
-**Funnel phase** - the machine's verdicts of the per-episode modules (``verdicts.jsonl``, 2.0 lines) and
-``keep.txt``, the episodes kept after the applied human decisions; the Daemon's two-block runs go straight
-to the final phase.
-
-**Final phase** - adds the applied human decisions (:mod:`.adjudication`):
+**The final lists** - the machine's verdicts plus the applied human decisions (:mod:`.adjudication`):
 a discard wins over everything; a person's answer is the conclusion of the findings it answers; an appeal
 lifts the blocking of appealable findings when every blocking finding of the episode is one (D42 by
 finding); a relabel not judged again yet holds the episode. The duplicate check (D87) is a module like the
 others: its findings are reported, nothing is kept first or dropped. Writes ``passed`` / ``reject`` / ``held``
-(disjoint, complete) and the ``review`` view (2.0) plus the frozen ``policy.json`` into
-``revisions/r<NNNN>/``.
-
-A run directory with 1.0 records was made by an earlier version (D59): it is read as it is, never
-aggregated again (:class:`LegacyRun`).
+(disjoint, complete), the ``review`` view, the frozen ``policy.json``, the machine's verdict lines
+(``verdicts.jsonl``) and the kept set after the decisions (``keep.txt``) into ``revisions/r<NNNN>/``.
 """
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..contracts import modules as registry
 from . import policy as policy_mod
 from .adjudication import Decisions, judged_with
-from .records import (is_error, is_v2, latest_results, revision_dir, write_json_atomic,
-                      write_text_atomic)
+from .records import is_error, latest_results, write_json_atomic, write_text_atomic
 from .tasktext import TaskText
-from .verdicts import Graded, Verdict, also_failed, judge, name_of
+from .verdicts import Graded, Verdict, judge, name_of
 
 #: the stages whose modules judge every episode (the duplicate check compares one with the others, but it
 #: writes a record for each like the rest, D87)
@@ -46,12 +38,6 @@ NAMES_CN = {m.id: m.name_zh for m in registry.MODULES}
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
 LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "reject_appeal")
-#: The finding that says a task text and the picture disagree (task_success, LABEL-4).
-LABEL_CONFLICT = "label_conflict_suspect"
-
-
-class LegacyRun(RuntimeError):
-    """The run directory holds records of C2 1.0: a task made before (D59), read only."""
 
 
 @dataclass
@@ -72,10 +58,6 @@ class RunState:
             self.policy = policy_mod.load(self.run_dir)
         if self.results is None:
             self.results = {m: latest_results(self.run_dir, m) for m in self.modules}
-        for m, recs in self.results.items():
-            if any(not is_v2(r) for r in recs.values()):
-                raise LegacyRun(f"{self.run_dir}: {m} has result records of C2 1.0 - a task made by an earlier "
-                                f"version is read as it is and never aggregated again (D59)")
 
     def records(self, ep: int) -> dict[str, dict | None]:
         return {m: self.results[m].get(ep) for m in self.modules}
@@ -92,18 +74,6 @@ def machine(state: RunState, ep: int) -> Verdict:
     """The machine's verdict of the modules (no human decisions)."""
     recs = state.records(ep)
     return judge(ep, recs, expected(state, ep, recs), state.policy)
-
-
-def task_passed(rec: dict | None) -> bool | None:
-    """task_success's tri-state from its findings (the label audit's task line)."""
-    if rec is None or is_error(rec):
-        return None
-    codes = {f.get("code") for f in rec.get("findings") or []}
-    if "failure" in codes:
-        return False
-    if codes & {"uncertain", "label_conflict_suspect"}:
-        return None
-    return True
 
 
 @dataclass
@@ -136,8 +106,8 @@ def answers_of(decisions: Decisions, ep: int) -> dict[str, str | None]:
             "eef_check": decisions.human_gate(ep, "eef_check", ("consistent", "inconsistent"))}
 
 
-def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "final") -> Decided:
-    """``ep`` after the human decisions (``phase`` names the caller's step; both judge every module)."""
+def decide(state: RunState, ep: int, decisions: Decisions) -> Decided:
+    """``ep`` after the human decisions."""
     recs = state.records(ep)
     need = expected(state, ep, recs)
     mach = judge(ep, recs, need, state.policy)
@@ -157,9 +127,9 @@ def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "fina
     return Decided(mach, verdict, discard, restored, admissible, pending)
 
 
-def decide_all(state: RunState, decisions: Decisions, *, phase: str = "final") -> dict[int, Decided]:
+def decide_all(state: RunState, decisions: Decisions) -> dict[int, Decided]:
     """Every episode after the human decisions."""
-    return {e: decide(state, e, decisions, phase=phase) for e in state.episodes}
+    return {e: decide(state, e, decisions) for e in state.episodes}
 
 
 # ---------------------------------------------------------------- the lists
@@ -190,46 +160,9 @@ def reasons_of(d: Decided) -> list[dict]:
     return []
 
 
-def merged_label_audit(state: RunState, profile_audit: dict | None) -> dict | None:
-    """The label-conflict queue: the kill guard's holds from task_success, each entry tagged with
-    the task line (``dataset_level.audit``). ``profile_audit`` is always None since the skill
-    profile left (registry 3.0); the parameter stays so an older run directory still reads."""
-    from ..dataset_level.audit import attach_task_context, guard_hold_entries, merge_guard_holds
-
-    task_detail, task_of = {}, {}
-    for ep, rec in (state.results.get(TASK) or {}).items():
-        if is_error(rec):
-            continue
-        d = rec.get("details") or {}
-        eid = f"ep{int(ep):06d}"
-        task_detail[eid] = d
-        task_of[eid] = {"passed": task_passed(rec), "verdict": d.get("verdict", "")}
-    audit = profile_audit if profile_audit else None
-    holds = guard_hold_entries(task_detail)
-    if holds:
-        audit = merge_guard_holds(audit, holds)
-    if audit is None:
-        return None
-    return attach_task_context(audit, task_of)
-
-
-def _audit_entries(audit: dict | None) -> dict[int, list[tuple[str, dict]]]:
-    out: dict[int, list[tuple[str, dict]]] = {}
-    for tier in ("high", "mid_for_review", "low_caption_unstable"):
-        for entry in (audit or {}).get(tier) or []:
-            try:
-                idx = int(str(entry.get("id")).lstrip("ep"))
-            except ValueError:
-                continue
-            out.setdefault(idx, []).append((tier, entry))
-    return out
-
-
-def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
-                 audit_entries: list[tuple[str, dict]], reasons: list[dict]) -> list[dict]:
+def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions, reasons: list[dict]) -> list[dict]:
     """What a person is asked about one episode (D42, D43): a kept episode's review findings nobody
-    settled, one item per line and module; an admissible reject's appeal. A suspected label conflict
-    is part of the task verdict's own item (registry 3.0), with the audit's reason and priority."""
+    settled, one item per line and module; an admissible reject's appeal."""
     items: list[dict] = []
     if d.state == "keep":
         by_line: dict[tuple[str, str], list[Graded]] = {}
@@ -244,12 +177,6 @@ def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
             item = {"source_module": module, "kind": spec.review_kind, "line": line,
                     "codes": codes, "items": [g.item for g in gs if g.item],
                     "reason": reason or "未注明"}
-            if LABEL_CONFLICT in codes and audit_entries:
-                tier, entry = audit_entries[0]
-                item["reason"] = "；".join(dict.fromkeys(
-                    x for x in (str(entry.get("reason") or ""), item["reason"]) if x))
-                if entry.get("priority"):
-                    item["priority"] = str(entry["priority"])
             items.append(item)
     if d.state == "drop" and d.discard is None and d.admissible and decisions.appeal(ep) in (None, "unsure") \
             and not d.restored:
@@ -289,12 +216,9 @@ def graded_findings(state: RunState, ep: int, d: Decided) -> list[dict]:
     return out
 
 
-def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None,
-          profile_audit: dict | None) -> dict:
-    """The four lists (``cli/final-list.schema.json`` 2.0) plus the merged label audit."""
+def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None) -> dict:
+    """The four lists (``cli/final-list.schema.json`` 2.0), the verdict lines and the kept set."""
     decided = decide_all(state, decisions)
-    audit = merged_label_audit(state, profile_audit) if TASK in state.modules else None
-    entries = _audit_entries(audit)
     passed, reject, held, review = [], [], [], []
     for ep in state.episodes:
         d = decided[ep]
@@ -313,7 +237,7 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         else:
             held.append(entry)
         if d.state in ("keep", "drop") and d.discard is None:
-            items = review_items(state, ep, d, decisions, entries.get(ep) or [], reasons)
+            items = review_items(state, ep, d, decisions, reasons)
             if items:
                 item_entry = {"episode_index": ep, "review": items,
                               "current_list": "passed" if d.state == "keep" else "reject"}
@@ -325,17 +249,12 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         return {"schema_version": "2.0", "list": name, "revision": int(revision), "count": len(eps),
                 "episodes": eps}
 
-    # keep.txt: the kept set after the human decisions (the delivered set is passed.json)
-    verdicts, keep = funnel(state, decisions)
+    # verdicts.jsonl: the machine's verdicts; keep.txt: the kept set after the human decisions (the delivered
+    # set is passed.json)
+    verdicts = [decided[e].machine for e in state.episodes]
+    keep = [e for e in state.episodes if decided[e].kept]
     return {"passed": doc("passed", passed), "reject": doc("reject", reject), "held": doc("held", held),
-            "review": doc("review", review), "label_audit": audit, "verdicts": verdicts, "keep": keep,
-            "policy": state.policy}
-
-
-def funnel(state: RunState, decisions: Decisions) -> tuple[list[Verdict], list[int]]:
-    """(the machine's verdicts of the funnel modules, the episodes kept after the human decisions)."""
-    decided = {e: decide(state, e, decisions, phase="funnel") for e in state.episodes}
-    return [decided[e].machine for e in state.episodes], [e for e in state.episodes if decided[e].kept]
+            "review": doc("review", review), "verdicts": verdicts, "keep": keep, "policy": state.policy}
 
 
 def write_verdicts(out_dir: str, verdicts: list[Verdict], keep: list[int]) -> dict:
@@ -356,7 +275,6 @@ def write_final(rev_dir: str, result: dict) -> dict:
         path = os.path.join(rev_dir, f"{name}.json")
         write_json_atomic(path, result[name])
         files[name] = path
-    write_json_atomic(os.path.join(rev_dir, "label_audit.json"), result["label_audit"] or {})
     pol = os.path.join(rev_dir, policy_mod.POLICY_NAME)
     write_json_atomic(pol, result["policy"].to_json())
     files["policy"] = pol

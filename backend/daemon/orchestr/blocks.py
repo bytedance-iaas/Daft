@@ -1,14 +1,10 @@
-"""The two blocks of a plan 2.0 run, side by side (design doc 17 §3, D57).
+"""The two blocks of a run, side by side (design doc 17 §3, D57).
 
 The CPU block (integrity -> numeric -> frame -> duplicate) and the VLM block (vlm)
-run in two threads and never filter each other. Inside a block the stages run in the plan's order:
-
-* the per-episode stages - one chain of the episode pipeline (:func:`.pipeline.run_funnel`):
-  every episode with a record of a stage goes on to the next one, findings and errors stop nothing.
-  Since D70 that is every stage of a block; a stage marked ``full_set`` (none today) would run as one
-  command over the whole selection;
-* ``autolabel`` - the caption pass plans from before D72 carry before the VLM block's checks: it is
-  gone (an episode without a task text is not judged), so such a stage is marked skipped.
+run in two threads and never filter each other. Inside a block the stages run in the plan's order,
+as one chain of the episode pipeline (:func:`.pipeline.run_funnel`): every episode with a record of a
+stage goes on to the next one, findings and errors stop nothing (since D70 no stage needs the whole
+selection at once).
 
 Either block failing stops the other (a shared abort event, :meth:`Run.check_intent`); a pause or a
 stop reaches every process of both. The CPU block books its CPU-pool slots to the run's key
@@ -18,8 +14,8 @@ never gives back the other's slots.
 Since registry 5.3 (design doc 23 §1, §4.3) a dispatch unit is a *chain*: stages linked by ``after``. The CPU
 block's second root, ``vlm_prep`` (the model modules' CPU halves), starts a chain of its own, and the vlm stage
 that comes after it continues that chain across the blocks - an episode's CPU half done, its model half is next.
-A chain is named after the block of its last stage (``cpu``, ``vlm``: a plan from before keeps its two names),
-or after its first stage when that name is taken (``vlm_prep`` with no model half).
+A chain is named after the block of its last stage (``cpu``, ``vlm``), or after its first stage when that name is
+taken (``vlm_prep`` with no model half).
 """
 from __future__ import annotations
 
@@ -51,8 +47,7 @@ def stages_by_chain(plan: dict) -> dict[str, list[dict]]:
 
 def chains_of(plan: dict) -> dict[str, list[tuple[str, list[str]]]]:
     """``chain -> [(stage, modules)]``: each chain's per-episode stages in order (the episode store's layout)."""
-    return {key: [(st["id"], list(st["modules"])) for st in stages
-                  if st.get("command") == "check" and not st.get("full_set")]
+    return {key: [(st["id"], list(st["modules"])) for st in stages if st.get("command") == "check"]
             for key, stages in stages_by_chain(plan).items()}
 
 
@@ -78,27 +73,10 @@ def run_block(run, block: str, stages: list[dict], selection: list[int], abort: 
     from .pipeline import run_funnel
 
     pool_key = run.cpu_key if block == "cpu" else (*run.cpu_key, block)
-    i = 0
-    while i < len(stages):
-        run.check_intent()
-        st = stages[i]
-        if st.get("command") == "autolabel":
-            if not run.journal.done(st["id"]):
-                run.log(st["id"], "info", "补描述这一步已经取消：没有任务标注的条目不做任务成败判定，"
-                                          "其余检查照常")
-                run.stage_done(st["id"], "skipped")
-            i += 1
-        elif st.get("full_set"):
-            run.check_stage(st, selection, fresh=True)
-            run.sync_quietly(st["id"])
-            i += 1
-        else:
-            chain = []
-            while i < len(stages) and stages[i].get("command") == "check" and not stages[i].get("full_set"):
-                chain.append(stages[i])
-                i += 1
-            if not all(run.journal.done(s["id"]) for s in chain):
-                run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block)
+    run.check_intent()
+    chain = [st for st in stages if st.get("command") == "check"]
+    if chain and not all(run.journal.done(s["id"]) for s in chain):
+        run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block)
 
 
 def _first(errors: list[BaseException]) -> BaseException:

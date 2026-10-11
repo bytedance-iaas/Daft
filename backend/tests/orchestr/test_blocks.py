@@ -14,20 +14,16 @@ from daemon.orchestr import blocks
 from daemon.orchestr import episode_pipeline as ep
 from daemon.orchestr.workdir import WorkDir
 
-#: A plan with a whole-set stage (``full_set``: one command over the selection - no planned stage is one
-#: since D70, the block runner still takes it) and the autolabel stage D72 retired, so that both paths stay
-#: covered. The duplicate check as the streaming segment it is planned as is covered by
-#: ``tests/cli/test_duplicate_stream.py`` and the end-to-end runs.
+#: The two blocks of a plan (design doc 17 §3.3): the CPU block's per-episode stages in a chain, the duplicate check
+#: last (D87), and the VLM block. Every stage takes every selected episode.
 PLAN = {"schema_version": "2.0", "stages": [
     {"id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 4,
      "modules": ["timestamp_check"], "episodes": "selected"},
     {"id": "frame", "kind": "cpu", "command": "check", "block": "cpu", "after": "numeric", "concurrency": 4,
      "modules": ["visual_quality"], "episodes": "selected"},
-    {"id": "duplicate", "kind": "cpu", "command": "check", "block": "cpu", "after": "frame", "full_set": True,
+    {"id": "duplicate", "kind": "cpu", "command": "check", "block": "cpu", "after": "frame",
      "concurrency": 1, "modules": ["duplicate_check"], "episodes": "selected"},
-    {"id": "autolabel", "kind": "vlm", "command": "autolabel", "block": "vlm", "episodes": "unlabeled",
-     "gates": {"caption": 2}},
-    {"id": "vlm", "kind": "vlm", "command": "check", "block": "vlm", "after": "autolabel",
+    {"id": "vlm", "kind": "vlm", "command": "check", "block": "vlm",
      "modules": ["task_success"], "episodes": "selected", "gates": {"episode": 2}},
     {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"},
 ]}
@@ -102,17 +98,8 @@ class Run:
     def module_params(self, module_id):
         return {}
 
-    # the whole-stage steps (StageRun's): what they did, in order
-    def check_stage(self, st, episodes, *, fresh, incremental=False):
-        if self.journal.done(st["id"]):
-            return []
-        self.note(st["id"], "start", tuple(episodes))
-        self.note(st["id"], "done", tuple(episodes))
-        self.stage_done(st["id"], "succeeded")
-        return list(episodes)
 
-
-def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset()):
+def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(), broken=None):
     class Worker:
         requested = "term"
         term_grace_s = int_grace_s = 0
@@ -156,6 +143,8 @@ def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(
             return CliOutcome(returncode=0, status="ok", doc={}, message=None)
 
     def start(run_, layer, selection, path, next_stage):
+        if layer.sid == broken:
+            raise RuntimeError(f"the {broken} stage went wrong")
         layer.child = Worker(layer, path, next_stage)
 
     monkeypatch.setattr(ep, "_start_worker", start)
@@ -182,18 +171,17 @@ def test_the_blocks_run_side_by_side_and_never_filter_each_other(tmp_path, monke
     last_vlm = max(at(events, "vlm", "done", e) for e in selection)
     last_frame = max(at(events, "frame", "done", e) for e in selection)
     assert last_vlm < last_frame
-    # its autolabel stage is skipped (the caption pass is gone, D72); its whole-set stage runs after the
-    # block's checks
-    assert ("autolabel", "start", None) not in events
-    assert at(events, "duplicate", "start", tuple(selection)) > last_frame
+    # the duplicate check takes each episode as frame hands it on (D70, D87)
+    assert {e for s, e in done if s == "duplicate"} == set(selection)
+    assert all(at(events, "frame", "done", e) < at(events, "duplicate", "start", e) for e in selection)
     assert run.stages == {"numeric": "completed_with_errors", "frame": "succeeded", "duplicate": "succeeded",
-                          "autolabel": "skipped", "vlm": "succeeded"}
+                          "vlm": "succeeded"}
     # the store knows where every episode is in each block
     store = EpisodeState(state_path(run.wd.root))
     try:
         assert store.positions(selection, "cpu") == {e: "done" for e in selection}
         assert store.positions(selection, "vlm") == {e: "done" for e in selection}
-        assert store.stage_states(1) == {"numeric": "error", "frame": "done", "vlm": "done"}
+        assert store.stage_states(1) == {"numeric": "error", "frame": "done", "duplicate": "done", "vlm": "done"}
         assert store.totals() == {"started": 6, "finished": 6}
     finally:
         store.close()
@@ -215,29 +203,21 @@ def test_a_resumed_run_goes_on_where_each_block_was(tmp_path, monkeypatch):
         store.finish("vlm", 0, {"task_success": {"module": "task_success", "episode_index": 0, **ok}}, "done")
     finally:
         store.close()
-    run.journal.mark("autolabel", done=True)
     blocks.run_blocks(run, PLAN, selection)
     started = [(sid, e) for sid, kind, e in events if kind == "start"]
     assert not any(sid == "numeric" for sid, _ in started)
     assert sorted(e for sid, e in started if sid == "frame") == selection
     assert sorted(e for sid, e in started if sid == "vlm") == [1, 2, 3]
-    assert ("autolabel", "start", None) not in events
 
 
 def test_a_failing_block_stops_the_other(tmp_path, monkeypatch):
     events: list = []
     run = Run(tmp_path, events)
-    install_workers(monkeypatch, run, frame_every=50)
-
-    def broken(st, episodes, *, fresh, incremental=False):
-        raise RuntimeError("the full-set stage went wrong")
-
-    run.check_stage = broken
+    install_workers(monkeypatch, run, frame_every=50, broken="vlm")
     try:
         blocks.run_blocks(run, PLAN, list(range(4)))
     except RuntimeError as exc:
-        assert "the full-set stage went wrong" in str(exc)
+        assert "the vlm stage went wrong" in str(exc)          # the cause, not the other block giving up
     else:
         raise AssertionError("the failure was not raised")
     assert run._pipeline_abort is None
-    assert ("duplicate", "start", (0, 1, 2, 3)) not in events

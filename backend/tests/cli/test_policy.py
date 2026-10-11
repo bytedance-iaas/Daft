@@ -39,11 +39,11 @@ def test_report_only_asks_nobody_and_rejects_only_on_data_integrity():
     assert "review" not in levels.values()
 
 
-def test_a_frozen_version_1_report_only_keeps_its_own_rules():
-    # a task started before 2026-10-05 froze report_only as one rule: everything info
-    old = P.Policy.from_json({"preset": "report_only", "version": "1", "rules": [{"match": {"level": "any"}, "level": "info"}]})
-    assert old.level("data_integrity", _f("file_empty", "FILE-1", "high")) == "info"
-    assert P.Policy.of("report_only").to_json()["version"] == "2"
+def test_frozen_rules_are_the_tasks_whatever_the_preset_says_today():
+    # a task froze its rules at start: a preset of the same name that changes later does not change the task
+    frozen = P.Policy.from_json({"preset": "report_only", "version": "2", "rules": [{"match": {"level": "any"}, "level": "info"}]})
+    assert frozen.level("data_integrity", _f("file_empty", "FILE-1", "high")) == "info"
+    assert P.Policy.of("report_only").level("data_integrity", _f("file_empty", "FILE-1", "high")) == "blocking"
 
 
 def test_rules_match_in_order_and_cannot_invent_a_question():
@@ -78,9 +78,8 @@ def test_frozen_in_the_run_directory(tmp_path):
 
 
 def test_a_task_keeps_the_default_levels_it_started_with(tmp_path):
-    """Design doc 25 §7.3: 5.0 made the EEF module's ``inconsistent`` info; a task frozen with its modules' default
-    levels keeps them whatever a later registry says, and a run frozen before 5.0 (no defaults in run.json) keeps
-    4.x's - an older task's next revision does not quietly bring its EEF rejects back."""
+    """Design doc 25 §7.3: a task frozen with its modules' default levels keeps them whatever a later registry
+    says; a table frozen without them reads today's registry."""
     eef = {"code": "inconsistent", "item": "MV-4", "severity": "high"}
     now = P.Policy.of().with_defaults(["eef_video_consistency", "duplicate_check"])
     table = now.to_json()["defaults"]
@@ -88,13 +87,10 @@ def test_a_task_keeps_the_default_levels_it_started_with(tmp_path):
     assert set(table) == {"eef_video_consistency", "duplicate_check"} and now.level("eef_video_consistency", eef) == "info"
     # what was frozen wins over the registry, even where they differ
     frozen = {**now.to_json(), "defaults": {"eef_video_consistency": {"inconsistent": "blocking"}}}
-    assert P.Policy.from_json(frozen, "5.0").level("eef_video_consistency", eef) == "blocking"
-    # a run of 4.x without frozen defaults: the default it had
-    old = {"preset": "default", "rules": [], "version": "2"}
-    for ver, want in (("4.4", "blocking"), ("4.0", "blocking"), ("5.0", "info"), (None, "info")):
-        assert P.Policy.from_json(old, ver).level("eef_video_consistency", eef) == want, ver
-    (tmp_path / "run.json").write_text(json.dumps({"policy": old, "registry_version": "4.2"}))
+    assert P.Policy.from_json(frozen).level("eef_video_consistency", eef) == "blocking"
+    assert P.Policy.from_json({"preset": "default", "rules": [], "version": "2"}).level("eef_video_consistency", eef) == "info"
+    (tmp_path / "run.json").write_text(json.dumps({"policy": frozen}))
     assert P.load(str(tmp_path)).level("eef_video_consistency", eef) == "blocking"
-    # rules still decide first: report_only makes it info even on an old run
-    ro = P.Policy.from_json({"preset": "report_only", "rules": P.PRESETS["report_only"], "version": "2"}, "4.2")
+    # rules still decide first: report_only makes it info even where the frozen default blocks
+    ro = P.Policy.from_json({**frozen, "preset": "report_only", "rules": P.PRESETS["report_only"]})
     assert ro.level("eef_video_consistency", eef) == "info"

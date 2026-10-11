@@ -7,9 +7,8 @@ covers but could not assess on this episode, and why) and ``readings`` (numbers 
 the scores among them). ``details`` stay exactly as the algorithm wrote them.
 
 Everything here is a pure function of ``(passed, score, details, params)``: the record writer calls it
-when a ``check`` call finishes an episode, and the parity tool and the evaluation call it on records
-written before (a 1.0 record still has all three). The judgement lines are module parameters with
-defaults (``param_schema``, registry 2.1), never constants of the evaluation tools.
+when a ``check`` call finishes an episode. The judgement lines are module parameters with defaults
+(``param_schema``, registry 2.1), never constants of the evaluation tools.
 
 Two guards keep the default policy equal to today's gates (P18): a module that fails an episode
 (``passed is False``) yields at least one finding whose code blocks by default, and one that defers to a
@@ -410,11 +409,6 @@ def _motion_quality(passed, score, d, p) -> Derived:
 
 # ---------------------------------------------------------------- vlm stage
 
-#: task_success verdicts of v1 that end on a person (passed None) other than the label guard's hold
-_TASK_SUCCESS = ("success", "arbitration_success", "recovery", "endstate_success")
-_TASK_FAILURE = ("failure", "arbitration_failure")
-
-
 def _evidence_span(d: dict) -> tuple[dict | None, list[dict]]:
     """The primary answer's evidence (video protocol): its first stretch and all of them."""
     items = [e for e in ((d.get("video_assessment") or {}).get("evidence") or []) if isinstance(e, dict)
@@ -424,23 +418,18 @@ def _evidence_span(d: dict) -> tuple[dict | None, list[dict]]:
 
 @deriver("task_success", fail="failure", defer="uncertain")
 def _task_success(passed, score, d, p) -> Derived:
-    """v1's verdict (video protocol in production, the frame-probe protocol in older records): failure,
-    an abstention, the label guard's hold (which today also asks the task verdict), a mid-way recovery
-    (frame protocol only; the video protocol does not report mistakes), and a task text the platform wrote
-    itself (LABEL-2). The completion estimate is a reading; the primary answer's evidence stretch is the
-    failure's interval (P19)."""
+    """The one video judgement (D71): failure or an abstention; an episode without a task text is not judged
+    (D72, LABEL-2). The completion estimate is a reading; the primary answer's evidence stretch is the failure's
+    interval (P19)."""
     out = Derived()
     m = "task_success"
     if d.get("skipped") == "no_task_text":
         # D72: the episode has no task text, so there was no judgement to derive from
         text = "没有任务标注，没有做任务成败判定"
         out.add(m, "task_text_missing", text, readings={"task_text_source": "无"})
-        for item in ("TASK-4", "LABEL-4"):
-            out.cannot(item, "no_task_text", text)
-        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
+        out.cannot("TASK-4", "no_task_text", text)
         return out
-    verdict = str(d.get("verdict") or "")
-    completion = d.get("video_completion", d.get("completion_final"))
+    completion = d.get("video_completion")
     if completion is not None:
         out.readings["completion"] = _r(completion)
     if d.get("task_type"):
@@ -457,23 +446,8 @@ def _task_success(passed, score, d, p) -> Derived:
                                             for e in items[:6]]}}
         out.add(m, "failure", "任务没有完成" + (f"：{reason[:200]}" if reason else ""), **kw)
     elif passed is None:
-        if verdict == "label_conflict_suspect":
-            lc = d.get("label_check") or {}
-            out.add(m, "label_conflict_suspect",
-                    f"模型判失败，但画面描述与标注不一致：标注「{str(lc.get('annotation') or '')[:60]}」，"
-                    f"画面「{str(lc.get('caption') or '')[:60]}」" if lc else "判失败但标注与画面疑似不符，先不判废",
-                    readings={"annotation": lc.get("annotation"), "caption": lc.get("caption")} if lc else None)
         out.add(m, "uncertain", "任务成败拿不准" + (f"：{reason[:200]}" if reason else ""))
-    if verdict == "recovery" or "recovery_dip" in (d.get("rules") or []):
-        out.add(m, "recovery", "中途进度回落后又完成了任务", readings={"dip": _r(d.get("dip", (d.get("raw") or {}).get("dip")))})
-    elif d.get("input_mode") == "video" or d.get("protocol"):
-        out.cannot("TASK-10", "not_applicable", "视频判定协议只判成败，不报告中途的失误")
-    source = str(d.get("task_desc_source") or "")
-    if source in ("自产caption", "无"):
-        # "自产caption": a record from before D72, judged with a caption the platform wrote
-        out.add(m, "task_text_missing", "没有任务标注，用的是当时平台生成的描述" if source == "自产caption"
-                else "没有任务标注，也没有描述", readings={"task_text_source": source})
-    elif not source:
+    if not str(d.get("task_desc_source") or ""):
         out.cannot("LABEL-2", "not_applicable", "记录里没有任务描述的来源")
     return out
 
@@ -521,44 +495,15 @@ def _camera_defects(passed, score, d, p) -> Derived:
     return out
 
 
-@deriver("eef_video_consistency", fail="inconsistent", defer="unsettled")
+@deriver("eef_video_consistency")
 def _eef_video_consistency(passed, score, d, p) -> Derived:
-    """Registry 5.0 (design doc 25 §7, D81): the merged cells' opinions - ``inconsistent`` (info) per sub-item and
-    camera at "possibly" or above, ``conflict`` (review, ``eef_check``) where the two channels say opposite things,
-    ``ego_motion_suspect`` for a wrist camera's own motion; a record from before 5.0 (no ``merged``): the decision
-    of design doc 12 appendix C.9. Both: the comparison with the dataset's own record, reported only."""
+    """Design doc 25 §7 (D81): the merged cells' opinions - ``inconsistent`` (info) per sub-item and camera at
+    "possibly" or above, ``conflict`` (review, ``eef_check``) where the two channels say opposite things,
+    ``ego_motion_suspect`` for a wrist camera's own motion - and the comparison with the dataset's own record,
+    reported only. A record without ``merged`` (the module said nothing on the episode) has no finding."""
     if isinstance(d.get("merged"), dict):
         return _eef_merged(d)
     out = Derived()
-    m = "eef_video_consistency"
-    dec = d.get("decision") if isinstance(d.get("decision"), dict) else {}
-    outcome = dec.get("outcome")
-    reason = str(d.get("reason") or dec.get("reason") or "").strip()
-    if d.get("overall"):
-        out.readings["overall"] = d.get("overall")
-    if passed is False or outcome == "reject":
-        cams = sorted({str(c.get("camera_id")) for c in dec.get("confirmed") or [] if isinstance(c, dict) and c.get("camera_id")})
-        out.add(m, "inconsistent", reason or "末端投影与画面不符", scope={"cameras": cams} if cams else None,
-                readings={"confirmed": [{k: c.get(k) for k in ("subitem", "camera_id") if c.get(k)}
-                                        for c in dec.get("confirmed") or [] if isinstance(c, dict)]})
-    elif passed is None or outcome == "human":
-        codes = sorted({str(h.get("code")) for h in dec.get("human") or [] if isinstance(h, dict) and h.get("code")})
-        out.add(m, "unsettled", reason.removeprefix("需要人工裁决：") or "末端投影与画面是否相符要人看",
-                readings={"why": codes})
-    opinion = d.get("opinion") if isinstance(d.get("opinion"), dict) else {}
-    if opinion.get("status") == "not_assessable":   # no trajectory for the episode: nothing was compared
-        out.cannot("MV-4", "not_applicable", str(opinion.get("failure") or reason or "这一条没有轨迹")[:200])
-    if opinion.get("flagged"):
-        best, best_cam = None, None
-        for cid, cam in (opinion.get("cameras") or {}).items():
-            for s in (cam or {}).get("segments") or []:
-                if isinstance(s, dict) and (best is None or (_num(s.get("confidence")) or 0) > (_num(best.get("confidence")) or 0)):
-                    best, best_cam = s, cid
-        kw = {}
-        if best is not None and _num(best.get("start_s")) is not None and _num(best.get("end_s")) is not None:
-            kw = {"time_s": (_num(best["start_s"]), _num(best["end_s"])), "scope": {"camera": str(best_cam)}}
-        out.add(m, "opinion_mismatch", f"模型认为末端投影与画面不符（最高置信 {_num(opinion.get('max_confidence')) or 0:.2f}）",
-                readings={"max_confidence": _r(opinion.get("max_confidence")), "segments": opinion.get("segments")}, **kw)
     _ego_motion(out, d)
     _eef_record(out, d)
     return out
@@ -619,59 +564,19 @@ def _eef_merged(d: dict) -> Derived:
     if episode.get("p") is None:                    # no channel said anything: nothing was compared
         why = str(episode.get("reason") or (d.get("opinion") or {}).get("failure") or "没有任何渠道给出结论")
         out.cannot("MV-4", "not_applicable", why[:200])
-    _ego_motion(out, d, emit=False)                 # AV-1 without a timed reading (the finding is the cell's)
+    _ego_motion(out, d)                             # AV-1 without a timed reading (the finding is the cell's)
     _eef_record(out, d)
     return out
 
 
-#: the band of a wrist camera's bad stretch -> the finding's severity (design doc 22 §5.3)
-_EGO_SEVERITY = {"minor": "low", "moderate": "medium", "severe": "high"}
-_EGO_BAND_ZH = {"minor": "轻", "moderate": "中", "severe": "重"}
-
-
-def _ego_motion(out: Derived, d: dict, emit: bool = True) -> None:
-    """A wrist camera's own motion against the recorded poses (design doc 22 §5.3): one ``ego_motion_suspect`` at
-    the episode's worst stretch (before 5.0; ``emit=False`` from 5.0, the merged cell reports it); its time offset
-    reading is the episode's AV-1 (unassessable without one)."""
-    m = "eef_video_consistency"
+def _ego_motion(out: Derived, d: dict) -> None:
+    """A wrist camera's own motion against the recorded poses (design doc 22 §5.3): its time offset reading is the
+    episode's AV-1, unassessable without one; the finding itself is the merged cell's (design doc 25 §7)."""
     ego = d.get("ego_motion") if isinstance(d.get("ego_motion"), dict) else {}
     cams = ego.get("cameras") if isinstance(ego.get("cameras"), dict) else {}
     timed = [c for c in cams.values() if isinstance(c, dict) and c.get("status") in ("ok", "suspect") and c.get("lag")]
     if not timed:
         out.cannot("AV-1", "not_applicable", "没有腕部相机自运动的时间读数（只有带位姿的腕部相机才有）")
-    if not emit or ego.get("status") != "suspect":
-        return
-    worst = ego.get("worst") if isinstance(ego.get("worst"), dict) else None
-    lags = {cid: c["lag"].get("lag_s") for cid, c in cams.items() if isinstance(c, dict) and (c.get("lag") or {}).get("flagged")}
-    kw = {}
-    if worst is not None:
-        if _num(worst.get("start_s")) is not None and _num(worst.get("end_s")) is not None:
-            kw["time_s"] = (_num(worst["start_s"]), _num(worst["end_s"]))
-        if worst.get("camera"):
-            kw["scope"] = {"camera": str(worst["camera"])}
-        kw["severity"] = _EGO_SEVERITY.get(str(worst.get("band")), None)
-        band = _EGO_BAND_ZH.get(str(worst.get("band")), "")
-        where = f"第 {int(worst['start_frame']) + 1}–{int(worst['end_frame']) + 1} 帧" if worst.get("start_frame") is not None else ""
-        if worst.get("reason") == "time_offset":
-            lag = _num(worst.get("lag_s")) or 0.0
-            what = f"位姿约{'晚' if lag > 0 else '早'} {abs(lag):.2f} s"
-        else:
-            what = f"画面里的转动与位姿差 {_num(worst.get('magnitude')) or 0:.1f}°"
-        detail = "，".join(x for x in (where, band) if x)
-        message = f"腕部相机的运动与记录的位姿不一致：{what}" + (f"（{detail}）" if detail else "")
-    else:
-        message = "腕部相机的运动与记录的位姿不一致"
-    readings = {"status": "suspect",
-                "cameras": {cid: {k: c.get("metrics", {}).get(k) for k in ("rotation_median_deg", "rotation_p95_deg",
-                                                                            "direction_median_deg", "lag_s", "lag_confidence",
-                                                                            "coverage")} | {"status": c.get("status")}
-                            for cid, c in cams.items() if isinstance(c, dict)},
-                "segments": [{"camera": cid, **{k: s.get(k) for k in ("start_frame", "end_frame", "start_s", "end_s",
-                                                                        "reason", "magnitude", "unit", "band")}}
-                             for cid, c in cams.items() if isinstance(c, dict) for s in c.get("segments") or []]}
-    if lags:
-        readings["lag_s"] = lags
-    out.add(m, "ego_motion_suspect", message, readings=readings, **kw)
 
 
 # ---------------------------------------------------------------- data integrity

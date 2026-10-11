@@ -79,7 +79,7 @@ jobs:
         env:
           PYTHONPATH: tools
         run: bash .github/scripts/pytest-summary.sh -q -rfE tools/parity/tests
-      - name: Regression sample tools (scorer, and the finding map against the platform's codes)
+      - name: Regression sample tools (injection, registration and the scorer)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           PYTHONPATH: tools

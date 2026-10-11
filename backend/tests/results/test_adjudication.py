@@ -8,7 +8,7 @@ import pytest
 
 from daemon.pagination import encode_cursor
 
-from .conftest import (API, CAPTION, JSON, MIN, T0, TEXT, World, all_pages, assert_error,
+from .conftest import (API, RELABEL, JSON, MIN, T0, TEXT, World, all_pages, assert_error,
                        assert_schema, make_task, read_csv)
 
 LIST = ("openapi.yaml#/paths/~1tasks~1{id}~1adjudication/get/responses/200/content/"
@@ -63,18 +63,11 @@ def test_the_queue_of_the_first_revision(world):
     cards = {c["episode_index"]: c for c in body["items"]}
     assert all(c["status"] == "pending" for c in cards.values())
     assert [q["line"] for q in cards[5]["questions"]] == ["task_verdict"]
-    # one question, both findings: the suspected label conflict and the abstention
-    conflict = cards[4]["questions"][0]
-    assert conflict == {"line": "task_verdict", "source_module": "task_success",
-                        "reason": conflict["reason"],
-                        "annotation": TEXT[4],
-                        "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "重点",
-                        "latest_decision": None,
-                        "codes": ["label_conflict_suspect", "uncertain"],
-                        "items": ["LABEL-4", "TASK-4"]}
-    assert "标注与画面描述不是同一任务" in conflict["reason"]      # the label audit's words
-    assert "任务成败拿不准" in conflict["reason"]                  # and the finding's
-    assert cards[5]["questions"][0]["priority"] == "重点"
+    # one question per card, what it asks about and the finding's sentence (C4 7.0: no caption, suggestion or priority)
+    assert cards[4]["questions"][0] == {"line": "task_verdict", "source_module": "task_success",
+                                        "reason": "任务成败拿不准：看不清积木最后是否放进箱子",
+                                        "annotation": TEXT[4], "latest_decision": None,
+                                        "codes": ["uncertain"], "items": ["TASK-4"]}
     verdict = cards[3]["questions"][0]
     assert (verdict["line"], verdict["source_module"], verdict["annotation"]) == (
         "task_verdict", "task_success", TEXT[3])
@@ -91,8 +84,6 @@ def test_the_queue_of_the_first_revision(world):
 
 
 def test_source_and_status_filters(world):
-    # the label questions now come from the kill guard, so task_success is the source of both
-    # the verdict cards and the label cards (the skill profile was the other source until 3.0)
     assert list(_cards(world, status="all", source="task_success")) == [3, 4, 5]
     assert list(_cards(world, status="all", source="timestamp_check")) == []
     assert list(_cards(world, tab="appeals", status="all", source="task_success")) == [2]
@@ -212,10 +203,10 @@ def test_a_verdict_may_carry_the_task_text_the_person_rewrote(world):
     """The question is "is this episode usable"; the answer may bring a new task text with it.
     Left "unsure", the episode stays in the queue and is judged again under the new text;
     concluded, the person's verdict stands."""
-    _ok(world.decide((4, "task_verdict", "unsure", CAPTION[4])))
+    _ok(world.decide((4, "task_verdict", "unsure", RELABEL[4])))
     card = _cards(world, status="all")[4]
     assert card["status"] == "unsure"                       # the model judges it again
-    assert card["questions"][0]["latest_decision"]["new_label"] == CAPTION[4]
+    assert card["questions"][0]["latest_decision"]["new_label"] == RELABEL[4]
     _ok(world.decide((5, "task_verdict", "success", "open the top drawer")))
     card = _cards(world, status="all")[5]
     assert card["status"] == "decided"
@@ -235,14 +226,14 @@ def _queue(world):
 def test_answers_are_executed_and_a_persons_verdict_is_not_re_judged(world):
     """What the apply subtask hands the CLI is every standing answer not applied yet; a verdict
     the person concluded stands, a rewritten text left "unsure" is judged again (D39)."""
-    _ok(world.decide((4, "task_verdict", "failure", CAPTION[4]),
+    _ok(world.decide((4, "task_verdict", "failure", RELABEL[4]),
                      (5, "task_verdict", "unsure", "open the top drawer")))
     assert [(d.episode_index, d.line) for d in _queue(world).executable()] == [
         (4, "task_verdict"), (5, "task_verdict")]
     sub = world.start_subtask(at=T0 + 10 * MIN)
     out = world.apply(sub)
     assert out["rerun_task_success"] == [5]                  # ep 4 was judged by the person
-    assert out["label_changes"] == [{"episode_index": 4, "new_label": CAPTION[4]},
+    assert out["label_changes"] == [{"episode_index": 4, "new_label": RELABEL[4]},
                                     {"episode_index": 5, "new_label": "open the top drawer"}]
     world.revision(2, subtask_id=sub.id)
     world.finish_subtask(sub, at=T0 + 11 * MIN)
@@ -332,13 +323,13 @@ def test_decided_cards_stay_after_their_answers_were_applied(world):
 # ---------------------------------------------------------------------------
 
 def test_csv_copy_in_v1_columns_and_words(world):
-    _ok(world.decide((4, "task_verdict", "unsure", CAPTION[4]), (3, "task_verdict", "success"),
+    _ok(world.decide((4, "task_verdict", "unsure", RELABEL[4]), (3, "task_verdict", "success"),
                      (2, "reject_appeal", "restore"), (5, "task_verdict", "unsure")))
     hd = world.run_dir / "human-decisions"
     assert not (hd / "label_decisions.csv").exists()        # the label line left with 3.0
     verdicts = read_csv(hd / "task_verdicts.csv")
     assert [(r["episode_id"], r["verdict"], r["new_label"]) for r in verdicts] == [
-        ("ep000004", "拿不准", CAPTION[4]), ("ep000003", "判成功", ""),
+        ("ep000004", "拿不准", RELABEL[4]), ("ep000003", "判成功", ""),
         ("ep000005", "拿不准", "")]
     assert list(verdicts[0]) == ["episode_id", "verdict", "new_label", "note", "at"]
     appeals = read_csv(hd / "reject_appeals.csv")

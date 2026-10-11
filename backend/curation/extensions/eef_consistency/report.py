@@ -412,29 +412,6 @@ def merged_summary(results: dict) -> dict:
             "tracking_invalid_cells": voided, "confidence_uncalibrated": not calibrated}
 
 
-def verdict_summary(results: dict) -> dict:
-    """What the module decided (D-E12): pass / reject / to a person, why people are asked and which
-    sub-items the rejects came from."""
-    outcomes = {"pass": 0, "reject": 0, "human": 0, "error": 0}
-    human: dict[str, int] = {}
-    rejected: dict[str, int] = {}
-    for rec in results.values():
-        dec = (rec.get("details") or {}).get("decision") or {}
-        o = dec.get("outcome") or ("error" if is_error(rec) else None)
-        if o in outcomes:
-            outcomes[o] += 1
-        for h in dec.get("human") or []:
-            human[h["code"]] = human.get(h["code"], 0) + 1
-        for c in dec.get("confirmed") or []:
-            rejected[c.get("subitem", "")] = rejected.get(c.get("subitem", ""), 0) + 1
-    series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
-    return {"judged_pass": outcomes["pass"], "judged_reject": outcomes["reject"], "to_human": outcomes["human"],
-            "outcomes": series({"pass": outcomes["pass"], "reject": outcomes["reject"], "human": outcomes["human"],
-                                "error": outcomes["error"]}),
-            "human_reasons": series(dict(sorted(human.items(), key=lambda kv: -kv[1]))),
-            "reject_subitems": series(rejected)}
-
-
 def review_rows(results: dict) -> list[dict]:
     out: list[dict] = []
     for ep, rec in sorted(results.items()):

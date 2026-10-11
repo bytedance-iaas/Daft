@@ -278,7 +278,7 @@ def main(argv: list[str]) -> int:
     with open(os.path.join(args.out, "parity.json"), "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=1, default=str)
     stats = doc["tape"]["hooks"]
-    print(f"[run-v2] {'FAILED ' + failure if failure else 'done'}; tape {mode}: "
-          f"hits={sum((stats.get('hits') or {}).values())} misses={stats.get('misses')} "
-          f"unused={stats.get('unused')}", file=sys.stderr)
+    counts = (f"hits={sum((stats.get('hits') or {}).values())} misses={stats.get('misses')} unused={stats.get('unused')}"
+              if mode == "replay" else f"written={sum((stats.get('written') or {}).values())}")
+    print(f"[run-v2] {'FAILED ' + failure if failure else 'done'}; tape {mode}: {counts}", file=sys.stderr)
     return 1 if failure else 0

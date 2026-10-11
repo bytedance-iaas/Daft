@@ -12,8 +12,9 @@ Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
 episode as soon as it is done; the highest part wins, ``results.jsonl`` is the
 compacted view.
 
-Exit 0 does not mean every episode succeeded: ``--json`` gives per-verdict
-counts and the error episodes, and the Daemon sets the module state from them.
+Exit 0 does not mean every episode succeeded: ``--json`` gives the judged and
+erred counts, the episodes per finding code and the error episodes, and the Daemon
+sets the module state from them.
 Non-zero only when the module as a whole cannot run (4: endpoint down, circuit
 breaker, a robot model the kinematic registry lacks), on signals (5 / 130),
 on a changed source (6).
@@ -383,14 +384,9 @@ def render(payload: dict) -> str:
     lines = []
     for m, entry in payload["modules"].items():
         c = entry["episodes"]
-        if "ok" in c:                                   # C2 2.0: judged / not, and the findings
-            found = ", ".join(f"{code} {n}" for code, n in (entry.get("findings") or {}).items())
-            lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - ok {c['ok']}, "
-                         f"error {c['error']}" + (f"; findings: {found}" if found else ""))
-        else:
-            lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - pass {c['pass']}, "
-                         f"fail {c['fail']}, abstain {c['abstain']}, scored {c['scored']}, "
-                         f"error {c['error']}")
+        found = ", ".join(f"{code} {n}" for code, n in (entry.get("findings") or {}).items())
+        lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - ok {c['ok']}, "
+                     f"error {c['error']}" + (f"; findings: {found}" if found else ""))
         if entry["error_episodes"]:
             shown = ", ".join(str(e) for e in entry["error_episodes"][:10])
             more = ", ..." if len(entry["error_episodes"]) > 10 else ""

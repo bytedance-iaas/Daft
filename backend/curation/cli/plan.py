@@ -89,7 +89,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         retired = retired_site_keys(site)
         if retired:
             ctx.log("warn", f"--site-config {args.site_config}: {', '.join(retired)} ignored; "
-                            "CPU workers follow the cores (cores - 2) and the task's cap")
+                            "CPU workers follow the cores (cores - 2) and the task's cap, the VLM gates "
+                            "are episode and probe")
     try:
         limits = PlanLimits(cpu_concurrency=args.task_cpu_concurrency,
                             vlm_parallelism=args.task_vlm_parallelism,

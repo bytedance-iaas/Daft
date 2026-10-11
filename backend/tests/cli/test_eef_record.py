@@ -80,6 +80,23 @@ def _mapping(tmp_path, doc: dict, name: str = "record.json") -> str:
     return str(path)
 
 
+#: what a declaration's records say (design doc 25 §6.1): the fields of an ``eef-mapping/1.1`` record it carries
+_DECLARED = {"pose": ("key", "topic", "fields", "slice", "layout", "quaternion_key", "units", "frame_id", "reference_frame"),
+             "joints": ("key", "topic", "fields", "slice", "units", "robot", "reference_frame")}
+
+
+def _declaration(tmp_path, doc: dict, name: str = "declaration.json") -> str:
+    """The dataset declaration (C7) whose records are those of the ``eef-mapping/1.1`` document ``doc``: what the
+    task freezes and ``check`` / ``preflight`` read with ``--declaration``."""
+    rec = doc["record"]
+    sem = {k: {f: copy.deepcopy(rec[k][f]) for f in fields if f in rec[k]} for k, fields in _DECLARED.items() if k in rec}
+    if rec.get("frames"):
+        sem["frames"] = copy.deepcopy(rec["frames"])
+    path = tmp_path / name
+    path.write_text(json.dumps({"schema_version": "dataset-declaration/1.0", "semantics": sem}))
+    return str(path)
+
+
 def _compare(traj: str, mapping: str, reader, ep: int = 1) -> dict:
     from curation.extensions.eef_consistency import load, profile
     from curation.extensions.eef_consistency import record as RC
@@ -235,16 +252,16 @@ def test_check_reports_it_and_the_verdict_does_not_move(mini_dataset, tmp_path):
     open(seeded, "w").write(json.dumps(doc))
     late = copy.deepcopy(MAPPING)
     late["record"]["joints"]["key"] = "observation.state"
-    mapping = _mapping(tmp_path, late)
+    declaration = _declaration(tmp_path, late)
     common = ("check", "--modules", EEF, "--input", mini_dataset, "--episodes", "0-3",
               "--param", f"{EEF}.trajectory_json={seeded}", *VLM)
     with fake_vlm(tmp_path / "tape"):
         base = run(*common, "--run-dir", str(tmp_path / "base"))
-        withrec = run(*common, "--run-dir", str(tmp_path / "rec"), "--param", f"{EEF}.record_mapping={mapping}")
+        withrec = run(*common, "--run-dir", str(tmp_path / "rec"), "--declaration", declaration)
     assert base.rc == 0 and withrec.rc == 0, withrec.doc
     a, b = results(str(tmp_path / "base"), EEF), results(str(tmp_path / "rec"), EEF)
     assert {e: passed_of(r) for e, r in a.items()} == {e: passed_of(r) for e, r in b.items()}
-    assert all(r["details"]["record"]["status"] == "unsupported" for r in a.values())          # no mapping given
+    assert all(r["details"]["record"]["status"] == "unsupported" for r in a.values())          # no declaration given
     rec = {e: r["details"]["record"] for e, r in b.items()}
     assert all(r["sources"]["joints"]["status"] == "suspect" for r in rec.values())
     assert all(r["details"]["summary"]["record_consistency"]["status"] == "suspect" for r in b.values())
@@ -254,9 +271,8 @@ def test_check_reports_it_and_the_verdict_does_not_move(mini_dataset, tmp_path):
     # the report: figures, a table row per episode and source, one line in report.md; nothing without a mapping
     for name in ("base", "rec"):
         rd = str(tmp_path / name)
-        for phase in ("funnel", "final"):
-            assert run("aggregate", "--run-dir", rd, "--phase", phase, "--revision", "1", "--episodes", "0-3",
-                       "--modules", EEF, "--input", mini_dataset).rc == 0
+        assert run("aggregate", "--run-dir", rd, "--revision", "1", "--episodes", "0-3",
+                   "--modules", EEF, "--input", mini_dataset).rc == 0
         assert run("report", "--run-dir", rd, "--revision", "1", "--modules", EEF).rc == 0
     sections = {}
     for name in ("base", "rec"):
@@ -281,7 +297,7 @@ def test_check_reports_it_and_the_verdict_does_not_move(mini_dataset, tmp_path):
     with fake_vlm(tmp_path / "tape2"):
         op = run("check", "--modules", EEF, "--input", mini_dataset, "--episodes", "0-1", "--run-dir",
                  str(tmp_path / "op"), "--param", f"{EEF}.trajectory_json={posed_only}",
-                 "--param", f"{EEF}.record_mapping={_mapping(tmp_path, MAPPING, 'ok.json')}", *VLM)
+                 "--declaration", _declaration(tmp_path, MAPPING, "ok.json"), *VLM)
     assert op.rc == 0, op.doc
     got = results(str(tmp_path / "op"), EEF)
     assert all(r["details"]["assessment_mode"] == "vlm_opinion" and passed_of(r) is True for r in got.values())
@@ -295,18 +311,18 @@ def test_preflight_says_whether_the_record_can_be_compared(mini_dataset, tmp_pat
     (entry,) = run(*args).doc["modules"]
     assert entry["subitems"]["record_consistency"] == {"availability": "unsupported",
                                                       "reason_code": "record_mapping_missing"}
-    (entry,) = run(*args, "--param", f"{EEF}.record_mapping={_mapping(tmp_path, MAPPING)}").doc["modules"]
+    (entry,) = run(*args, "--declaration", _declaration(tmp_path, MAPPING)).doc["modules"]
     assert entry["subitems"]["record_consistency"]["availability"] == "available"
     missing = copy.deepcopy(MAPPING)
     missing["record"]["joints"]["key"] = "observation.state.joint_position"
-    (entry,) = run(*args, "--param", f"{EEF}.record_mapping={_mapping(tmp_path, missing, 'm.json')}").doc["modules"]
+    (entry,) = run(*args, "--declaration", _declaration(tmp_path, missing, "m.json")).doc["modules"]
     assert entry["subitems"]["record_consistency"]["reason_code"] == "record_columns_missing"
     assert any("not in the dataset: observation.state.joint_position" in n for n in entry["notes"])
-    ur5 = copy.deepcopy(MAPPING)
-    ur5["record"]["joints"]["robot"] = "ur5"
-    (entry,) = run(*args, "--param", f"{EEF}.record_mapping={_mapping(tmp_path, ur5, 'u.json')}").doc["modules"]
-    assert entry["subitems"]["record_consistency"]["reason_code"] == "robot_model_unknown"
     assert entry["availability"] == "available"                                 # only this sub-item goes
+    ur5 = copy.deepcopy(MAPPING)                                                # a robot the platform has no
+    ur5["record"]["joints"]["robot"] = "ur5"                                    # kinematics for: not a declaration
+    refused = run(*args, "--declaration", _declaration(tmp_path, ur5, "u.json"))
+    assert refused.rc == 2 and "--declaration" in refused.doc["error"]["message"]
 
 
 # ------------------------------------------------------------------------------------ the DEMO dataset2
@@ -365,14 +381,14 @@ def test_dataset2_check_lists_its_overlays_in_the_record(tmp_path):
     from ..eef import demo_data
 
     root = demo_data.require("dataset2")
-    mapping = _mapping(tmp_path, {"schema_version": "eef-mapping/1.1", "record": {"joints": {
+    declaration = _declaration(tmp_path, {"schema_version": "eef-mapping/1.1", "record": {"joints": {
         "key": "observation.state.joint_position", "units": "rad", "robot": "franka_panda",
         "reference_frame": "robot_base"}}})
     rd = tmp_path / "run"
     with fake_vlm(tmp_path / "tape"):
         res = run("check", "--modules", EEF, "--input", demo_data.lerobot_root("dataset2"), "--episodes", "1",
                   "--run-dir", rd, "--param", f"{EEF}.trajectory_json={root / 'trajectory.json'}",
-                  "--param", f"{EEF}.record_mapping={mapping}", *VLM)
+                  "--declaration", declaration, *VLM)
     assert res.rc == 0, res.doc
     (r,) = results(str(rd), EEF).values()
     shown = r["details"]["record"]["evidence"]
@@ -384,10 +400,10 @@ def test_dataset2_check_lists_its_overlays_in_the_record(tmp_path):
 # ------------------------------------------------------------------------------------ drafted by the preflight (F5.16)
 
 
-def test_the_preflight_drafts_a_declaration_and_an_old_record_mapping_still_counts(mini_dataset, tmp_path):
+def test_the_preflight_drafts_a_declaration_and_a_declared_record_counts(mini_dataset, tmp_path):
     """Design doc 25 §3 (F5.23): the dataset preflight - no declaration given - drafts one to say what is missing (the
     mini dataset records joints and no end-effector pose: missing_pose); the record mapping is no longer drafted - the
-    declaration says the records - while an old task's record_mapping still makes the sub-item available."""
+    declaration says the records, and a declaration that does makes the sub-item available."""
     import json
 
     from parity.fixtures import make_mini_mcap
@@ -399,10 +415,10 @@ def test_the_preflight_drafts_a_declaration_and_an_old_record_mapping_still_coun
     assert entry["trajectory_source"]["kind"] == "missing_pose"
     assert entry["trajectory_source"]["declaration"]["drafted"] is True
     info = json.loads(open(f"{mini_dataset}/meta/info.json", encoding="utf-8").read())
-    confirmed = _mapping(tmp_path, D.draft(info)["document"], "draft.json")
+    confirmed = _declaration(tmp_path, D.draft(info)["document"], "draft.json")
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                    "--param", f"{EEF}.trajectory_json={_bundle(tmp_path)}",
-                   "--param", f"{EEF}.record_mapping={confirmed}").doc["modules"]
+                   "--declaration", confirmed).doc["modules"]
     assert entry["subitems"]["record_consistency"]["availability"] == "available"
     assert entry["trajectory_source"] == {"kind": "upload"}
     mcap = make_mini_mcap(str(tmp_path / "mini_mcap"))

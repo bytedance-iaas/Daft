@@ -47,12 +47,12 @@ def flow(tmp_path_factory, mini_dataset):
         with FakeVlmServer() as vlm:
             c = Chain(dataset, str(tmp / "run"), vlm.url)
             c.front()
-            c.funnel()
+            c.checks()
             c.post()
             c.deliver(delivery)
             decisions = str(tmp / "decisions.json")
             with open(decisions, "w", encoding="utf-8") as fh:
-                json.dump({"schema_version": "1.0", "decisions": [
+                json.dump({"schema_version": "2.0", "decisions": [
                     {"id": 1, "episode_index": 3, "line": "task_verdict", "decision": "failure",
                      "new_label": None, "note": "the block never reaches the bin",
                      "decided_by": "alice", "decided_at": 1790000000000},
@@ -64,8 +64,6 @@ def flow(tmp_path_factory, mini_dataset):
             rerun = applied.doc["rerun_task_success"]
             c.step("rejudge", "check", "--modules", "task_success", *c.common(),
                    "--episodes", ",".join(map(str, rerun)), *c.vlm)
-            c.step("funnel2", "aggregate", "--run-dir", c.rd, "--phase", "funnel",
-                   "--revision", "2", "--episodes", "0-7")
             c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
@@ -91,8 +89,6 @@ def test_the_duplicate_check_is_not_run_again_after_the_decisions(flow):
     run again and its byte copy 7 stays."""
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == ["0", "6", "7"]              # 6: no task text, not judged (D72)
-    counts = flow.steps["funnel2"].doc["counts"]
-    assert counts["decided_out"] == 1 and counts["decided_in"] == 0
     assert sorted(os.listdir(flow.path("checks", "duplicate_check", "parts"))) == ["0001.jsonl"]
 
 

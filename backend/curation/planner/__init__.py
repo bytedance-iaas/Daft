@@ -6,7 +6,7 @@ ledger into ``check`` and ``adapters/vlm_client.py`` waits until the golden
 baselines are archived (see README.md in this package).
 
 * :mod:`.limits` - effective CPU concurrency and VLM parallelism (D31)
-* :mod:`.gates` - one parallelism N -> the eight VLM gates (04 §2.2)
+* :mod:`.gates` - one parallelism N -> the VLM gates (04 §2.2)
 * :mod:`.plan` - :func:`build_plan`, the execution plan (04 §3)
 * :mod:`.merge` - FramePolicy, MergeUnit, MergeGroup, MergeLimits, strategies (04 §4.2)
 * :mod:`.executor` - sends units through an injected ``send(request)``
@@ -19,7 +19,7 @@ from .consistency import (MERGE_AGREEMENT_BAR, AgreementReport, default_verdict,
                           run_merge_consistency, verdict_agreement)
 from .executor import (MergeExecutor, MergeReceipts, MergeRun, UnitOutcome, VlmRequest,
                        VlmResponse, chat_payload, merge_units_for)
-from .gates import GATE_NAMES, V1_CONFIG_KEYS, derive_gates, v1_set_overrides
+from .gates import GATE_NAMES, derive_gates
 from .limits import (Limit, PlanLimits, SiteConfig, available_cpu_workers,
                      effective_cpu_concurrency, effective_vlm_parallelism, retired_site_keys)
 from .merge import (DeclaredMergeUnits, FramePolicy, MergeGroup, MergeLimits, MergeStrategy,
@@ -38,13 +38,13 @@ __all__ = [
     "MergeLimits", "MergeReceipts", "MergeRun", "MergeStrategy", "MergeUnit", "NoMerge",
     "PerEpisodeMultiModule", "PlanError", "PlanLimits", "ResizableGate", "RetryPolicy",
     "RetryStats", "SiteConfig", "UnitOutcome", "Usage", "UsageAccumulator", "UsageLedger",
-    "V1_CONFIG_KEYS", "VlmRequest", "VlmResponse", "VlmTransportError", "apportion",
+    "VlmRequest", "VlmResponse", "VlmTransportError", "apportion",
     "available_cpu_workers",
     "build_plan", "call_with_retry", "chat_payload", "classify_failure", "compose_merged_prompt",
     "dataset_episodes", "default_verdict", "derive_gates", "describe_episodes",
     "effective_cpu_concurrency", "effective_vlm_parallelism",
     "merge_enabled", "merge_units_for", "parse_usage", "retired_site_keys", "run_merge_consistency",
     "split_answer",
-    "strategy_for_stage", "strategy_named", "usage_from_response", "v1_set_overrides",
+    "strategy_for_stage", "strategy_named", "usage_from_response",
     "validate_plan", "verdict_agreement",
 ]

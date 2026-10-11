@@ -121,12 +121,9 @@ class FakeVlm:
             camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
             start = float(re.search(r"episode time ([\d.]+)s", text).group(1))
             end = float(re.search(r"episode window ends at ([\d.]+)s", text).group(1))
-            # Whole-second short clips are ambiguous; longer/fractional clips
-            # exercise the primary/review disagreement and video arbitration.
+            # Whole-second short clips are ambiguous: uncertain; longer / fractional ones fail.
             visible = end >= 6 or abs(end - round(end)) > 0.01
-            review = "Independently review ONLY this camera" in text
-            arbitration = "Re-examine the action and object trajectory" in text
-            verdict = ("success" if review or arbitration else "failure") if visible else "uncertain"
+            verdict = "failure" if visible else "uncertain"
             out = {"verdict": verdict, "task_type": "persistent",
                    "completion": 0.9 if verdict == "success" else 0.2,
                    "reason": "synthetic video observation",
@@ -151,23 +148,6 @@ class FakeVlm:
                         "camera_check": _fake_camera_check(k, c_start, c_end),
                     }
                 out["cameras"] = block
-            elif 'extra field "camera_check"' in text:
-                # the camera_defects report: a pure function of the camera name and the
-                # window, so every level, an omitted item and an omitted report all occur
-                # over the fixture without touching the verdict above
-                k = int(round(end * 10)) + sum(map(ord, camera))
-                if k % 11:
-                    levels = ("none", "minor", "severe")
-                    kinds = ("dirt", "smudge", "water", "obstruction", "other")
-                    def item(level):
-                        return {"level": level, "note": f"synthetic {level}",
-                                "times": [] if level == "none" else [[start, min(end, start + 0.5)]]}
-                    check = {"glitch": item(levels[k % 3]),
-                             "contamination": dict(item(levels[(k // 9) % 3]),
-                                                   kind="none" if levels[(k // 9) % 3] == "none" else kinds[k % 5])}
-                    if k % 7:
-                        check["shake"] = item(levels[(k // 3) % 3])
-                    out["camera_check"] = check
             return json.dumps(out)
         if "You check a recorded robot trajectory against a camera video" in text:
             # the EEF opinion without a gripper reference (design doc 12 §10.5): every other clip gets one

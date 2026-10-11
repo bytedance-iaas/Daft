@@ -1,4 +1,4 @@
-"""One funnel stage over a set of episodes: the engine of ``curation check`` (doc 02 §3.5).
+"""One stage of a block over a set of episodes: the engine of ``curation check`` (doc 02 §3.5).
 
 The stages and their order are a block's segments (design doc 17 §3): ``numeric``
 (timestamp_check, kinematic_limits, motion_quality), ``frame`` (visual_quality and
@@ -38,10 +38,8 @@ from dataclasses import dataclass, field
 from ..contracts import modules as registry_mod
 from . import funnel
 from .incidents import IncidentLog, camera_names, wrap_call, wrap_decode
-from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error,
-                      latest_results, passes_funnel,
-                      module_dir, pid_alive, read_inflight, record_from_struct, two_blocks,
-                      write_json_atomic)
+from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error, latest_results,
+                      module_dir, pid_alive, read_inflight, record_from_struct, write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
 FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
@@ -190,17 +188,10 @@ class StageRun:
         self.label = "check:" + "+".join(opts.modules)
         self._lock = threading.Lock()
         self.done = 0
-        #: what stops an episode in the funnel (``records.passes_funnel``): a finding that blocks under
-        #: the task's policy (``run.json``; the default levels without one) - until the two blocks of F12.4
-        from .policy import load as load_policy
-
-        self.funnel_policy = load_policy(opts.run_dir)
-        #: plan 2.0: the next stage takes every episode this one judged (design doc 17 §3, D57)
-        self.two_blocks = two_blocks(opts.run_dir)
         if opts.pipeline_state:
             from .episode_state import EpisodeState
 
-            self._store = EpisodeState(opts.pipeline_state, self.funnel_policy)
+            self._store = EpisodeState(opts.pipeline_state)
         else:
             self._store = None
         #: episodes found without their source files (D40): no result line
@@ -404,11 +395,6 @@ class StageRun:
         clients = self.o.task_clients
         deps = funnel.TaskDeps(vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
                                                         call_kind="probe"))
-        # D39 recorded how a human relabel is judged again ("v1": v1's rejudge, scoring plus
-        # the per-camera vote; "full": the first run's flow). Under the one protocol (D71) there
-        # is nothing left to choose between: both judge the relabel in the single request.
-        # The recorded mode is kept on the record for aggregate.
-        rerun = self.o.task_text.relabel_rerun(ep) if src == "人工改标" else None
         try:
             protocol_src = "原始标注" if src == "人工改标" else src
             struct = funnel.task_check_episode(
@@ -421,7 +407,6 @@ class StageRun:
             # what aggregate checks the relabel was judged with, and how
             detail["task_desc"] = str(text)[:80]
             detail["task_desc_source"] = src
-            detail["relabel_rerun"] = rerun
             struct = dict(struct, detail=json.dumps(detail, ensure_ascii=False, default=str))
         evidence = self._evidence(ep, row, struct)
         return {"task_success": struct}, {"task_success": evidence}
@@ -799,8 +784,7 @@ class StageRun:
                 self._committed(ep, records)
             inflight.remove(ep)
             self.done += 1
-            stream.completed(ep, records is not None and (self._store.blocks is not None or all(
-                passes_funnel(r, self.funnel_policy) for r in records.values())))
+            stream.completed(ep, records is not None)     # the next stage takes every judged episode (D57)
             ctx.progress(self.label, self.done, total, episode_index=ep)
 
         try:
@@ -915,28 +899,25 @@ class StageRun:
         digest = input_digest(o.episodes)
         judged = [e for e in o.episodes if e not in self.missing]
         out: dict = {}
-        version = "1.0"
         prepared = getattr(o, "prepared", None)
         kept = set(prepared(judged)) if prepared is not None else set()
         for m in o.modules:
-            version, counts, errors, found = check_counts(latest_results(o.run_dir, m, judged), judged)
+            _, counts, errors, found = check_counts(latest_results(o.run_dir, m, judged), judged)
             if getattr(o, "prep", False) and kept:   # a CPU half kept for its model half: ok here, judged there
                 errors = [e for e in errors if e not in kept]
                 counts = {**counts, "ok": counts["total"] - len(errors), "error": len(errors)}
             entry = {"part": o.part, "input_digest": digest, "episodes": counts,
-                     "error_episodes": errors}
-            if version != "1.0":
-                entry["findings"] = found
+                     "error_episodes": errors, "findings": found}
             if o.resume:
                 entry["skipped_existing"] = skipped
             if self.missing:
                 entry["skipped_missing_source"] = as_list(self.missing)
             out[m] = entry
-        return {"schema_version": version, "modules": out}
+        return {"schema_version": "2.0", "modules": out}
 
     def survivors(self) -> list[int]:
-        """Episodes of this call that go on to the next stage: plan 2.0 - every one judged (findings and errors
-        stop nothing, D57); a funnel run - no error, nothing that blocks under the policy."""
+        """Episodes of this call that go on to the next stage: every one judged (findings and errors stop
+        nothing, D57), and a CPU half kept for its model half."""
         cur = {m: latest_results(self.o.run_dir, m, self.o.episodes)
                for m in self.o.modules}
         prepared = getattr(self.o, "prepared", None)
@@ -944,11 +925,6 @@ class StageRun:
         out = []
         for e in self.o.episodes:
             recs = [cur[m].get(e) for m in self.o.modules]
-            if self.two_blocks:
-                if all(r is not None for r in recs) or e in kept:     # a kept CPU half goes on to its model half
-                    out.append(e)
-                continue
-            if not all(passes_funnel(r, self.funnel_policy) for r in recs):
-                continue
-            out.append(e)
+            if all(r is not None for r in recs) or e in kept:     # a kept CPU half goes on to its model half
+                out.append(e)
         return out

@@ -2,8 +2,8 @@
 
 Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's two blocks side by side
 (:mod:`.blocks`) - the CPU block's integrity -> numeric -> frame -> duplicate and the VLM block's vlm, every
-stage on the episode pipeline (an episode without a task text is not judged by task_success, D72; plans
-from before carry an autolabel stage, now skipped) - no stage filters another (D57). Then ``final``
+stage on the episode pipeline (an episode without a task text is not judged by task_success, D72) - no
+stage filters another (D57). Then ``final``
 (aggregate: the policy verdicts into
 revision N), ``report`` (commit.json last) and ``verify``: the run
 directory is synced to ``<delivery>/<run_id>/``, read back, ``_COMPLETE`` written; only then does
@@ -14,8 +14,8 @@ runs with ``--resume``: after a pause or a crash nothing finished is done twice.
   from where its episodes are.
 * ``retry`` re-runs the (module, episode) pairs that erred or have no record - a module that failed as a
   whole on every episode, into a new revision (design doc 17 §3.4; D35).
-* ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) -> task_success on the
-  relabelled episodes without a human verdict
+* ``apply_adjudication``: adjudicate-apply -> task_success on the relabelled episodes without a human verdict
+  (judged in the one request with the new text, D39, D71)
   -> aggregate final -> report -> verify. The duplicate check is not run again (its groups stand).
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ log = logging.getLogger("daemon.orchestr")
 EPISODE_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
-_NAME["autolabel"] = "无标注补描述"
 
 
 def names(modules) -> str:
@@ -170,31 +169,24 @@ class StageRun(Run):
         return out
 
     # -- aggregate ------------------------------------------------------------------
-    def aggregate(self, sid: str, phase: str, rev: int, modules: list[str],
-                  selection: list[int]) -> dict:
+    def aggregate(self, sid: str, rev: int, modules: list[str], selection: list[int]) -> dict:
         modules = registry.with_riders(modules)
         if self.journal.done(sid):
             return self.journal.stage(sid).get("counts") or {}
         if not modules:
             raise TaskFailure("no_modules", "这个任务没有能在这个数据集上运行的模块")
         self.progress(sid, state="running", done=0, total=1)
-        argv = ["aggregate", "--run-dir", str(self.wd.root), "--phase", phase,
+        argv = ["aggregate", "--run-dir", str(self.wd.root), "--phase", "final",
                 "--revision", str(rev), "--modules", ",".join(modules),
                 "--episodes", self.episodes_arg("selected", selection)]
-        need_input = phase == "final"
-        if need_input:
-            argv += self.source_args(manifest=False, semantics=True)
-        outcome = self.cli(sid, argv, need_input=need_input)
+        argv += self.source_args(manifest=False, semantics=True)
+        outcome = self.cli(sid, argv, need_input=True)
         if not outcome.ok:
             self.fail_on(outcome, sid)
         counts = outcome.doc.get("counts") or {}
-        if phase == "funnel":
-            self.log(sid, "info", f"漏斗判决（r{rev:04d}）：保留 {counts.get('keep', 0)}、拒绝 "
-                                  f"{counts.get('drop', 0)}、待补跑 {counts.get('held', 0)}")
-        else:
-            self.log(sid, "info", f"终判（r{rev:04d}）：通过 {counts.get('passed', 0)}、拒绝 "
-                                  f"{counts.get('reject', 0)}、待补跑 {counts.get('held', 0)}，"
-                                  f"待人工复核 {counts.get('review', 0)}")
+        self.log(sid, "info", f"终判（r{rev:04d}）：通过 {counts.get('passed', 0)}、拒绝 "
+                              f"{counts.get('reject', 0)}、待补跑 {counts.get('held', 0)}，"
+                              f"待人工复核 {counts.get('review', 0)}")
         self.stage_done(sid, "succeeded", counts=counts)
         return counts
 
@@ -252,7 +244,6 @@ class MainRun(StageRun):
         if self.sub_id is not None:                      # a resume, maybe days later
             self.ensure_local()
             self.forget_listing()
-        self.require_current_format()
         plan = planning.ensure_plan(self)
         self.plan_progress(self.stage_ids(plan), plan)
         modules = self.plan_modules(plan)
@@ -261,7 +252,7 @@ class MainRun(StageRun):
         rev = self.allocate_revision()
         run_blocks(self, plan, selection)
         self.check_intent()
-        self.aggregate("final", "final", rev, modules, selection)
+        self.aggregate("final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
         self.publish(rev)
@@ -285,7 +276,6 @@ class RetryRun(StageRun):
         self.reload()
         self.ensure_local()
         self.forget_listing()
-        self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         scope = set((self.subtask.scope or {}).get("modules") or [])
@@ -330,7 +320,7 @@ class RetryRun(StageRun):
                 self.stage_done(st["id"], "skipped")
                 self.progress(st["id"], note="没有需要补跑的条目", force=True)
         self.check_intent()
-        self.aggregate("final", "final", rev, modules, selection)
+        self.aggregate("final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
         self.publish(rev)
@@ -345,7 +335,6 @@ class AdjudicationRun(StageRun):
     def execute(self) -> str:
         self.reload()
         self.ensure_local()
-        self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
@@ -359,7 +348,7 @@ class AdjudicationRun(StageRun):
         if "vlm" in stages and "task_success" in stages["vlm"].get("modules", []):
             self.rejudge(stages["vlm"], rerun)
         self.check_intent()
-        self.aggregate("final", "final", rev, modules, selection)
+        self.aggregate("final", rev, modules, selection)
         self.report(rev, modules)
         self.check_intent()
         self.publish(rev)
@@ -376,8 +365,7 @@ class AdjudicationRun(StageRun):
             return entry.get("applied") or {}
         self.progress(sid, state="running", done=0, total=1)
         rows = self.orch.decisions_to_apply(self.reload())
-        rerun_how = (self.subtask.scope or {}).get("relabel_rerun") or "v1"
-        doc = {"schema_version": "1.0", "relabel_rerun": rerun_how, "decisions": [
+        doc = {"schema_version": "2.0", "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
              "new_label": a.new_label, "note": a.note, "decided_by": a.decided_by,
              "decided_at": a.decided_at} for a in sorted(rows, key=lambda r: r.id)]}

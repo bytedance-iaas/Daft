@@ -54,7 +54,7 @@ def flow(tmp_path_factory, mini_dataset):
         with FakeVlmServer() as vlm:
             c = Chain(dataset, str(tmp / "run"), vlm.url)
             c.front()
-            c.funnel()
+            c.checks()
             c.post()
             c.deliver(str(tmp / "delivery"))
     return c
@@ -105,11 +105,11 @@ def test_without_a_manifest_check_finds_them_when_it_reads(dataset, tmp_path):
         assert entry["episodes"]["total"] == 3 and entry["error_episodes"] == []
         assert sorted(latest_results(rd, m)) == [0, 1, 3]            # no line for 2
     assert _json(rd, "skipped_episodes.json")["skipped_episodes"][0]["episode_index"] == 2
-    agg = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--modules",
+    agg = run("aggregate", "--run-dir", rd, "--revision", "1", "--modules",
               "timestamp_check,kinematic_limits,motion_quality", "--episodes", "0-3")
     assert agg.rc == 0, agg.doc
     assert agg.doc["counts"]["total"] == 3 and agg.doc["counts"]["skipped"] == 1
-    lines = read_jsonl(os.path.join(rd, "funnel", "verdicts.jsonl"))
+    lines = read_jsonl(os.path.join(rd, "revisions", "r0001", "verdicts.jsonl"))
     assert [ln["episode_index"] for ln in lines] == [0, 1, 3]
 
 

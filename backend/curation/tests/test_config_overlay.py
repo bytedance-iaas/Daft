@@ -49,17 +49,17 @@ def test_nested_partial_override(tmp_path):
 
 
 def test_scalar_and_threshold_override(tmp_path):
-    site = _write(tmp_path, {"verdict": {"soft_threshold": 0.7},
-                             "pipeline": {"vlm_episode_concurrency": 2}})
+    site = _write(tmp_path, {"checks": {"timestamp_check": {"params": {"min_duration_s": 2.0}}},
+                             "pipeline": {"max_endstate_cams": 2}})
     cfg = load_config(site)
-    assert cfg["verdict"]["soft_threshold"] == 0.7
-    assert cfg["pipeline"]["vlm_episode_concurrency"] == 2
+    assert cfg["checks"]["timestamp_check"]["params"]["min_duration_s"] == 2.0
+    assert cfg["pipeline"]["max_endstate_cams"] == 2
     assert cfg["pipeline"]["frame_max_side"] == 448        # 同段其他键仍在
 
 
 def test_merged_config_still_validated(tmp_path):
-    """叠加后仍走结构校验:站点文件写坏(非法 gate)必须报错,不能静默跑偏。"""
-    site = _write(tmp_path, {"checks": {"visual_quality": {"gate": "banana"}}})
+    """叠加后仍走结构校验:站点文件写坏(视频抽帧率越界)必须报错,不能静默跑偏。"""
+    site = _write(tmp_path, {"checks": {"task_success": {"vlm": {"video": {"fps": 30}}}}})
     with pytest.raises(ConfigError):
         load_config(site)
 
@@ -121,29 +121,3 @@ def test_direct_noop_when_all_none():
 
 # ───────── n_probe/帧问询并发 对齐提示(2026-07-27,选"提示"弃"绑定")─────────
 
-def test_probe_hint_fires_when_misaligned():
-    from curation.pipeline.config import probe_concurrency_hint
-    cfg = load_config(None)
-    # 显式制造错位(2026-08-06 出厂默认升到 16 后,12 探针一波装下不再触发——
-    # 这正是升默认的目的;本测试钉的是"错位时要提示"这一行为本身)
-    cfg["checks"]["task_success"]["vlm"]["max_concurrency"] = 8
-    cfg["checks"]["task_success"]["params"]["n_probe"] = 12   # 并发 8 → 2 波
-    hint = probe_concurrency_hint(cfg)
-    assert hint and "n_probe=12" in hint and "max_concurrency=12" in hint and "2 波" in hint
-
-
-def test_probe_hint_silent_when_aligned_or_disabled():
-    from curation.pipeline.config import probe_concurrency_hint
-    assert probe_concurrency_hint(load_config(None)) is None      # 出厂 8≤8,无话可说
-    cfg = load_config(None)
-    cfg["checks"]["task_success"]["params"]["n_probe"] = 12
-    cfg["checks"]["task_success"]["enable"] = False               # 模块关了也闭嘴
-    assert probe_concurrency_hint(cfg) is None
-
-
-def test_factory_concurrency_defaults_are_32():
-    """2026-07-27 用户定:两旋钮默认 8→32(依据=全后端基准:方舟 256 在飞零限流,
-    质量三档稳定;自托管服务端排队无害)。锚定防回退。"""
-    cfg = load_config(None)
-    assert cfg["pipeline"]["vlm_episode_concurrency"] == 32
-    assert cfg["skill_profile"]["caption_concurrency"] == 32

@@ -1,92 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "curation check --json (schema 2.0; 1.0 still read)",
-  "description": "Design doc 02, section 3.5. Exit 0 does not mean every episode succeeded: the Daemon sets the module state from these counts (succeeded / completed_with_errors), never from the exit code alone. 2.0 (design doc 17): per module the episodes it judged (ok) and could not judge (error), and how many episodes got each finding code; 1.0 counted the funnel's verdicts (D59: still read).",
-  "oneOf": [
-    {
-      "$ref": "#/$defs/check_2"
-    },
-    {
-      "$ref": "#/$defs/check_1"
-    }
+  "title": "curation check --json (schema 2.0)",
+  "description": "Design doc 02, section 3.5. Exit 0 does not mean every episode succeeded: the Daemon sets the module state from these counts (succeeded / completed_with_errors), never from the exit code alone. Per module the episodes it judged (ok) and could not judge (error), and how many episodes got each finding code (design doc 17).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "modules"
   ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version_2"
+    },
+    "modules": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "common.schema.json#/$defs/module_id"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/module"
+      }
+    }
+  },
   "$defs": {
-    "check_2": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "modules"
-      ],
-      "properties": {
-        "schema_version": {
-          "$ref": "common.schema.json#/$defs/schema_version_2"
-        },
-        "modules": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "common.schema.json#/$defs/module_id"
-          },
-          "additionalProperties": {
-            "allOf": [
-              {
-                "$ref": "#/$defs/module"
-              },
-              {
-                "required": [
-                  "findings"
-                ],
-                "properties": {
-                  "episodes": {
-                    "$ref": "#/$defs/episode_counts"
-                  }
-                }
-              }
-            ]
-          }
-        }
-      }
-    },
-    "check_1": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "modules"
-      ],
-      "properties": {
-        "schema_version": {
-          "$ref": "common.schema.json#/$defs/schema_version"
-        },
-        "modules": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "common.schema.json#/$defs/module_id"
-          },
-          "additionalProperties": {
-            "allOf": [
-              {
-                "$ref": "#/$defs/module"
-              },
-              {
-                "not": {
-                  "required": [
-                    "findings"
-                  ]
-                },
-                "properties": {
-                  "episodes": {
-                    "$ref": "common.schema.json#/$defs/verdict_counts"
-                  }
-                }
-              }
-            ]
-          }
-        }
-      }
-    },
     "module": {
       "type": "object",
       "additionalProperties": false,
@@ -94,6 +31,7 @@
         "part",
         "input_digest",
         "episodes",
+        "findings",
         "error_episodes"
       ],
       "properties": {
@@ -104,8 +42,7 @@
           "$ref": "common.schema.json#/$defs/digest"
         },
         "episodes": {
-          "type": "object",
-          "description": "2.0: episode_counts; 1.0: verdict_counts"
+          "$ref": "#/$defs/episode_counts"
         },
         "findings": {
           "type": "object",
@@ -116,7 +53,7 @@
             "type": "integer",
             "minimum": 0
           },
-          "description": "2.0: finding code -> episodes of this call with at least one finding of it"
+          "description": "finding code -> episodes of this call with at least one finding of it"
         },
         "error_episodes": {
           "$ref": "common.schema.json#/$defs/episode_list"
@@ -128,7 +65,7 @@
         },
         "skipped_missing_source": {
           "$ref": "common.schema.json#/$defs/skipped_episodes",
-          "description": "episodes found without their source files at read time (no manifest named them): no result line, left out like v1 does (D40)"
+          "description": "episodes found without their source files at read time (no manifest named them): no result line, left out (D40)"
         },
         "merge": {
           "type": "object",

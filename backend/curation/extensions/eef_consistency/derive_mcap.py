@@ -63,23 +63,19 @@ class Derived:
     """The task's trajectory, derived episode by episode (each once, cached; thread-safe).
 
     ``root``: the dataset (a local directory or the ``tos://`` URI of a streamed one); ``numbering``: episode ->
-    file name; ``calibration``: an old task's uploaded ``umi-calibration/2`` file, else ``calibration_doc`` (the
-    dataset declaration's, design doc 25 §3.2), else the built-in one; ``out_dir``: the module's output directory.
+    file name; ``calibration_doc``: the dataset declaration's ``umi-calibration/2`` (design doc 25 §3.2), else the
+    built-in one; ``out_dir``: the module's output directory.
     ``sha256`` names what the derivation depends on besides the recording (the calibration's bytes and this code's
     version), for ``--resume``."""
 
-    def __init__(self, *, root: str, numbering: Mapping[int, str], calibration: str | None, out_dir: str,
-                 dataset_id: str, horizon_s: float = 1.0, calibration_doc: dict | None = None):
+    def __init__(self, *, root: str, numbering: Mapping[int, str], out_dir: str, dataset_id: str,
+                 horizon_s: float = 1.0, calibration_doc: dict | None = None):
         from .adapters import umi_mcap as X
 
-        if calibration or calibration_doc is None:
-            path = pathlib.Path(calibration) if calibration else X.BUILTIN_CALIBRATION
-            raw = path.read_bytes()
-            try:
-                doc = json.loads(raw)
-            except ValueError as exc:
-                raise X.ExportError(f"the gripper calibration is not JSON: {exc}") from None
-            where, source = ("the gripper calibration", "upload") if calibration else ("the built-in calibration", "builtin")
+        if calibration_doc is None:
+            raw = pathlib.Path(X.BUILTIN_CALIBRATION).read_bytes()
+            doc = json.loads(raw)
+            where, source = "the built-in calibration", "builtin"
         else:
             doc = calibration_doc
             raw = json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()
@@ -102,7 +98,7 @@ class Derived:
         return sorted(self.numbering)
 
     def describe(self) -> str:
-        how = {"builtin": "built-in", "upload": "uploaded", "declaration": "the declaration's"}[self.calibration["source"]]
+        how = {"builtin": "built-in", "declaration": "the declaration's"}[self.calibration["source"]]
         return (f"trajectory derived from the recordings ({len(self.episodes)} episode(s), {how} calibration "
                 f"{self.calibration['gripper']})")
 

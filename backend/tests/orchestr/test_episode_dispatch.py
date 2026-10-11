@@ -19,6 +19,7 @@ class Run:
             self.orch = SimpleNamespace(cpu_pool=pool)
         self.params = params or {}
         self.wd = WorkDir(root, "task")
+        name_the_chain(self.wd.root)
         self.run_key = "main"
         self.task = SimpleNamespace(params={"batch_size": batch})
         self.journal = SimpleNamespace(done=lambda _: False)
@@ -67,14 +68,24 @@ class Run:
         return self.params.get(module_id, {})
 
 
+#: one chain of three layers (the scheduling under test does not depend on how a plan splits its blocks)
 STAGES = [
-    {"id": "numeric", "kind": "cpu", "concurrency": 4,
+    {"id": "numeric", "block": "chain", "kind": "cpu", "concurrency": 4,
      "modules": ["timestamp_check"]},
-    {"id": "frame", "kind": "cpu", "concurrency": 4,
+    {"id": "frame", "block": "chain", "kind": "cpu", "concurrency": 4,
      "modules": ["visual_quality"]},
-    {"id": "vlm", "kind": "vlm", "gates": {"episode": 2},
+    {"id": "vlm", "block": "chain", "kind": "vlm", "gates": {"episode": 2},
      "modules": ["task_success"]},
 ]
+
+
+def name_the_chain(root) -> None:
+    """The episode store's layout, as ``blocks.prepare_store`` writes it before a run."""
+    store = EpisodeState(state_path(root))
+    try:
+        store.set_blocks({"chain": [(s["id"], s["modules"]) for s in STAGES]})
+    finally:
+        store.close()
 
 
 def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False,
@@ -234,22 +245,6 @@ def test_worker_exit_during_send_retries_the_unsent_credit(tmp_path, monkeypatch
     ep.run_episodes(run, STAGES, [0, 1, 2, 3])
     assert attempts[("numeric", 0)] == 1
     assert len([e for e in events if e[:2] == ("done", "vlm")]) == 4
-
-
-def test_module_failure_releases_previously_rejected_episodes(tmp_path, monkeypatch):
-    run = Run(tmp_path, 1)
-    # A single CPU slot also proves the dispatcher releases it between episodes.
-    stages = [{**s, "concurrency": 1} if s["kind"] == "cpu" else s for s in STAGES]
-    events, attempts = install_workers(monkeypatch, run, fail_frame=True)
-    ep.run_episodes(run, stages, [0, 1, 2, 3])
-    assert run.stages["frame"] == "failed"
-    assert {e for kind, sid, e in events if kind == "done" and sid == "vlm"} == {0, 1, 2, 3}
-    assert all(attempts[("vlm", e)] == 1 for e in range(4))
-    store = EpisodeState(state_path(run.wd.root))
-    try:
-        assert store.failed_stages() == {"frame": "injected module failure"}
-    finally:
-        store.close()
 
 
 # ---------------------------------------------------------------- the Daemon's CPU pool (D54)

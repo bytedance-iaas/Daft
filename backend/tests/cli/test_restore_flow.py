@@ -60,13 +60,13 @@ def flow(tmp_path_factory, mini_dataset):
         with FakeVlmServer() as vlm:
             c = Chain(mini_dataset, str(tmp / "run"), vlm.url)
             c.front()
-            c.funnel()
+            c.checks()
             _reject_by_task_success(c.rd, {0, 6})
             c.post()
             c.deliver(delivery)
             path = str(tmp / "decisions.json")
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"schema_version": "1.0", "decisions": [
+                json.dump({"schema_version": "2.0", "decisions": [
                     {"id": i, "episode_index": ep, "line": "reject_appeal",
                      "decision": "restore", "new_label": None, "note": None,
                      "decided_by": "alice", "decided_at": 1790000000000 + i}

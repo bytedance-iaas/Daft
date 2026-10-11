@@ -70,7 +70,7 @@ def chain(tmp_path_factory, mini_dataset):
         with FakeVlmServer(delay_s=0.003) as vlm:
             c = Chain(mini_dataset, rd, vlm.url)
             c.front()
-            c.funnel()
+            c.checks()
             c.post()
     c.digest = _records(rd)
     return c
@@ -95,9 +95,8 @@ def test_report_only_keeps_what_was_judged_and_asks_nobody(chain):
 
 def test_switching_to_the_default_reruns_aggregate_only(chain):
     _set_policy(chain.rd, "default")
-    for phase in ("funnel", "final"):
-        res = run("aggregate", "--run-dir", chain.rd, "--phase", phase, "--revision", "2", "--episodes", "0-7")
-        assert res.rc == 0, res.doc
+    res = run("aggregate", "--run-dir", chain.rd, "--revision", "2", "--episodes", "0-7")
+    assert res.rc == 0, res.doc
     assert _records(chain.rd) == chain.digest            # the module records stay as they were
     assert _list(chain.rd, 2, "held") == {}
     reject = _list(chain.rd, 2, "reject")

@@ -9,7 +9,7 @@ import pytest
 from curation.contracts import modules as registry
 from curation.contracts import schemas
 from curation.pipeline import findings as F
-from curation.pipeline.records import is_v2, legacy_verdict, passes_funnel, record_from_struct, upgrade_record
+from curation.pipeline.records import legacy_verdict, record_from_struct
 
 # ---------------------------------------------------------------- answer shapes (exact outputs of the algorithms)
 
@@ -90,16 +90,10 @@ TASK_FAIL = {"verdict": "failure", "init_verdict": "failure", "review": "no", "c
              "video_assessment": {"verdict": "failure", "completion": 0.2, "reason": "杯子掉在台面",
                                   "evidence": [{"camera": "observation.images.front", "start_s": 4.2, "end_s": 6.0,
                                                 "observation": "杯子从夹爪滑落"}]}}
-TASK_UNSURE = {"verdict": "uncertain", "init_verdict": "success", "review": "split", "rules": [],
-               "video_completion": 0.7, "input_mode": "video", "protocol": "video-task/1",
-               "task_desc_source": "自产caption", "reason": "复核意见不一致"}
-TASK_HELD = {"verdict": "label_conflict_suspect", "init_verdict": "failure", "review": "no",
-             "rules": ["kill_held_label_conflict"], "input_mode": "video", "protocol": "video-task/1",
-             "task_desc_source": "原始标注",
-             "label_check": {"annotation": "pour rice into the cup", "caption": "pour rice into the green bowl",
-                             "outcome": "different"}}
-TASK_OK_FRAMES = {"verdict": "recovery", "rules": ["recovery_dip"], "dip": 0.31, "completion_final": 0.95,
-                  "task_desc_source": "无"}
+TASK_UNSURE = {"verdict": "uncertain", "video_completion": 0.7, "input_mode": "video", "protocol": "video-task/2",
+               "task_desc_source": "原始标注", "reason": "看不清杯子最后是否放稳"}
+#: an episode without a task text is not judged (D72)
+TASK_SKIPPED = {"skipped": "no_task_text", "reason": "没有任务标注"}
 
 CAM = {"protocol": "camera-check/1", "cams": ["observation.images.a", "observation.images.b"], "known": 6,
        "clean_ratio": 0.5, "reason": "", "items": {"glitch": "severe", "shake": "unknown", "contamination": "minor"},
@@ -114,19 +108,6 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
 
-EEF_REJECT = {"decision": {"outcome": "reject", "reason": "ext 的末端位置与画面不符", "confirmed": [
-    {"code": "confirmed", "subitem": "position_2d", "camera_id": "ext"}], "human": [], "unchecked": []},
-    "reason": "ext 的末端位置与画面不符", "assessment_mode": "verdict", "overall": "assessed",
-    "record": {"status": "suspect", "sources": {"pose": {"status": "suspect", "reasons": ["record_deviation"]}}}}
-EEF_HUMAN = {"decision": {"outcome": "human", "reason": "需要人工裁决：模型与 CPU 意见冲突",
-                          "human": [{"code": "conflict", "subitem": "position_2d", "camera_id": "ext"}], "confirmed": []},
-             "reason": "需要人工裁决：模型与 CPU 意见冲突", "assessment_mode": "verdict"}
-EEF_OPINION = {"decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []},
-               "assessment_mode": "vlm_opinion", "overall": "opinion",
-               "opinion": {"protocol": "eef-opinion/1", "status": "answered", "segments": 1, "flagged": True,
-                           "max_confidence": 0.85, "cameras": {"ext": {"status": "answered", "segments": [
-                               {"start_s": 2.67, "end_s": 6.33, "aspect": "position", "confidence": 0.85}]}}},
-               "record": {"status": "unsupported", "reasons": ["record_mapping_missing"]}}
 #: registry 5.0 (design doc 25 §7): the merged cells - a conflict between the CPU and the model's review ...
 _CPU_ISSUE = {"verdict": "issue", "p": 0.9, "confidence": 0.8}
 EEF_CONFLICT = {"assessment_mode": "verdict", "overall": "assessed", "merged": {
@@ -152,20 +133,26 @@ EEF_OPINIONS = {"assessment_mode": "vlm_opinion", "overall": "opinion", "merged"
 EEF_CANNOT = {"assessment_mode": "vlm_opinion", "overall": "opinion", "merged": {
     "cells": [], "episode": {"label": "cannot_tell", "p": None, "flags": [], "why": [], "conflicts": 0,
                              "reason": "判断不了：这一条推不出轨迹"}}}
-#: a handheld gripper's wrist camera whose poses come late (design doc 22 §5.3): the model saw nothing amiss
-_EGO_SEG = {"start_frame": 50, "end_frame": 250, "start_s": 1.683, "end_s": 8.35, "reason": "time_offset",
-            "magnitude": 0.467, "unit": "s", "band": "moderate", "band_level": 2, "evidence_frames": [120, 135],
-            "lag_s": 0.467}
-EEF_EGO = {**EEF_OPINION, "opinion": {**EEF_OPINION["opinion"], "flagged": False, "segments": 0, "cameras": {}},
-           "ego_motion": {"status": "suspect", "verdict": "bad", "explanation_zh": "x", "worst": {"camera": "robot0_camera0", **_EGO_SEG},
-                          "cameras": {"robot0_camera0": {"status": "suspect", "segments": [_EGO_SEG], "unmatched": [],
-                                                         "metrics": {"rotation_median_deg": 1.99, "rotation_p95_deg": 8.0,
-                                                                     "lag_s": 0.467, "lag_confidence": 0.8, "coverage": 0.97},
-                                                         "lag": {"lag_s": 0.467, "confidence": 0.8, "flagged": True}},
-                                      "robot1_camera0": {"status": "ok", "segments": [], "unmatched": [],
-                                                         "metrics": {"rotation_median_deg": 0.5, "lag_s": -0.033},
-                                                         "lag": {"lag_s": -0.033, "confidence": 0.84, "flagged": False}}}}}
-
+#: a handheld gripper's wrist camera whose poses come late (design doc 22 §5.3): its merged cell is the finding, and
+#: its time offset reading is the episode's AV-1
+_EGO_CAMS = {"robot0_camera0": {"status": "suspect", "segments": [], "unmatched": [],
+                                "metrics": {"rotation_median_deg": 1.99, "lag_s": 0.467, "lag_confidence": 0.8},
+                                "lag": {"lag_s": 0.467, "confidence": 0.8, "flagged": True}},
+             "robot1_camera0": {"status": "ok", "segments": [], "unmatched": [],
+                                "metrics": {"rotation_median_deg": 0.5, "lag_s": -0.033},
+                                "lag": {"lag_s": -0.033, "confidence": 0.84, "flagged": False}}}
+EEF_EGO = {"assessment_mode": "vlm_opinion", "overall": "opinion",
+           "ego_motion": {"status": "suspect", "cameras": _EGO_CAMS},
+           "merged": {"cells": [{"subitem": "ego_motion", "camera": "robot0_camera0", "p": 0.7,
+                                 "label": "possibly_inconsistent", "flags": ["single_source"],
+                                 "sources": {"cpu": {"verdict": "issue", "p": 0.7, "confidence": 0.8}},
+                                 "time_s": [1.683, 8.35]}],
+                      "episode": {"label": "possibly_inconsistent", "p": 0.7, "subitem": "ego_motion",
+                                  "camera": "robot0_camera0", "flags": ["single_source"], "conflicts": 0,
+                                  "reason": "可能不一致 · 0.70"}}}
+#: the trajectory uploaded against the dataset's own record: reported only
+EEF_RECORD = {**EEF_OPINIONS, "record": {"status": "suspect", "source": "upload", "reasons": [],
+                                         "sources": {"pose": {"status": "suspect", "reasons": ["record_deviation"]}}}}
 
 def _integ(*findings, files=None):
     return {"outcome": "reject", "reason": "x", "tiers": {"L1": True, "L2": True, "L3": False},
@@ -220,18 +207,16 @@ CASES = [
     ("video_action_sync", True, None, SYNC_WEAK, {"undecidable"}, set()),
     ("video_action_sync", True, None, SYNC_SUSPECT, {"suspect"}, set()),
     ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3"}),
-    ("task_success", False, None, TASK_FAIL, {"failure"}, {"TASK-10"}),
-    ("task_success", None, None, TASK_UNSURE, {"uncertain", "task_text_missing"}, {"TASK-10"}),
-    ("task_success", None, None, TASK_HELD, {"label_conflict_suspect", "uncertain"}, {"TASK-10"}),
-    ("task_success", True, None, TASK_OK_FRAMES, {"recovery", "task_text_missing"}, set()),
+    ("task_success", False, None, TASK_FAIL, {"failure"}, set()),
+    ("task_success", None, None, TASK_UNSURE, {"uncertain"}, set()),
+    ("task_success", None, None, TASK_SKIPPED, {"task_text_missing"}, {"TASK-4"}),
+    ("task_success", True, None, {"verdict": "success", "task_desc_source": "原始标注"}, set(), set()),
     ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
     ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
     ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
     # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
-    ("eef_video_consistency", False, None, EEF_REJECT, {"inconsistent", "record_mismatch"}, {"AV-1"}),
-    ("eef_video_consistency", None, None, EEF_HUMAN, {"unsettled"}, {"AV-1"}),
-    ("eef_video_consistency", True, None, EEF_OPINION, {"opinion_mismatch"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
+    ("eef_video_consistency", True, None, EEF_RECORD, {"inconsistent", "record_mismatch"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_CONFLICT, {"conflict"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_OPINIONS, {"inconsistent"}, {"AV-1"}),
     ("eef_video_consistency", True, None, EEF_CANNOT, set(), {"MV-4", "AV-1"}),
@@ -251,7 +236,7 @@ def _record(module, passed, score, details, **kw):
 def test_each_answer_gives_its_findings(module, passed, score, details, codes, unassessable):
     rec = _record(module, passed, score, details)
     assert schemas.errors("cli/result-record.schema.json", rec) == []
-    assert is_v2(rec) and rec["status"] == "ok" and rec["details"] == details      # details stay as written
+    assert rec["status"] == "ok" and rec["details"] == details      # details stay as written
     assert {f["code"] for f in rec["findings"]} == codes
     assert {u["item"] for u in rec["unassessable"]} == unassessable
     covers = registry.get(module).covers
@@ -259,10 +244,9 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
     for f in rec["findings"]:
         spec = registry.finding_code(module, f["code"])
         assert f["item"] == spec.item and f["message_zh"]
-    # the default policy keeps today's gates: a failed episode stops the funnel, nothing else does - but the EEF
-    # module rejects nothing since 5.0 (D81; a run from before keeps its rejects through its frozen defaults), and
-    # the duplicate check only reports (D87)
-    assert passes_funnel(rec) == (passed is not False or module in ("eef_video_consistency", "duplicate_check"))
+    # the default policy keeps today's gates: a failed episode has a blocking finding, nothing else has - but the
+    # EEF module rejects nothing (D81) and the duplicate check only reports (D87)
+    assert (legacy_verdict(rec) == "fail") == (passed is False and module != "duplicate_check")
 
 
 #: codes no answer can raise yet; every module's codes have a fixture since the skill profile left
@@ -277,23 +261,16 @@ def test_every_code_is_drawn_from_a_real_answer():
 
 
 
-def test_a_wrist_camera_off_its_poses_is_one_finding_at_its_worst_stretch():
-    """design doc 22 §5.3: info level, at most one an episode, at the worst stretch of the camera it is on, with
-    every camera's readings; the episode is kept whatever it says."""
+def test_a_wrist_camera_off_its_poses_is_its_merged_cell():
+    """design doc 22 §5.3 / 25 §7: a wrist camera's own motion is a merged cell like the others - one finding at
+    its stretch, on the camera it is on; the camera's time offset makes AV-1 assessed; the episode is kept."""
     rec = _record("eef_video_consistency", True, None, EEF_EGO)
     (f,) = rec["findings"]
     assert f["code"] == "ego_motion_suspect" and f["item"] == "MV-4" and f["severity"] == "medium"
-    assert f["message_zh"] == "腕部相机的运动与记录的位姿不一致：位姿约晚 0.47 s（第 51–251 帧，中）"
     assert f["time_s"] == [1.683, 8.35] and f["scope"] == {"camera": "robot0_camera0"}
-    assert f["readings"]["lag_s"] == {"robot0_camera0": 0.467}
-    assert f["readings"]["cameras"]["robot1_camera0"]["status"] == "ok"
-    assert rec["assessed"] == ["MV-4", "AV-1"] and passes_funnel(rec)
-    severe = {**EEF_EGO, "ego_motion": {**EEF_EGO["ego_motion"], "worst": {"camera": "robot1_camera0", **_EGO_SEG,
-                                                                          "reason": "rotation", "magnitude": 9.61,
-                                                                          "unit": "deg", "band": "severe"}}}
-    (f,) = _record("eef_video_consistency", True, None, severe)["findings"]
-    assert f["severity"] == "high" and f["message_zh"].endswith("画面里的转动与位姿差 9.6°（第 51–251 帧，重）")
-    calm = {**EEF_EGO, "ego_motion": {**EEF_EGO["ego_motion"], "status": "ok", "worst": None}}
+    assert f["readings"]["subitem"] == "ego_motion" and f["readings"]["sources"]["cpu"]["verdict"] == "issue"
+    assert rec["assessed"] == ["MV-4", "AV-1"] and legacy_verdict(rec) != "fail"
+    calm = {**EEF_EGO, "merged": {"cells": [], "episode": {"label": "consistent", "p": 0.1, "flags": [], "conflicts": 0}}}
     assert _record("eef_video_consistency", True, None, calm)["findings"] == []
 
 
@@ -331,7 +308,7 @@ def test_intervals_scopes_and_readings():
     glitch = [f for f in _record("camera_defects", None, None, CAM)["findings"] if f["code"] == "glitch"]
     assert {(f["scope"]["camera"], f["severity"]) for f in glitch} == {("a", "low"), ("b", "medium")}
     assert next(f for f in glitch if f["scope"]["camera"] == "a")["time_s"] == [1.0, 1.5]
-    opinion = _record("eef_video_consistency", True, None, EEF_OPINION)["findings"][0]
+    opinion = _record("eef_video_consistency", True, None, EEF_OPINIONS)["findings"][0]
     assert opinion["time_s"] == [2.67, 6.33] and opinion["scope"] == {"camera": "ext"}
     lag = next(f for f in _record("video_action_sync", True, None, SYNC_ONE)["findings"] if f["code"] == "lag_inconsistent")
     assert lag["scope"] == {"cameras": ["front", "wrist"]}
@@ -356,12 +333,12 @@ def test_thresholds_are_module_parameters():
 
 def test_guards_keep_todays_gates():
     """A failed gate always blocks by default, a person's question always reaches review (P18)."""
-    rec = _record("timestamp_check", False, None, {"n": 3})                         # a fail v1 did not explain
-    assert [f["code"] for f in rec["findings"]] == ["gap"] and not passes_funnel(rec)
+    rec = _record("timestamp_check", False, None, {"n": 3})                         # a fail it did not explain
+    assert [f["code"] for f in rec["findings"]] == ["gap"] and legacy_verdict(rec) == "fail"
     rec = _record("data_integrity", False, None, _integ())
     assert [f["code"] for f in rec["findings"]] == ["structure_invalid"]
-    rec = _record("eef_video_consistency", None, None, {"decision": {}})
-    assert [f["code"] for f in rec["findings"]] == ["unsettled"]
+    rec = _record("task_success", None, None, {})
+    assert [f["code"] for f in rec["findings"]] == ["uncertain"] and legacy_verdict(rec) == "abstain"
 
 
 def test_context_and_errors():
@@ -370,24 +347,7 @@ def test_context_and_errors():
     err = record_from_struct("task_success", 3, None, incidents=[{"step": "probe", "cause": "timeout"}])
     assert err["status"] == "error" and err["findings"] == [] and err["assessed"] == []
     assert schemas.errors("cli/result-record.schema.json", err) == []
-    assert legacy_verdict(err) == "error" and not passes_funnel(err)
-
-
-def test_the_compatibility_verdict_matches_1_0():
-    """Views that still count by 1.0's verdict read a 2.0 record the same way (camera_defects, always abstain
-    in 1.0, and sync without cameras, a pass in 1.0, are the two deliberate exceptions)."""
-    for module, passed, score, details, *_ in CASES:
-        verdict = {True: "pass", False: "fail"}.get(passed) or ("scored" if score is not None else "abstain")
-        old = {"episode_index": 7, "module": module, "verdict": verdict, "passed": passed, "score": score,
-               "gate": "none", "details": details, "evidence": [], "elapsed_s": None, "error": None}
-        new = upgrade_record(old)
-        if module == "camera_defects" or details is SYNC_NONE:
-            continue
-        if module == "eef_video_consistency":      # 1.0's EEF verdicts used 4.x's levels (D81 changed them)
-            continue
-        if module == "duplicate_check":            # registry 6.0 (D87): no 1.0 record of it was ever written
-            continue
-        assert legacy_verdict(new) == old["verdict"], (module, details)
+    assert legacy_verdict(err) == "error"
 
 
 def test_dataset_level_findings():

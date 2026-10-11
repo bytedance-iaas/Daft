@@ -19,8 +19,7 @@ def test_modules_in_block_and_stage_order():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
     assert M.STAGES == M.BLOCKS["cpu"] + M.BLOCKS["vlm"]
-    assert M.FULL_SET_STAGES == (), "D70: every stage judges one episode at a time"
-    assert all(s in M.STAGES for s in M.FULL_SET_STAGES)
+    assert "full_set_stages" not in M.export(), "D70: every stage judges one episode at a time"
 
 
 @pytest.mark.parametrize("spec", M.MODULES, ids=M.ids())
@@ -152,8 +151,8 @@ def test_p20_items_have_codes():
 
 def test_the_eef_module_gives_opinions():
     """D49: one module, CPU then model; 5.0 (design doc 25 §7.3, D81): opinions with a confidence - nothing it
-    reports rejects, a conflict between its channels is asked on eef_check; the codes it no longer reports stay
-    in the catalogue, retired, for older records."""
+    reports rejects, a conflict between its channels is asked on eef_check. 7.0 (D90): the codes it no longer
+    reports are gone from the catalogue."""
     assert M.native_ids() == ("data_integrity", "eef_video_consistency", "duplicate_check")
     spec = M.get("eef_video_consistency")
     assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video"} <= spec.needs
@@ -161,18 +160,15 @@ def test_the_eef_module_gives_opinions():
     assert (spec.code("inconsistent").level, spec.code("inconsistent").appealable) == ("info", False)
     assert (spec.code("conflict").level, spec.code("conflict").review_line) == ("review", "eef_check")
     assert not spec.appealable and spec.review_lines == ("eef_check",)
-    assert {c.code for c in spec.codes if c.retired} == {"unsettled", "opinion_mismatch"}
-    assert spec.code("unsettled").review_line == "eef_check"            # an older record's question still has its line
+    assert not {"unsettled", "opinion_mismatch"} & {c.code for c in spec.codes}
     exported = {m["id"]: m for m in M.export()["modules"]}
-    exported_codes = {c["code"]: c for c in exported["eef_video_consistency"]["codes"]}
-    assert exported_codes["unsettled"]["retired"] is True and "retired" not in exported_codes["conflict"]
+    assert all("retired" not in c for c in exported["eef_video_consistency"]["codes"])
     props = spec.param_schema["properties"]
-    # 4.3 (design doc 24): the trajectory is generated from the dataset; 4.4 (design doc 22 §5.4, D80): a handheld
-    # gripper's raw mcap is derived with an uploaded gripper calibration or the built-in one
+    # 4.3 (design doc 24): the trajectory is generated from the dataset; 7.0 (D90): the parameters the dataset
+    # declaration replaced (gripper_calibration, record_mapping) are gone
     assert "trajectory_json" not in spec.param_schema.get("required", []) and "review_windows_per_camera" in props
     assert M.upload_params(spec.id) == {"trajectory_json": "eef_trajectory", "observation_seeds": "eef_observation_seeds",
-                                        "gripper_template": "eef_gripper_template", "record_mapping": "eef_record_mapping",
-                                        "gripper_calibration": "eef_gripper_calibration"}
+                                        "gripper_template": "eef_gripper_template"}
     assert [o["const"] for o in props["threshold_profile"]["oneOf"]] == ["demo"]   # no "no thresholds" any more
     assert {"eef_review_windows", "eef_opinions"} <= {t.id for t in spec.tables}
     exported = {m["id"]: m for m in M.export()["modules"]}
@@ -271,7 +267,7 @@ def test_params_validate():
     M.validate_params("eef_video_consistency", {"trajectory_json": "/data/trajectory.json", "lag_search_s": 0.5})
     M.validate_params("eef_video_consistency", {})                      # the trajectory is generated (design doc 24)
     with pytest.raises(jsonschema.ValidationError):
-        M.validate_params("eef_video_consistency", {"gripper_calibration": 3})
+        M.validate_params("eef_video_consistency", {"use_vlm": "yes"})
     with pytest.raises(jsonschema.ValidationError):
         M.validate_params("eef_video_consistency", {"trajectory_json": "x", "threshold_profile": "strict"})
     M.validate_params("video_action_sync", {"sync_plots": "all"})

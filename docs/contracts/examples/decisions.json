@@ -2,78 +2,62 @@
  "schema": "cli/decisions.schema.json",
  "valid": [
   {
-   "schema_version": "1.0",
+   "schema_version": "2.0",
    "decisions": [
     {
      "id": 1,
      "episode_index": 29,
-     "line": "label",
-     "decision": "adopt_suggestion",
+     "line": "task_verdict",
+     "decision": "unsure",
      "new_label": "pour rice into the green bowl",
      "note": null,
-     "decided_by": "alice",
-     "decided_at": 1758300000000
-    },
-    {
-     "id": 2,
-     "episode_index": 29,
-     "line": "task_verdict",
-     "decision": "discard",
-     "new_label": null,
-     "note": "画面被遮挡",
      "decided_by": "alice",
      "decided_at": 1758300001000
     },
     {
-     "id": 3,
-     "episode_index": 6,
-     "line": "reject_appeal",
-     "decision": "restore",
+     "id": 2,
+     "episode_index": 17,
+     "line": "task_verdict",
+     "decision": "success",
      "new_label": null,
      "note": null,
-     "decided_by": "bob",
+     "decided_by": "alice",
      "decided_at": 1758300002000
+    },
+    {
+     "id": 3,
+     "episode_index": 33,
+     "line": "task_verdict",
+     "decision": "discard",
+     "new_label": null,
+     "note": "画面全黑",
+     "decided_by": "alice",
+     "decided_at": 1758300003000
+    },
+    {
+     "id": 4,
+     "episode_index": 12,
+     "line": "eef_check",
+     "decision": "consistent",
+     "new_label": null,
+     "note": null,
+     "decided_by": "alice",
+     "decided_at": 1758300004000
+    },
+    {
+     "id": 5,
+     "episode_index": 8,
+     "line": "integrity_check",
+     "decision": "broken",
+     "new_label": null,
+     "note": null,
+     "decided_by": "alice",
+     "decided_at": 1758300005000
     }
    ]
   },
   {
-   "schema_version": "1.0",
-   "decisions": [
-    {
-     "id": 1,
-     "episode_index": 29,
-     "line": "label",
-     "decision": "adopt_suggestion",
-     "new_label": "pour rice into the green bowl",
-     "note": null,
-     "decided_by": "alice",
-     "decided_at": 1758300000000
-    },
-    {
-     "id": 2,
-     "episode_index": 29,
-     "line": "task_verdict",
-     "decision": "discard",
-     "new_label": null,
-     "note": "画面被遮挡",
-     "decided_by": "alice",
-     "decided_at": 1758300001000
-    },
-    {
-     "id": 3,
-     "episode_index": 6,
-     "line": "reject_appeal",
-     "decision": "restore",
-     "new_label": null,
-     "note": null,
-     "decided_by": "bob",
-     "decided_at": 1758300002000
-    }
-   ],
-   "relabel_rerun": "full"
-  },
-  {
-   "schema_version": "1.0",
+   "schema_version": "2.0",
    "decisions": [
     {
      "id": 7,
@@ -81,16 +65,16 @@
      "line": "reject_appeal",
      "decision": "restore",
      "new_label": null,
-     "note": "两条画面其实不同",
+     "note": "其实完成了",
      "decided_by": "alice",
-     "decided_at": 1758300003000
+     "decided_at": 1758300007000
     }
    ]
   }
  ],
  "invalid": [
   {
-   "schema_version": "1.0",
+   "schema_version": "2.0",
    "decisions": [
     {
      "id": 1,
@@ -99,61 +83,41 @@
      "decision": "success",
      "new_label": null,
      "note": null,
-     "decided_by": "a",
-     "decided_at": 1
-    }
-   ]
-  },
-  {
-   "schema_version": "1.0",
-   "decisions": [
-    {
-     "id": 1,
-     "episode_index": 6,
-     "line": "label",
-     "decision": "custom_label",
-     "new_label": null,
-     "note": null,
-     "decided_by": "a",
-     "decided_at": 1
-    }
-   ]
-  },
-  {
-   "schema_version": "1.0",
-   "decisions": [
-    {
-     "id": 1,
-     "episode_index": 29,
-     "line": "label",
-     "decision": "adopt_suggestion",
-     "new_label": "pour rice into the green bowl",
-     "note": null,
-     "decided_by": "alice",
-     "decided_at": 1758300000000
-    },
-    {
-     "id": 2,
-     "episode_index": 29,
-     "line": "task_verdict",
-     "decision": "discard",
-     "new_label": null,
-     "note": "画面被遮挡",
      "decided_by": "alice",
      "decided_at": 1758300001000
-    },
-    {
-     "id": 3,
-     "episode_index": 6,
-     "line": "reject_appeal",
-     "decision": "restore",
-     "new_label": null,
-     "note": null,
-     "decided_by": "bob",
-     "decided_at": 1758300002000
     }
-   ],
-   "relabel_rerun": "fast"
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "decisions": [
+    {
+     "id": 1,
+     "episode_index": 29,
+     "line": "task_verdict",
+     "decision": "adopt_suggestion",
+     "new_label": "pour rice",
+     "note": null,
+     "decided_by": "alice",
+     "decided_at": 1758300001000
+    }
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "relabel_rerun": "full",
+   "decisions": [
+    {
+     "id": 1,
+     "episode_index": 29,
+     "line": "task_verdict",
+     "decision": "unsure",
+     "new_label": "pour rice",
+     "note": null,
+     "decided_by": "alice",
+     "decided_at": 1758300001000
+    }
+   ]
   },
   {
    "schema_version": "1.0",
@@ -162,11 +126,11 @@
      "id": 7,
      "episode_index": 41,
      "line": "reject_appeal",
-     "decision": "success",
+     "decision": "restore",
      "new_label": null,
-     "note": "两条画面其实不同",
+     "note": null,
      "decided_by": "alice",
-     "decided_at": 1758300003000
+     "decided_at": 1758300007000
     }
    ]
   }

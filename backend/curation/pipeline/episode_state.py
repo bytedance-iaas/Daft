@@ -4,12 +4,10 @@ The public check result files remain JSONL. This private database is the resume
 source for a pipelined run: a stage commits its records and next destination in
 one transaction after the corresponding result lines have been fsynced.
 
-Two layouts. A run of plan 2.0 (design doc 17 §3) has two blocks side by side: the
-Daemon names their streaming stages once (:meth:`EpisodeState.set_blocks`), every
-episode has a position in each block (``block_progress``), and a stage hands every
-episode on to the next one of its block - a finding or an execution error stops
-nothing (D57). A run made before it (one chain, the funnel) keeps ``progress``: a
-stage hands on its survivors only.
+A run has two blocks side by side (design doc 17 §3): the Daemon names their streaming
+stages once (:meth:`EpisodeState.set_blocks`), every episode has a position in each block
+(``block_progress``), and a stage hands every episode on to the next one of its block - a
+finding or an execution error stops nothing (D57).
 """
 from __future__ import annotations
 
@@ -22,17 +20,12 @@ def state_path(run_dir: str | Path) -> Path:
     return Path(run_dir) / ".orchestr" / "episodes.sqlite3"
 
 
-def index_verdict(rec: dict, policy=None) -> str:
-    """The verdict column of a record: 1.0's verdict, where ``fail`` means the funnel stops the episode
-    under ``policy`` (the task's; the registry's default levels when None) - a record of either format."""
-    from .records import is_error, legacy_verdict, passes_funnel
+def index_verdict(rec: dict) -> str:
+    """The verdict column of a record: ``error`` when the module failed on the episode, else ``ok``
+    (the live module cards count the errors, :meth:`EpisodeState.module_counts`)."""
+    from .records import is_error
 
-    if is_error(rec):
-        return "error"
-    if not passes_funnel(rec, policy):
-        return "fail"
-    verdict = legacy_verdict(rec)
-    return "pass" if verdict == "fail" else verdict
+    return "error" if is_error(rec) else "ok"
 
 
 def index_findings(rec: dict) -> int | None:
@@ -47,9 +40,7 @@ _PUT = "INSERT OR REPLACE INTO results (module, episode, record, verdict, findin
 
 
 class EpisodeState:
-    def __init__(self, path: str | Path, policy=None):
-        #: what stops an episode in the funnel (``records.passes_funnel``); the default levels when None
-        self.policy = policy
+    def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(self.path), timeout=30)
@@ -64,14 +55,8 @@ class EpisodeState:
                 episode INTEGER NOT NULL,
                 record TEXT NOT NULL,
                 verdict TEXT,
+                findings INTEGER,
                 PRIMARY KEY (module, episode)
-            );
-            CREATE TABLE IF NOT EXISTS progress (
-                episode INTEGER PRIMARY KEY,
-                last_stage TEXT NOT NULL,
-                next_stage TEXT NOT NULL,
-                reason TEXT,
-                updated_seq INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS clock (
                 id INTEGER PRIMARY KEY CHECK (id=1),
@@ -97,33 +82,12 @@ class EpisodeState:
             );
             CREATE INDEX IF NOT EXISTS block_progress_recent ON block_progress(updated_seq DESC);
         """)
-        if "updated_seq" not in {row[1] for row in self.db.execute("PRAGMA table_info(progress)")}:
-            with self.db:
-                self.db.execute("ALTER TABLE progress ADD COLUMN updated_seq INTEGER NOT NULL DEFAULT 0")
-                self.db.execute("UPDATE progress SET updated_seq=episode+1")
-                self.db.execute("UPDATE clock SET seq=(SELECT COALESCE(MAX(updated_seq), 0) FROM progress)")
-        self.db.execute("CREATE INDEX IF NOT EXISTS progress_recent ON progress(updated_seq DESC)")
-        if "verdict" not in {row[1] for row in self.db.execute("PRAGMA table_info(results)")}:
-            self.db.execute("ALTER TABLE results ADD COLUMN verdict TEXT")
-            with self.db:
-                rows = self.db.execute("SELECT module, episode, record FROM results").fetchall()
-                for module, ep, record in rows:
-                    self.db.execute("UPDATE results SET verdict=? WHERE module=? AND episode=?",
-                                    (index_verdict(json.loads(record), self.policy), module, ep))
-        if "findings" not in {row[1] for row in self.db.execute("PRAGMA table_info(results)")}:
-            self.db.execute("ALTER TABLE results ADD COLUMN findings INTEGER")
-            with self.db:
-                rows = self.db.execute("SELECT module, episode, record FROM results").fetchall()
-                for module, ep, record in rows:
-                    self.db.execute("UPDATE results SET findings=? WHERE module=? AND episode=?",
-                                    (index_findings(json.loads(record)), module, ep))
-
         self._chains = self._load_chains()
 
     def close(self) -> None:
         self.db.close()
 
-    # ------------------------------------------------------------ the two blocks (plan 2.0)
+    # ------------------------------------------------------------ the two blocks
     def _load_chains(self) -> dict[str, list[tuple[str, list[str]]]] | None:
         row = self.db.execute("SELECT value FROM meta WHERE key='blocks'").fetchone()
         if row is None:
@@ -131,8 +95,8 @@ class EpisodeState:
         return {block: [(stage, list(mods)) for stage, mods in chain] for block, chain in json.loads(row[0]).items()}
 
     def set_blocks(self, chains: dict[str, list[tuple[str, list[str]]]]) -> None:
-        """A run of plan 2.0: each block's streaming stages in order, with their modules. Every episode then
-        has a position in each block and every stage hands every episode on (design doc 17 §3.3)."""
+        """Each block's streaming stages in order, with their modules. Every episode then has a position in
+        each block and every stage hands every episode on (design doc 17 §3.3)."""
         doc = {block: [[stage, list(mods)] for stage, mods in chain] for block, chain in chains.items()}
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO meta VALUES ('blocks', ?)", (json.dumps(doc),))
@@ -140,7 +104,7 @@ class EpisodeState:
 
     @property
     def blocks(self) -> dict[str, list[tuple[str, list[str]]]] | None:
-        """The blocks' streaming stages (plan 2.0); None for a run with one chain (the funnel)."""
+        """The blocks' streaming stages; None until the Daemon names them (:meth:`set_blocks`)."""
         return self._chains
 
     def block_of(self, stage: str) -> str | None:
@@ -228,14 +192,6 @@ class EpisodeState:
             self.db.execute("INSERT OR REPLACE INTO failed_stages VALUES (?, ?)",
                             (stage, message))
 
-    def reopen_gate(self, stage: str, next_stage: str) -> list[int]:
-        if self._chains is not None:                     # plan 2.0 has no gates: nothing was held back
-            return []
-        episodes = [row[0] for row in self.db.execute(
-            "SELECT episode FROM progress WHERE last_stage=? AND reason='gate'", (stage,))]
-        self.forward(stage, episodes, next_stage)
-        return episodes
-
     def indexed(self, module: str) -> bool:
         return self.db.execute("SELECT 1 FROM indexed_modules WHERE module=?",
                                (module,)).fetchone() is not None
@@ -247,7 +203,7 @@ class EpisodeState:
 
     def _row(self, module: str, episode: int, record: dict, default) -> tuple:
         return (module, episode, json.dumps(record, ensure_ascii=False, default=default),
-                index_verdict(record, self.policy), index_findings(record))
+                index_verdict(record), index_findings(record))
 
     def bootstrap(self, run_dir: str, modules: list[str]) -> None:
         """Index an existing run once, before parallel stage processes start."""
@@ -269,20 +225,10 @@ class EpisodeState:
                next_stage: str) -> None:
         from .records import _json_default
 
-        if self._chains is not None:                     # plan 2.0: every episode goes on
-            with self.db:
-                self.db.executemany(_PUT, (self._row(module, episode, record, _json_default)
-                                           for module, record in records.items()))
-                self._place([episode], stage, next_stage, None)
-            return
-        terminal = any(index_verdict(r, self.policy) in ("fail", "error") for r in records.values())
-        destination = "done" if terminal or next_stage == "done" else next_stage
-        reason = "gate" if terminal else None
-        with self.db:
+        with self.db:                                    # every episode goes on (D57)
             self.db.executemany(_PUT, (self._row(module, episode, record, _json_default)
                                        for module, record in records.items()))
-            self.db.execute("INSERT OR REPLACE INTO progress VALUES (?, ?, ?, ?, ?)",
-                            (episode, stage, destination, reason, self._reserve(1)))
+            self._place([episode], stage, next_stage, None)
 
     def put_result(self, record: dict) -> None:
         from .records import _json_default
@@ -294,86 +240,20 @@ class EpisodeState:
     def missing(self, stage: str, episode: int) -> None:
         """Its source files are gone (D40): left out, in every later stage too."""
         with self.db:
-            if self._chains is not None:
-                for block in self._chains:
-                    first = self._reserve(1)
-                    self.db.execute("INSERT OR REPLACE INTO block_progress VALUES (?, ?, ?, 'done', 'missing', ?)",
-                                    (episode, block, stage, first))
-                return
-            self.db.execute("INSERT OR REPLACE INTO progress VALUES (?, ?, 'done', 'missing', ?)",
-                            (episode, stage, self._reserve(1)))
+            for block in self._chains or {}:
+                first = self._reserve(1)
+                self.db.execute("INSERT OR REPLACE INTO block_progress VALUES (?, ?, ?, 'done', 'missing', ?)",
+                                (episode, block, stage, first))
 
     def forward(self, stage: str, episodes: list[int], next_stage: str) -> None:
-        """A whole module failed: the episodes go on without its records (a funnel run: its gate is open
-        for every episode in the batch)."""
+        """A whole module failed: the episodes go on without its records."""
         if not episodes:
             return
-        if self._chains is not None:
-            with self.db:
-                self._place(list(episodes), stage, next_stage, None)
-            return
         with self.db:
-            first = self._reserve(len(episodes))
-            self.db.executemany("INSERT OR REPLACE INTO progress VALUES (?, ?, ?, NULL, ?)",
-                                ((ep, stage, next_stage, first + i)
-                                 for i, ep in enumerate(episodes)))
-
-    def seed_progress(self, episodes: list[int], stages: list[tuple[str, list[str]]]) -> None:
-        """Recover older runs whose result files predate the episode progress table."""
-        existing = self.progress_for(episodes)
-        missing = [ep for ep in episodes if ep not in existing]
-        if not missing:
-            return
-        by_stage = []
-        for stage, modules in stages:
-            available: dict[int, list[str]] = {}
-            for module in modules:
-                for ep, verdict in self.db.execute(
-                    "SELECT episode, verdict FROM results WHERE module=?", (module,)):
-                    available.setdefault(ep, []).append(verdict)
-            by_stage.append((stage, len(modules), available))
-        with self.db:
-            for ep in missing:
-                for i, (stage, count, available) in enumerate(by_stage):
-                    verdicts = available.get(ep, [])
-                    if len(verdicts) != count:
-                        break
-                    terminal = any(v in ("fail", "error") for v in verdicts)
-                    next_stage = "done" if terminal or i == len(by_stage) - 1 \
-                        else by_stage[i + 1][0]
-                    self.db.execute("INSERT OR REPLACE INTO progress VALUES (?, ?, ?, ?, ?)",
-                                    (ep, stage, next_stage, "gate" if terminal else None,
-                                     self._reserve(1)))
-                    if terminal:
-                        break
-
-    def next_for(self, episodes: list[int], stage: str) -> list[int]:
-        if not episodes:
-            return []
-        out = []
-        for start in range(0, len(episodes), 900):
-            chunk = episodes[start:start + 900]
-            slots = ",".join("?" for _ in chunk)
-            found = self.db.execute(
-                f"SELECT episode FROM progress WHERE next_stage=? AND episode IN ({slots})",
-                (stage, *chunk)).fetchall()
-            out.extend(row[0] for row in found)
-        return sorted(out)
-
-    def progress_for(self, episodes: list[int]) -> dict[int, str]:
-        out = {}
-        for start in range(0, len(episodes), 900):
-            chunk = episodes[start:start + 900]
-            if not chunk:
-                continue
-            slots = ",".join("?" for _ in chunk)
-            out.update(self.db.execute(
-                f"SELECT episode, next_stage FROM progress WHERE episode IN ({slots})",
-                chunk).fetchall())
-        return out
+            self._place(list(episodes), stage, next_stage, None)
 
     def _block_rows(self, sql_tail: str, args: tuple) -> list[dict]:
-        """One row per episode of a two-block run: its latest change and the positions of its blocks."""
+        """One row per episode: its latest change and the positions of its blocks."""
         rows = self.db.execute(
             "SELECT episode, MAX(updated_seq) AS seq FROM block_progress GROUP BY episode " + sql_tail, args).fetchall()
         out = []
@@ -388,42 +268,22 @@ class EpisodeState:
         return out
 
     def recent(self, *, before: int | None = None, limit: int = 50) -> list[dict]:
-        if self._chains is not None:
-            if before is not None:
-                return self._block_rows("HAVING seq < ? ORDER BY seq DESC LIMIT ?", (before, limit))
-            return self._block_rows("ORDER BY seq DESC LIMIT ?", (limit,))
-        sql = "SELECT episode, last_stage, next_stage, reason, updated_seq FROM progress"
-        args: tuple = ()
         if before is not None:
-            sql += " WHERE updated_seq < ?"
-            args = (before,)
-        sql += " ORDER BY updated_seq DESC LIMIT ?"
-        return [dict(zip(("episode_index", "last_stage", "next_stage", "reason", "updated_seq"), row))
-                for row in self.db.execute(sql, (*args, limit))]
+            return self._block_rows("HAVING seq < ? ORDER BY seq DESC LIMIT ?", (before, limit))
+        return self._block_rows("ORDER BY seq DESC LIMIT ?", (limit,))
 
     def episode(self, index: int) -> dict | None:
-        if self._chains is not None:
-            rows = self._block_rows("HAVING episode = ?", (index,))
-            return rows[0] if rows else None
-        row = self.db.execute(
-            "SELECT episode, last_stage, next_stage, reason, updated_seq FROM progress WHERE episode=?",
-            (index,)).fetchone()
-        if row is None:
-            return None
-        return dict(zip(("episode_index", "last_stage", "next_stage", "reason", "updated_seq"), row))
+        rows = self._block_rows("HAVING episode = ?", (index,))
+        return rows[0] if rows else None
 
     def episode_records(self, index: int) -> dict[str, dict]:
         return {module: json.loads(record) for module, record in self.db.execute(
             "SELECT module, record FROM results WHERE episode=?", (index,))}
 
     def totals(self) -> dict[str, int]:
-        if self._chains is not None:
-            total, done = self.db.execute(
-                "SELECT count(*), sum(finished) FROM (SELECT episode, sum(next_stage='done')=? AS finished "
-                "FROM block_progress GROUP BY episode)", (len(self._chains),)).fetchone()
-            return {"started": int(total or 0), "finished": int(done or 0)}
         total, done = self.db.execute(
-            "SELECT count(*), sum(next_stage='done') FROM progress").fetchone()
+            "SELECT count(*), sum(finished) FROM (SELECT episode, sum(next_stage='done')=? AS finished "
+            "FROM block_progress GROUP BY episode)", (len(self._chains or {}),)).fetchone()
         return {"started": int(total or 0), "finished": int(done or 0)}
 
     def records(self, module: str, episodes: list[int] | None = None) -> dict[int, dict]:
@@ -468,16 +328,5 @@ class EpisodeState:
             modules)]
 
     def survivors(self, modules: list[str]) -> list[int]:
-        """A funnel run: the episodes every one of ``modules`` judged and none stopped (plan 2.0: every one with
-        records, :meth:`completed`)."""
-        if self._chains is not None:
-            return self.completed(modules)
-        if not modules:
-            return []
-        slots = ",".join("?" for _ in modules)
-        return [row[0] for row in self.db.execute(
-            "SELECT episode FROM results "
-            f"WHERE module IN ({slots}) GROUP BY episode "
-            "HAVING count(DISTINCT module)=? "
-            "AND sum(verdict IN ('fail','error'))=0 "
-            "ORDER BY episode", (*modules, len(modules)))]
+        """The episodes that go on after ``modules``: every one with their records (:meth:`completed`, D57)."""
+        return self.completed(modules)

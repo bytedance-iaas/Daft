@@ -31,7 +31,7 @@ def chain(tmp_path_factory, mini_dataset):
         with FakeVlmServer(delay_s=0.003) as vlm:
             c = Chain(mini_dataset, str(tmp / "run"), vlm.url)
             c.front()
-            c.funnel()
+            c.checks()
             c.post()
             c.deliver(str(tmp / "delivery"))
             c.vlm_calls = list(vlm.calls)
@@ -48,7 +48,7 @@ def test_every_step_ran_and_fits_its_contract(chain):
 
 def test_by_default_one_model_request_at_a_time(chain):
     """No --concurrency anywhere in the chain: never two model requests in flight."""
-    assert len(chain.vlm_calls) >= 8 and chain.max_in_flight == 1   # one judgement per episode, plus the label guard
+    assert len(chain.vlm_calls) >= 8 and chain.max_in_flight == 1   # one request per episode
 
 
 def test_every_stage_judges_every_episode(chain):
@@ -66,7 +66,6 @@ def test_every_stage_judges_every_episode(chain):
     skipped = {e: r["details"].get("skipped") for e, r in results(chain.rd, "task_success").items()
                if r["details"].get("skipped")}
     assert skipped == {4: "no_task_text", 6: "no_task_text"}
-    assert not os.path.exists(os.path.join(chain.rd, "autolabel"))
     assert s["duplicate"].doc["modules"]["duplicate_check"]["findings"] == {"duplicate": 2}   # 3 and 7, each naming the other
 
 
@@ -131,10 +130,7 @@ def test_usage_is_booked_per_module_on_both_ledgers(chain):
     posts = [c for c in chain.vlm_calls if c["path"].endswith("/chat/completions")]
     assert sum(e["requests"] for e in actual) == len(posts)          # every request, once
     assert sum(e["requests_unknown_usage"] for e in actual) == 0
-    # "llm" was the skill profile's taxonomy induction and left with it (registry 3.0)
     kinds = {e["call_kind"] for e in actual}
-    # llm here is the label guard's annotation-vs-caption comparison on the episodes the judgement
-    # rejected (the skill profile's induction, the other llm caller, left with registry 3.0)
     assert kinds == {"probe"}, "one request per episode - the judgement, or the picture-defect request (D73)"
     assert not kinds & {"endstate", "arbitration"}, "no review request per camera, no arbitration (D71)"
     report = json.load(open(os.path.join(chain.rd, "revisions", "r0001", "report.json"),
@@ -201,8 +197,8 @@ def test_report_summaries_are_chart_ready(chain):
     assert [c["camera"] for c in sync["cameras"]] == ["exterior", "wrist"] and sync["sync_advice"]
     task = s["task_success"]
     assert sum(j["count"] for j in task["judgements"]) == task["counts"]["total"] - task["counts"]["error"]
-    assert [x["name"] for x in task["layers"]] == ["probe", "endstate", "label_guard", "arbitration"]
-    assert "arbitration" in task and "abstain_reasons" in task                # kept as in 1.0
+    assert [x["name"] for x in task["layers"]] == ["probe", "endstate"]
+    assert "abstain_reasons" in task
     assert s["duplicate_check"]["group_sizes"] == [{"name": "2", "count": 1}]
     assert (s["duplicate_check"]["groups"], s["duplicate_check"]["duplicated"]) == (1, 2)
     assert "重复组 1 组,涉及 2 条(只报告)" in open(os.path.join(rev, "report.md"), encoding="utf-8").read()

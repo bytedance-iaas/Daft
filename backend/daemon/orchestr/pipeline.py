@@ -1,6 +1,6 @@
 """The entry point of a chain's per-episode stages, and batch compatibility for site-supplied CLI wrappers.
 
-A chain is one block's streaming stages (plan 2.0, :mod:`.blocks`) or, before it, the funnel."""
+A chain is one block's streaming stages (:mod:`.blocks`)."""
 from __future__ import annotations
 
 import concurrent.futures as futures
@@ -79,11 +79,7 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
     store = EpisodeState(path)
     try:
         store.bootstrap(str(run.wd.root), modules)
-        if store.blocks is not None:                       # plan 2.0: this chain's place in the store
-            saved = store.positions(selection, chain or stages[0].get("block"))
-        else:
-            store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
-            saved = store.progress_for(selection)
+        saved = store.positions(selection, chain or stages[0].get("block"))
     finally:
         store.close()
 
@@ -171,7 +167,6 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
         downstream = queues[index + 1] if index + 1 < len(ids) else None
         seen_batches = 0
         count = 0
-        dropped: list[int] = []
         stage_failed = False
         child: list[StageWorker] = []
         try:
@@ -207,21 +202,6 @@ def run_batches(run, stages: list[dict], selection: list[int], *,
                         stage_failed = True
                         failed.add(sid)
                         failure_messages[sid] = (failure_message or "模块整体失败")[:2000]
-                        # A failed module's gate is open for the whole input, including
-                        # episodes rejected by earlier batches of that same layer.
-                        if dropped:
-                            correction = EpisodeState(path)
-                            try:
-                                correction.forward(sid, dropped, next_stage)
-                            finally:
-                                correction.close()
-                            if downstream is not None:
-                                for chunk in _batches(dropped, batch_size):
-                                    put(downstream, chunk)
-                            dropped.clear()
-                    else:
-                        passed = set(survivors)
-                        dropped.extend(ep for ep in batch if ep not in passed)
                 count += len(batch)
                 run.progress(sid, done=count, total=len(selection),
                              note=(f"按 episode 流水执行，每批最多 {batch_size} 条；"

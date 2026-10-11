@@ -3,21 +3,6 @@
  "valid": [
   {
    "schema_version": "1.0",
-   "phase": "funnel",
-   "revision": null,
-   "counts": {
-    "total": 50,
-    "keep": 42,
-    "drop": 6,
-    "held": 2
-   },
-   "files": {
-    "verdicts": "verdicts.jsonl",
-    "keep": "keep.txt"
-   }
-  },
-  {
-   "schema_version": "1.0",
    "phase": "final",
    "revision": 2,
    "counts": {
@@ -52,6 +37,21 @@
     "reject": "b",
     "held": "c",
     "review": "d"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "phase": "funnel",
+   "revision": null,
+   "counts": {
+    "total": 50,
+    "keep": 42,
+    "drop": 6,
+    "held": 2
+   },
+   "files": {
+    "verdicts": "verdicts.jsonl",
+    "keep": "keep.txt"
    }
   }
  ]

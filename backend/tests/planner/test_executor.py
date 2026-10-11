@@ -207,9 +207,9 @@ def test_receipts_count_per_module_and_fit_check_json():
         "requests": 5, "merged_units": 2, "split_units": 1, "fallback_units": 1}
     assert receipts.for_module("nobody") == {
         "requests": 0, "merged_units": 0, "split_units": 0, "fallback_units": 0}
-    doc = {"schema_version": "1.0", "modules": {
+    doc = {"schema_version": "2.0", "modules": {
         module: {"part": "0001", "input_digest": "sha256:" + "a" * 64,
-                 "episodes": {"total": 4, "pass": 1, "fail": 1, "abstain": 2, "scored": 0, "error": 0},
+                 "episodes": {"total": 4, "ok": 4, "error": 0}, "findings": {},
                  "error_episodes": [], "merge": counts}
         for module, counts in receipts.to_json().items()}}
     schemas.validate("cli/check.schema.json", doc)

@@ -72,8 +72,8 @@ def container_cpu_cores(root: str = "/sys/fs/cgroup") -> int | None:
 def load_site_config(path: str | None) -> dict:
     """The planner's site settings (``concurrency`` / ``vlm`` blocks); {} without a file.
 
-    ``concurrency.cpu`` / ``cpuMax`` of site files written before D54 are dropped with a
-    warning, never an error: an upgrade must not keep the Daemon from starting.
+    ``concurrency.cpu`` / ``cpuMax`` of site files written before D54 and the ``vlm.gates`` of v1's requests
+    (D89) are dropped with a warning, never an error: an upgrade must not keep the Daemon from starting.
     """
     if not path:
         return {}
@@ -93,16 +93,23 @@ def load_site_config(path: str | None) -> dict:
         raise OrchestratorConfigError(f"站点配置 {p} 不是合法的 YAML / JSON：{err}") from None
     if not isinstance(data, dict):
         raise OrchestratorConfigError(f"站点配置 {p} 的顶层应该是一个对象")
-    from curation.planner.limits import RETIRED_SITE_KEYS, retired_site_keys
+    from curation.planner.limits import RETIRED_GATES, RETIRED_SITE_KEYS, retired_site_keys
 
     out = {k: data[k] for k in ("concurrency", "vlm") if k in data}
     retired = retired_site_keys(out)
-    if retired:
+    cpu = [k for k in retired if k.startswith("concurrency.")]
+    gates = [k for k in retired if k.startswith("vlm.gates.")]
+    if cpu:
         log.warning("site config %s: %s ignored - CPU workers are the container's cores minus 2, "
-                    "shared by the running tasks; a task can only lower its own cap", p,
-                    ", ".join(retired))
+                    "shared by the running tasks; a task can only lower its own cap", p, ", ".join(cpu))
         out["concurrency"] = {k: v for k, v in out["concurrency"].items()
                               if k not in RETIRED_SITE_KEYS}
+    if gates:
+        log.warning("site config %s: %s ignored - those requests are gone (one request per episode, D71); "
+                    "the VLM gates are episode and probe", p, ", ".join(gates))
+        vlm = dict(out["vlm"])
+        vlm["gates"] = {k: v for k, v in vlm["gates"].items() if k not in RETIRED_GATES}
+        out["vlm"] = vlm
     return out
 
 

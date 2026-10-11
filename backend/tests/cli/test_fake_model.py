@@ -7,7 +7,6 @@ from the request's texts and each image's pixel size, never the bytes
 """
 from __future__ import annotations
 
-import os
 import shutil
 
 import numpy as np
@@ -74,14 +73,13 @@ def test_video_run_sends_video_inputs(vlm_stage, tmp_path):
 
 def test_the_mini_dataset_walks_every_task_success_path(vlm_stage):
     """What the CLI tests build on (``parity.fakevlm.SEED``) under the one judgement (D71):
-    abstentions that go to a person, rejections a camera backs, and captions other than the
-    annotation (4 and 6). Nothing is rescued by a second request any more."""
+    abstentions that go to a person, rejections a camera backs, and episodes without a task
+    text (4 and 6). Nothing is rescued by a second request any more."""
     got = {e: (verdict_of(r), r["details"].get("verdict"))
            for e, r in vlm_stage["reference"].items()}
-    # 4 and 6 have no task text: not judged at all (D72), no caption is written for them
+    # 4 and 6 have no task text: not judged at all (D72)
     assert got == {0: ("abstain", "uncertain"), 1: ("fail", "failure"),
                    2: ("abstain", "uncertain"), 3: ("abstain", "uncertain"),
                    4: ("abstain", None), 5: ("fail", "failure"),
                    6: ("abstain", None), 7: ("abstain", "uncertain")}
     assert {e for e, r in vlm_stage["reference"].items() if r["details"].get("skipped")} == {4, 6}
-    assert not os.path.exists(f"{vlm_stage['reference_dir']}/autolabel")

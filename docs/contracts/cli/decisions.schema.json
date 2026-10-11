@@ -1,37 +1,158 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "decisions.json - input of curation adjudicate-apply (schema 1.0)",
-  "description": "The Daemon exports this task's decisions that are not applied yet (D32: decisions never cross tasks). Lines and decisions follow v1 (design doc 06, section 5.1): label = annotation conflict from skill_profile, task_verdict = task_success abstention, reject_appeal = appeal of a reject attributed to an appealable module; eef_check (C1 1.9) = an episode the EEF module could not settle, 'consistent' keeps it and 'inconsistent' rejects it as the gate's result; integrity_check (C1 1.11, design doc 14) = an episode the data integrity module suspects, 'intact' keeps it and 'broken' rejects it, likewise. 'discard' (drop the whole episode) wins over any task verdict; 'unsure' is recorded and changes nothing. adopt_suggestion always carries new_label here: the Daemon fills in the question's suggestion when a person left it out (C4 1.5.1). A task_verdict on an episode whose task_success did not abstain is a follow-up of its label answer (C1 follow_ups): adjudicate-apply counts it only while the label's latest decision is one of the follow-up's 'after' and the verdict came after it (by id), the same rule as the Daemon's queue; otherwise it lapses and the relabel is judged again.",
+  "title": "decisions.json - input of curation adjudicate-apply (schema 2.0)",
+  "description": "The Daemon exports this task's decisions that are not applied yet (D32: decisions never cross tasks). One line per registry review line (design doc 06, section 5.1): task_verdict = a task_success question, reject_appeal = appeal of a reject whose blocking findings are all appealable; eef_check = a conflict between the EEF module's two channels, 'consistent' keeps the episode and 'inconsistent' rejects it; integrity_check (design doc 14) = an episode the data integrity module suspects, 'intact' keeps it and 'broken' rejects it. 'discard' (drop the whole episode) wins over any task verdict; 'unsure' is recorded and changes nothing. A task_verdict may carry new_label, the task text the person rewrote: the episode is judged again under it unless the same answer says success or failure. 2.0 (D90): relabel_rerun and the label line of the skill profile are gone.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "decisions"],
+  "required": [
+    "schema_version",
+    "decisions"
+  ],
   "properties": {
-    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
-    "relabel_rerun": {"enum": ["v1", "full"], "default": "v1", "description": "how relabelled episodes without a human task verdict are judged again (D39): v1 = what v1's rejudge runs (multi-view scoring and the per-camera end-state vote only); full = the first run's complete task_success flow. Recorded with each relabel it applies, so a later retry of those episodes judges them the same way"}
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version_2"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/decision"
+      }
+    }
   },
   "$defs": {
     "decision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "episode_index", "line", "decision", "new_label", "note", "decided_by", "decided_at"],
+      "required": [
+        "id",
+        "episode_index",
+        "line",
+        "decision",
+        "new_label",
+        "note",
+        "decided_by",
+        "decided_at"
+      ],
       "properties": {
-        "id": {"type": "integer", "minimum": 1},
-        "episode_index": {"$ref": "common.schema.json#/$defs/episode_index"},
-        "line": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "a registry review line (C1, D43); adjudicate-apply refuses a line it has no apply rule for"},
-        "decision": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "one of the line's decisions in the registry; the known lines are pinned below"},
-        "new_label": {"type": ["string", "null"]},
-        "note": {"type": ["string", "null"]},
-        "decided_by": {"type": "string", "minLength": 1},
-        "decided_at": {"$ref": "common.schema.json#/$defs/epoch_ms"}
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "episode_index": {
+          "$ref": "common.schema.json#/$defs/episode_index"
+        },
+        "line": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "a registry review line (C1, D43); adjudicate-apply refuses a line it has no apply rule for"
+        },
+        "decision": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "one of the line's decisions in the registry; the known lines are pinned below"
+        },
+        "new_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decided_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decided_at": {
+          "$ref": "common.schema.json#/$defs/epoch_ms"
+        }
       },
       "allOf": [
-        {"if": {"properties": {"line": {"const": "label"}}}, "then": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"]}}}},
-        {"if": {"properties": {"line": {"const": "task_verdict"}}}, "then": {"properties": {"decision": {"enum": ["success", "failure", "unsure", "discard"]}}}},
-        {"if": {"properties": {"line": {"const": "reject_appeal"}}}, "then": {"properties": {"decision": {"enum": ["restore", "keep_rejected", "unsure"]}}}},
-        {"if": {"properties": {"line": {"const": "eef_check"}}}, "then": {"properties": {"decision": {"enum": ["consistent", "inconsistent", "unsure"]}}}},
-        {"if": {"properties": {"line": {"const": "integrity_check"}}}, "then": {"properties": {"decision": {"enum": ["intact", "broken", "unsure"]}}}},
-        {"if": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label"]}}}, "then": {"properties": {"new_label": {"type": "string", "minLength": 1}}}}
+        {
+          "if": {
+            "properties": {
+              "line": {
+                "const": "task_verdict"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "success",
+                  "failure",
+                  "unsure",
+                  "discard"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "line": {
+                "const": "reject_appeal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "restore",
+                  "keep_rejected",
+                  "unsure"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "line": {
+                "const": "eef_check"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "consistent",
+                  "inconsistent",
+                  "unsure"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "line": {
+                "const": "integrity_check"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "intact",
+                  "broken",
+                  "unsure"
+                ]
+              }
+            }
+          }
+        }
       ]
     }
   }

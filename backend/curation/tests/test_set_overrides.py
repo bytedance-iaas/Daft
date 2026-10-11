@@ -37,9 +37,9 @@ def test_set_new_leaf_allowed_with_notice(capsys):
 
 
 def test_set_breaking_invariant_caught():
-    """覆盖出非法配置(负权重)→ 重新校验拦住,不静默跑偏。"""
+    """覆盖出非法配置(视频抽帧率越界)→ 重新校验拦住,不静默跑偏。"""
     from curation.pipeline.config import validate_config
     cfg = load_config()
-    apply_overrides(cfg, ["checks.visual_quality.weight=-1"])
-    with pytest.raises(ConfigError, match="不能为负"):
+    apply_overrides(cfg, ["checks.task_success.vlm.video.fps=30"])
+    with pytest.raises(ConfigError, match="fps"):
         validate_config(cfg, "--set 覆盖后")

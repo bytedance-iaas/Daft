@@ -1,4 +1,4 @@
-"""A persistent multiprocessing child for one funnel layer."""
+"""A persistent multiprocessing child for one per-episode stage of a block."""
 from __future__ import annotations
 
 import io

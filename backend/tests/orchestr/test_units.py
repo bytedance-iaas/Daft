@@ -233,6 +233,17 @@ def test_an_old_site_config_with_cpu_settings_still_starts(tmp_path, caplog):
     assert "concurrency.cpu, concurrency.cpuMax ignored" in caplog.text
 
 
+def test_an_old_site_config_with_v1_gates_still_starts(tmp_path, caplog):
+    """D89: the gates of v1's requests (``vlm.gates.arbitration`` ...) are dropped with a warning, with or without
+    a ``concurrency`` section; the two gates there are stay."""
+    site = tmp_path / "site.yaml"
+    site.write_text("vlm: {gates: {arbitration: 16, caption: 8, probe: 32}}\n")
+    with caplog.at_level("WARNING", logger="daemon.orchestr"):
+        cfg = OrchestratorConfig.from_env({"CURATOR_SITE_CONFIG": str(site)})
+    assert cfg.site_config == {"vlm": {"gates": {"probe": 32}}}
+    assert "vlm.gates.arbitration, vlm.gates.caption ignored" in caplog.text
+
+
 def test_the_cpu_pool_is_every_core_but_two(tmp_path, monkeypatch):
     """P4, D54: CURATOR_CPU_CORES, else the container's quota, else os.cpu_count(); minus 2."""
     from daemon.orchestr.config import container_cpu_cores

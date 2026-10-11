@@ -35,11 +35,7 @@ def _review_items(entry: dict | None) -> list[dict]:
     for it in (entry or {}).get("review") or []:
         if not isinstance(it, dict):
             continue
-        item = {"module": it.get("source_module"), "kind": it.get("kind"),
-                "text": it.get("reason") or ""}
-        if it.get("priority"):
-            item["priority"] = it["priority"]
-        items.append(item)
+        items.append({"module": it.get("source_module"), "kind": it.get("kind"), "text": it.get("reason") or ""})
 
     def asked(item: dict) -> bool:
         return item["kind"] in _ADJUDICABLE or (item["kind"] == "task_verdict"

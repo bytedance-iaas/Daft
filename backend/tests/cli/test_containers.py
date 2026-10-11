@@ -204,7 +204,7 @@ def chain(request, tmp_path_factory, mini_mcap, mini_lance):
                 c = Chain(_datasets(mini_mcap, mini_lance)[fmt], str(tmp / "run"), vlm.url,
                           extra_source=["--selection", EPISODES])
                 c.front()
-                c.funnel()
+                c.checks()
                 c.post()
                 c.deliver(str(tmp / "delivery"))
         finally:

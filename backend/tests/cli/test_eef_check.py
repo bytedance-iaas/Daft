@@ -329,8 +329,8 @@ def test_a_handheld_gripper_recording_gets_an_opinion_camera_by_camera(cli, tmp_
 
 def test_a_handheld_gripper_recording_needs_no_trajectory(cli, tmp_path):
     """Design doc 22 §5.4 (F5.20): no trajectory.json on a handheld gripper's mcap - each episode's trajectory is
-    derived from the recording with the built-in DAS DEMO calibration (or the task's), kept in the run directory for
-    the overlay, and the record says where it came from. --resume keeps it; another calibration redoes it."""
+    derived from the recording with the built-in DAS DEMO calibration (or the dataset declaration's), kept in the run
+    directory for the overlay, and the record says where it came from. --resume keeps it; another calibration redoes it."""
     from curation.extensions.eef_consistency import derive_mcap
 
     from ..eef import das_mcap as F
@@ -360,9 +360,10 @@ def test_a_handheld_gripper_recording_needs_no_trajectory(cli, tmp_path):
     out = os.path.join(rd, "checks", EEF)
     assert derive_mcap.bundle_path(out, 0).is_file() and derive_mcap.report_path(out, 0).is_file()
     assert run("--resume")["skipped_existing"] == 1
-    cal = tmp_path / "cal.json"
-    cal.write_text(json.dumps(F.calibration()))                 # with robot1's intrinsics as a fallback
-    again = run("--resume", "--param", f"{EEF}.gripper_calibration={cal}")
+    decl = tmp_path / "declaration.json"                        # the gripper's calibration, with robot1's intrinsics
+    decl.write_text(json.dumps({"schema_version": "dataset-declaration/1.0",      # as a fallback (design doc 25 §3)
+                                "calibration": {"handheld": {"calibration": F.calibration(), "builtin": None}}}))
+    again = run("--resume", "--declaration", str(decl))
     assert again["skipped_existing"] == 0
     (rec,) = results(rd, EEF).values()
     src = rec["details"]["trajectory_source"]
@@ -464,8 +465,6 @@ def chain(vlm_stage, tmp_path_factory):
         eef = c.step("eef", "check", "--modules", EEF, *c.common(), *c.vlm, "--episodes", vlm_stage["episodes"],
                      "--param", f"{EEF}.trajectory_json={traj}", "--survivors-out", c.path("stages", "eef.txt"))
         mods = f"{MODS},{EEF}"
-        c.step("funnel2", "aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "2",
-               "--episodes", "0-7", "--modules", mods)
         c.step("final2", "aggregate", "--run-dir", rd, "--phase", "final", "--revision", "2", "--episodes", "0-7",
                "--modules", mods, "--input", ds)
         c.step("report2", "report", "--run-dir", rd, "--revision", "2", "--modules", mods)
@@ -475,7 +474,7 @@ def chain(vlm_stage, tmp_path_factory):
 def test_the_frame_survivors_are_judged(chain):
     rd, survivors = chain["rd"], chain["survivors"]
     recs = results(rd, EEF)
-    assert sorted(recs) == sorted(survivors)                      # D49: the funnel's survivors, not the selection
+    assert sorted(recs) == sorted(survivors)                      # D49: the frame stage's survivors, not the selection
     counts = chain["eef"].doc["modules"][EEF]["episodes"]
     assert counts["total"] == len(survivors) and counts["error"] == 0
     for ep, r in recs.items():
@@ -522,7 +521,7 @@ def test_the_report_shows_the_eef_section(chain):
     s = sec["summary"]
     n = len(chain["survivors"])
     assert sum(x["count"] for x in s["labels"]) == n and s["uncalibrated"] and s["confidence_uncalibrated"]
-    assert s["judged_pass"] == s["judged_reject"] == s["to_human"] == 0           # the 4.x keys, nothing behind them
+    assert not {"judged_pass", "judged_reject", "to_human", "outcomes", "reject_subitems"} & set(s)   # 4.x's (D90)
     assert sum(x["count"] for x in s["p_bins"]) == n - next(x["count"] for x in s["labels"] if x["name"] == "cannot_tell")
     assert s["threshold_profile"].startswith("demo ") and "gate" not in sec       # report 2.0
     assert s["assessed_episodes"] == n

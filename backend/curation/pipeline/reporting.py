@@ -69,7 +69,7 @@ class Revision:
         frozen = _read(os.path.join(self.dir, policy_mod.POLICY_NAME), None)
         self.run = _read(os.path.join(run_dir, "run.json"), {}) or {}
         #: the policy the revision's verdicts were computed with (aggregate froze it)
-        self.policy = (policy_mod.Policy.from_json(frozen, self.run.get("registry_version")) if isinstance(frozen, dict)
+        self.policy = (policy_mod.Policy.from_json(frozen) if isinstance(frozen, dict)
                        else policy_mod.load(run_dir))
 
     def module_params(self, module: str) -> dict:
@@ -168,11 +168,6 @@ def _summary(rev: Revision, m: str) -> dict:
     if scores:
         out["mean_score"] = round(sum(scores) / len(scores), 4)
     if m == "task_success":
-        from .funnel import arbitration_stats
-
-        out["arbitration"] = arbitration_stats(
-            [{"detail": json.dumps(r.get("details") or {})} for r in res.values()
-             if not is_error(r)])
         reasons: dict[str, int] = {}
         for r in res.values():
             if legacy_verdict(r) == "abstain":
@@ -200,7 +195,6 @@ def _summary(rev: Revision, m: str) -> dict:
 
         out.update(eef_report.summary(res))
         out.update(eef_report.review_summary(res))
-        out.update(eef_report.verdict_summary(res))     # records before registry 5.0 (pass / reject / a person)
         out.update(eef_report.merged_summary(res))      # 5.0 on: opinions with a confidence (design doc 25 §7)
         out.update(eef_report.source_summary(res))      # the trajectory's source, cameras declared fixed (§3.3)
         out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
@@ -473,7 +467,7 @@ def _adjudication(review: list, module: str, spec) -> dict:
 
     out = {"pending": sum(1 for e in review if has(e, True))}
     appeals = sum(1 for e in review if has(e, False))
-    if spec.appealable or appeals:                  # an older run's rejects may still be appealable (design doc 25 §7.3)
+    if spec.appealable:
         out["appealable"] = appeals
     return out
 
@@ -497,7 +491,7 @@ def container_integrity(rev: Revision) -> dict | None:
     over what ``check`` recorded in ``source_info.json``).
 
     No delivery line since D69: the delivery is this report and the result revision, the
-    same for every source format. Reports written before that still carry ``delivery``.
+    same for every source format.
     """
     kind = ((rev.preflight.get("format") or {}).get("kind"))
     if kind not in ("mcap", "lance"):
@@ -678,7 +672,7 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             from ..extensions.camera_defects import LEVEL_ZH, NAME_ZH
 
             s = sec["summary"]
-            lines.append("- 建议项,不影响判决;借逐机位复核请求顺带回答,没有新增模型调用")
+            lines.append("- 建议项,不影响判决;借任务成败判定的那一次请求顺带回答,没有新增模型调用")
             for item, name in NAME_ZH.items():
                 c = s.get(item) or {}
                 lines.append(f"- {name}:" + " · ".join(f"{LEVEL_ZH[lv]} {c.get(lv, 0)}"
@@ -689,7 +683,7 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
         if spec is not None and sec["id"] == "eef_video_consistency":
             s = sec["summary"]
             if s.get("labels"):
-                # registry 5.0 (design doc 25 §7, D81): opinions with a confidence; a conflict is the only card
+                # design doc 25 §7 (D81): opinions with a confidence; a conflict is the only card
                 lab = {x["name"]: x["count"] for x in s["labels"]}
                 lines.append(f"- 结论(意见,不判废):不一致 {lab.get('inconsistent', 0)} · 可能不一致 "
                              f"{lab.get('possibly_inconsistent', 0)} · 一致 {lab.get('consistent', 0)} · 判断不了 "
@@ -700,11 +694,6 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 lines.append(f"- 只有一个渠道的分项(格数):{miss}")
                 why = "、".join(f"{x['name']} {x['count']}" for x in s.get("cannot_tell_reasons") or []) or "无"
                 lines.append(f"- 判断不了的原因(条数):{why}")
-            else:
-                # the EEF module before 5.0 (D49): CPU first, the model second; pass / reject / a person's card
-                lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "
-                             f"转人工 {s.get('to_human', 0)} · 出错 {cnt['error']}"
-                             f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
             if s.get("opinion_episodes"):
                 lines.append(f"- 模型意见（没有夹爪参考，不参与判决）:问过 {s['opinion_episodes']} 条 · "
                              f"有不匹配片段(置信度 ≥ 0.5) {s.get('opinion_flagged', 0)} 条 · "
@@ -714,9 +703,6 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 lines.append(f"- 腕部相机的自运动（只报告，阈值未校准）:读过 {s['ego_motion_episodes']} 条 · "
                              f"与位姿不一致 {s.get('ego_motion_suspect', 0)} 条 · 画面匹配不足 {s.get('ego_motion_unknown', 0)} 条 · "
                              f"片段 轻 {bands.get('minor', 0)} / 中 {bands.get('moderate', 0)} / 重 {bands.get('severe', 0)}")
-            if not s.get("labels"):
-                why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
-                lines.append(f"- 转人工的原因(条数):{why}")
             adj = sec.get("adjudication") or {}
             lines.append(f"- 人工裁决:待裁 {adj.get('pending', 0)} 条(转人工而仍在通过清单里、还没人裁的),"
                          f"可复议 {adj.get('appealable', 0)} 条(只被本模块判废的)")
@@ -745,11 +731,6 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 重复组 {sec['summary']['groups']} 组,"
                          f"涉及 {sec['summary']['duplicated']} 条(只报告)")
         if sec["id"] == "task_success":
-            arb = sec["summary"].get("arbitration") or {}
-            if arb.get("triggered"):
-                lines.append(f"- 取证仲裁触发 {arb['triggered']} 条:救回 "
-                             f"{arb.get('adopted_success', 0)},判废 "
-                             f"{arb.get('adopted_failure', 0)},仍弃权 {arb.get('abstained', 0)}")
             for why, n in (sec["summary"].get("abstain_reasons") or {}).items():
                 lines.append(f"  - 弃权原因:{why}({n} 条)")
         if sec.get("adjudication"):
@@ -760,13 +741,11 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
     container = report["integrity"].get("container")
     if container:                               # mcap / lance (D44)
         lines.append(f"## 数据包({container['format']})")
-        if container.get("delivery"):            # written before D69
-            lines.append(f"- 交付数据集:{container['delivery']}")
         for f in container.get("findings") or []:
             lines.append(f"- {f.get('项')}:{f.get('状态')} —— {f.get('说明')}")
         lines.append("")
     if report["integrity"].get("skipped_episodes"):
-        lines.append("## 未质检的条目(源文件缺失,照 v1 剔除)")
+        lines.append("## 未质检的条目(源文件缺失)")
         for s in report["integrity"]["skipped_episodes"][:50]:
             lines.append(f"- ep{s['episode_index']:06d}:缺 " + "、".join(s["missing"]))
         lines.append("- 补齐文件后另建任务即可")

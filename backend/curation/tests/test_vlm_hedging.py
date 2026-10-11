@@ -311,11 +311,9 @@ def test_read_timeout_gets_exactly_one_serial_retry():
 
 def test_timeouts_site_config_override(monkeypatch):
     """站点配置 checks.task_success.vlm.timeouts_s 能覆盖,且走既有配置深合并路。"""
-    vcfg = {"timeouts_s": {"probe": 30, "llm": 300}}
-    assert timeout_for("probe", vcfg) == 30.0
-    assert timeout_for("llm", vcfg) == 300.0
-    assert timeout_for("endstate", vcfg) == 60.0      # 没覆盖的走默认
-    assert timeout_for("caption", None) == 60.0
+    assert timeout_for("probe", {"timeouts_s": {"probe": 30}}) == 30.0
+    assert timeout_for("probe", {"timeouts_s": {}}) == 60.0      # 没覆盖的走默认
+    assert timeout_for("probe", None) == 60.0
     # vlm_completion_from_config 必须把覆盖值传进打分工厂
     import curation.adapters.vlm_client as vc
     captured = {}

@@ -1,11 +1,10 @@
-"""Caps intersect (D31) and one parallelism N -> the eight gates (04 §2.2)."""
+"""Caps intersect (D31) and one parallelism N -> the VLM gates (04 §2.2)."""
 from __future__ import annotations
 
 import pytest
 
 from curation.planner import (GATE_NAMES, PlanLimits, SiteConfig, available_cpu_workers, derive_gates,
-                              effective_cpu_concurrency, effective_vlm_parallelism, retired_site_keys,
-                              v1_set_overrides)
+                              effective_cpu_concurrency, effective_vlm_parallelism, retired_site_keys)
 from curation.planner.limits import DEFAULT_VLM_PARALLELISM
 
 
@@ -15,31 +14,17 @@ def test_the_default_plan_lands_on_n_64():
     """With no caps at all the planner lands on N = 64 and its gates."""
     n = effective_vlm_parallelism(PlanLimits(), SiteConfig())
     assert n.value == DEFAULT_VLM_PARALLELISM == 64 and n.bound_by == "planner"
-    assert derive_gates(n.value) == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
-                                     "guard_caption": 32, "caption": 32, "llm": 16, "audit": 16}
+    assert derive_gates(n.value) == {"episode": 64, "probe": 64}
 
 
 # ---------------------------------------------------------------- derive_gates
 
 @pytest.mark.parametrize("n", range(1, 257))
 def test_gates_are_positive_and_follow_the_table(n):
+    """One request per episode (D71): the episode gate follows the probe gate, which is N."""
     g = derive_gates(n)
-    assert set(g) == set(GATE_NAMES) and all(v >= 1 for v in g.values())
-    assert g["probe"] == n
-    assert g["episode"] == g["caption"] == max(1, n // 2)
-    assert g["arbitration"] == g["guard_caption"] == g["episode"]
-    assert g["endstate"] == max(2, 2 * g["episode"])
-    assert g["llm"] == g["audit"] == max(1, n // 4)
-    if n % 2 == 0:
-        assert g["endstate"] == max(2, n)           # the design table's N
-
-
-def test_gates_never_shrink_as_n_grows():
-    previous = derive_gates(1)
-    for n in range(2, 300):
-        current = derive_gates(n)
-        assert all(current[k] >= previous[k] for k in GATE_NAMES)
-        previous = current
+    assert set(g) == set(GATE_NAMES) == {"episode", "probe"}
+    assert g == {"episode": n, "probe": n}
 
 
 def test_site_overrides_scale_with_n():
@@ -47,28 +32,15 @@ def test_site_overrides_scale_with_n():
     assert derive_gates(32, {"probe": 96})["probe"] == 48
     assert derive_gates(1, {"probe": 96})["probe"] == 1
     assert derive_gates(16, {"probe": 48}, reference=32)["probe"] == 24
-    with pytest.raises(ValueError):
-        derive_gates(64, {"warp": 3})
-    with pytest.raises(ValueError):
-        derive_gates(64, {"probe": 0})
+    assert derive_gates(64, {"probe": 32}) == {"episode": 32, "probe": 32}       # the episode gate follows
+    assert derive_gates(64, {"probe": 32, "episode": 8}) == {"episode": 8, "probe": 32}
+    for bad in ({"warp": 3}, {"probe": 0}, {"endstate": 64}):
+        with pytest.raises(ValueError):
+            derive_gates(64, bad)
     with pytest.raises(ValueError):
         derive_gates(0)
     with pytest.raises(ValueError):
         derive_gates(True)
-
-
-def test_v1_overrides_refuse_what_v1_cannot_express():
-    gates = derive_gates(64, {"endstate": 100})
-    with pytest.raises(ValueError, match="endstate"):
-        v1_set_overrides(gates)
-    assert v1_set_overrides(derive_gates(64))[0] == "pipeline.vlm_episode_concurrency=32"
-
-
-def test_episode_override_carries_v1_coupled_gates():
-    gates = derive_gates(64, {"episode": 48})
-    assert (gates["episode"], gates["endstate"], gates["arbitration"], gates["guard_caption"]) == \
-        (48, 96, 48, 48)
-    assert derive_gates(64, {"episode": 48, "endstate": 64})["endstate"] == 64
 
 
 # ---------------------------------------------------------------- CPU concurrency (P4, D54)
@@ -147,10 +119,11 @@ def test_limits_reject_bad_values():
 def test_site_config_from_values_yaml_shape():
     site = SiteConfig.from_mapping({
         "concurrency": {"vlmParallelism": 64, "vlmParallelismMax": 128},
-        "vlm": {"merge": {"enabled": False, "max_units": 4}, "gates": {"llm": 8}}})
+        "vlm": {"merge": {"enabled": False, "max_units": 4}, "gates": {"probe": 8, "llm": 8}}})
     assert (site.vlm_parallelism, site.vlm_parallelism_max) == (64, 128)
     assert site.merge_enabled is False and site.merge_limits_obj().max_units == 4
-    assert site.gate_overrides == {"llm": 8}
+    assert site.gate_overrides == {"probe": 8}                  # v1's gates are read and ignored (D89)
+    assert retired_site_keys({"vlm": {"gates": {"llm": 8, "probe": 8}}}) == ["vlm.gates.llm"]
     assert SiteConfig.from_mapping(None) == SiteConfig()
     with pytest.raises(ValueError):
         SiteConfig.from_mapping({"concurrency": {"vlmParallelism": 4, "vlm_parallelism": 5}})

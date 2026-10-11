@@ -1,4 +1,4 @@
-"""The pipeline configuration's switches: no engineering switches, no thinking switch, a valid concurrency."""
+"""The pipeline configuration's switches: no engineering switches, no thinking switch."""
 import pytest
 
 from curation.pipeline.config import ConfigError, load_config, validate_config
@@ -13,12 +13,6 @@ def test_pipeline_has_no_thinking_switch():
 def test_old_engineering_switches_are_rejected():
     with pytest.raises(ConfigError, match='removed'):
         validate_config({'pipeline': {'optimizations': {'frame_cache': False}}})
-
-
-@pytest.mark.parametrize('concurrency', [0, -1, True, 1.5, '8'])
-def test_active_execution_rejects_invalid_concurrency(concurrency):
-    with pytest.raises(ConfigError, match='positive integer'):
-        validate_config({'pipeline': {'vlm_episode_concurrency': concurrency}})
 
 
 def test_pipeline_thinking_setting_reaches_visual_request(monkeypatch):

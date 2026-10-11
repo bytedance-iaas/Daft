@@ -74,8 +74,8 @@ def test_each_kind_of_damage_rejects_its_episode(cli, dataset, tmp_path):
     survivors = str(tmp_path / "integrity.txt")
     check(cli, dataset, rd, "0-7", "--survivors-out", survivors)
     recs = results(rd)
-    with open(survivors, encoding="utf-8") as fh:                   # what goes on to the numeric stage
-        assert fh.read().split() == ["5", "7"]                      # rejects stop here
+    with open(survivors, encoding="utf-8") as fh:                   # what goes on to the numeric stage:
+        assert fh.read().split() == [str(e) for e in range(8)]      # every one judged, a reject stops nothing (D57)
     assert verdicts(recs) == {0: "fail", 1: "fail", 2: "fail", 3: "fail", 4: "fail", 5: "pass",
                               6: "fail", 7: "pass"}
     first = {e: codes(r)[0] for e, r in recs.items() if verdict_of(r) == "fail"}
@@ -317,7 +317,7 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
     with FakeVlmServer() as vlm:
         plain = Chain(mini_dataset, str(tmp_path / "plain"), vlm.url)
         plain.front()
-        plain.funnel()
+        plain.checks()
         plain.post()
         c = Chain(mini_dataset, str(tmp_path / "integrity"), vlm.url)
         c.front()
@@ -326,7 +326,7 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
         os.makedirs(c.path("stages"))
         c.step("integrity", "check", "--modules", MOD, *c.common(), "--episodes", "0-7",
                "--survivors-out", c.path("stages", "integrity.txt"))
-        c.funnel("@" + c.path("stages", "integrity.txt"))
+        c.checks("@" + c.path("stages", "integrity.txt"))
         c.post()
     with open(c.path("stages", "integrity.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == [str(e) for e in range(8)]

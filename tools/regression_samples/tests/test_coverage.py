@@ -27,7 +27,7 @@ def test_the_rules():
         assert (items[item]["platform_status"], items[item]["platform_codes"]) == ("有读数", [code]), item
     # every module that covers it has a precondition
     assert items["MV-4"]["platform_status"] == "部分"
-    assert items["MV-4"]["platform_conditions"] == ["要上传 trajectory.json"]
+    assert items["MV-4"]["platform_conditions"] == ["要有轨迹：数据集声明够生成，或上传 trajectory.json"]
     assert items["ACT-4"]["platform_conditions"] == ["数据集要有状态量", "机器人型号要在规格库里"]
     # nothing covers it: a gap
     assert (items["MV-1"]["platform_status"], items["MV-1"]["platform_codes"]) == ("没有", [])

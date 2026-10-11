@@ -352,8 +352,7 @@ class TaskModule:
     unavailable_reason: str | None = None
     error: str | None = None
     input_digest: str | None = None          # the episode set this result was computed on
-    #: the episodes it ran on: the task's selection on two-block plans (design doc 17 §3), the
-    #: survivors it was given on the funnel plans of tasks made before
+    #: the episodes it ran on: the task's selection (design doc 17 §3)
     episodes_total: int = 0
     episodes_error: int = 0
     params: dict | None = None

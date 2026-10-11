@@ -16,11 +16,9 @@ takes the whole selection, a stage without modules is left out:
     vlm block   vlm        the VLM checks                       vlm gates, merge proposal
     final       aggregate --phase final: the policy verdicts (design doc 17 §4)
 
-Every segment is per-episode since D70: no stage waits for the whole selection, and a plan
-no longer carries ``full_set`` (a plan from before that still may). Since D72 there is no
-``autolabel`` stage either: an episode without a task text is not judged by task_success
-(the plan notes how many there are); a plan from before still carries the stage, which the
-Daemon now skips. Modules the preflight marked unsupported stay out, and the plan says why.
+Every segment is per-episode (D70): no stage waits for the whole selection. An episode without a
+task text is not judged by task_success (D72; the plan notes how many there are). Modules the
+preflight marked unsupported stay out, and the plan says why.
 """
 from __future__ import annotations
 
@@ -34,8 +32,7 @@ from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
 from .merge import declared_frame_policy
 
 SCHEMA_VERSION = "2.0"
-#: the stages that hand episodes on one at a time (the Daemon's episode pipeline); a plan from before
-#: D70 / D72 may also carry whole-set stages and an autolabel stage, which ran as one command
+#: the stages that hand episodes on one at a time (the Daemon's episode pipeline)
 STREAM_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm")
 
 
@@ -257,10 +254,6 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             stage["episodes"] = "selected"
             if kind == "vlm":
                 stage["gates"] = stage_gates(stage_id, gates)
-                # one request per episode (D71): an episode in flight is one probe in flight,
-                # so the episode gate is the probe gate (v1's half, for its 2-3 requests per
-                # episode, stays in derive_gates for v1's own configuration)
-                stage["gates"]["episode"] = stage["gates"]["probe"]
                 stage["merge"] = _merge_proposal(members, site, notes)
             stages.append(stage)
             if stage_id not in getattr(registry_mod, "ROOT_STAGES", ()):

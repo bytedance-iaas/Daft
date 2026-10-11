@@ -1,9 +1,8 @@
 """Credit-based episode dispatch to one persistent process per layer of a chain.
 
-A chain is the streaming stages of one block (plan 2.0, design doc 17 §3; :mod:`.blocks`
-runs the two blocks' chains side by side): every episode with a record of a layer goes on
-to the next layer of its chain - a finding or an execution error stops nothing (D57). A
-funnel run (one chain, before plan 2.0) hands on the survivors only.
+A chain is the streaming stages of one block (design doc 17 §3; :mod:`.blocks` runs the two
+blocks' chains side by side): every episode with a record of a layer goes on to the next layer
+of its chain - a finding or an execution error stops nothing (D57).
 
 The CPU layers draw their episodes' slots from the Daemon's CPU pool (:mod:`.cpupool`,
 D54): the plan's concurrency is what this task may use at most, the pool decides what it
@@ -248,20 +247,12 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
     sync_jobs = []
     try:
         store.bootstrap(str(run.wd.root), [m for s in stages for m in s["modules"]])
-        if store.blocks is not None:                       # plan 2.0: this chain's block
-            def where(episodes):
-                return store.positions(episodes, block)
-        else:
-            store.seed_progress(selection, [(s["id"], s["modules"]) for s in stages])
-            where = store.progress_for
         failures = store.failed_stages()
-        for i, layer in enumerate(layers):
+        for layer in layers:
             for episode in store.stage_inputs(layer.stage["modules"]):
                 layer.record_time(episode, processing_times(store.episode_records(episode)).get(layer.sid))
             layer.failed = failures.get(layer.sid)
-            if layer.failed:
-                store.reopen_gate(layer.sid, layers[i + 1].sid if i + 1 < len(layers) else "done")
-        saved = where(selection)
+        saved = store.positions(selection, block)
         by_id = {layer.sid: layer for layer in layers}
         for ep in selection:
             dest = saved.get(ep, layers[0].sid)
@@ -316,8 +307,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
                             if outcome.status == "module_failed":
                                 layer.failed = (outcome.message or outcome.reason())[:2000]
                                 store.fail_stage(layer.sid, layer.failed)
-                                reopened = store.reopen_gate(layer.sid, next_stage)
-                                layer.ready.extend(sorted(set(reopened) | layer.active))
+                                layer.ready.extend(sorted(layer.active))
                                 layer.active.clear()
                                 run.log(layer.sid, "error", f"模块整体失败，放行本层输入：{layer.failed}")
                             elif not outcome.ok:
@@ -337,7 +327,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
                         raise TaskFailure("crashed", f"{layer.sid} worker 反复异常退出", stage=layer.sid) from exc
                     # The child may have committed a result before its notification
                     # reached us. Route those records instead of executing them twice.
-                    positions = where(sorted(layer.active))
+                    positions = store.positions(sorted(layer.active), block)
                     for ep in sorted(layer.active):
                         dest = positions.get(ep, layer.sid)
                         if dest == layer.sid:

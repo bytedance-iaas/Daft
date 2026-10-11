@@ -1,280 +1,123 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Per-episode check result record (schema 2.0; 1.0 still read)",
-  "description": "One line of checks/<module>/parts/*.jsonl (and of records/<module>.jsonl in a parity dump). 2.0 (design doc 17 §1.1, D56): the module's findings, the taxonomy items it assessed and those it could not, readings and the module's own details; no verdict, no score, no gate - whether the episode is rejected is the policy's call in aggregate. 1.0 is the funnel's record, still read for tasks made before (D59). Self-contained on purpose (no reference to common.schema.json): the parity tool validates records with this file alone; its definitions are common's, and a contract test keeps them equal.",
-  "oneOf": [
-    {
-      "$ref": "#/$defs/record_2"
+  "title": "Per-episode check result record (schema 2.0)",
+  "description": "One line of checks/<module>/parts/*.jsonl (design doc 17 §1.1, D56): the module's findings, the taxonomy items it assessed and those it could not, readings and the module's own details; no verdict, no score, no gate - whether the episode is rejected is the policy's call in aggregate. Self-contained on purpose (no reference to common.schema.json): the parity tool validates records with this file alone; its definitions are common's, and a contract test keeps them equal.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "episode_index",
+    "module",
+    "status",
+    "findings",
+    "assessed",
+    "unassessable",
+    "readings",
+    "details",
+    "evidence",
+    "elapsed_s",
+    "error"
+  ],
+  "properties": {
+    "episode_index": {
+      "$ref": "#/$defs/episode_index"
     },
+    "module": {
+      "$ref": "#/$defs/module_id"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error"
+      ],
+      "description": "error: the module could not judge this episode properly (D33); no findings, nothing assessed"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "assessed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item_id"
+      },
+      "uniqueItems": true,
+      "description": "the items it covers minus the unassessable ones: an assessed item without a finding was checked and found clean"
+    },
+    "unassessable": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unassessable"
+      }
+    },
+    "readings": {
+      "type": "object",
+      "description": "numbers that are no finding, for the report and the episode page"
+    },
+    "details": {
+      "type": "object",
+      "description": "module-specific, field names kept from v1 (parity and the episode page)"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "elapsed_s": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/execution_error"
+        }
+      ]
+    }
+  },
+  "allOf": [
     {
-      "$ref": "#/$defs/record_1"
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "object"
+          },
+          "findings": {
+            "maxItems": 0
+          },
+          "assessed": {
+            "maxItems": 0
+          },
+          "unassessable": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
     }
   ],
   "$defs": {
-    "record_2": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "episode_index",
-        "module",
-        "status",
-        "findings",
-        "assessed",
-        "unassessable",
-        "readings",
-        "details",
-        "evidence",
-        "elapsed_s",
-        "error"
-      ],
-      "properties": {
-        "episode_index": {
-          "$ref": "#/$defs/episode_index"
-        },
-        "module": {
-          "$ref": "#/$defs/module_id"
-        },
-        "status": {
-          "enum": [
-            "ok",
-            "error"
-          ],
-          "description": "error: the module could not judge this episode properly (D33); no findings, nothing assessed"
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/finding"
-          }
-        },
-        "assessed": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/item_id"
-          },
-          "uniqueItems": true,
-          "description": "the items it covers minus the unassessable ones: an assessed item without a finding was checked and found clean"
-        },
-        "unassessable": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/unassessable"
-          }
-        },
-        "readings": {
-          "type": "object",
-          "description": "numbers that are no finding, for the report and the episode page"
-        },
-        "details": {
-          "type": "object",
-          "description": "module-specific, field names kept from v1 (parity and the episode page)"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "elapsed_s": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "error": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/execution_error"
-            }
-          ]
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "error"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "error": {
-                "type": "object"
-              },
-              "findings": {
-                "maxItems": 0
-              },
-              "assessed": {
-                "maxItems": 0
-              },
-              "unassessable": {
-                "maxItems": 0
-              }
-            }
-          },
-          "else": {
-            "properties": {
-              "error": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      ]
-    },
-    "record_1": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "episode_index",
-        "module",
-        "verdict",
-        "passed",
-        "score",
-        "gate",
-        "details",
-        "evidence",
-        "elapsed_s",
-        "error"
-      ],
-      "properties": {
-        "episode_index": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "module": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*$"
-        },
-        "verdict": {
-          "description": "pass/fail: hard gate passed=True/False; abstain: passed=null and no score; scored: soft module with a score (never votes); error: the module could not judge this episode properly (D33).",
-          "enum": [
-            "pass",
-            "fail",
-            "abstain",
-            "scored",
-            "error"
-          ]
-        },
-        "passed": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "score": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "gate": {
-          "enum": [
-            "hard",
-            "soft",
-            "dedup",
-            "none"
-          ]
-        },
-        "details": {
-          "type": "object",
-          "description": "Module-specific, field names kept from v1."
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "elapsed_s": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "error": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "kind",
-                "incidents"
-              ],
-              "properties": {
-                "kind": {
-                  "const": "execution"
-                },
-                "incidents": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": {
-                    "type": "object",
-                    "required": [
-                      "step"
-                    ],
-                    "properties": {
-                      "step": {
-                        "type": "string"
-                      },
-                      "cause": {
-                        "type": "string"
-                      },
-                      "camera": {
-                        "type": "string"
-                      },
-                      "call_kind": {
-                        "type": "string"
-                      },
-                      "attempts": {
-                        "type": "integer",
-                        "minimum": 0
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "verdict": {
-                "const": "error"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "error": {
-                "type": "object"
-              }
-            }
-          },
-          "else": {
-            "properties": {
-              "error": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      ],
-      "description": "Record 1.0 (tasks made before C2 2.0, read only, D59): pass/fail/abstain/scored/error with the funnel gate."
-    },
     "episode_index": {
       "type": "integer",
       "minimum": 0

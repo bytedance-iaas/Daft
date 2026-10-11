@@ -1,4 +1,4 @@
-"""Basic auth, ported from v1 ``curation/ui/auth.py`` and its retired tests (docs/v1/retired-ui-tests.md).
+"""Basic auth, ported from v1's ``curation/ui/auth.py`` and its tests (the v1 code is on the release_v1 branch).
 
 v1 cases kept: 401 then 200 on every route, probes exempt, half-configured single
 user = not enabled, htpasswd with several users, bcrypt ``$2y$``, htpasswd wins

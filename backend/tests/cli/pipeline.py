@@ -24,7 +24,7 @@ REPO = os.path.dirname(BACKEND)
 #: the C2 schema of each command's --json
 SCHEMA_OF = {"preflight": "cli/preflight.schema.json", "plan": "cli/plan.schema.json",
              "snapshot": "cli/source-manifest.schema.json",
-             "autolabel": "cli/autolabel.schema.json", "check": "cli/check.schema.json",
+             "check": "cli/check.schema.json",
              "aggregate": "cli/aggregate.schema.json",
              "report": "cli/report-output.schema.json",
              "adjudicate-apply": "cli/adjudicate-apply.schema.json",
@@ -164,7 +164,7 @@ class Chain:
                   "--episodes", episodes, "--survivors-out", self.path("stages", "frame.txt"))
         self.step("duplicate", "check", "--modules", "duplicate_check", *self.common(), "--episodes", episodes)
 
-    def funnel(self, episodes: str = "0-7") -> None:
+    def checks(self, episodes: str = "0-7") -> None:
         """The per-episode checks of both blocks."""
         self.before_vlm(episodes)
         self.step("vlm", "check", "--modules", "task_success", *self.common(),

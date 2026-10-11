@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 6.0.0
+  version: 7.0.0
   description: |
     ## Overview
 
@@ -228,6 +228,17 @@ info:
     questions; appeals are for task success rejects alone. A row's `stage_processing_s` may hold `duplicate`.
     `GET /tasks/{id}/logs` takes several stages in `stage`, separated by commas.
 
+    **7.0.0** (2026-10-11): what was kept for tasks run before the findings (2.2.0) goes. Results of the older
+    format are no longer read; such a task is only listed. Gone: a pipeline row's `last_stage` and `next_stage`,
+    a stage's `full_set` and the module registry's `full_set_stages`, the stages `autolabel` and `profile`, a finding
+    code's `retired` (with the EEF module's `unsettled` and `opinion_mismatch`), task success's codes `recovery`
+    and `label_conflict_suspect` (it reports neither since 4.2.0, so it no longer covers TASK-10 and LABEL-4), the
+    upload kinds `eef_record_mapping` and `eef_gripper_calibration` (the dataset declaration says both), the
+    adjudication question's `caption`, `suggestion` and `priority` (the review item's too), `relabel_rerun` when executing decisions (a relabelled
+    episode is judged again with its new task text, in the one request), the call kinds `endstate`,
+    `arbitration`, `caption` and `llm` from `params.vlm_timeouts_s`, and the episode-reason kinds of the older
+    format.
+
   x-description-zh: |
     ## 概览
 
@@ -368,6 +379,13 @@ info:
     数据完整性不再报告「与另一条的文件完全相同」（`duplicate_content`），由重复检测覆盖。随之去掉的还有阶段 `dedup`、原因类型 `duplicate`，
     以及条目原因与裁决问题里的 `duplicate_of`；被拒复议只针对任务成败判定的拒绝。一行的 `stage_processing_s` 还可能有 `duplicate`。
     `GET /tasks/{id}/logs` 的 `stage` 可以写几个阶段，用逗号隔开。
+
+    **7.0.0**（2026-10-11）：为「发现」之前（2.2.0 以前）的任务保留的东西都去掉了。旧格式的结果不再读取，这样的任务只在列表里显示。
+    去掉的有：流水线行的 `last_stage`、`next_stage`，阶段的 `full_set` 与模块注册表的 `full_set_stages`，阶段 `autolabel` 与 `profile`，
+    细码的 `retired`（连同 EEF 模块的 `unsettled`、`opinion_mismatch`），任务成败判定的细码 `recovery` 与 `label_conflict_suspect`
+    （4.2.0 起就不再报出，所以它不再覆盖 TASK-10 与 LABEL-4），上传种类 `eef_record_mapping` 与 `eef_gripper_calibration`
+    （数据集声明里都有），裁决问题的 `caption`、`suggestion` 与 `priority`（复核项的同名字段也去掉），执行裁决时的 `relabel_rerun`（改了标注的条目按新标注、用同一次请求重判），
+    `params.vlm_timeouts_s` 里的调用种类 `endstate`、`arbitration`、`caption`、`llm`，以及旧格式的条目原因种类。
 
 servers:
   - url: "{base}/api/v1"
@@ -1803,12 +1821,6 @@ paths:
                         created_at: 1791239508043
                         progress:
                           stages:
-                            - id: autolabel
-                              state: succeeded
-                              done: 640
-                              total: 640
-                              elapsed_s: 612
-                              eta_s: null
                             - id: integrity
                               state: succeeded
                               done: 640
@@ -1816,16 +1828,9 @@ paths:
                               elapsed_s: 190
                               eta_s: null
                             - {id: numeric, state: succeeded, done: 640, total: 640, elapsed_s: 5, eta_s: null}
-                            - id: frame
-                              state: succeeded
-                              done: 631
-                              total: 631
-                              elapsed_s: 1033
-                              eta_s: null
-                              note: 数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条
-                            - {id: vlm, state: running, done: 410, total: 631, elapsed_s: 1102, eta_s: 1440}
-                            - {id: verdict, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
-                            - {id: duplicate, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
+                            - {id: frame, state: succeeded, done: 640, total: 640, elapsed_s: 1033, eta_s: null}
+                            - {id: duplicate, state: succeeded, done: 640, total: 640, elapsed_s: 30, eta_s: null}
+                            - {id: vlm, state: running, done: 410, total: 640, elapsed_s: 1102, eta_s: 1440}
                             - {id: final, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: report, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
                             - {id: verify, state: pending, done: 0, total: 0, elapsed_s: null, eta_s: null}
@@ -1852,24 +1857,16 @@ paths:
                         created_at: 1791235308043
                         progress:
                           stages:
-                            - {id: autolabel, state: succeeded, done: 22, total: 22, elapsed_s: 46, eta_s: null}
                             - {id: numeric, state: succeeded, done: 50, total: 50, elapsed_s: 9, eta_s: null}
-                            - id: frame
-                              state: succeeded
-                              done: 49
-                              total: 49
-                              elapsed_s: 144
-                              eta_s: null
-                              note: 数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条
+                            - {id: frame, state: succeeded, done: 50, total: 50, elapsed_s: 144, eta_s: null}
                             - id: vlm
                               state: completed_with_errors
-                              done: 49
-                              total: 49
+                              done: 50
+                              total: 50
                               elapsed_s: 542
                               eta_s: null
                               note: 2 条出错（ep 7、ep 31），暂不交付，等待补跑
-                            - {id: verdict, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
-                            - {id: duplicate, state: succeeded, done: 42, total: 42, elapsed_s: 11, eta_s: null}
+                            - {id: duplicate, state: succeeded, done: 50, total: 50, elapsed_s: 11, eta_s: null}
                             - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                             - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                             - {id: verify, state: skipped, done: 0, total: 0, elapsed_s: null, eta_s: null}
@@ -2083,13 +2080,6 @@ paths:
                           elapsed_s: 12
                           eta_s: null
                           block: cpu
-                        - id: autolabel
-                          state: succeeded
-                          done: 22
-                          total: 22
-                          elapsed_s: 46
-                          eta_s: null
-                          block: vlm
                         - id: vlm
                           state: completed_with_errors
                           done: 50
@@ -2115,14 +2105,6 @@ paths:
                               - {start: 1791232368043, end: 1791233028043}
                             held_by_downstream: false
                           block: vlm
-                        - id: profile
-                          state: succeeded
-                          done: 50
-                          total: 50
-                          elapsed_s: 140
-                          eta_s: null
-                          block: vlm
-                          full_set: true
                         - {id: final, state: succeeded, done: 1, total: 1, elapsed_s: 1, eta_s: null}
                         - {id: report, state: succeeded, done: 1, total: 1, elapsed_s: 6, eta_s: null}
                         - {id: verify, state: succeeded, done: 1, total: 1, elapsed_s: 9, eta_s: null}
@@ -2541,14 +2523,14 @@ paths:
                           - {item: TASK-4, count: 5}
                           - {item: AV-1, count: 1}
                           - {item: STRM-5, count: 1}
-                        policy: {preset: default, version: '1'}
+                        policy: {preset: default, version: '2'}
                         coverage:
-                          taxonomy_version: '1.3'
+                          taxonomy_version: '2.0'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
-                            ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-1, LABEL-2, LABEL-4, SET-1, TASK-10]
+                            ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-2, SET-1]
                           not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
-                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4, AV-5, TASK-2, TASK-3, TASK-5,
-                            TASK-6, LABEL-3, SET-2, SET-3, STRM-9, IMG-12, IMG-13, IMG-14, TASK-8, TASK-9]
+                            STRM-9, IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, IMG-12, IMG-13, IMG-14, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4,
+                            AV-5, TASK-2, TASK-3, TASK-5, TASK-6, TASK-8, TASK-9, TASK-10, LABEL-1, LABEL-3, LABEL-4, SET-2, SET-3]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:
@@ -2559,7 +2541,6 @@ paths:
                           - {item: AV-3, episodes: 4, blocking: 0, review: 0, info: 4}
                           - {item: TASK-1, episodes: 17, blocking: 0, review: 0, info: 17}
                           - {item: TASK-4, episodes: 11, blocking: 5, review: 6, info: 0}
-                          - {item: LABEL-4, episodes: 5, blocking: 0, review: 5, info: 0}
                           - {item: SET-1, episodes: 2, blocking: 0, review: 0, info: 2}
                       modules:
                         - id: timestamp_check
@@ -2607,36 +2588,25 @@ paths:
                           episodes_error: 2
                           summary:
                             counts: {total: 49, pass: 36, fail: 5, abstain: 6, scored: 0, error: 2}
-                            arbitration: {triggered: 7, adopted_success: 0, adopted_failure: 2, abstained: 3, skipped: 2}
                             abstain_reason_counts:
-                              - {name: 末态物证 … 在灰区, count: 3}
-                              - {name: 取证仲裁只有 … 路判未完成, count: 1}
-                              - {name: 峰值 … 崩至末态 …, count: 1}
-                              - {name: 复核判未完成, count: 1}
+                              - {name: 视频判定=uncertain, count: 4}
+                              - {name: 没有任务标注, count: 2}
                             error_steps:
-                              - {name: arbitration, count: 2}
+                              - {name: probe, count: 2}
                             judgements:
-                              - {name: success, count: 30}
-                              - {name: endstate_success, count: 6}
-                              - {name: failure, count: 3}
-                              - {name: arbitration_failure, count: 2}
-                              - {name: uncertain, count: 3}
-                              - {name: gap_violation, count: 1}
-                              - {name: review_conflict, count: 1}
-                              - {name: label_conflict_suspect, count: 1}
+                              - {name: success, count: 36}
+                              - {name: failure, count: 5}
+                              - {name: uncertain, count: 4}
+                              - {name: other, count: 2}
                             abstain_by_judgement:
-                              - {name: uncertain, count: 3}
-                              - {name: gap_violation, count: 1}
-                              - {name: review_conflict, count: 1}
-                              - {name: label_conflict_suspect, count: 1}
+                              - {name: uncertain, count: 4}
+                              - {name: other, count: 2}
                             text_sources:
-                              - {name: 原始标注, count: 26}
-                              - {name: 自产caption, count: 21}
+                              - {name: 原始标注, count: 47}
+                              - {name: 无, count: 2}
                             layers:
                               - {name: probe, count: 47}
                               - {name: endstate, count: 47}
-                              - {name: label_guard, count: 3}
-                              - {name: arbitration, count: 5}
                             assessed_episodes: 48
                             flagged_episodes: 11
                             levels: {blocking: 5, review: 6, info: 0}
@@ -2728,9 +2698,8 @@ paths:
         substring of the index; a leading `ep` and leading zeros are dropped, so `12`, `ep12`,
         `ep 12` and `ep000012` all find ep 12. The cursor carries the revision and is bound to
         the filters (another filter set is 400 validation_failed, another revision 409
-        result_changed). `total` counts the filtered set, `counts` the whole revision. On a findings
-        revision (C2 2.0) `level` and `item` keep the episodes with a finding of that level / that
-        taxonomy item (2.3.0); a revision without them (the funnel's) matches none.
+        result_changed). `total` counts the filtered set, `counts` the whole revision. `level` and
+        `item` keep the episodes with a finding of that level / that taxonomy item.
       parameters:
         - name: list
           in: query
@@ -2809,7 +2778,7 @@ paths:
     get:
       tags: [report]
       operationId: getEpisode
-      summary: One episode across all modules (the v1 trajectory page)
+      summary: One episode across all modules
       responses:
         "200":
           description: episode view
@@ -2823,7 +2792,7 @@ paths:
     get:
       tags: [report]
       operationId: listPipelineEpisodes
-      summary: Recent per-episode funnel progress, available while the task runs
+      summary: Recent per-episode progress through the two blocks, available while the task runs
       parameters:
         - name: before
           in: query
@@ -2834,7 +2803,7 @@ paths:
           schema: {type: integer, minimum: 1, maximum: 100, default: 50}
       responses:
         "200":
-          description: Recent episodes and live funnel verdicts
+          description: Recent episodes, where each is in its blocks and its verdict so far
           content:
             application/json:
               schema:
@@ -2849,8 +2818,8 @@ paths:
                   modules:
                     type: array
                     description: >-
-                      two-block runs (2.3.0): per per-episode module so far, the episodes it judged, the ones
-                      it failed on and, of the judged, the ones with a finding (the live module cards)
+                      per per-episode module so far, the episodes it judged, the ones it failed on and, of the
+                      judged, the ones with a finding (the live module cards)
                     items:
                       type: object
                       additionalProperties: false
@@ -2871,7 +2840,7 @@ paths:
     get:
       tags: [report]
       operationId: getPipelineEpisode
-      summary: Immediate funnel result and module records of one episode
+      summary: Progress and current module records of one episode
       responses:
         "200":
           description: Episode progress and current records
@@ -3239,9 +3208,6 @@ paths:
                             source_module: task_success
                             reason: 证据不足，弃权：画面看不出米有没有倒进杯子里
                             annotation: pour rice into the cup
-                            caption: null
-                            suggestion: null
-                            priority: null
                             latest_decision: null
                             codes: [uncertain]
                             items: [TASK-4]
@@ -3250,14 +3216,11 @@ paths:
                         questions:
                           - line: task_verdict
                             source_module: task_success
-                            reason: 这条标注和画面对不上：标注说开柜门，画面是叠衣服
+                            reason: 视频判定=uncertain，逐机位=abstain，结论不够确定，转人工
                             annotation: Open the cabinet door
-                            caption: fold the cloth and put it on the table
-                            suggestion: fold the cloth and put it on the table
-                            priority: 高置信
                             latest_decision: null
-                            codes: [label_conflict_suspect]
-                            items: [LABEL-4]
+                            codes: [uncertain]
+                            items: [TASK-4]
                     next_cursor: null
                     has_more: false
                     counts: {decided: 0, pending: 10, unapplied: 0}
@@ -3312,8 +3275,8 @@ paths:
       operationId: applyAdjudication
       summary: Execute the recorded decisions as a subtask (D10)
       description: |
-        The body is optional; without one (or with `{}`) relabelled episodes are judged again the
-        way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
+        No body, or `{}`. A relabelled episode is judged again with its new task text, in the one
+        request (D39, D71); an episode a person judged success or failure is not judged again.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -3322,14 +3285,10 @@ paths:
           application/json:
             schema: {$ref: "#/components/schemas/AdjudicationApply"}
             examples:
-              v1:
-                summary: Judge relabelled episodes again the v1 way (the default; {} or no body does the same)
-                x-summary-zh: 改了标注的 episode 按 v1 的方式重判（缺省；传 {} 或不带请求体效果相同）
-                value: {relabel_rerun: v1}
-              full:
-                summary: Run the first run's full flow on relabelled episodes
-                x-summary-zh: 改了标注的 episode 按首次运行的完整流程重判
-                value: {relabel_rerun: full}
+              empty:
+                summary: Execute every recorded decision (no body does the same)
+                x-summary-zh: 执行已记录的全部裁决（不带请求体效果相同）
+                value: {}
       responses:
         "202":
           description: subtask created
@@ -3345,7 +3304,7 @@ paths:
                       id: sub-rnfqwzbke
                       task_id: task-kqzmrtbwe
                       kind: apply_adjudication
-                      scope: {relabel_rerun: v1}
+                      scope: {}
                       state: queued
                       state_reason: null
                       progress: null
@@ -3918,7 +3877,7 @@ components:
     ModuleRegistry:
       type: object
       additionalProperties: false
-      required: [registry_version, taxonomy_version, blocks, stages, full_set_stages, finding_levels,
+      required: [registry_version, taxonomy_version, blocks, stages, finding_levels,
                  unassessable_reasons, review_lines, taxonomy, modules]
       description: >-
         C1 2.0 (design doc 17 §2): where every module runs, what it can find and what it covers. The
@@ -3940,10 +3899,6 @@ components:
               title_zh: {type: string}
               stages: {type: array, minItems: 1, items: {$ref: "#/components/schemas/RegistryStage"}}
         stages: {type: array, items: {$ref: "#/components/schemas/RegistryStage"}, description: "every stage, the CPU block's first"}
-        full_set_stages:
-          type: array
-          items: {$ref: "#/components/schemas/RegistryStage"}
-          description: "stages that need the whole selection at once; empty (every check streams), kept for a future module that needs it"
         root_stages:
           type: array
           items: {$ref: "#/components/schemas/RegistryStage"}
@@ -4024,8 +3979,8 @@ components:
               stage: {$ref: "#/components/schemas/RegistryStage"}
               depends_on:
                 type: array
-                items: {enum: [autolabel]}
-                description: "data only; empty for every module now that no caption is written for episodes without a task text"
+                maxItems: 0
+                description: "data dependencies on another stage's output; no module has one"
               codes:
                 type: array
                 minItems: 1
@@ -4067,7 +4022,7 @@ components:
                   present on a module that runs in two parts (5.2.0): the stage of its CPU part; its records come
                   from its stage when a model is asked, from this one when not
     RegistryStage:
-      enum: [integrity, numeric, frame, duplicate, vlm_prep, autolabel, vlm, profile]
+      enum: [integrity, numeric, frame, duplicate, vlm_prep, vlm]
       description: a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
     FindingLevel:
       enum: [blocking, review, info]
@@ -4092,7 +4047,6 @@ components:
         scope_kind: {enum: [episode, camera, channel, dataset]}
         appealable: {type: boolean, description: "blocking codes only: a reject it caused may be appealed (D42)"}
         review_line: {$ref: "#/components/schemas/ReviewLineId"}
-        retired: {type: boolean, description: "no longer reported (4.7.0): kept so older results still get a level"}
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
@@ -4398,13 +4352,10 @@ components:
         region: {$ref: "#/components/schemas/Region"}
         credential: {type: [string, "null"], description: "access key name; null in responses once the key was deleted"}
     UploadKind:
-      enum: [eef_trajectory, eef_observation_seeds, eef_gripper_template, eef_record_mapping, eef_gripper_calibration,
-             viz_annotations]
+      enum: [eef_trajectory, eef_observation_seeds, eef_gripper_template, viz_annotations]
       description: >-
         the x-upload-kind of a file parameter (registry 1.5); viz_annotations is a dataset's external
-        annotation file (design doc 18 §4.5), not a module parameter; eef_gripper_calibration (4.6.0) is a
-        handheld gripper's calibration (umi-calibration/2). eef_record_mapping and eef_gripper_calibration are
-        retired in 5.0.0 (the dataset declaration says both) and still accepted for older tasks
+        annotation file (design doc 18 §4.5), not a module parameter
     UploadId:
       type: string
       pattern: "^(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$"
@@ -4530,7 +4481,7 @@ components:
       description: task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31)
       properties:
         start_now: {type: boolean, default: true}
-        batch_size: {type: integer, minimum: 1, maximum: 256, description: "Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections."}
+        batch_size: {type: integer, minimum: 1, maximum: 256, description: "Maximum episodes per dispatch to a stage. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections."}
         vlm_retry: {type: integer, minimum: 0, maximum: 5, default: 3}
         vlm_hedge: {type: boolean, default: true}
         vlm_timeouts_s:
@@ -4538,10 +4489,6 @@ components:
           additionalProperties: false
           properties:
             probe: {type: number, exclusiveMinimum: 0, default: 60}
-            endstate: {type: number, exclusiveMinimum: 0, default: 60}
-            arbitration: {type: number, exclusiveMinimum: 0, default: 60}
-            caption: {type: number, exclusiveMinimum: 0, default: 60}
-            llm: {type: number, exclusiveMinimum: 0, default: 120}
         clips: {type: boolean, default: false}
         policy:
           type: object
@@ -4551,9 +4498,8 @@ components:
             person and which are only reported. `default` gives every finding code its registry level
             (today's hard gates reject, today's suspects and abstentions are asked); `report_only`
             asks nothing and rejects only on data integrity's blocking findings (an empty, cut or
-            unreadable file leaves nothing for the modules after it; policy version 2, 2026-10-05 -
-            version 1 rejected nothing). Frozen at start; changing it later re-runs aggregate
-            only. The funnel keeps judging by `default` until the policy aggregate replaces it (F12.3).
+            unreadable file leaves nothing for the modules after it). Frozen at start; changing it later
+            re-runs aggregate only.
           properties:
             preset: {enum: [default, report_only], default: default}
         limits:
@@ -4643,9 +4589,8 @@ components:
       additionalProperties: false
       required: [id, state, done, total]
       properties:
-        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "two-block plans: integrity, numeric, frame, duplicate (6.0.0, the duplicate check), vlm_prep (5.2.0: the CPU part of a module of two parts), autolabel, vlm, final; funnel plans (tasks made before): also verdict, and profile_vlm for a task made before the skill profile was retired; then report and verify (a task that ran before the export was retired also has export); subtasks add adjudicate; new modules may add stages"}
-        block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
-        full_set: {type: boolean, description: "a whole-set stage: it starts once the earlier stages of its block are done. No stage is one today"}
+        id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "integrity, numeric, frame, duplicate, vlm_prep (the CPU part of a module of two parts), vlm, final; then report and verify; subtasks add adjudicate; new modules may add stages"}
+        block: {enum: [cpu, vlm], description: "the block the stage belongs to (design doc 17 §3); absent on the steps after both blocks"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
         done: {type: integer, minimum: 0}
         total: {type: integer, minimum: 0}
@@ -4657,7 +4602,7 @@ components:
       type: object
       additionalProperties: false
       required: [inflight, queued, capacity, dispatches, recent, started_at, finished_at, updated_at]
-      description: Current invocation of the persistent funnel. Inflight counts admitted episodes awaiting durable completion, including worker setup. Dispatches are layer-local arrivals, not a barrier shared across layers.
+      description: Current invocation of the stage's persistent workers. Inflight counts admitted episodes awaiting durable completion, including worker setup. Dispatches are layer-local arrivals, not a barrier shared across layers.
       properties:
         inflight: {type: integer, minimum: 0}
         queued: {type: integer, minimum: 0}
@@ -4739,7 +4684,7 @@ components:
           type: integer
           minimum: 0
           description: >-
-            episodes left out because source files are missing (D40, as v1 does): not checked, in
+            episodes left out because source files are missing (D40): not checked, in
             none of the lists and not part of total; the report lists them
     UsageTotals:
       type: object
@@ -4837,7 +4782,6 @@ components:
           properties:
             modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}}
             episodes: {enum: [errors, all]}
-            relabel_rerun: {enum: [v1, full], description: "apply_adjudication only (D39)"}
         state: {$ref: "#/components/schemas/TaskState"}
         state_reason: {type: [string, "null"]}
         pause_reason: {enum: [user, system, null], description: "only while pausing or paused"}
@@ -4883,7 +4827,7 @@ components:
       properties:
         subtask_id: {type: string, description: "empty = main run"}
         module_id: {type: string}
-        call_kind: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "v1: probe, endstate, arbitration, caption, llm; merged; new modules name their own"}
+        call_kind: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "probe (task success and the picture defects), eef_review (the EEF module); merged; new modules name their own"}
         model_name: {type: string}
         prompt_tokens: {type: integer, minimum: 0}
         completion_tokens: {type: integer, minimum: 0}
@@ -4908,9 +4852,7 @@ components:
       required: [episode_index, reason, verdict, verdict_reason]
       properties:
         episode_index: {type: integer, minimum: 0}
-        last_stage: {enum: [integrity, numeric, frame, vlm], description: "a funnel run (tasks made before 2.2.0): the last stage it went through"}
-        next_stage: {enum: [numeric, frame, vlm, done], description: "a funnel run: where it goes next"}
-        reason: {type: [string, "null"], description: "missing: left out, its source files are gone (D40); a funnel run's gate: stopped there"}
+        reason: {type: [string, "null"], description: "missing: left out, its source files are gone (D40)"}
         verdict: {type: [string, "null"], enum: [keep, drop, held, null]}
         verdict_reason: {type: [string, "null"]}
         stages:
@@ -4991,9 +4933,8 @@ components:
           type: array
           items: {$ref: "#/components/schemas/EpisodeFinding"}
           description: >-
-            findings revisions (C2 2.0, 2.3.0): every finding of the episode, every module, with the
-            level it has in this revision (its list entry's: the task's policy after the applied human
-            decisions)
+            every finding of the episode, every module, with the level it has in this revision (its list
+            entry's: the task's policy after the applied human decisions)
         fps:
           type: [number, "null"]
           description: >-
@@ -5032,11 +4973,11 @@ components:
         items:
           type: array
           items: {$ref: "#/components/schemas/TaxonomyItemId"}
-          description: findings revisions (C2 2.0) only - the taxonomy items of its findings, every module together, in taxonomy order
+          description: the taxonomy items of its findings, every module together, in taxonomy order
         levels:
           type: array
           items: {$ref: "#/components/schemas/FindingLevel"}
-          description: findings revisions (C2 2.0) only - the levels its findings have (the task's policy after the applied human decisions), blocking first
+          description: the levels its findings have (the task's policy after the applied human decisions), blocking first
     TaskEpisodePage:
       type: object
       additionalProperties: false
@@ -5101,16 +5042,15 @@ components:
       required: [module, text]
       description: >-
         one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list
-        (2.0: finding, human, execution_error; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a
-        review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed
+        (finding, human, execution_error) or a review kind; a finding reason names its finding code, the code's taxonomy
+        item and whether it may be appealed
       properties:
         module: {$ref: "#/components/schemas/ModuleId"}
         kind: {type: string}
         text: {type: string}
-        priority: {type: string}
-        code: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "2.0: the finding code (registry 2.x)"}
-        item: {type: [string, "null"], description: "2.0: the taxonomy item of the code (C6), null for a code without one"}
-        appealable: {type: boolean, description: "2.0: the code may be appealed (D42)"}
+        code: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "the finding code"}
+        item: {type: [string, "null"], description: "the taxonomy item of the code (C6), null for a code without one"}
+        appealable: {type: boolean, description: "the code may be appealed (D42)"}
     Perf:
       type: object
       additionalProperties: false
@@ -5119,8 +5059,8 @@ components:
         revision: {type: integer, minimum: 1}
         scope: {enum: [all, main, subtask]}
         subtask_id: {type: [string, "null"]}
-        backend: {type: object, description: "model service used (v1 perf_backend)"}
-        container: {type: object, description: "CPU / memory quota (v1 perf_env)"}
+        backend: {type: object, description: "model service used"}
+        container: {type: object, description: "CPU / memory quota"}
         latency:
           type: array
           items:
@@ -5128,7 +5068,7 @@ components:
             additionalProperties: false
             required: [call_kind, count, p50_s, p90_s, p99_s, wall_s]
             properties:
-              call_kind: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "v1: probe, endstate, arbitration, caption, llm; merged; new modules name their own"}
+              call_kind: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "probe (task success and the picture defects), eef_review (the EEF module); merged; new modules name their own"}
               count: {type: integer, minimum: 0}
               failed: {type: integer, minimum: 0}
               hedged: {type: integer, minimum: 0}
@@ -5166,9 +5106,6 @@ components:
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
         annotation: {type: [string, "null"]}
-        caption: {type: [string, "null"]}
-        suggestion: {type: [string, "null"], description: "a task text the model read off the video: what a person may send back as new_label"}
-        priority: {type: [string, "null"]}
         latest_decision: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Decision"}]}
         codes:
           type: array
@@ -5219,17 +5156,8 @@ components:
     AdjudicationApply:
       type: object
       additionalProperties: false
-      properties:
-        relabel_rerun:
-          enum: [v1, full]
-          default: v1
-          description: >-
-            How task success is judged again for relabelled episodes that have no human task
-            verdict (D39). v1: what v1's rejudge runs - multi-view scoring and the per-camera
-            end-state vote only, no task-type step, camera hints, reject guard or evidence
-            arbitration; verdicts and calls match v1. full: the first run's complete flow, so
-            the same decisions may end differently from v1. Episodes a person judged success
-            or failure are not judged again either way.
+      description: empty - the request carries nothing to choose
+      properties: {}
     DecisionInput:
       allOf:
         - $ref: "#/components/schemas/DecisionFields"

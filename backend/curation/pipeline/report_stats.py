@@ -396,9 +396,9 @@ def sync_stats(records: list[dict], lag_tol_s: float) -> dict:
 
 # ---------------------------------------------------------------- task_success
 
-#: the layers of the judgement (v1's 判定口径): scoring, the per-camera review, the
-#: label guard before a kill, the evidence arbitration
-TASK_LAYERS = ("probe", "endstate", "label_guard", "arbitration")
+#: the layers of the judgement: the episode's verdict and the cameras' own answers - both in the one
+#: request (D71); the review, label guard and arbitration requests of v1 are gone
+TASK_LAYERS = ("probe", "endstate")
 
 
 def task_stats(records: list[dict]) -> dict:
@@ -419,10 +419,6 @@ def task_stats(records: list[dict]) -> dict:
             layers["probe"] += 1
         if d.get("review") or d.get("cam_votes"):
             layers["endstate"] += 1
-        if isinstance(d.get("label_check"), dict):
-            layers["label_guard"] += 1
-        if isinstance(d.get("arbitration"), dict):
-            layers["arbitration"] += 1
     return {"judgements": series(codes), "abstain_by_judgement": series(abstain),
             "text_sources": series(sources), "layers": series(layers, TASK_LAYERS, keep_zero=True)}
 

@@ -51,8 +51,8 @@ def test_module_summaries_carry_chart_ready_statistics(world):
     assert sum(sum(c["hist"]) for c in vq["cameras"]) == 17           # 9 x 2; ep3's second camera has no score
     task = s["task_success"]
     assert {x["name"]: x["count"] for x in task["judgements"]} == {
-        "success": 4, "review_conflict": 1, "label_conflict_suspect": 2, "failure": 1}
-    assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
+        "success": 4, "uncertain": 3, "failure": 1}
+    assert task["error_steps"] == [{"name": "probe", "count": 1}]
     assert task["text_sources"] == [{"name": "原始标注", "count": 8}]
     dup = s["duplicate_check"]                         # one group of two (ep 0 and ep 7), reported only (D87)
     assert (dup["groups"], dup["duplicated"]) == (1, 2) and dup["group_sizes"] == [{"name": "2", "count": 1}]

@@ -1069,14 +1069,12 @@
    "platform_codes": [
     "eef_video_consistency.inconsistent",
     "eef_video_consistency.conflict",
-    "eef_video_consistency.unsettled",
-    "eef_video_consistency.opinion_mismatch",
     "eef_video_consistency.record_mismatch",
     "eef_video_consistency.ego_motion_suspect",
     "eef_video_consistency.calibration_suspect"
    ],
    "platform_conditions": [
-    "要上传 trajectory.json"
+    "要有轨迹：数据集声明够生成，或上传 trajectory.json"
    ],
    "kind": "defect",
    "level": "episode",
@@ -1768,11 +1766,9 @@
    "name": "执行失误（抓取失败、掉落、碰撞、反复尝试）",
    "origin": "具",
    "samples": "真实：G1 194 条（228 个失误区间，发布者逐帧标注）；第二批标注 `operator_mistakes`",
-   "platform": "部分：技能画像给流畅度，不定位失误",
-   "platform_status": "有读数",
-   "platform_codes": [
-    "task_success.recovery"
-   ],
+   "platform": "没有：技能画像（D68 下线）给过流畅度，帧探针判定报过中途回落（D71 起没有），都不定位失误",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "episode",
    "description": "操作过程中的失误及其恢复；本身不是数据缺陷，是质量信号（失败演示可能有价值），要检出并定位",
@@ -1944,11 +1940,9 @@
    "name": "标注与画面不符",
    "origin": "具",
    "samples": "合成",
-   "platform": "能判：进「标注分歧」的人工复核（要模型）",
-   "platform_status": "能判",
-   "platform_codes": [
-    "task_success.label_conflict_suspect"
-   ],
+   "platform": "没有：原先由判废护栏送进「标注分歧」的人工复核，D73 去掉护栏后不再检测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "标注与画面不符",

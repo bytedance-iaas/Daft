@@ -129,7 +129,7 @@ def test_the_items_and_levels_of_its_findings(world):
     policy's levels after the applied human decisions; IMG-2 is every episode's underexposure (info)."""
     by_ep = {i["episode_index"]: i for i in _page(world)["items"]}
     assert by_ep[1]["items"] == ["STRM-5", "IMG-2"] and by_ep[1]["levels"] == ["blocking", "info"]
-    assert by_ep[5]["items"] == ["IMG-2", "TASK-4", "LABEL-4"] and by_ep[5]["levels"] == ["review", "info"]
+    assert by_ep[5]["items"] == ["IMG-2", "TASK-4"] and by_ep[5]["levels"] == ["review", "info"]
     assert by_ep[7]["items"] == ["IMG-2", "SET-1"] and by_ep[7]["levels"] == ["info"]   # D87: reported only
     assert by_ep[6]["items"] == ["IMG-2"] and by_ep[6]["levels"] == ["info"]   # held: what the others found
     assert _eps(_page(world, level="blocking")) == [1, 2]
@@ -138,7 +138,7 @@ def test_the_items_and_levels_of_its_findings(world):
     assert _eps(_page(world, item="TASK-4")) == [2, 3, 4, 5]
     assert _eps(_page(world, item="SET-1")) == [0, 7]                     # both members of the group
     assert _eps(_page(world, item="TASK-4", level="review")) == [3, 4, 5]
-    assert _eps(_page(world, item="LABEL-4", list="passed", review="true")) == [4, 5]
+    assert _eps(_page(world, item="TASK-4", list="passed", review="true")) == [3, 4, 5]
     body = _page(world, item="ACT-4")
     assert _eps(body) == [] and body["total"] == 0 and body["counts"]["all"] == 9
 
@@ -169,15 +169,3 @@ def test_a_person_s_answer_changes_the_levels_of_the_next_revision(world):
     assert by_ep[3]["items"] == ["IMG-2"] and by_ep[3]["levels"] == ["info"]
     assert _eps(_page(world, level="review")) == [4, 5]
     assert _eps(_page(world, rev=1, level="review")) == [3, 4, 5]            # r1 as it was
-
-
-def test_a_funnel_revision_has_no_findings_to_filter(world, monkeypatch):
-    """A task made before (C2 1.0): no items / levels, and a finding filter matches nothing."""
-    from daemon.results.revision import Revision
-
-    real = Revision.entries
-    monkeypatch.setattr(Revision, "entries", lambda self: {
-        ep: (name, {k: v for k, v in e.items() if k != "findings"}) for ep, (name, e) in real(self).items()})
-    body = _page(world)
-    assert all("items" not in i and "levels" not in i for i in body["items"])
-    assert _eps(_page(world, level="info")) == [] and _eps(_page(world, item="IMG-2")) == []

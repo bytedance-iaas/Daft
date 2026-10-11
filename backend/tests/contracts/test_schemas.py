@@ -35,9 +35,10 @@ def test_examples(path: pathlib.Path):
         assert schemas.errors(ex["schema"], inst), f"invalid[{i}] accepted"
 
 
-#: the documents C2 2.0 changed (design doc 17 §7): written as 2.0, still read as 1.0 (D59)
+#: the documents C2 2.0 changed (design doc 17 §7); 1.0 is no longer read (D90)
 CHANGED_IN_2_0 = ("cli/result-record.schema.json", "cli/check.schema.json", "cli/verdict-line.schema.json",
-                  "cli/final-list.schema.json", "cli/report.schema.json", "cli/plan.schema.json")
+                  "cli/final-list.schema.json", "cli/report.schema.json", "cli/plan.schema.json",
+                  "cli/decisions.schema.json")
 
 
 def _is_2_0(rel: str, inst: dict) -> bool:
@@ -47,15 +48,15 @@ def _is_2_0(rel: str, inst: dict) -> bool:
 
 
 def test_schema_versions_are_pinned():
-    """A breaking change bumps schema_version. C2 2.0 changed six documents: they take 2.0 and 1.0;
-    every other CLI document is unchanged and stays 1.0."""
+    """A breaking change bumps schema_version. C2 2.0 changed six documents and D90 a seventh (decisions.json):
+    they take 2.0 only; every other CLI document is unchanged and stays 1.0."""
     for rel in schemas.schema_files():
         if not rel.startswith("cli/") or rel == "cli/common.schema.json":
             continue
         doc = schemas.load(rel)
         version = (doc.get("properties") or {}).get("schema_version")
         if rel in CHANGED_IN_2_0:
-            assert "(schema 2.0; 1.0 still read)" in doc["title"], rel
+            assert "(schema 2.0)" in doc["title"] and "1.0" not in doc["title"], rel
             assert version in (None, {"$ref": "common.schema.json#/$defs/schema_version_2"}), rel
         else:
             assert "2.0" not in doc.get("title", ""), rel
@@ -76,11 +77,10 @@ def test_the_result_record_stands_alone():
 
 
 @pytest.mark.parametrize("rel", CHANGED_IN_2_0)
-def test_changed_documents_have_examples_of_both_versions(rel):
+def test_changed_documents_take_2_0_only(rel):
     ex = json.loads((schemas.contracts_dir() / "examples" / f"{rel[4:-12]}.json").read_text(encoding="utf-8"))
     assert ex["schema"] == rel
-    versions = {_is_2_0(rel, inst) for inst in ex["valid"]}
-    assert versions == {True, False}, "2.0 and 1.0 (D59) are both valid"
-    assert any(_is_2_0(rel, inst) for inst in ex["invalid"]), "and 2.0 has invalid examples too"
+    assert all(_is_2_0(rel, inst) for inst in ex["valid"])
+    assert any(not _is_2_0(rel, inst) for inst in ex["invalid"]), "a 1.0 document is refused (D90)"
 
 

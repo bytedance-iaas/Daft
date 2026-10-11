@@ -502,7 +502,7 @@ class Orchestrator:
         elif kind == "apply_adjudication":
             if not self.decisions_to_apply(task):
                 raise conflict(task, "没有待执行的裁决：先在裁决页做出判断")
-            scope = {"relabel_rerun": scope.get("relabel_rerun") or "v1"}
+            scope = {}
         self.checks.require(Draft.of_task(self.repo, task), SUBTASK_CHECKS[kind])
         try:
             sub = self.repo.create_subtask(P.Subtask(id="", task_id=task_id, kind=kind,

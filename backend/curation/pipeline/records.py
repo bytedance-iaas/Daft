@@ -1,19 +1,12 @@
 """Per-episode result records and the files of a run directory (design doc 02 §3.5, 06 §1).
 
 A record is one line of ``checks/<module>/parts/<NNNN>.jsonl`` and of the
-compacted ``checks/<module>/results.jsonl``
-(``docs/contracts/cli/result-record.schema.json``). ``verdict`` is derived from
-v1's tri-state ``passed`` and ``score`` exactly as the parity tool derives it for
-v1's results (``tools/parity/records.py``), so the two sides compare line by line:
-
-* ``pass`` / ``fail`` - ``passed`` is True / False (hard gates, the duplicate check);
-* ``abstain``        - ``passed`` is None and there is no score;
-* ``scored``         - ``passed`` is None with a score (soft modules never vote);
-* ``error``          - the module could not judge the episode properly (D33).
-
-``details`` go through the same JSON round trip as v1's daft column
-(``result_to_struct``: ``json.dumps(detail, default=str)``), so a numpy scalar
-ends up exactly as v1 wrote it.
+compacted ``checks/<module>/results.jsonl`` (``docs/contracts/cli/result-record.schema.json``,
+design doc 17 §1): ``status`` (ok / error, D33), the module's findings, the taxonomy items it
+assessed and those it could not, readings and the module's own ``details``. A check still
+answers with v1's ``{passed, score, detail}`` struct; :func:`record_from_struct` turns it into
+findings. ``details`` go through a JSON round trip (``json.dumps(detail, default=str)``), so a
+numpy scalar never reaches the line.
 
 Parts are append-only: each ``check`` call writes one part, a line is written in
 full and fsync'ed before the next one starts, and the highest part wins when an
@@ -29,7 +22,6 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-SCHEMA_VERSION = "1.0"
 #: The format ``record_from_struct`` writes (C2 result-record): 2.0 since the policy verdicts (F12.3).
 RECORD_VERSION = "2.0"
 
@@ -105,35 +97,18 @@ def record_v2(module: str, episode_index: int, passed: bool | None, score: float
             "unassessable": got.unassessable, "readings": got.readings, "error": None}
 
 
-def upgrade_record(rec: dict, params: dict | None = None) -> dict:
-    """A 1.0 record as the 2.0 writer would have written it from the same answer (the parity tool
-    and the evaluation compare old runs with new ones this way; tasks are never migrated, D59)."""
-    if is_v2(rec):
-        return rec
-    return record_v2(rec["module"], rec["episode_index"], rec.get("passed"), rec.get("score"),
-                     rec.get("details") or {}, error=rec.get("error"), evidence=rec.get("evidence"),
-                     elapsed_s=rec.get("elapsed_s"), params=params)
-
-
-# ---------------------------------------------------------------- reading either format
-
-def is_v2(rec: dict | None) -> bool:
-    """A record 2.0 (findings) rather than 1.0 (tri-state)."""
-    return isinstance(rec, dict) and "status" in rec
-
+# ---------------------------------------------------------------- reading
 
 def is_error(rec: dict | None) -> bool:
-    """The module could not judge the episode (D33): 2.0 ``status`` error, 1.0 ``verdict`` error."""
-    if not isinstance(rec, dict):
-        return False
-    return rec.get("status") == "error" if is_v2(rec) else rec.get("verdict") == "error"
+    """The module could not judge the episode (D33)."""
+    return isinstance(rec, dict) and rec.get("status") == "error"
 
 
 def score_of(rec: dict | None) -> float | None:
-    """The module's score: 1.0 ``score``, 2.0 ``readings.score`` (soft scores are readings, P18)."""
+    """The module's score: ``readings.score`` (soft scores are readings, P18)."""
     if not isinstance(rec, dict):
         return None
-    v = (rec.get("readings") or {}).get("score") if is_v2(rec) else rec.get("score")
+    v = (rec.get("readings") or {}).get("score")
     return None if v is None or isinstance(v, bool) else float(v)
 
 
@@ -146,15 +121,13 @@ def default_level(module: str, finding: dict) -> str:
 
 
 def legacy_verdict(rec: dict | None) -> str | None:
-    """1.0's ``verdict`` of a record of either format, for the views that still count by it
-    (the report's 1.0 summary keys, the console until F12.5): a 2.0 record with a finding that
-    blocks by default is ``fail``, one with a review finding ``abstain``, one with a score
-    ``scored``; one that assessed none of the items its own per-episode codes report on, or
-    could not assess an item it rejects on, ``abstain``; else ``pass``."""
+    """The record's verdict word, for the views that still count by it (the report's summary counts
+    and the modules' own views): a record with a finding that blocks by default is ``fail``, one with
+    a review finding ``abstain``, one with a score ``scored``; one that assessed none of the items its
+    own per-episode codes report on, or could not assess an item it rejects on, ``abstain``; else
+    ``pass``."""
     if not isinstance(rec, dict):
         return None
-    if not is_v2(rec):
-        return rec.get("verdict")
     if rec.get("status") == "error":
         return "error"
     levels = {default_level(rec["module"], f) for f in rec.get("findings") or []}
@@ -175,21 +148,6 @@ def legacy_verdict(rec: dict | None) -> str | None:
             or any(u.get("item") in gate_items for u in rec.get("unassessable") or []):
         return "abstain"                     # it assessed nothing of its own, or not what it rejects on
     return "pass"
-
-
-def passes_funnel(rec: dict | None, policy=None) -> bool:
-    """Whether the funnel lets the episode on to the next stage after this record (until the two
-    blocks of F12.4 retire the funnel): no error and nothing that blocks - 1.0: not ``fail``; 2.0: no
-    finding the task's ``policy`` (a :class:`.policy.Policy`; default levels when None) makes blocking."""
-    if rec is None or is_error(rec):
-        return False
-    if not is_v2(rec):
-        return rec.get("verdict") != "fail"
-    for f in rec.get("findings") or []:
-        level = policy.level(rec["module"], f) if policy is not None else default_level(rec["module"], f)
-        if level == "blocking":
-            return False
-    return True
 
 
 def check_counts(records: dict[int, dict], episodes: Iterable[int]) -> tuple[str, dict, list[int], dict]:
@@ -255,18 +213,6 @@ def next_part(run_dir: str, modules: Iterable[str]) -> str:
         for p in part_ids(run_dir, m):
             top = max(top, int(p))
     return f"{top + 1:04d}"
-
-
-def two_blocks(run_dir: str) -> bool:
-    """A run of plan 2.0 (design doc 17 §3, D57): every selected module judges every selected episode - no
-    stage stops one, the full-set steps take the whole selection. False for a run without a plan (a hand-made
-    run directory) or with a funnel plan."""
-    try:
-        with open(os.path.join(run_dir, "plan.json"), encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError):
-        return False
-    return isinstance(doc, dict) and str(doc.get("schema_version")) == "2.0"
 
 
 def revision_dir(run_dir: str, revision: int) -> str:

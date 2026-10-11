@@ -39,25 +39,12 @@ def load_relabels(run_dir: str) -> dict[int, str]:
     return {i: str(v["text"]) for i, v in _labels(run_dir).items()}
 
 
-def load_relabel_reruns(run_dir: str) -> dict[int, str]:
-    """How each relabel in force is judged again (D39): ``v1`` (default) or ``full``."""
-    return {i: str(v.get("relabel_rerun") or "v1") for i, v in _labels(run_dir).items()}
-
-
 class TaskText:
     """Resolves (text, source) per episode; ``missing`` names why there is none."""
 
     def __init__(self, run_dir: str, instructions: dict[int, str]):
         self.instructions = instructions
         self.relabels = load_relabels(run_dir)
-        self.relabel_reruns = load_relabel_reruns(run_dir)
-
-    def relabel_rerun(self, episode_index: int) -> str | None:
-        """``v1`` / ``full`` for an episode judged under a human relabel, else None."""
-        idx = int(episode_index)
-        if idx not in self.relabels:
-            return None
-        return self.relabel_reruns.get(idx, "v1")
 
     def resolve(self, episode_index: int) -> tuple[str, str, str | None]:
         """(text, source, problem): ``problem`` is set when the episode has no task text."""

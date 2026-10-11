@@ -3,8 +3,8 @@
 Each test writes the module records it needs (records 2.0, the ``check`` record format), runs
 the commands in process - every ``--json`` checked against its C2 schema - and reads the files
 they leave. The rules under test are the policy verdicts of design doc 17 (D58) under the default
-policy, which is v1's gates (``pipeline/verdict.py``, ``rejudge``) without the soft-score rejects
-(P18), plus D24 / D33 / D35: a blocking finding drops an episode, else an execution error holds it.
+policy - the hard gates, no soft-score rejects (P18) - plus D24 / D33 / D35: a blocking finding drops an
+episode, else an execution error holds it.
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ TASK = "pick up the red block and place it in the bin"
 
 def record(module: str, ep: int, verdict: str, *, score=None, details=None,
            incidents=None) -> dict:
-    """A record 2.0 of ``module`` that a 1.0 reader would call ``verdict``: written from the same
-    answer the module gives (``records.record_v2``, the derivation ``check`` uses) - pass finds
+    """A record 2.0 of ``module`` whose verdict word (``records.legacy_verdict``) is ``verdict``: written
+    from the same answer the module gives (``records.record_v2``, the derivation ``check`` uses) - pass finds
     nothing, fail reports the module's blocking finding, abstain its review finding (or only what it
     could not assess), scored a score reading, error an execution error."""
     passed = {"pass": True, "fail": False}.get(verdict)
@@ -89,8 +89,9 @@ class RunDir:
         return self.path
 
 
-def funnel(run_dir: str, episodes: str) -> dict[int, dict]:
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "funnel", "--revision", "1",
+def machine(run_dir: str, episodes: str) -> dict[int, dict]:
+    """The machine's verdict lines (``verdicts.jsonl``) of revision 1."""
+    res = run("aggregate", "--run-dir", run_dir, "--phase", "final", "--revision", "1",
               "--modules", ",".join(ALL), "--episodes", episodes)
     assert res.rc == 0, res.doc
     lines = read_jsonl(os.path.join(run_dir, "revisions", "r0001", "verdicts.jsonl"))
@@ -115,7 +116,7 @@ def final(run_dir: str, episodes: str, revision: int = 1) -> dict[str, dict[int,
 
 
 def decisions(path: str, *items) -> str:
-    doc = {"schema_version": "1.0", "decisions": [
+    doc = {"schema_version": "2.0", "decisions": [
         {"id": i, "episode_index": ep, "line": line, "decision": decision,
          "new_label": new_label, "note": None, "decided_by": "alice",
          "decided_at": 1790000000000 + i}
@@ -132,10 +133,10 @@ def apply(run_dir: str, path: str) -> dict:
     return res.doc
 
 
-# ---------------------------------------------------------------- funnel
+# ---------------------------------------------------------------- the machine's verdicts
 
 
-def test_funnel_gates_errors_and_d35(tmp_path):
+def test_machine_verdicts_gates_errors_and_d35(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0, 6)
     # 1: a finding blocks; every other module judged it too (D57)
     rd.good(1).replace("timestamp_check", 1, "fail", details={"reason": "丢帧"})
@@ -157,7 +158,7 @@ def test_funnel_gates_errors_and_d35(tmp_path):
         rd.drop(m, 7)
     # 8: a blocking finding drops it wherever it is, a module that failed is named (D35, D58)
     rd.good(8).replace("motion_quality", 8, "error").replace("task_success", 8, "fail")
-    lines = funnel(rd.write(), "0-8")
+    lines = machine(rd.write(), "0-8")
 
     assert lines[0]["verdict"] == "keep" and lines[0]["error_modules"] == []
     assert lines[0]["blocking"] == [] and lines[0]["review"] == []
@@ -183,23 +184,14 @@ def test_funnel_gates_errors_and_d35(tmp_path):
         assert fh.read().split() == ["0", "6"]
 
 
-def test_funnel_without_revision_goes_to_the_funnel_directory(tmp_path):
-    rd = RunDir(str(tmp_path / "run")).good(0, 1).write()
-    res = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--modules", ",".join(ALL),
-              "--episodes", "0-1")
-    assert res.rc == 0 and res.doc["files"]["keep"] == "funnel/keep.txt"
-    assert not os.path.exists(os.path.join(rd, "revisions"))
-
-
 def test_the_modules_come_from_the_plan(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0).write()
     plan = {"stages": [{"id": "numeric", "modules": ["timestamp_check"]}]}
     with open(os.path.join(rd, "plan.json"), "w", encoding="utf-8") as fh:
         json.dump(plan, fh)
-    res = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--episodes", "0")
-    assert res.rc == 0 and res.doc["counts"] == {"total": 1, "keep": 1, "drop": 0, "held": 0,
-                                              "decided_in": 0, "decided_out": 0,
-                                              "skipped": 0}
+    res = run("aggregate", "--run-dir", rd, "--revision", "1", "--episodes", "0")
+    assert res.rc == 0 and res.doc["counts"] == {"total": 1, "passed": 1, "reject": 0, "held": 0,
+                                              "review": 0, "skipped": 0}
 
 
 # ---------------------------------------------------------------- final
@@ -211,8 +203,8 @@ def test_final_lists_are_disjoint_and_complete(tmp_path):
     rd.replace("duplicate_check", 1, "fail", details={"same_as": [0], "group_id": 0})
     rd.drop("duplicate_check", 2)                              # the duplicate check never saw it
     rd.replace("visual_quality", 3, "error")
-    rd.put("timestamp_check", 4, "fail")                       # the funnel rejects it
-    rd.replace("task_success", 5, "error")                     # the funnel holds it
+    rd.put("timestamp_check", 4, "fail")                       # a blocking finding rejects it
+    rd.replace("task_success", 5, "error")                     # an execution error holds it
     lists = final(rd.write(), "0-5")
 
     assert sorted(lists["passed"]) == [0, 1]                   # a duplicate is reported, never rejected (D87)
@@ -296,13 +288,6 @@ def _keep_txt(run_dir: str, revision: int) -> list[int]:
         return [int(x) for x in fh.read().split()]
 
 
-def _funnel_phase(run_dir: str, revision: int, episodes: str) -> dict:
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "funnel", "--revision",
-              str(revision), "--modules", ",".join(ALL), "--episodes", episodes)
-    assert res.rc == 0, res.doc
-    return res.doc["counts"]
-
-
 def test_a_restored_appeal_passes_in_the_next_revision(tmp_path):
     """ep 1 was rejected by task_success alone, so it was not in keep.txt. A person restores it:
     keep.txt of the next revision takes it in and it passes."""
@@ -313,22 +298,15 @@ def test_a_restored_appeal_passes_in_the_next_revision(tmp_path):
         rd.put(m, 1, "scored")
     rd.put("task_success", 1, "fail")
     run_dir = rd.write()
-    assert _funnel_phase(run_dir, 1, "0-2")["keep"] == 2
-    assert _keep_txt(run_dir, 1) == [0, 2]
     first = final(run_dir, "0-2")
     assert sorted(first["reject"]) == [1] and first["reject"][1]["reasons"][0]["kind"] \
         == "finding"
+    assert _keep_txt(run_dir, 1) == [0, 2]
 
     apply(run_dir, decisions(str(tmp_path / "d.json"), (1, "reject_appeal", "restore", None)))
-    counts = _funnel_phase(run_dir, 2, "0-2")
-    assert (counts["keep"], counts["decided_in"], counts["decided_out"]) == (2, 1, 0)
-    assert _keep_txt(run_dir, 2) == [0, 1, 2]
-    # what the next revision adds for it
-    rd.put("visual_quality", 1, "pass", part="0002")
-    rd.write()
     after = final(run_dir, "0-2", revision=2)
     assert sorted(after["passed"]) == [0, 1, 2] and after["held"] == {}
-    assert _keep_txt(run_dir, 2) == [0, 1, 2]                 # final writes the same set
+    assert _keep_txt(run_dir, 2) == [0, 1, 2]
 
 
 def _kinds(lists) -> dict[int, list[tuple[str, str]]]:
@@ -449,31 +427,22 @@ def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
 
 
 def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
-    """Every item carries its C1 line and the codes it asks about - a suspected label conflict
-    is part of the task verdict's question (registry 3.0) - and a line is only asked where it applies
-    (a task verdict: delivered episodes)."""
+    """Every item carries its C1 line and the codes it asks about, and a line is only asked where it
+    applies (a task verdict: delivered episodes)."""
     rd = RunDir(str(tmp_path / "run")).good(0, 3)
-    rd.replace("task_success", 0, "abstain")
     _gate_reject(rd, 3, "timestamp_check")
-    run_dir = _label_questions(rd, 0, 3)
+    run_dir = _asked(rd, 0, 3)
     lists = final(run_dir, "0,3")
     items = {e: v["review"] for e, v in lists["review"].items()}
     assert [(i["kind"], i["line"], i["codes"]) for i in items[0]] == [
-        ("task_verdict", "task_verdict", ["label_conflict_suspect", "uncertain"])]
+        ("task_verdict", "task_verdict", ["uncertain"])]
     assert 3 not in items, "rejected: its task verdict is not asked"
 
 
-def _label_questions(rd: RunDir, *eps: int) -> str:
-    """The run directory of ``rd`` with the label audit queueing ``eps``.
-
-    The queue used to have two sources, the skill profile and task_success's kill guard; the
-    profile left with registry 3.0, so the guard is the only one and the records carry its
-    ``label_conflict_suspect``."""
+def _asked(rd: RunDir, *eps: int) -> str:
+    """The run directory of ``rd`` with task_success unsure of ``eps``: their task verdict is asked."""
     for e in eps:
-        rd.replace("task_success", e, "abstain",
-                   details={"verdict": "label_conflict_suspect", "task_desc": TASK,
-                            "task_desc_source": "原始标注",
-                            "label_check": {"annotation": "旧标注", "caption": "画面描述"}})
+        rd.replace("task_success", e, "abstain")
     return rd.write()
 
 
@@ -481,7 +450,7 @@ def test_a_task_verdict_with_a_new_label_is_taken_instead_of_a_re_judge(tmp_path
     """One card, one question: a person judging an episode may rewrite its task text in the same
     answer (``new_label``). A success or failure is taken as it is and the episode is not judged
     again; "unsure" leaves the rewritten text to the model, which judges the episode again (D39)."""
-    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1, 2), 0, 1, 2)
+    run_dir = _asked(RunDir(str(tmp_path / "run")).good(0, 1, 2), 0, 1, 2)
     first = final(run_dir, "0-2")
     assert {e: [i["line"] for i in v["review"]] for e, v in first["review"].items()} == \
         {0: ["task_verdict"], 1: ["task_verdict"], 2: ["task_verdict"]}
@@ -512,7 +481,7 @@ def test_a_task_verdict_with_a_new_label_is_taken_instead_of_a_re_judge(tmp_path
 
 def _apply_more(run_dir: str, path: str, first_id: int, *items) -> dict:
     """adjudicate-apply of ``items`` numbered from ``first_id`` (a later batch)."""
-    doc = {"schema_version": "1.0", "decisions": [
+    doc = {"schema_version": "2.0", "decisions": [
         {"id": i, "episode_index": ep, "line": line, "decision": decision,
          "new_label": new_label, "note": None, "decided_by": "alice",
          "decided_at": 1790000000000 + i}
@@ -526,8 +495,7 @@ def test_the_latest_answer_on_a_line_is_the_one_in_force(tmp_path):
     """Answers are append only and the last one on a line wins: a person who judged an episode
     failed and then answered again carries the episode with the second answer."""
     rd = RunDir(str(tmp_path / "run")).good(0)
-    rd.replace("task_success", 0, "abstain")
-    run_dir = _label_questions(rd, 0)
+    run_dir = _asked(rd, 0)
     _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
                 (0, "task_verdict", "failure", "stack the cups"))
     lists = final(run_dir, "0", revision=2)
@@ -574,8 +542,7 @@ def test_decisions_are_copied_in_v1s_csv_words(tmp_path):
     with open(os.path.join(rd, "human-decisions", "reject_appeals.csv"), encoding="utf-8") as fh:
         assert [r["appeal"] for r in csv.DictReader(fh)] == ["拿不准"]
     with open(os.path.join(rd, "adjudication", "labels.json"), encoding="utf-8") as fh:
-        assert json.load(fh) == {"labels": {"1": {"text": "wipe the table", "decision_id": 2,
-                                                  "relabel_rerun": "v1"}}}
+        assert json.load(fh) == {"labels": {"1": {"text": "wipe the table", "decision_id": 2}}}
 
 
 @pytest.mark.parametrize("bad, words", [
@@ -587,7 +554,7 @@ def test_a_decision_that_breaks_the_contract_is_a_usage_error(tmp_path, bad, wor
     d = {"id": 1, "episode_index": 0, "new_label": None, "note": None, "decided_by": "a",
          "decided_at": 1, **bad}
     path = tmp_path / "d.json"
-    path.write_text(json.dumps({"schema_version": "1.0", "decisions": [d]}))
+    path.write_text(json.dumps({"schema_version": "2.0", "decisions": [d]}))
     res = run("adjudicate-apply", "--run-dir", rd, "--decisions", str(path))
     assert res.rc == 2 and words in res.doc["error"]["message"]
     assert not os.path.exists(os.path.join(rd, "adjudication", "applied.jsonl"))

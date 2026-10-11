@@ -204,15 +204,9 @@ class EefJudge:
         self.template_sha = template.sha256 if template is not None else None
         self.record_mapping = None
         self.record_note = None
-        rpath = (params.get("record_mapping") or "").strip()
         from ..extensions.eef_consistency import record as RC
 
-        if rpath:                                  # an old task's record mapping (design doc 12 §8.7)
-            try:
-                self.record_mapping = RC.load_mapping(os.path.expanduser(rpath))
-            except (RC.RecordMappingError, OSError, ValueError) as e:
-                raise UsageError(f"{MODULE}: the record mapping is invalid: {e}") from None
-        elif self.decl is not None:                # the declaration's records (design doc 25 §6.1)
+        if self.decl is not None:                  # the declaration's records (design doc 25 §6.1)
             from ..extensions.eef_consistency import declared
 
             block = declared.record_block(self.decl)
@@ -318,21 +312,18 @@ class EefJudge:
 
     def _derived(self, params: dict, run_dir: str):
         """The trajectory a handheld gripper's raw mcap carries (design doc 22 §5.4): derived episode by episode with
-        the task's gripper calibration or the built-in DAS DEMO one - the calibration the recording lacks."""
+        the dataset declaration's calibration or the built-in DAS DEMO one - the calibration the recording lacks."""
         from ..extensions.eef_consistency import derive_mcap
         from ..extensions.eef_consistency.adapters.umi_mcap import ExportError
         from ..pipeline.records import module_dir
 
-        cal = os.path.expanduser((params.get("gripper_calibration") or "").strip()) or None
-        if cal and not os.path.isfile(cal):
-            raise UsageError(f"{MODULE}: gripper calibration not found: {cal}")
         hh = (((self.decl or {}).get("calibration") or {}).get("handheld") or {}).get("calibration")
         name = os.path.basename(str(getattr(self.src, "uri", "") or self.src.input_dir).rstrip("/")) or "dataset"
         try:
-            return derive_mcap.Derived(root=self.src.input_dir, numbering=self.src.numbering(), calibration=cal,
+            return derive_mcap.Derived(root=self.src.input_dir, numbering=self.src.numbering(),
                                        out_dir=module_dir(run_dir, MODULE), dataset_id=name, calibration_doc=hh)
         except (ExportError, OSError) as e:
-            raise ModuleFailed(f"{MODULE}: the gripper calibration is invalid: {e}", {"path": cal}) from None
+            raise ModuleFailed(f"{MODULE}: the gripper calibration is invalid: {e}", {}) from None
 
     def _sample(self, ep: int):
         """(the episode's sample or None, how its trajectory was had: None for an uploaded file)."""
@@ -383,7 +374,7 @@ class EefJudge:
              **({"umi_prompt": UMI_PROMPT} if self.umi else {})},
             sort_keys=True).encode()).hexdigest()
         self.ask = None if self.vlm_missing else \
-            eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
+            eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("probe", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
         where = (self.derived.describe() if self.derived is not None
                  else f"trajectory.json sha256 {self.result.sha256[:12]}, {len(self.result.samples)} episode(s) declared")

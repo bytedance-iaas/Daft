@@ -101,7 +101,7 @@ def name_of(module: str) -> str:
     try:
         return registry.get(module).name_zh
     except KeyError:
-        return {"autolabel": "无标注补描述"}.get(module, module)   # verdicts from before D72
+        return module
 
 
 def also_failed(errors: list[str]) -> str:

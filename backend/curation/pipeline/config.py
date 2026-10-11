@@ -1,7 +1,7 @@
 """L1 配置层:YAML 声明式配置(DESIGN.md §11.1)。
 
-客户勾选跑哪些检查/设阈值/定硬门软门;权重阈值全部来自配置,无魔法数字。
-未知检查名/非法门类型 → 报错(配置错误不能静默跑偏)。
+出厂 default.yaml 为底,站点文件叠加其上:检查的参数、模型后端、数据来源。判决不在这里
+(任务的判决策略,设计 17 §4)。未知检查名 → 报错(配置错误不能静默跑偏)。
 """
 from __future__ import annotations
 
@@ -28,22 +28,12 @@ def validate_config(cfg: dict, origin: str = "config") -> None:
         raise ConfigError("pipeline must be a mapping")
     if "optimizations" in pipeline:
         raise ConfigError("pipeline.optimizations has been removed; engineering optimizations run automatically")
-    concurrency = pipeline.get("vlm_episode_concurrency", 8)
-    if type(concurrency) is not int or concurrency < 1:
-        raise ConfigError("vlm_episode_concurrency must be a positive integer")
     checks = cfg.get("checks")
     if not checks:
         raise ConfigError(f"{origin}: 缺 checks 段")
-    for name, c in checks.items():
+    for name in checks:
         if name not in KNOWN_CHECKS:
             raise ConfigError(f"{origin}: 未知检查 {name!r};可用: {KNOWN_CHECKS}")
-        gate = c.get("gate", "soft")
-        if gate not in ("hard", "soft"):
-            raise ConfigError(f"{origin}: {name}.gate 必须是 hard/soft,got {gate!r}")
-        if gate == "soft" and c.get("enable", True) and c.get("weight", 1.0) < 0:
-            raise ConfigError(f"{origin}: {name}.weight 不能为负")
-    if "verdict" not in cfg or "soft_threshold" not in cfg["verdict"]:
-        raise ConfigError(f"{origin}: 缺 verdict.soft_threshold")
     video = ((checks.get("task_success") or {}).get("vlm") or {}).get("video")
     if video is not None:
         if not isinstance(video, dict):
@@ -122,26 +112,6 @@ def apply_vlm_direct(cfg: dict, endpoint: str | None = None, model: str | None =
     return cfg
 
 
-def probe_concurrency_hint(cfg: dict) -> str | None:
-    """n_probe > 帧问询并发时给一行提醒(2026-07-27 用户定,选'提示'弃'绑定')。
-
-    两键语义不同(帧数=看多细;并发=压服务端多重),绑定会让调帧数静默加压;
-    但不对齐会让问询分波、单条耗时上升且**不报错**——用提示消灭这个失误模式。
-    纯函数:返回提示文本或 None,不打印(打印归调用方,可单测)。
-    """
-    ts = cfg.get("checks", {}).get("task_success", {})
-    if not ts.get("enable", False):
-        return None
-    n_probe = ts.get("params", {}).get("n_probe", 8)
-    mc = ts.get("vlm", {}).get("max_concurrency", 8)
-    if n_probe <= mc:
-        return None
-    waves = -(-n_probe // mc)                  # ceil
-    return (f"[curation] ⚠️ n_probe={n_probe} > 帧问询并发 {mc}:问询将分 {waves} 波,"
-            f"单条耗时约 ×{waves}。建议 --set checks.task_success.vlm.max_concurrency="
-            f"{n_probe} 对齐(一波齐发)")
-
-
 def apply_overrides(cfg: dict, sets: list[str]) -> dict:
     """CLI --set 路径=值(可重复)→ 点路径覆盖单个配置值(2026-07-15 用户定)。
 
@@ -207,49 +177,21 @@ def enabled(cfg: dict, name: str) -> bool:
     return bool(c and c.get("enable", True))
 
 
-def apply_check_selection(cfg: dict, only: str | None = None,
-                          skip: str | None = None) -> dict:
-    """CLI 的 --only/--skip → enable 开关覆盖(单跑任意模块/组合)。
+def apply_check_selection(cfg: dict, only: str) -> dict:
+    """一次 ``check`` 调用的模块 → enable 开关覆盖:只开 ``only`` 列出的检查。
 
-    only 与 skip 互斥;名字必须是已知模块(语义化名,如 visual_quality),
-    错名报错并列出全部可选。M 编号不进 CLI(与"编号不进代码"同一纪律)。
-    除漏斗检查外,数据集级模块 skill_profile(技能画像)同样可选:
-    --only skill_profile = 跳过全部检查、只跑画像;--skip skill_profile = 反之。
+    名字必须是已知检查(语义化名,如 visual_quality),错名报错并列出全部可选。
     """
-    if only and skip:
-        raise ValueError("--only 与 --skip 互斥,只能用一个")
-
-    cfg.setdefault("skill_profile", {})
-    cfg.setdefault("dedup", {})
-    extras = ("skill_profile", "dedup")    # 数据集级可选模块(非漏斗检查)
-
-    def parse(s):
-        names = []
-        for tok in s.split(","):
-            tok = tok.strip().lower()
-            if not tok:
-                continue
-            if tok not in cfg["checks"] and tok not in extras:
-                raise ValueError(f"未知检查名 {tok!r}。可选: "
-                                 f"{sorted(cfg['checks']) + sorted(extras)}")
-            names.append(tok)
-        if not names:
-            raise ValueError("检查名列表为空")
-        return names
-
-    if only:
-        keep = set(parse(only))
-        for name in cfg["checks"]:
-            cfg["checks"][name]["enable"] = name in keep
-        cfg["skill_profile"]["enable"] = "skill_profile" in keep
-        cfg["dedup"]["enable"] = "dedup" in keep
-    elif skip:
-        names = parse(skip)
-        for name in names:
-            if name in cfg["checks"]:
-                cfg["checks"][name]["enable"] = False
-        if "skill_profile" in names:
-            cfg["skill_profile"]["enable"] = False
-        if "dedup" in names:
-            cfg["dedup"]["enable"] = False
+    keep = []
+    for tok in only.split(","):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        if tok not in cfg["checks"]:
+            raise ValueError(f"未知检查名 {tok!r}。可选: {sorted(cfg['checks'])}")
+        keep.append(tok)
+    if not keep:
+        raise ValueError("检查名列表为空")
+    for name in cfg["checks"]:
+        cfg["checks"][name]["enable"] = name in keep
     return cfg

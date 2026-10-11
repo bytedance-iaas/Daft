@@ -38,12 +38,12 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
         P.AdjudicationCreate(task_id=task_id, episode_index=4, line="task_verdict",
                              decision="unsure", new_label="wipe the table",
                              decided_by="tester")], at=d.rt.clock())
-    r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={"relabel_rerun": "nope"})
-    assert r.status_code == 400
+    r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={"relabel_rerun": "v1"})
+    assert r.status_code == 400                              # C4 7.0.0: the body carries nothing to choose
     r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={})
     assert r.status_code == 202, r.text
     assert_schema("SubtaskCreated", r.json())
-    assert r.json()["subtask"]["scope"] == {"relabel_rerun": "v1"}
+    assert r.json()["subtask"]["scope"] == {}
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
     # 3 judged failed (its byte copy 7 was passed all along, D87); 4, judged for
@@ -63,7 +63,7 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     with open(os.path.join(rd, ".orchestr", sub_id, "decisions.json"), encoding="utf-8") as fh:
         decisions = json.load(fh)
     assert_schema("./cli/decisions.schema.json", decisions)
-    assert decisions["relabel_rerun"] == "v1" and len(decisions["decisions"]) == 2
+    assert set(decisions) == {"schema_version", "decisions"} and len(decisions["decisions"]) == 2
     part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))
     assert [r["episode_index"] for r in part2] == [4]       # the relabelled one, re-judged
     assert os.listdir(os.path.join(rd, "checks", "duplicate_check", "parts")) == ["0001.jsonl"]

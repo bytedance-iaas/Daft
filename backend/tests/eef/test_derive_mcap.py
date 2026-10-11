@@ -25,8 +25,9 @@ def das(tmp_path_factory):
 
 
 def _derived(das, tmp_path, calibration=None):
-    return derive_mcap.Derived(root=str(das / "data"), numbering={0: "episode_0.mcap"}, calibration=calibration,
-                          out_dir=str(tmp_path / "out"), dataset_id="das")
+    """``calibration``: the dataset declaration's ``umi-calibration/2`` (design doc 25 §3.2), else the built-in one."""
+    return derive_mcap.Derived(root=str(das / "data"), numbering={0: "episode_0.mcap"}, calibration_doc=calibration,
+                               out_dir=str(tmp_path / "out"), dataset_id="das")
 
 
 def test_the_built_in_calibration_is_the_das_demo_assumptions():
@@ -57,25 +58,22 @@ def test_an_episode_is_derived_once_and_kept_for_the_overlay(das, tmp_path):
 
 def test_the_calibration_decides_what_can_be_drawn_and_the_digest(das, tmp_path):
     builtin = _derived(das, tmp_path)
-    cal = tmp_path / "cal.json"
-    cal.write_text(json.dumps(F.calibration()))                       # robot1's intrinsics as a fallback
-    given = _derived(das, tmp_path / "b", calibration=str(cal))
+    given = _derived(das, tmp_path / "b", calibration=F.calibration())  # robot1's intrinsics as a fallback
     s, src = given.sample(0)
     assert set(s.cameras) == {"robot0_camera0", "robot1_camera0"} and not src["calibration"]["builtin"]
+    assert src["calibration"]["source"] == "declaration"
     assert src["cameras"]["robot1"]["intrinsics"] == "intrinsics_fallback"
     assert given.sha256 != builtin.sha256 and builtin.sha256 == _derived(das, tmp_path / "c").sha256
-    bad = tmp_path / "bad.json"
-    bad.write_text(json.dumps(F.calibration(body_to_optical=[[1, 0, 0], [0, 1, 0], [0, 0, -1]])))
     with pytest.raises(X.ExportError, match="proper rotation"):
-        _derived(das, tmp_path / "d", calibration=str(bad))
+        _derived(das, tmp_path / "d", calibration=F.calibration(body_to_optical=[[1, 0, 0], [0, 1, 0], [0, 0, -1]]))
 
 
 def test_a_recording_that_is_no_handheld_grippers_says_so(tmp_path):
     from ..viz.mcap_fixtures import make_default
 
     make_default(str(tmp_path / "arm"))
-    d = derive_mcap.Derived(root=str(tmp_path / "arm"), numbering={0: "episode_0.mcap"}, calibration=None,
-                       out_dir=str(tmp_path / "out"), dataset_id="arm")
+    d = derive_mcap.Derived(root=str(tmp_path / "arm"), numbering={0: "episode_0.mcap"},
+                            out_dir=str(tmp_path / "out"), dataset_id="arm")
     s, src = d.sample(0)
     assert s is None and src["reason"] == derive_mcap.NOT_DERIVED and "no hand" in src["message"]
 
@@ -98,11 +96,9 @@ def test_the_preflight_lets_a_handheld_gripper_go_without_the_file(das, tmp_path
     seeds.write_text("")
     assert PF.consistency_entry({"observation_seeds": str(seeds)}, episodes=[0], media_exists=None,
                                 handheld=True)["availability"] == C.UNSUPPORTED
-    bad = tmp_path / "bad.json"
-    bad.write_text("{}")
-    refused = PF.consistency_entry({"gripper_calibration": str(bad)}, episodes=[0], media_exists=None, handheld=True)
+    # the dataset declaration's calibration (design doc 25 §3.2) replaces the built-in one; one that cannot be right
+    # is refused
+    refused = PF.derived_entry({}, episodes=[0], calibration={})
     assert refused["availability"] == C.UNSUPPORTED and refused["reason_code"] == C.CALIBRATION_INVALID
-    cal = tmp_path / "cal.json"
-    cal.write_text(json.dumps(F.calibration()))
-    given = PF.consistency_entry({"gripper_calibration": str(cal)}, episodes=[0], media_exists=None, handheld=True)
-    assert given["availability"] == C.AVAILABLE and "uploaded calibration (das_test)" in given["notes"][0]
+    given = PF.derived_entry({}, episodes=[0], calibration=F.calibration())
+    assert given["availability"] == C.AVAILABLE and "declaration's calibration (das_test" in given["notes"][0]

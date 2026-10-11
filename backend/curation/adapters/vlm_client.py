@@ -227,8 +227,7 @@ DEFAULT_MAX_CONCURRENCY = 8
 # 调用 p95 都在 60s 内(probe 51.7 / endstate 47.0 / arbitration 57.5),llm 长
 # 输入体质特殊(p99 139.9s)单独给 120s。慢调用不集中在某一批(按分钟稳定在
 # 1.6%-7%)⇒ 是服务端排队的随机抖动,补发大概率落进快的那堆,这是对冲的立论。
-DEFAULT_TIMEOUTS_S = {"probe": 60.0, "endstate": 60.0, "arbitration": 60.0,
-                      "caption": 60.0, "llm": 120.0}
+DEFAULT_TIMEOUTS_S = {"probe": 60.0}
 
 #: 首发排队等闸门许可的保险丝(秒)。排队本身**不烧 2T 预算**(方案 A,2026-08-31
 #: 用户拍板):正常拥堵该等就等——队深被上游 episode 信号量天然封顶,等待一定
@@ -554,7 +553,6 @@ def probe_endpoint(endpoint: str, model: str, *, api_key_env: str | None = None,
 def vlm_completion_from_config(cfg: dict):
     """Production scorer: continuous multi-camera video -> structured assessment.
 
-    Frame factories above remain available for historical evaluations only.
     An unsupported video endpoint fails explicitly; it never falls back to images.
     """
     from .video_vlm import make_video_assessor
@@ -586,12 +584,3 @@ def camera_check_from_config(cfg: dict):
                                fps=float((vlm.get("video") or {}).get("fps", 5)),
                                max_in_flight=int(vlm.get("max_concurrency",
                                                          DEFAULT_MAX_CONCURRENCY)))
-
-
-# ══ 取证仲裁链的提示词与工厂(2026-08-13 定稿)═══════════════════════════════
-# 提示词全部原样承接实验版 arb_bench_b_v2(droid-200 真值上校准过的措辞):
-# - 问题生成三军规(禁加强词/严格度不超指令字面/gripper 不当 target):删一条冤杀就涨;
-# - 判官讲理标准三句(达成即YES/看不见答UNCLEAR绝不猜NO/空间短语按说话人本意):
-#   实验里把冤杀 52→17。改措辞前先回 droid-200 重测,不许手感调优。
-
-

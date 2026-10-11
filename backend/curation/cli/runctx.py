@@ -19,12 +19,9 @@ from ..streams import objects as stream_objects
 from .errors import CliError, InputUnreachable, ModuleFailed, UsageError
 from .framework import Context
 
+#: the gates the module code reads from its config (the episode gate is the stage's own, ``check``)
 GATE_CONFIG_KEYS = {
-    "episode": "pipeline.vlm_episode_concurrency",
     "probe": "checks.task_success.vlm.max_concurrency",
-    "caption": "skill_profile.caption_concurrency",
-    "llm": "skill_profile.llm_concurrency",
-    "audit": "skill_profile.audit_concurrency",
 }
 
 
@@ -164,8 +161,6 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
         else:
             for entry in cfg["checks"].values():
                 entry["enable"] = False
-            for extra in ("skill_profile", "dedup"):
-                cfg.setdefault(extra, {})["enable"] = False
     except ValueError as e:
         raise UsageError(str(e)) from None
     if args is not None and hasattr(args, "vlm_endpoint"):
@@ -195,8 +190,7 @@ def vlm_gates(args, plan_stage: dict | None) -> dict:
     """The VLM gates of this call: the plan stage's, else derived from ``--concurrency``.
 
     With neither, every gate is 1: one model request in flight at a time (doc 02
-    §1: no concurrency unless asked for). ``derive_gates(1)`` would still allow two
-    review votes at once (the endstate gate never drops below 2 there).
+    §1: no concurrency unless asked for).
     """
     from ..planner.gates import derive_gates
 

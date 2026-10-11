@@ -3,7 +3,7 @@
 Upload validation with located errors, the task rules for the EEF module (an upload handle, never a
 server path; the module is preflighted against the dataset with the uploaded file; it needs a model)
 and - in the slow tests - a task that runs it end to end (the files are copied into the run
-directory, it judges the frame stage's survivors next to task_success, the report has its section and
+directory, it judges every selected episode next to task_success, the report has its section and
 the delivery its artifacts) and one where a person settles what it could not.
 """
 from __future__ import annotations
@@ -85,24 +85,6 @@ def test_upload_is_validated_on_arrival_with_located_errors(daemon):
     assert _upload(d, "no_such_kind", "x.json", {}, status=400)["error"]["code"] == "validation_failed"
 
 
-def test_a_gripper_calibration_is_validated_on_arrival(daemon):
-    """Design doc 22 §5.4: a handheld gripper's umi-calibration/2, checked as the exporter checks it."""
-    from ..eef import das_mcap as F
-
-    d = daemon()
-    up = _upload(d, "eef_gripper_calibration", "das.json", F.calibration())
-    s = up["validation"]["summary"]
-    assert (s["gripper"], s["pose_frame"], s["assumed"], s["intrinsics_fallback"]) == ("das_test", "vio_body_flu",
-                                                                                       ["T_camera_tcp"], ["robot1"])
-    assert [w["problem"] for w in up["validation"]["warnings"]] == ["assumed, not declared by the gripper's maker: T_camera_tcp"]
-    bad = _upload(d, "eef_gripper_calibration", "bad.json",
-                  F.calibration(body_to_optical=[[1, 0, 0], [0, 1, 0], [0, 0, -1]]), status=400)
-    assert bad["error"]["details"]["errors"][0]["code"] == "calibration_invalid"
-    assert "proper rotation" in bad["error"]["message"]
-    assert _upload(d, "eef_gripper_calibration", "old.json", {**F.calibration(), "schema_version": "umi-calibration/1"},
-                   status=400)["error"]["code"] == "validation_failed"
-
-
 def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daemon, monkeypatch):
     from daemon import uploads as U
 
@@ -182,45 +164,6 @@ def test_without_seeds_or_a_template_the_module_gives_the_models_opinion(daemon)
     assert entry["availability"] == "available" and any("vlm_opinion" in n for n in entry["notes"])
 
 
-
-def test_the_record_mapping_is_validated_on_arrival_and_preflighted(daemon, tmp_path):
-    """F5.15 (design doc 12 §8.7, D-E16): the dataset-record mapping is an upload of its own kind, checked on
-    arrival; the task's preflight says whether its columns are in the dataset. Optional: without it the
-    sub-item is unsupported and nothing else changes."""
-    from ..cli.test_eef_record import MAPPING
-    from ..cli.test_eef_record import _bundle as _posed
-
-    d = daemon()
-    up = _upload(d, "eef_record_mapping", "record.json", MAPPING)
-    assert up["validation"] == {"valid": True, "warnings": [], "summary": {
-        "sources": ["joints"], "robot": "franka_panda", "columns": ["action"], "topics": [], "declared_frames": []}}
-    # retired in registry 5.1 (the dataset declaration says the records, design doc 25 §3): no longer drafted by the
-    # preflight, still checked on arrival for an older task
-    (entry,) = [m for m in d.preflight()["result"]["modules"] if m["id"] == EEF]
-    assert "drafts" not in entry
-    wrong = json.loads(json.dumps(MAPPING))
-    wrong["record"]["joints"]["robot"] = "ur5"
-    bad = _upload(d, "eef_record_mapping", "record.json", wrong, status=400)["error"]
-    assert bad["code"] == "validation_failed" and bad["details"]["errors"][0]["code"] == "robot_model_unknown"
-    assert "franka_panda" in bad["message"]
-    del wrong["record"]["joints"]["units"]
-    wrong["record"]["joints"]["robot"] = "franka_panda"
-    bad = _upload(d, "eef_record_mapping", "record.json", wrong, status=400)["error"]
-    assert bad["details"]["errors"][0]["code"] == "record_mapping_invalid" and "units" in bad["message"]
-    traj = _upload(d, "eef_trajectory", "trajectory.json", json.loads(open(_posed(tmp_path)).read()))
-    body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"],
-                                                                     "record_mapping": traj["handle"]}}],
-                       start_now=False)
-    r = d.api("POST", "/tasks", json=body)
-    assert r.status_code == 400 and "eef_record_mapping" in r.text             # a file of the wrong kind
-    cells = {}
-    for name, params in (("without", {}), ("with", {"record_mapping": up["handle"]})):
-        created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], **params}}],
-                           start_now=False)
-        (entry,) = [m for m in d.rt.repo.get_task(created["id"]).preflight["modules"] if m["id"] == EEF]
-        cells[name] = entry["subitems"]["record_consistency"]
-    assert cells["without"] == {"availability": "unsupported", "reason_code": "record_mapping_missing"}
-    assert cells["with"]["availability"] == "available"
 
 def test_the_module_needs_no_model(daemon):
     """Design doc 25 D84 (registry 5.2): the module no longer needs a model - a task without one is accepted, the
@@ -316,7 +259,7 @@ def test_an_eef_task_runs_end_to_end(daemon):
                                                                                       "results.jsonl")))}
     ts = {r["episode_index"] for r in (json.loads(x) for x in open(os.path.join(rd, "checks", "task_success",
                                                                                 "results.jsonl")))}
-    assert set(recs) == ts                                   # the same survivors as task_success
+    assert set(recs) == ts                                   # the same episodes as task_success
     (row,) = [m for m in task["modules"] if m["id"] == EEF]
     assert row["state"] == "succeeded" and row["episodes_total"] == len(recs) and row["episodes_error"] == 0
     assert {r["details"]["input_file_sha256"] for r in recs.values() if r["details"].get("input_file_sha256")} \
@@ -355,7 +298,7 @@ def test_an_eef_task_runs_end_to_end(daemon):
 def test_a_person_settles_a_conflict_and_the_delivery_follows(daemon, fake_vlm):
     """F5.11, design doc 25 §7.3: with a seed on every frame the CPU measures and finds the positions fine, the
     model (scripted) refutes every window - a conflict, the only card; "inconsistent" rejects it and
-    "consistent" keeps it once the decisions are executed, and the re-export delivers accordingly."""
+    "consistent" keeps it once the decisions are executed, and the new revision is delivered."""
     import re
 
     plain = fake_vlm.fake.answer
@@ -454,8 +397,9 @@ def test_an_eef_task_pauses_between_its_halves_and_asks_what_it_kept(daemon, fak
             return {s["id"]: s["state"] for s in d.get(tid)["progress"]["stages"]}.get("vlm_prep") == "succeeded"
 
         # the CPU half's stage reported done (not only its packages on disk) while the model is held: the pause
-        # lands between the halves however slow the machine is
-        d.wait_for(lambda: len(kept()) == 8 and fake_vlm.count(needle) > 0 and prep_done(),
+        # lands between the halves however slow the machine is. Episode 7 is not in the trajectory: its CPU half
+        # makes the record and asks nothing, so the model half may have taken its package already
+        d.wait_for(lambda: set(range(7)) <= set(kept()) and fake_vlm.count(needle) > 0 and prep_done(),
                    what="every episode's CPU half kept and its stage done while the model is asked")
         r = d.action(tid, "pause")
         assert r.status_code == 200, r.text

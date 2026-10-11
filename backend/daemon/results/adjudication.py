@@ -6,9 +6,7 @@ them (C2 1.5 ``final-list``, v1's queues; D42, D43) - the queue never re-derives
 An item names its line (``line``; before C2 1.5 the line of its ``kind``), and
 :mod:`.catalog` - the registry's review lines - says which tab shows it: ``task_verdict``
 on the review tab (one question: is this episode usable; its answer may carry a rewritten
-task text, and for a suspected label conflict the original annotation and the model's
-description come from the revision's ``label_audit.json`` as the suggestion),
-``reject_appeal`` on the appeals tab (rejects of an appealable
+task text), ``reject_appeal`` on the appeals tab (rejects of an appealable
 module: task_success; physical and structural gates are final - rule 2). A line the catalog does not know is not asked.
 
 A question that was answered keeps its card after the answer was applied and the
@@ -67,9 +65,6 @@ class Question:
     source_module: str
     reason: str
     annotation: str | None = None
-    caption: str | None = None
-    suggestion: str | None = None
-    priority: str | None = None
     revision: int = 0
     codes: tuple[str, ...] = ()         # C2 2.0: the finding codes the question is about
     items: tuple[str, ...] = ()         # ... and their taxonomy items
@@ -105,8 +100,6 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
     """Every question revision ``rev`` asks, by (episode, line)."""
     def make():
         out: dict[tuple[int, str], Question] = {}
-        audit = rev.audit_entries()
-        relabel = set(C.relabel_lines())
         for ep, entry in rev.review().items():
             asked: dict[str, list[dict]] = {}
             for item in entry.get("review") or []:
@@ -117,16 +110,9 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
                 ln = C.line(line_id)
                 first = items[0]
                 reasons = [str(i.get("reason") or "") for i in items]
-                q = {"source_module": str(first.get("source_module") or ""),
-                     "priority": _str(first.get("priority")), "annotation": _task_text(rev, ep),
+                q = {"source_module": str(first.get("source_module") or ""), "annotation": _task_text(rev, ep),
                      "codes": tuple(dict.fromkeys(str(c) for i in items for c in i.get("codes") or [])),
                      "items": tuple(dict.fromkeys(str(c) for i in items for c in i.get("items") or []))}
-                if line_id in relabel:                  # the annotation against the description
-                    a = audit.get(ep) or {}
-                    caption = _str(a.get("caption"))
-                    q.update(annotation=_str(a.get("label")) or q["annotation"],
-                             caption=caption, suggestion=caption,
-                             priority=q["priority"] or _str(a.get("priority")))
                 if ln.tab == "appeals":                 # why it was rejected
                     reasons += _reject_reasons(rev, ep)
                 out[(ep, line_id)] = Question(ep, line_id, reason=_join(reasons),
@@ -175,8 +161,7 @@ class Card:
         for q in self.questions:
             d = standing.get((q.episode, q.line))
             qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
-                       "annotation": q.annotation, "caption": q.caption,
-                       "suggestion": q.suggestion, "priority": q.priority,
+                       "annotation": q.annotation,
                        "latest_decision": decision_json(d) if d is not None else None})
             if q.codes:                         # C2 2.0 (C4 2.3.0): what the card is rendered by
                 qs[-1].update(codes=list(q.codes), items=list(q.items))

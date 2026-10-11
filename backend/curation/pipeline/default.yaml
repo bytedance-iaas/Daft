@@ -5,26 +5,9 @@ pipeline:
   evidence_frames: flagged       # 任务成败证据帧:flagged=只存拒绝/待裁决(默认)/all=全存/off=不存
   frame_sample_interval_s: 0.5     # 视觉/同步检查的抽帧间隔
   frame_max_side: 448
-  max_endstate_cams: 4             # 二值复核纳入的相机路数上限(主相机优先,其余按名字序)。
+  max_endstate_cams: 4             # 任务成败判定一次请求送几路相机(主相机优先,其余按名字序)。
                                    #   2026-07-21 由"主相机+wrist"放开为全部路:DROID ep34 的关键
                                    #   视角 exterior_2 曾被按名字过滤挡掉。
-  vlm_episode_concurrency: 32      # VLM 段同时处理几条 episode。VLM 段占端到端 ~97%
-                                   #   (10条 DROID:关掉 VLM 仅 12s),且几乎全是等服务端响应 → 并发是这里
-                                   #   唯一有效的提速手段。⚠️ 三类请求的在飞上限各自独立,**不是**本值×帧级:
-                                   #   打分 probe = vlm.max_concurrency(进程级一把闸门,所有 episode 共用);
-                                   #   复核 endstate = 本值×2;仲裁 = 本值(2026-09-07 吞吐诊断实锤)。
-                                   #   2026-07-22 实测 10 条 DROID(1→447s,8→84s,5.3×);
-                                   #   2026-07-27 全后端基准(32条 droid,并发 8/16/32)后默认 8→32
-                                   #   (用户定):方舟 32×8=256 总在飞零 429 零排队(配额余量充足),
-                                   #   判定质量三档稳定;自托管 vLLM 服务端排队无害。批量越大收益
-                                   #   越大(墙钟≈N×单条耗时/并发)。设 1 = 退回串行。⚠️ 闸门是自建
-                                   #   信号量,**不是** daft 的 max_concurrency(那个对 async 行级
-                                   #   UDF 静默失效,见 funnel.py)。
-  endstate_frames: 8               # 二值复核每路取几帧(全程均匀,含中段)。⚠️原实现只取首尾各1帧,
-                                   #   ep34 消融证明那是误杀根因:同相机同模型,首尾2帧怎么问都判
-                                   #   "未完成",带中段的全程8帧怎么问都判"完成"——阶跃型任务
-                                   #   (倒/放/开关)证据在动作瞬间(1-2秒),末态看不出。图片数=路数×本值。
-
 ingest:
   # rerun(.rrd)格式总开关(2026-08-21):release 只对外支持 LeRobot v2/v3,默认关。
   # 关着时 .rrd 目录会被明确拒绝("RRD 质检暂未开放");打开即恢复全部 RRD 能力
@@ -56,36 +39,29 @@ ingest:
   mcap_mapping: null
 
 checks:
-  # 漏斗顺序按成本:纯数值 → 抽帧 → VLM(垫底只跑幸存者)
+  # 判废与否不在这里:模块只报发现,任务的判决策略定级(设计 17 §4)。这里是各检查的参数。
   timestamp_check:                 # M5a-L0
     enable: true
-    gate: hard
     params:
       min_duration_s: 1.0          # 短于此=残段(采集中断碎片)硬杀;实证 droid ep000018(0.5s/8帧)
   kinematic_limits:                # M5b 核心
     enable: true
-    gate: hard
     params: {margin: 0.02}
-  motion_quality:                  # M4b(六维软分)
+  motion_quality:                  # M4b(六个分项,只报告)
     enable: true
-    gate: soft
-    weight: 1.0
     params: {}
   visual_quality:
     # 多相机权重:默认每路 1.0;按相机名(全名或短名如 wrist)覆盖,设 0 =该路不进总分
     # 例: camera_weights: {wrist: 0.5}
     camera_weights: {}
     enable: true                   # M4a(抽帧)
-    gate: soft
-    weight: 1.0
     params:
       blur_ref_var: 100.0   # 清晰度参考线(lapvar,绑定 frame_max_side=448 标尺;P5.1 按可用性标注校准)
-  video_action_sync:               # M5a-L1(抽帧+光流,硬门)
+  video_action_sync:               # M5a-L1(抽帧+光流)
     # 2026-08-07 逐相机改造:**每路相机各测一遍**(与视觉质量共用同一次解码),
     # 判废只发生在"所有可信相机一致指向同一个 Δ≠0"这一种情形;单相机数据集永不
     # 因同步判废;测不准/矛盾/无信号一律 passed + 标注(不进人工裁决队列)。
     enable: true
-    gate: hard
     params:
       corr_min: 0.3                # 测量层:峰值相关低于此 = 这一路测不准
       lag_tol_s: 0.25              # |lag| 容忍(≈2-3 帧);两层共用
@@ -94,31 +70,13 @@ checks:
       # kill_lag_min_s: 0.5        # 正滞后判废门槛(相机链路延迟有良性解释,门槛抬高)
       # neg_kill_lag_min_s: 0.25   # 负滞后判废门槛(无良性解释,从严)
       # min_kill_cameras: 2        # 判废至少要几路可信相机同证(孤证不定罪)
-  task_success:                    # M4c(VLM,唯一语义点;永远垫底)
+  task_success:                    # M4c(VLM)
     enable: true
-    gate: hard
-    # 连续视频主判 + 逐机位视频复核；不用图片探针、VOC 或旧完成度阈值。
+    # 一次请求看全部机位的连续视频判成败，同一次回答带每路相机的意见与画面缺陷（D71）。
     # 相机路数沿用 pipeline.max_endstate_cams，视频预处理见下面 vlm.video。
     params: {}
-    # 取证仲裁链(2026-08-13 用户拍板):
-    # 只接管打分+复核后仍**弃权**的条目再判一次(过/杀/继续弃权),没有推翻老判决的
-    # 权力。droid-200 真值实测:人工 50→32(-36%);代价如实写明=冤杀 1→4,靠已交付
-    # 的「被拒复议」轨道兜底(语义判定的杀可人工捞回)。enable: false = 完全退回
-    # 没有仲裁链的行为(逐字节等价),这是必须保证的性质。
-    arbitration:
-      enable: true
-      consensus: strict            # 全部有效路结论一致才采纳,不一致=弃权(仅支持 strict)
-      kill_min_lines: 2            # 🔴 杀需≥2条有效取证路:实测只有一路的杀 5 条全是冤杀
-                                   #   (与生产线 v7.3「杀人双签/孤证不放行」同一条原则)
-      n_votes: 3                   # 每路判官投票次数(方舟 temperature=0 仍不可复现,取多数)
-      crop_pad: 0.15               # 取证裁剪:target+object 两框并集向外扩 15%
-      upscale: 3                   # 裁剪图放大倍数(小/细目标在原图里看不清)
-      transient_offset_s: 1.0     # 瞬态任务(只抓取/举起)取证时刻=最大闭爪时刻+此偏移
-                                   #   (验末帧会犯"松爪即失败"谬误;夹爪列走 registry 的
-                                   #   gripper_dims,不硬编码数据集)
-      # max_cams: 4                # 外部取证路数上限;不写默认复用 pipeline.max_endstate_cams
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
-                                   #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
+                                   #   本段供任务成败判定(连同画面缺陷)与 EEF 模块的模型复核
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
       model: doubao-seed-2-1-pro-260915     # 出厂默认=2.1-pro(2026-09-24 用户定;依据=umi224 实测:
                                             #   glm-5-3-flash-260828 对 166s 双相机视频稳定 500(字节降到
@@ -127,35 +85,20 @@ checks:
                                             #   2.1-pro 上下文 1024k,四连跑判决完全稳定)。自托管 Cosmos
                                             #   走预设/站点文件切换。
       endpoint: https://ark.cn-beijing.volces.com/api/v3
-      video:                      # 打分/复核/仲裁/caption 共用连续视频输入
+      video:                      # 任务成败判定的连续视频输入
         fps: 5                    # 本地编码与服务端共用的抽帧率（设计 13）：模型可见帧与全帧编码+服务端抽样一致，只省字节
         max_side: 720              # 裁片分辨率上限，保持宽高比
         max_bytes: 33554432        # 单次请求全部机位视频总字节上限，超出明确报错
-      max_concurrency: 64          # 打分 probe 请求的**进程级**在飞上限(1=串行)。⚠️ 真实语义不是
-                                   #   "每条 episode 逐帧并发 N":make_multiview_completion 每次 run 只建
-                                   #   一把 SharedGate,闭包进 daft UDF,所有 episode 共用这 N 张许可,
-                                   #   与 vlm_episode_concurrency 无关。probe 占判定段请求 46%/耗时 50%,
-                                   #   它被钉住整段就被钉住。
-                                   #   2026-09-07 诊断(DROID 50 条,episode 并发 32):16→64 判定段
-                                   #   13.8→7.7min,probe 有效并发 15.3→43.0,方舟在飞 117 零 429、
-                                   #   均延迟 22.6→22.8s 无排队;64 只用到 67%,再往上受 episode 并发 32
-                                   #   与 asyncio 线程池压住,加大本值无益。默认 16→64(用户定)。
-                                   #   历史:2026-08-06 8→16(droid-30 判定段 11.9→4.7min)。
-                                   #   ⚠️上 Ray 后调小:总在飞=worker数×本值,一个旋钮压在服务端配额下。
+      max_concurrency: 64          # 判定请求(probe)的进程级在飞上限(1=串行);任务的执行计划
+                                   #   按 VLM 并行度 N 覆盖它(设计 04 §2.2)。
       api_key_env: ARK_API_KEY     # 只写环境变量**名**,密钥本身只存环境变量/K8s Secret,
                                    #   绝不进 YAML 与仓库。切自托管时预设会把它清空(不发鉴权头)。
       timeouts_s:                  # 分类型超时(秒),站点文件可只覆盖想改的几项(深合并)。
                                    #   这也是**对冲补发**的触发线:单次调用到线未回 → 同一并发
                                    #   闸门下补发一次,谁先回用谁;整次调用最坏 2×此值出结果或作废。
-                                   #   2026-08-15 droid-200 实测定值:各类 p95 都在 60s 内
-                                   #   (probe 51.7 / endstate 47.0 / arbitration 57.5),旧默认
-                                   #   600/1800 让超时调用卡线白等(6 次失败 5 次恰 600.1s,
-                                   #   打分步 18.1 分钟被拖到 23.3 分钟)。
-        probe: 60                  # 任务完成度打分
-        endstate: 60               # 逐机位复核
-        arbitration: 60            # 取证仲裁
-        caption: 60                # 技能打标
-        llm: 120                   # 技能归纳(单次输入长,p99 139.9s,单独给足)
+                                   #   2026-08-15 droid-200 实测定值:p95 在 60s 内,旧默认 600 让超时
+                                   #   调用卡线白等。视频请求按送出的视频长度再放宽(video_vlm)。
+        probe: 60                  # 任务成败判定(一次请求)
       # ── 切换后端:--vlm-backend <名>(预设见下方 vlm_backends,一个参数三元组全换)──
       #    仍可 --set checks.task_success.vlm.* 微调(--set 在 backend 之后应用,赢)
 
@@ -229,116 +172,6 @@ vlm_backends:
     hardware:                      # 填你的卡型(如 NVIDIA A100 80G);留空 = 界面写"未记录"
     service_type: 自托管 vLLM
 
-skill_profile:                     # 技能画像:caption 路线(VLM 端点可达时);不可达降级为按原始标注分组
-  method: caption
-  # 分类判据(2026-07-11 判据显式化):分类维度/颗粒度由这段文字声明,类数由数据
-  # 在判据下自然涌现(不设数字范围)。客户可整段替换(如改按物体类型/场景分)。
-  # ⚠️ 与 curation/dataset_level/taxonomy.py 的 DEFAULT_GUIDELINE 保持同文(改一处必改另一处)。
-  # 2026-07-30 粒度改进:族的定义由"动词"改成"交互类型"——旧判据在 droid-200 归出 24 族,
-  #   前四族 Put/Pick/Take/Move 占 72% 却是同一种抓放,11 个族只有 1 条(含互逆对)。
-  taxonomy_guideline: |
-    Group by MANIPULATION SKILL, at TWO levels: family = interaction type,
-    sub-skill = motion-pattern variant.
-    - FAMILY = the TYPE OF PHYSICAL INTERACTION between robot and object (how the
-      robot acts on it), NOT whichever verb a caption happens to use. Typical
-      families, take only what the data needs: grasp-and-transport (grasp / lift /
-      carry / place / release — pick, take, put, move, stack ALL belong here);
-      articulated-object actuation (open, close, unscrew, plug, press, switch);
-      deformable-object manipulation (fold, unfold, bundle, drape); non-prehensile
-      manipulation (push, pull, tip, flip, slide — object never grasped); tool cyclic
-      motion (wipe, stir, sweep, vacuum); pouring / granular transfer.
-    - That list is a REFERENCE, not a closed set. If the data is a different kind of
-      interaction (suturing, cable routing, assembly, ...), name a family after ITS
-      interaction type. Never file an episode into a listed family whose interaction
-      type it does not actually match — a wrong-but-familiar label is worse than a new
-      family.
-    - NEAR-SYNONYM verbs NEVER get their own family: pick / take / grab / lift are
-      ONE family, and put / place / set belong to that SAME family.
-    - INVERSE action pairs stay in the SAME family ONLY IF they share the same CONTACT
-      MODE (fold/unfold, open/close, screw/unscrew — both directions touch and hold the
-      object the same way); for those, direction is a SUB-SKILL difference, never a
-      family difference. push/pull are NOT such a pair: pushing normally never grasps
-      while pulling normally requires a grasp, so file each of them by its actual
-      CONTACT MODE, not by the fact that they are opposites.
-    - SUB-SKILL = verb + motion-pattern variant WITHIN the family: place-onto-surface
-      vs place-into-container vs stack; open vs close; fold vs unfold.
-    - SUB-SKILL granularity is governed as STRICTLY as family granularity. A sub-skill
-      is a RECURRING MOTION PATTERN, not a one-off phrasing. Two candidate sub-skills
-      that differ ONLY by destination, by object identity, or by what the object is
-      attached to / detached from are the SAME sub-skill and must be one.
-    - INVERSE DIRECTIONS must stay SEPARATE sub-skills inside their family: open vs
-      close, fold vs unfold, pour-in vs pour-out, screw vs unscrew are NOT the same
-      skill and must NEVER be merged — the contact is alike but the motion runs the
-      opposite way. Whenever two sub-skills are opposite directions of the same action,
-      they are DIFFERENT skills. Never name a combined group after one direction.
-    - Do NOT open a new sub-skill for a single caption merely because no existing one
-      fits it exactly: if ANY sub-skill already in that family shares its motion
-      pattern, put the caption there. A one-member sub-skill is legitimate ONLY when NO
-      sub-skill in the family shares its motion pattern.
-    - NEAR-SYNONYM verbs never get their own SUB-SKILL either: connect / join /
-      attach / mate / insert / plug describing the SAME contact and the SAME motion
-      path are ONE sub-skill. Before opening a second sub-skill inside a family, ask
-      whether the two differ in the MOTION ITSELF (approach direction, contact mode,
-      release) — if the only difference is which English verb the caption chose, they
-      are the same sub-skill.
-    - The number of sub-skills follows the number of DISTINCT MOTION PATTERNS in the
-      family — no more, no fewer. A family whose episodes all share one motion pattern
-      has exactly ONE sub-skill, and that is correct, not a degenerate failure. A
-      family containing several distinct approach / contact / release patterns must
-      expose all of them. Count is never the criterion; the motion is.
-    - Object identity, color, size, brand, and table position are NOT grouping
-      criteria: 'move the blue fork to the burner' and 'move the silver pot to the
-      burner' are the SAME skill.
-    - The DESTINATION/LOCATION (burner, sink, drawer, tray, side of table, ...) is
-      also NOT a criterion: place-on-burner and place-on-tray are the SAME sub-skill
-      (both place-onto-surface).
-    - An object CATEGORY may distinguish sub-skills ONLY when it changes the motion
-      pattern: place-onto-surface vs place-into-container differ (different approach
-      and release motion); blue cube vs red cube do NOT, burner vs tray does NOT.
-    - criterion texts must describe MOTION, never colors/object identities/locations.
-    - The number of families and sub-skills must EMERGE from the data under this
-      criterion: create exactly as many as naturally exist. Do not pad, do not force
-      a count. One family holding everything is a failure; one sub-skill per caption
-      is a failure. Emitting a family that has NO members is ALSO a failure — the
-      typical families listed above are a VOCABULARY, not a checklist; never output a
-      family you did not actually fill.
-  n_frames: 8
-  audit_recheck_n: 3               # 标注-画面分歧的**复检轮数**(1 = 关闭本机制)。
-                                   #   why:我方 caption 不可复现——同一条 episode、同一批帧,
-                                   #   方舟 temperature=0 连打 5 次得到 5 种说法(droid ep000143
-                                   #   两次分别是 "put the towel on the sink counter" /
-                                   #   "Hang the towel on the hook",而原始标注逐字正确)。
-                                   #   拿一个不稳的东西当基准去质疑客户标注是产品缺陷,故把
-                                   #   不可复现变成信号:对被标记条目重打标 N 次,N 次(连同原
-                                   #   描述)归到同一族=我方稳→保持高置信;自己就不一致=我们
-                                   #   自己都没看准→降级 low_caption_unstable,不指控标注。
-                                   #   一致性判定在**族**这一层(措辞天然会变,族一致就算稳)。
-                                   #   成本:只对被标记条目重跑,非全量——droid-200 实测约
-                                   #   30-40 条 × 3 次 ≈ 100 次 VLM 调用(全量 caption 的 ~1/2 轮)。
-  audit_concurrency: 16            # 标注-画面分歧判官的并发度。判官 2026-08-22 起**单对单**问
-                                   #   (曾 40 对一批:同批邻居把判官带偏,29 对×5 遍有 13 对翻转、
-                                   #   每遍打旗 17~26 条不等;单对单 9 对翻转、13~16 条,对人工
-                                   #   裁决的符合数 5~15 → 16~19)。单次 ~25s,200 条 16 路 ≈ 5 分钟。
-  llm_concurrency: 16              # 自查裁判两两合并问询的并发度(2026-08-06:该段曾嵌套循环
-                                   #   纯串行,droid-30 实测 605s 净墙钟 = 全 run 第二瓶颈;
-                                   #   一波并发+并查集统一合并后 ~54s。候选对通常 <16,再大无益)。
-  caption_concurrency: 32          # caption 同时处理几条 episode(1=串行,排障基线)。
-                                   #   2026-07-22 实测 20 条 DROID(caption 段墙钟):
-                                   #     1 → 312s  1.0×    8 → 66s  4.7×    16 → 37s  8.4×
-                                   #   2026-07-27 默认 8→32(用户定,与 vlm_episode_concurrency
-                                   #   同步):32 条 caption 请求仍远低于漏斗段已验证的 256 在飞;
-                                   #   内存按 16 并发实测 1.83GB 峰值线性外推 ~3.7GB,limit 内富余。
-                                   #   为什么是**独立**旋钮而非复用 vlm_episode_concurrency:
-                                   #   漏斗那层总在飞 = episode并发 × 帧级并发(8×8=64),
-                                   #   而 caption 每条只发 1 个请求 ⇒ 同数字在两处实际负载差 8 倍,
-                                   #   共用会让 caption 白白欠载;且 caption 并发 16 = 16 请求,
-                                   #   仍远低于漏斗已验证的 64,方舟侧安全。
-                                   #   内存:decode 未采样,整条 episode 帧全解进内存再抽 8 帧,
-                                   #   但抽样后原始帧即释放 ⇒ 实测并发16 容器峰值仅 1.83GB(limit 5%)。
-
-verdict:
-  soft_threshold: 0.5              # 软分加权低于此 → drop(P5.1 校准)
-
 # 公共数据集镜像(2026-08-21):一个匿名可读的 TOS 桶,HF 数据集按 <prefix>/<名字>/ 镜像,
 # 桶根有 {名字: [对象 key…]} 的清单。配了桶名,界面「数据来源」多出「公共数据集」一项、
 # CLI 多出 `curation public`;不配 = 功能整个不出现。桶名/地区是部署常量,写站点配置。
@@ -348,10 +181,3 @@ public_datasets:
   prefix: dataset                 # 数据集都在这个前缀下
   manifest: dataset_files.json    # 桶根清单的对象名
   label: HuggingFace 缓存桶          # 界面「数据集目录」旁二选一里这个来源的叫法
-
-# 交付数据集导出(2026-08-21 方案 1:边出边传)。v3 源的 data / 视频按大小滚动分文件,
-# 文件封口即上传(直连交付)、传完即删 —— pod 本地盘占用与数据集大小无关。
-# 阈值留空 = 取源 info.json 的 data_files_size_in_mb / video_files_size_in_mb(缺省 100 / 200)。
-export:
-  video_file_mb: null
-  data_file_mb: null

@@ -31,7 +31,7 @@
     },
     "stage": {
       "type": "string",
-      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel. 1.2 (design doc 17 §5.5): the stages of a two-block plan are the registry's - integrity, numeric, frame, duplicate, vlm_prep; vlm (autolabel and profile in plans made before they retired) - and post_verdict / profile_vlm retire with the funnel"
+      "description": "e.g. check:visual_quality, aggregate:final. 1.2 (design doc 17 §5.5): the stages of a two-block plan are the registry's - integrity, numeric, frame, duplicate, vlm_prep; vlm"
     },
     "block": {
       "enum": ["cpu", "vlm"],
@@ -108,12 +108,12 @@
         },
         "module": {
           "type": "string",
-          "description": "a module id, or autolabel. On the actual ledger a merged request is booked under the module ids it carried, sorted and joined with +, e.g. example_grasp+example_table; the attributed ledger splits it back to single modules."
+          "description": "a module id. On the actual ledger a merged request is booked under the module ids it carried, sorted and joined with +, e.g. example_grasp+example_table; the attributed ledger splits it back to single modules."
         },
         "call_kind": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "v1's kinds are probe, endstate, arbitration, caption and llm; merged marks a request that carried several modules (actual ledger only). A new module sends under its own kind, named like a module id."
+          "description": "probe is task_success's one request per episode (its camera defects ride on it), eef_review the EEF module's; merged marks a request that carried several modules (actual ledger only). A new module sends under its own kind, named like a module id."
         },
         "requests": {
           "type": "integer",

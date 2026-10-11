@@ -159,9 +159,7 @@ async def apply_adjudication(request: Request, task_id: str):
     rt, who = runtime(request), principal(request)
 
     def handler() -> Response:
-        sub = orchestrator_of(rt).create_subtask(
-            task_id, "apply_adjudication", who,
-            scope={"relabel_rerun": body.get("relabel_rerun") or "v1"})
+        sub = orchestrator_of(rt).create_subtask(task_id, "apply_adjudication", who, scope={})
         return _subtask_created(rt, sub, who.owner_id)
 
     return await _idem(request, rt, who, "applyAdjudication", body, handler)

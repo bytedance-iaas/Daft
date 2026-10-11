@@ -15,6 +15,18 @@
      "new_label": "pour rice into the green bowl"
     }
    ]
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "applied": 14,
+   "rerun_task_success": [
+    17,
+    17
+   ],
+   "label_changes": [],
+   "skipped_already_applied": 0
   },
   {
    "schema_version": "1.0",
@@ -31,18 +43,6 @@
     }
    ],
    "relabel_rerun": "v1"
-  }
- ],
- "invalid": [
-  {
-   "schema_version": "1.0",
-   "applied": 14,
-   "rerun_task_success": [
-    17,
-    17
-   ],
-   "label_changes": [],
-   "skipped_already_applied": 0
   }
  ]
 }

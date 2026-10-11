@@ -88,13 +88,11 @@ def open_questions(store: ResultStore, repo: P.Repository, task: P.Task,
     return out
 
 
-def finding_index(rev: Revision) -> dict[int, tuple[list[str], list[str]]] | None:
+def finding_index(rev: Revision) -> dict[int, tuple[list[str], list[str]]]:
     """episode -> (the taxonomy items of its findings, the levels they have), from the list entries'
-    ``findings``; None when the lists carry none (a revision of the funnel, C2 1.0)."""
+    ``findings``."""
     def make():
         entries = rev.entries()
-        if not any(isinstance(e.get("findings"), list) for _, e in entries.values()):
-            return None
         order = {it["id"]: i for i, it in enumerate(registry.taxonomy()["items"])}
         out: dict[int, tuple[list[str], list[str]]] = {}
         for ep, (_, entry) in entries.items():
@@ -151,15 +149,14 @@ def page(store: ResultStore, repo: P.Repository, task: P.Task, rev: Revision, *,
             continue
         if needle is not None and needle not in str(ep):
             continue
-        its, lvs = found.get(ep, ([], [])) if found is not None else ([], [])
+        its, lvs = found.get(ep, ([], []))
         if level is not None and level not in lvs:
             continue
         if item is not None and item not in its:
             continue
         row = {"episode_index": ep, "list": name, "review": ep in asking,
                "reason_modules": reason_modules(name, entry), "review_modules": asking.get(ep, [])}
-        if found is not None:
-            row.update(items=its, levels=lvs)
+        row.update(items=its, levels=lvs)
         items.append(row)
     scope = {"task": task.id, "list": list_name, "review": review, "q": needle}
     if level is not None or item is not None:            # cursors of 1.x filter sets stay valid

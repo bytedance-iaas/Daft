@@ -143,8 +143,7 @@ def test_the_verdict_ignores_the_rider_and_the_report_shows_it(vlm_stage, ran, t
     shutil.copytree(vlm_stage["reference_dir"], bare)        # task_success only, no rider records
     shutil.rmtree(os.path.join(bare, "checks", MOD), ignore_errors=True)
     for rd in (bare, ran["dir"]):
-        res = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "1",
-                  "--episodes", "0-7")
+        res = run("aggregate", "--run-dir", rd, "--revision", "1", "--episodes", "0-7")
         assert res.rc == 0, res.doc
     lists = {}
     for rd in (bare, ran["dir"]):

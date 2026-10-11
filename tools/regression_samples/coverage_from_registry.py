@@ -33,7 +33,7 @@ MODULES_JSON = os.path.join(REPO, "docs", "contracts", "modules.json")
 #: a module's needs that some datasets cannot meet, and what each asks for
 CONDITIONS = {"embodiment_profile": "机器人型号要在规格库里",
               "state": "数据集要有状态量",
-              "eef_input": "要上传 trajectory.json"}
+              "eef_input": "要有轨迹：数据集声明够生成，或上传 trajectory.json"}
 JUDGED_LEVELS = ("blocking", "review")
 #: items the preflight judges, outside the registry
 PREFLIGHT_ITEMS = ("SET-2",)

@@ -1,9 +1,7 @@
 """Execution errors are not abstentions (D33), and the CLI's defaults (W3).
 
-* A model call that fails, a camera that does not decode, an episode whose
-  caption could not be made: the record is ``verdict = error`` with the
-  incidents, even where v1's fallbacks still reach a conclusion, and aggregate
-  holds the episode back. A model that answers "can't tell" is an abstention,
+* A model call that fails or a camera that does not decode: the record is an
+  execution error with the incidents, and aggregate holds the episode back. A model that answers "can't tell" is an abstention,
   never an error.
 * No concurrency and no retry unless asked for (doc 02 §1): one model request
   in flight at a time, one attempt per request; ``--concurrency`` and
@@ -64,8 +62,9 @@ def _same_as_reference(run_dir: str, vlm_stage) -> None:
         {e: comparable(r) for e, r in ref.items()}
 
 
-def _funnel(run_dir: str) -> dict[int, dict]:
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "funnel", "--revision", "1",
+def _verdicts(run_dir: str) -> dict[int, dict]:
+    """The machine's verdict lines of revision 1."""
+    res = run("aggregate", "--run-dir", run_dir, "--revision", "1",
               "--episodes", "0-7")
     assert res.rc == 0, res.doc
     return {ln["episode_index"]: ln for ln in
@@ -151,7 +150,7 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
     entry = res.doc["modules"]["task_success"]
     assert entry["error_episodes"] == hit and entry["episodes"]["error"] == len(hit)
 
-    lines = _funnel(rd)
+    lines = _verdicts(rd)
     for e in hit:
         assert lines[e]["error_modules"] == ["task_success"]
         if lines[e]["blocking"]:                 # 2 and 5: their timestamps reject them all the same (D35)
@@ -180,22 +179,21 @@ def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
 
 
 def test_an_episode_without_a_task_text_is_not_judged(vlm_stage, tmp_path):
-    """D72: 4 and 6 have no annotation. No caption is written for them and no judgement request
-    is sent: their record says ``no_task_text`` (an info finding, nothing to review), they are
-    not held, and every other check still counts for them."""
+    """D72: 4 and 6 have no annotation. No judgement request is sent for them: their record says
+    ``no_task_text`` (an info finding, nothing to review), they are not held, and every other check
+    still counts for them."""
     rd = _copy(vlm_stage, tmp_path)
     with FakeVlmServer() as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0
     assert len(_posts(vlm)) == vlm_stage["reference_posts"]
-    assert not os.path.exists(os.path.join(rd, "autolabel"))
     recs = results(rd, "task_success")
     for e in (4, 6):
         assert recs[e]["status"] == "ok" and recs[e]["error"] is None
         assert recs[e]["details"]["skipped"] == "no_task_text"
         assert [f["code"] for f in recs[e]["findings"]] == ["task_text_missing"]
         assert {u["reason"] for u in recs[e]["unassessable"]} >= {"no_task_text"}
-    verdicts = _funnel(rd)
+    verdicts = _verdicts(rd)
     for e in (4, 6):
         assert verdicts[e]["verdict"] == "keep" and verdicts[e]["error_modules"] == []
     assert verdicts[5]["verdict"] == "drop"                        # its timestamps, as ever

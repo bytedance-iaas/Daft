@@ -586,6 +586,12 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
         source["declaration"] = {"drafted": drafted, "sha256": DCL.sha256(decl)}
     if plan.get("missing"):
         source["missing"] = plan["missing"]
+    # the declaration's records, compared with the trajectory (design doc 25 §6.1; never a draft's)
+    record = None
+    if decl is not None and not drafted:
+        from ..extensions.eef_consistency import declared
+
+        record = declared.record_block(decl)
     how = plan["kind"]
     if how == derive.MISSING_POSE:
         entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
@@ -599,13 +605,13 @@ def _eef_entry(eef_preflight, storage, listing, uri: str, module_params: dict, e
     elif how == derive.MCAP_DERIVE:
         hh = (((decl or {}).get("calibration") or {}).get("handheld") or {}).get("calibration") if not drafted else None
         entry = eef_preflight.derived_entry(params, episodes=episodes, lerobot_root=None if "://" in uri else uri,
-                                            calibration=hh)
+                                            calibration=hh, record=record)
     elif how == derive.GENERATE and "readiness" in plan:
         joints = isinstance(((decl or {}).get("semantics") or {}).get("joints"), dict)
         entry = eef_preflight.declared_entry(params, plan["readiness"], episodes=episodes, joints=joints)
     elif how == derive.UPLOAD:
         entry = eef_preflight.consistency_entry(params, episodes=episodes, media_exists=lambda key: key in listing,
-                                                lerobot_root=None if "://" in uri else uri)
+                                                lerobot_root=None if "://" in uri else uri, record=record)
     else:                                          # session, a handheld LeRobot export, the dataset's own file
         try:
             temp = derive.to_temp(storage, listing)

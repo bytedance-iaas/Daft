@@ -8,10 +8,20 @@ from curation.pipeline.check_stage import StageOptions, StageRun
 from curation.pipeline.episode_state import EpisodeState, state_path
 from curation.pipeline.records import record_v2
 
+#: the run's blocks (design doc 17 §3.3): the stages hand every episode on along these chains
+CHAINS = {"cpu": [("numeric", ["timestamp_check"]), ("frame", ["visual_quality", "video_action_sync"])],
+          "vlm": [("vlm", ["task_success"])]}
+
+
+def _new_store(path) -> EpisodeState:
+    store = EpisodeState(path)
+    store.set_blocks(CHAINS)
+    return store
+
 
 def test_check_pool_refills_after_fast_episode_and_commits_before_notification(tmp_path):
     path = state_path(tmp_path)
-    store = EpisodeState(path)
+    store = _new_store(path)
     store.bootstrap(str(tmp_path), ["timestamp_check"])
     store.close()
     second_done = threading.Event()
@@ -25,7 +35,7 @@ def test_check_pool_refills_after_fast_episode_and_commits_before_notification(t
         def completed(self, episode, survivor):
             check = EpisodeState(path)
             try:
-                assert check.progress_for([episode]) == {episode: "frame"}
+                assert check.positions([episode], "cpu") == {episode: "frame"}
             finally:
                 check.close()
             completions.append(episode)
@@ -57,7 +67,7 @@ def test_check_pool_refills_after_fast_episode_and_commits_before_notification(t
 
 def test_stream_pause_drains_active_work_without_admitting_more(tmp_path):
     path = state_path(tmp_path)
-    EpisodeState(path).close()
+    _new_store(path).close()
     incoming = deque([[0], [1]])
     completed = []
     ctx = SimpleNamespace(stop_requested=False, progress=lambda *a, **k: None,

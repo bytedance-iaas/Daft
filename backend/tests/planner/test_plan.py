@@ -59,9 +59,9 @@ def test_full_plan_matches_the_design_example():
     vlm = stage(p, "vlm")
     # D72: no caption stage before the checks - the 88 unlabeled episodes are simply not judged
     assert (vlm["block"], vlm["episodes"]) == ("vlm", "selected") and "after" not in vlm
-    assert vlm["modules"] == ["task_success", "camera_defects"] and "hard_gates" not in vlm
+    assert vlm["modules"] == ["task_success", "camera_defects"]
     # no guard_caption (D73); one request per episode, so episode = probe (2026-10-08)
-    assert vlm["gates"] == {"episode": 64, "probe": 64, "endstate": 64, "arbitration": 32}
+    assert vlm["gates"] == {"episode": 64, "probe": 64}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
     assert stage(p, "final") == {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
 
@@ -90,7 +90,7 @@ def test_the_eef_module_is_in_the_vlm_block():
     assert ids(p) == ["integrity", "numeric", "frame", "duplicate", "vlm_prep", "vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
-        and vlm["episodes"] == "selected" and "hard_gates" not in vlm and vlm["after"] == "vlm_prep"
+        and vlm["episodes"] == "selected" and vlm["after"] == "vlm_prep"
     assert stage(p, "vlm_prep") == {"id": "vlm_prep", "kind": "cpu", "command": "check", "block": "cpu",
                                     "concurrency": 30, "modules": ["eef_video_consistency"], "episodes": "selected"}
     only = plan(["eef_video_consistency"])
@@ -297,9 +297,7 @@ def test_caps_flow_into_the_plan():
     assert p["limits"]["cpu_concurrency"] == {"value": 2, "bound_by": "task"}
     assert p["limits"]["vlm_parallelism"] == {"value": 16, "bound_by": "task"}
     assert p["vlm_parallelism"] == 16
-    g = derive_gates(16)
-    assert stage(p, "vlm")["gates"] == {**{k: g[k] for k in ("probe", "endstate", "arbitration")},
-                                        "episode": g["probe"]}
+    assert stage(p, "vlm")["gates"] == derive_gates(16) == {"episode": 16, "probe": 16}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "duplicate")["concurrency"] == 1                 # never above 1 (05 §1)
 

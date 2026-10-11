@@ -451,31 +451,5 @@ def task_check_episode(cfg: dict, deps: TaskDeps, video, task_desc, task_src, se
         task_src=str(task_src), hints=str(semantics_extras or "")))
 
 
-def arbitration_stats(task_structs) -> dict:
-    """仲裁触发计数(验收:成本可见,报告里要能看出触发了多少条)。
-
-    纯读已产出的 detail,零重算;enable:false 时调用方不产生这个统计键(逐字节等价)。
-    """
-    _arb_cnt = {"triggered": 0, "adopted_success": 0, "adopted_failure": 0,
-                "abstained": 0, "skipped": 0}
-    for _r in task_structs:
-        try:
-            _a = json.loads((_r or {}).get("detail") or "{}").get("arbitration")
-        except Exception:  # noqa: BLE001
-            _a = None
-        if not isinstance(_a, dict):
-            continue
-        _arb_cnt["triggered"] += 1
-        if _a.get("skipped") or _a.get("error"):
-            _arb_cnt["skipped"] += 1
-        elif _a.get("final") == "yes":
-            _arb_cnt["adopted_success"] += 1
-        elif _a.get("final") == "no":
-            _arb_cnt["adopted_failure"] += 1
-        else:
-            _arb_cnt["abstained"] += 1
-    return _arb_cnt
-
-
 def result_to_struct_none() -> dict:
     return {"passed": None, "score": None, "detail": "{}"}

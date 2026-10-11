@@ -16,15 +16,12 @@ review (there is nobody to ask) and stays as it was.
 
 Two presets ship (``PRESETS``): ``default`` (no rule) and ``report_only`` (nobody is asked and every
 finding is reported; only data integrity's blocking findings still reject - an empty, cut or unreadable
-file leaves nothing for the modules after it, requester 2026-10-05, policy version 2; version 1 made
-everything info). The task names one in ``params.policy`` (C4 ``TaskParams.policy``); the Daemon freezes
+file leaves nothing for the modules after it, requester 2026-10-05). The task names one in ``params.policy`` (C4 ``TaskParams.policy``); the Daemon freezes
 the full table into ``run.json`` at start (``policy``) and every result revision keeps a copy
 (``policy.json``), so a task keeps the rules it started with.
 
-From registry 5.0 on the frozen table carries the default levels too (``defaults``: module -> code -> level, for
-the task's modules): a default that changes later (5.0 made the EEF module's ``inconsistent`` info, design doc 25
-§7.3) does not change a task that started before. A run frozen without them reads the defaults its
-``registry_version`` had (``LEGACY_DEFAULTS``), so an older task's next revision keeps its EEF rejects.
+The frozen table carries the default levels too (``defaults``: module -> code -> level, for the task's
+modules) and the appealable codes: a default that changes later does not change a task that started before.
 """
 from __future__ import annotations
 
@@ -34,20 +31,10 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 
-#: 2 (2026-10-05): report_only keeps data integrity's blocking findings; 1 made everything info.
+#: 2 (2026-10-05): report_only keeps data integrity's blocking findings.
 POLICY_VERSION = "2"
 LEVELS = tuple(lv for lv, _ in registry.FINDING_LEVELS)
 MATCH_KEYS = ("module", "code", "item", "severity", "level")
-
-#: default levels that changed, by the registry version that changed them: a run from before that version and
-#: without frozen defaults keeps the old level (design doc 25 §7.3)
-LEGACY_DEFAULTS: dict[tuple[int, int], dict[tuple[str, str], str]] = {
-    (5, 0): {("eef_video_consistency", "inconsistent"): "blocking"},
-}
-#: likewise the codes whose reject could be appealed (D42) before that version
-LEGACY_APPEALABLE: dict[tuple[int, int], set[tuple[str, str]]] = {
-    (5, 0): {("eef_video_consistency", "inconsistent")},
-}
 
 #: Modules whose blocking findings reject even under report_only: the modules after them cannot use
 #: an episode whose files are empty, cut short or unreadable (requester, 2026-10-05).
@@ -77,38 +64,6 @@ def _check_rule(rule: dict) -> dict:
     if unknown:
         raise PolicyError(f"a policy rule matches on {', '.join(MATCH_KEYS)}, not {', '.join(sorted(unknown))}")
     return {"match": dict(rule["match"]), "level": rule["level"]}
-
-
-def _version(v) -> tuple[int, int] | None:
-    try:
-        major, minor = str(v).split(".")[:2]
-        return int(major), int(minor)
-    except (ValueError, TypeError):
-        return None
-
-
-def legacy_appealable(registry_version) -> tuple[tuple[str, str], ...] | None:
-    """The appealable codes a run of ``registry_version`` had, where they differ from today's (None: today's)."""
-    ver = _version(registry_version)
-    extra = {key for changed_in, keys in LEGACY_APPEALABLE.items() if ver is not None and ver < changed_in
-             for key in keys}
-    if not extra:
-        return None
-    now = {(m.id, c.code) for m in registry.MODULES for c in m.codes if c.appealable}
-    return tuple(sorted(now | extra))
-
-
-def legacy_defaults(registry_version) -> tuple[tuple[str, str, str], ...]:
-    """The default levels a run of ``registry_version`` had where they differ from today's."""
-    ver = _version(registry_version)
-    if ver is None:
-        return ()
-    out: dict[tuple[str, str], str] = {}
-    for changed_in, levels in sorted(LEGACY_DEFAULTS.items()):
-        if ver < changed_in:
-            for key, level in levels.items():
-                out.setdefault(key, level)
-    return tuple((m, c, lv) for (m, c), lv in sorted(out.items()))
 
 
 @dataclass(frozen=True)
@@ -193,8 +148,8 @@ class Policy:
         return out
 
     @classmethod
-    def from_json(cls, doc: dict | None, registry_version=None) -> "Policy":
-        """The frozen policy; without frozen defaults, a run of ``registry_version`` keeps the defaults it had."""
+    def from_json(cls, doc: dict | None) -> "Policy":
+        """The frozen policy (the registry's defaults where it froze none)."""
         if not isinstance(doc, dict):
             base = cls.of(DEFAULT_PRESET)
         else:
@@ -207,7 +162,7 @@ class Policy:
             appeals = tuple(sorted((str(x[0]), str(x[1])) for x in listed if isinstance(x, (list, tuple)) and len(x) == 2)) \
                 if isinstance(listed, list) else None
         else:
-            frozen, appeals = legacy_defaults(registry_version), legacy_appealable(registry_version)
+            frozen, appeals = (), None
         return cls(base.preset, base.rules, frozen, appeals)
 
 
@@ -234,4 +189,4 @@ def load(run_dir: str) -> Policy:
         return Policy.of(DEFAULT_PRESET)
     if not isinstance(doc, dict):
         return Policy.of(DEFAULT_PRESET)
-    return Policy.from_json(doc.get("policy"), doc.get("registry_version"))
+    return Policy.from_json(doc.get("policy"))

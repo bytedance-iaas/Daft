@@ -82,8 +82,7 @@ def code_version() -> str:
         return "unknown"
 
 
-#: the format of the run's records, verdicts, lists and report (C2 2.0, design doc 17); a run directory
-#: whose run.json says otherwise was made by an earlier version and is read only (D59)
+#: the format of the run's records, verdicts, lists and report (C2 2.0, design doc 17), written into run.json
 C2_VERSION = "2.0"
 
 

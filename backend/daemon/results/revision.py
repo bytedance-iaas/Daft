@@ -1,8 +1,7 @@
 """One committed result revision of a task (design doc 06 §1; C2 ``commit.json``).
 
-``revisions/r<NNNN>/`` holds the funnel verdicts, the four lists, the merged label
-audit, the report, the performance profile and the detail tables, with
-``commit.json`` written last. Readers trust only a revision that has it, and the
+``revisions/r<NNNN>/`` holds the verdict lines, the four lists, the report, the
+performance profile and the detail tables, with ``commit.json`` written last. Readers trust only a revision that has it, and the
 Daemon serves only revisions up to ``task.result_rev`` - a newer committed one is
 still being uploaded and verified before the CAS switch (D25).
 
@@ -31,8 +30,7 @@ REVISIONS_DIR = "revisions"
 COMMIT_NAME = "commit.json"
 #: passed / reject / held are disjoint and cover every episode; review is a view (C2 final-list)
 LISTS = ("passed", "reject", "held")
-_KEY_FILES = (COMMIT_NAME, "report.json", "passed.json", "reject.json", "held.json", "review.json",
-              "label_audit.json")
+_KEY_FILES = (COMMIT_NAME, "report.json", "passed.json", "reject.json", "held.json", "review.json")
 
 
 def revision_name(number: int) -> str:
@@ -84,10 +82,6 @@ class Revision:
         doc = self._doc(f"{name}.json")
         return doc if isinstance(doc, dict) else {"episodes": []}
 
-    def label_audit(self) -> dict:
-        doc = self._doc("label_audit.json", required=False)
-        return doc if isinstance(doc, dict) else {}
-
     # -- derived ----------------------------------------------------------------------
     def _derived(self, what: str, make):
         return self.store.derived.get_or_make((what, self.key), make)
@@ -119,22 +113,6 @@ class Revision:
                     for e in self.final_list("review").get("episodes") or []
                     if isinstance(e, dict) and isinstance(e.get("episode_index"), int)}
         return self._derived("review", make)
-
-    def audit_entries(self) -> dict[int, dict]:
-        """episode -> its label-audit entry (``label``, ``caption``, ``reason``...), first tier wins."""
-        def make():
-            out: dict[int, dict] = {}
-            for tier in ("high", "mid_for_review", "low_caption_unstable"):
-                for e in self.label_audit().get(tier) or []:
-                    if not isinstance(e, dict):
-                        continue
-                    try:
-                        ep = int(str(e.get("id")).lstrip("ep"))
-                    except ValueError:
-                        continue
-                    out.setdefault(ep, e)
-            return out
-        return self._derived("audit", make)
 
     # -- module records -----------------------------------------------------------------
     def _parts(self, module: str) -> list[str]:

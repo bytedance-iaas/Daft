@@ -9,8 +9,8 @@ Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 * **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
   (integrity -> numeric -> frame -> duplicate) and the VLM block (vlm). Stages
   inside a block exist to share a decode and to size their own concurrency; every stage gets every
-  selected episode, one at a time (no stage waits for the whole selection: ``FULL_SET_STAGES`` is
-  empty). ``depends_on`` names data dependencies only; since 3.2 no module has one.
+  selected episode, one at a time (no stage waits for the whole selection). ``depends_on`` names data
+  dependencies only; since 3.2 no module has one.
 * **What it can find.** Every module carries its catalogue of finding codes (``codes``). A code maps
   to one item of the taxonomy (C6, ``docs/contracts/taxonomy.json``, bound version
   ``TAXONOMY_VERSION``) and has a default severity and a default level under the default policy:
@@ -82,6 +82,11 @@ the same way on most episodes, more likely its calibration than the episodes (in
 every episode of a group of byte-identical ones gets an info ``duplicate`` (SET-1) naming the others; nothing is
 rejected, kept first or appealed. The data integrity module's ``duplicate_content`` is gone (the check covers it).
 No reader is kept for tasks that selected the old module.
+7.0 (design doc 27 §2, D90): what was kept for tasks run before goes - the EEF module's retired codes
+(``unsettled``, ``opinion_mismatch``) with the ``retired`` flag, its parameters the dataset declaration replaced
+(``gripper_calibration``, ``record_mapping``), and ``full_set_stages`` (no stage has needed the whole selection
+since D70); task_success's ``recovery`` (TASK-10) and ``label_conflict_suspect`` (LABEL-4), which the one video
+request (D71) and the end of the label guard (D73) left without a producer - the module no longer covers either item.
 """
 from __future__ import annotations
 
@@ -89,7 +94,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "6.0"
+REGISTRY_VERSION = "7.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -108,10 +113,6 @@ ROOT_STAGES: tuple[str, ...] = ("vlm_prep",)
 #: runs its CPU half there and its model half in the other; the model half's stage comes after it.
 PREP_STAGES: dict[str, str] = {"vlm_prep": "vlm"}
 BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
-#: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
-#: No stage needs the whole selection at once since D70 (the duplicate check streams like the others);
-#: the tuple stays so a future whole-set module has a place to say so.
-FULL_SET_STAGES: tuple[str, ...] = ()
 #: Every stage, the CPU block's first.
 STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 
@@ -211,7 +212,6 @@ class FindingCode:
     review_line: str | None = None       # review level: the REVIEW_LINES id a person answers on
     appealable: bool = False             # blocking level: a reject it caused may be appealed (D42)
     scope_kind: str = "episode"          # episode / camera / channel / dataset
-    retired: bool = False                # no longer reported (5.0): kept so older records still get a level
 
     def to_json(self) -> dict:
         out = {"code": self.code, "item": self.item, "name_zh": self.name_zh,
@@ -219,8 +219,6 @@ class FindingCode:
                "appealable": self.appealable}
         if self.review_line:
             out["review_line"] = self.review_line
-        if self.retired:
-            out["retired"] = True
         return out
 
 
@@ -437,9 +435,9 @@ def _eef_params() -> dict:
     ``observation_seeds`` (a person's anchors)
     or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
     seeds win where both exist; without either (1.12, D-E15) the CPU measures nothing and the model gives an
-    advisory opinion on each camera's whole clip (design doc 12 §10.5). Since 4.4 (design doc 22 §5.4, D80) a
-    handheld gripper's raw mcap, which has nothing to generate the trajectory from, has it derived episode by episode
-    with ``gripper_calibration`` or the built-in DAS DEMO calibration."""
+    advisory opinion on each camera's whole clip (design doc 12 §10.5). A handheld gripper's raw mcap has its
+    trajectory derived episode by episode with the dataset declaration's calibration or the built-in DAS DEMO one
+    (design doc 22 §5.4, design doc 25 §3)."""
     return {
         "type": "object", "additionalProperties": False,
         "properties": {
@@ -449,10 +447,6 @@ def _eef_params() -> dict:
                             "（导出过的数据集、UMI 原始会话、原始 mcap），或读数据集自带的 trajectory.json，这时上传只是换一份，"
                             "并额外比对上传件与数据集记录。算不出来的数据集必须上传：约定格式 eef-video 1.0 / 1.1 的单文件包，"
                             "上传即校验", default=""),
-            "gripper_calibration": _upload(
-                "eef_gripper_calibration", [".json"], 1, title="夹爪标定",
-                description="已停用（5.1）：手持夹爪的标定写在数据集声明里。旧任务给过的仍然照用", default="",
-                deprecated=True),
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
@@ -464,10 +458,6 @@ def _eef_params() -> dict:
                 description="gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，"
                             "不用逐条 episode 点种子。只用于第三视角相机",
                 default="", **{"x-choice-group": GRIPPER_REFERENCE, "x-applies-when": THIRD_PERSON_CAMERA}),
-            "record_mapping": _upload(
-                "eef_record_mapping", [".json"], 8, title="数据集记录映射",
-                description="已停用（5.1）：数据集的位姿与关节记录写在数据集声明里。旧任务给过的仍然照用", default="",
-                deprecated=True),
             "use_vlm": {
                 "type": "boolean", "title": "使用 VLM 辅助",
                 "description": "开着时请模型复核或看整段视频给意见，和 CPU 的测量各算各的、取大；关掉只用 CPU（夹爪参考的测量、"
@@ -623,11 +613,9 @@ MODULES: tuple[ModuleSpec, ...] = (
         depends_on=(), vlm_switch="use_vlm", prep_stage="vlm_prep",
         # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
         # 5.0 (design doc 25 §7.3, D81): opinions with a confidence, no machine reject - a person's "inconsistent" on
-        # a conflict still blocks (kind human); unsettled / opinion_mismatch are retired, kept for older records
+        # a conflict still blocks (kind human)
         codes=(_info("inconsistent", "MV-4", "末端投影与画面不一致（意见）", "medium", scope_kind="camera"),
                _review("conflict", "MV-4", "两个渠道结论相反，请人看", "eef_check", scope_kind="camera"),
-               _review("unsettled", "MV-4", "末端投影与画面是否相符待人工核对", "eef_check", retired=True),
-               _info("opinion_mismatch", "MV-4", "模型意见：末端投影与画面不符", retired=True),
                _info("record_mismatch", "MV-4", "上传轨迹与数据集的记录不符"),
                # 4.1 (design doc 22 §5.3): a wrist camera's own motion in its pictures against the recorded poses;
                # its time offsets are the episode's timing too (AV-1, also_covers)
@@ -660,8 +648,6 @@ MODULES: tuple[ModuleSpec, ...] = (
         depends_on=(),
         codes=(_blocking("failure", "TASK-4", "任务失败", appealable=True),
                _review("uncertain", "TASK-4", "任务成败拿不准", "task_verdict"),
-               _info("recovery", "TASK-10", "中途失误后完成"),
-               _review("label_conflict_suspect", "LABEL-4", "标注与画面疑似不符", "task_verdict"),
                _info("task_text_missing", "LABEL-2", "没有任务标注，没有做任务成败判定")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
@@ -670,7 +656,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="camera_defects", name_zh="镜头画面缺陷",
-        summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+        summary_zh="借任务成败判定的那一次模型请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=(),
         # minor -> low, severe -> medium
@@ -797,7 +783,7 @@ def export() -> dict:
     return {"registry_version": REGISTRY_VERSION, "taxonomy_version": TAXONOMY_VERSION,
             "blocks": [{"id": b, "title_zh": BLOCK_TITLES[b], "stages": list(stages)}
                        for b, stages in BLOCKS.items()],
-            "stages": list(STAGES), "full_set_stages": list(FULL_SET_STAGES),
+            "stages": list(STAGES),
             "root_stages": list(ROOT_STAGES), "prep_stages": dict(PREP_STAGES),
             "finding_levels": [{"id": lv, "title_zh": title} for lv, title in FINDING_LEVELS],
             "unassessable_reasons": [{"id": r, "title_zh": title} for r, title in UNASSESSABLE_REASONS],

@@ -48,7 +48,7 @@ def cams(front="success", wrist="success") -> dict:
 
 def test_every_supplied_camera_gets_an_entry_even_when_the_model_skips_one():
     clips = [clip(FRONT), clip(WRIST)]
-    out = parse_assessment(answer(cameras={FRONT: cams()[FRONT]}), clips, per_camera=True)
+    out = parse_assessment(answer(cameras={FRONT: cams()[FRONT]}), clips)
     assert sorted(out["cameras"]) == sorted([FRONT, WRIST])
     assert out["cameras"][FRONT]["verdict"] == "success"
     assert out["cameras"][WRIST]["verdict"] == "unavail", "a camera left out votes for nothing"
@@ -58,14 +58,14 @@ def test_every_supplied_camera_gets_an_entry_even_when_the_model_skips_one():
 def test_a_shortened_camera_name_still_lands_on_its_camera():
     clips = [clip(FRONT), clip(WRIST)]
     out = parse_assessment(answer(cameras={"front": cams()[FRONT], "wrist": cams()[WRIST]}),
-                           clips, per_camera=True)
+                           clips)
     assert [e["verdict"] for e in out["cameras"].values()] == ["success", "success"]
 
 
 def test_a_bad_per_camera_verdict_is_unavail_and_named_not_raised():
     clips = [clip(FRONT)]
     broken = {FRONT: {"verdict": "yes please", "reason": "", "camera_check": {}}}
-    out = parse_assessment(answer(cameras=broken), clips, per_camera=True)
+    out = parse_assessment(answer(cameras=broken), clips)
     assert out["cameras"][FRONT]["verdict"] == "unavail"
     assert any("is not success/failure/uncertain" in p
                for p in out["cameras"][FRONT]["camera_check"]["problems"])
@@ -73,7 +73,7 @@ def test_a_bad_per_camera_verdict_is_unavail_and_named_not_raised():
 
 def test_a_missing_cameras_block_is_an_error_so_it_costs_the_one_repair_round():
     with pytest.raises(ValueError, match="per-camera block"):
-        parse_assessment(answer(), [clip(FRONT)], per_camera=True)
+        parse_assessment(answer(), [clip(FRONT)])
 
 
 def test_each_camera_check_time_is_bounded_by_that_camera_window():
@@ -88,12 +88,6 @@ def test_each_camera_check_time_is_bounded_by_that_camera_window():
     assert out[WRIST]["camera_check"]["glitch"]["times"] == [[20.0, 25.0]]
 
 
-def test_the_five_fields_still_parse_on_their_own():
-    """v1's own commands (``rejudge``) still read the plain shape."""
-    out = parse_assessment(answer(), [clip(FRONT)])
-    assert sorted(out) == ["completion", "evidence", "reason", "task_type", "verdict"]
-
-
 # ---------------------------------------------------------------- the decision
 
 
@@ -105,7 +99,7 @@ class _Scorer:
 
     def __call__(self, clips, instruction, *, hints=""):
         self.calls += 1
-        return parse_assessment(self.text, self.clips, per_camera=True)
+        return parse_assessment(self.text, self.clips)
 
 
 def _judge(verdict, front, wrist, monkeypatch):

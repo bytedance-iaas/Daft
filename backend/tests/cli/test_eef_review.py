@@ -192,7 +192,7 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
 def test_aggregate_rejects_nothing_and_asks_the_conflict(cli, taped, mini_dataset):
     """D81: the module's opinions reject nothing; its conflict is asked on eef_check."""
     rd = taped["rd"]
-    res = cli("aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "1", "--episodes", "0-3,7",
+    res = cli("aggregate", "--run-dir", rd, "--revision", "1", "--episodes", "0-3,7",
               "--modules", EEF)
     assert res.rc == 0, res.doc
     lines = {x["episode_index"]: x for x in read_jsonl(os.path.join(rd, "revisions", "r0001", "verdicts.jsonl"))}

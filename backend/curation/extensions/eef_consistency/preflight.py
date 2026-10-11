@@ -4,7 +4,7 @@ The file is a module parameter (``trajectory_json``): a path on the command line
 the console (F5.5), which the Daemon turns into a path before it calls the CLI. The file is optional only where
 the platform can compute the trajectory: ``cli/preflight`` generates it from the dataset and passes that (design
 doc 24); a handheld gripper's raw mcap carries its own (``handheld``, design doc 22 §5.4, D80: derived when the
-module runs, with ``gripper_calibration`` or the built-in DAS DEMO calibration); on any other dataset the module
+module runs, with the dataset declaration's calibration or the built-in DAS DEMO one); on any other dataset the module
 ``needs_input`` (``input_hint.field = trajectory_json``) and the console asks for the upload. The console never
 pre-selects an advisory module; with a valid file it then needs a VLM backend (D49: the module reviews with a
 model).
@@ -98,33 +98,31 @@ def bundle_cameras(result) -> list[dict]:
 
 
 def applicable_params(cameras: list[dict] | None) -> list[str]:
-    """The module's parameters that apply to the dataset (design doc 25 §4.2): retired (``deprecated``) ones never,
-    those with ``x-applies-when: third_person_camera`` (the gripper reference) only where a camera is a fixed
-    third-person one - or where the cameras are not known (``cameras`` empty)."""
+    """The module's parameters that apply to the dataset (design doc 25 §4.2): those with ``x-applies-when:
+    third_person_camera`` (the gripper reference) only where a camera is a fixed third-person one - or where the
+    cameras are not known (``cameras`` empty)."""
     from ...contracts import modules as registry
 
     props = registry.get(MODULE_ID).param_schema.get("properties") or {}
     third = not cameras or any(c.get("mount") == "fixed_external" for c in cameras)
-    return [k for k, p in props.items() if not p.get("deprecated")
-            and (p.get("x-applies-when") != "third_person_camera" or third)]
+    return [k for k, p in props.items() if p.get("x-applies-when") != "third_person_camera" or third]
 
 
-def _record_check(params: dict, root: str | None):
+def _record_check(record: dict | None, root: str | None):
     """(the capability's ``record`` - the mapping, ``{"missing": [...]}``, ``{"invalid": text, "code": ...}``,
-    None without one - and a note). A local dataset's columns (LeRobot ``meta/info.json``) or topics
+    None without one - and a note). ``record``: the dataset declaration's records as ``eef-mapping/1.1``
+    (``declared.record_block``, design doc 25 §6.1). A local dataset's columns (LeRobot ``meta/info.json``) or topics
     (the first mcap file's summary) are checked; a remote one's are checked when the module runs."""
     from . import record as RC
 
-    path = (params.get("record_mapping") or "").strip()
-    if not path:
+    if record is None:
         return None, None
     try:
-        mapping = RC.load_mapping(os.path.expanduser(path))
-    except (RC.RecordMappingError, OSError, ValueError) as exc:           # only the record item goes
+        mapping = RC.parse_mapping(record)
+    except RC.RecordMappingError as exc:                                  # only the record item goes
         code = C.ROBOT_MODEL_UNKNOWN if isinstance(exc, RC.RobotModelUnknown) else C.RECORD_MAPPING_INVALID
-        return {"invalid": str(exc), "code": code}, f"record mapping unusable: {exc}"
-    kinds = ", ".join(sorted(mapping.sources))
-    note = f"record mapping {mapping.sha256[:12]}…: {kinds}"
+        return {"invalid": str(exc), "code": code}, f"the declaration's records cannot be compared: {exc}"
+    note = f"the declaration's records: {', '.join(sorted(mapping.sources))}"
     if not root or not os.path.isdir(root):
         return mapping, note + " (columns / topics checked when the module runs)"
     missing: list[str] = []
@@ -145,39 +143,43 @@ def _record_check(params: dict, root: str | None):
     return ({"missing": missing}, note + f"; not in the dataset: {', '.join(missing)}") if missing else (mapping, note)
 
 
+def _record_cell(record) -> dict:
+    """The record sub-item of an entry whose trajectory is derived (no upload to compare per sample)."""
+    if record is not None and not isinstance(record, dict):
+        return {"availability": C.AVAILABLE, "reason_code": None}
+    return {"availability": C.UNSUPPORTED,
+            "reason_code": C.RECORD_MAPPING_MISSING if record is None else record.get("code") or C.RECORD_COLUMNS_MISSING}
+
+
 def derived_entry(params: dict, *, episodes: Iterable[int], lerobot_root: str | None = None,
-                  calibration: dict | None = None) -> dict:
+                  calibration: dict | None = None, record: dict | None = None) -> dict:
     """No trajectory.json on a handheld gripper's mcap (design doc 22 §5.4): the trajectory comes from each recording
     when the module runs. Available unless the calibration is unusable or a gripper reference is given (a handheld
     gripper only gets the model's opinion); what each sub-item can be is what a wrist camera on its own hand gives.
-    The calibration: an old task's ``gripper_calibration`` file, else the dataset declaration's (``calibration``,
-    design doc 25 §3.2), else the built-in DAS DEMO one."""
+    The calibration: the dataset declaration's (``calibration``, design doc 25 §3.2), else the built-in DAS DEMO one;
+    ``record``: the declaration's records (``declared.record_block``), compared with the derived poses."""
     from .adapters import umi_mcap as X
 
     if seed_dir(params) or template_path(params):
         return _unsupported("UMI action overlays use advisory video opinion; omit gripper seeds/templates",
                             C.TRAJECTORY_INVALID)
-    cal = os.path.expanduser((params.get("gripper_calibration") or "").strip())
     try:
-        cfg = X.read_calibration(cal) if cal else X.check_calibration(calibration, "the declaration's handheld calibration") \
-            if calibration is not None else X.read_calibration(X.BUILTIN_CALIBRATION)
+        cfg = X.check_calibration(calibration, "the declaration's handheld calibration") if calibration is not None \
+            else X.read_calibration(X.BUILTIN_CALIBRATION)
     except (X.ExportError, OSError) as exc:
-        return _unsupported(f"the gripper calibration is unusable: {exc}", C.CALIBRATION_INVALID, {"path": cal or None})
+        return _unsupported(f"the gripper calibration is unusable: {exc}", C.CALIBRATION_INVALID)
     episodes = sorted(set(int(e) for e in episodes))
     own = {C.POSITION: C.OWN_HAND_CAMERA, C.ORIENTATION: C.OWN_HAND_CAMERA, C.TEMPORAL: C.WRIST_CAMERA_SPATIAL_ONLY,
            C.CAMERA_MOTION: C.WRIST_CAMERA_SPATIAL_ONLY, C.STATE_MOTION: C.POSE_SEMANTICS_UNKNOWN,
            C.INPUT_CONSISTENCY: C.PROJECTION_MISSING}
     subitems = {k: {"availability": C.UNSUPPORTED, "reason_code": r} for k, r in own.items()}
     subitems[C.EGO_MOTION] = {"availability": C.AVAILABLE, "reason_code": None}
-    record, record_note = _record_check(params, lerobot_root)
-    subitems[C.RECORD] = {"availability": C.AVAILABLE, "reason_code": None} if record is not None and not isinstance(record, dict) \
-        else {"availability": C.UNSUPPORTED,
-              "reason_code": C.RECORD_MAPPING_MISSING if record is None else record.get("code") or C.RECORD_COLUMNS_MISSING}
-    which = (f"the uploaded calibration ({cfg['gripper']})" if cal
-             else f"the dataset declaration's calibration ({cfg['gripper']}; {', '.join(X.assumed(cfg)) or 'nothing'} "
-                  f"assumed)" if calibration is not None
+    checked, record_note = _record_check(record, lerobot_root)
+    subitems[C.RECORD] = _record_cell(checked)
+    which = (f"the dataset declaration's calibration ({cfg['gripper']}; {', '.join(X.assumed(cfg)) or 'nothing'} "
+             f"assumed)" if calibration is not None
              else f"the built-in DAS DEMO calibration ({', '.join(X.assumed(cfg))} assumed; no intrinsics fallback: "
-                  f"a recording without camera_info needs an uploaded calibration with one)")
+                  f"a recording without camera_info needs a declaration with one)")
     notes = [f"no trajectory.json: the platform derives each episode's trajectory from the handheld gripper's recording "
              f"(design doc 22 §5.4) with {which}",
              "no observation seeds and no gripper template: the model gives an advisory opinion on each wrist camera's "
@@ -228,12 +230,13 @@ def declared_entry(params: dict, ready: dict, *, episodes: Iterable[int], joints
 
 
 def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Callable[[str], bool] | None,
-                      lerobot_root: str | None = None, handheld: bool = False) -> dict:
+                      lerobot_root: str | None = None, handheld: bool = False, record: dict | None = None) -> dict:
     """The preflight entry of ``eef_video_consistency`` for the task's episodes. ``handheld``: the dataset is a
-    handheld gripper's mcap (the built-in UMI layout), which carries its own trajectory."""
+    handheld gripper's mcap (the built-in UMI layout), which carries its own trajectory; ``record``: the dataset
+    declaration's records (``declared.record_block``), compared with the upload's poses."""
     traj = (params.get("trajectory_json") or "").strip()
     if not traj and handheld:
-        return derived_entry(params, episodes=episodes, lerobot_root=lerobot_root)
+        return derived_entry(params, episodes=episodes, lerobot_root=lerobot_root, record=record)
     if not traj:
         return {"availability": C.NEEDS_INPUT, "reason_code": C.TRAJECTORY_MISSING,
                 "reason": "the platform cannot compute the trajectory from this dataset (it records no end-effector "
@@ -274,8 +277,8 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
         observable = {ep: {cid: set(load.declared_point_ids(s, cid)) for cid in s.cameras}
                       for ep, s in result.samples.items()}
     mounts = MOUNTS[params.get("camera_mounts") or "fixed_external_and_wrist"]
-    record, record_note = _record_check(params, lerobot_root)
-    table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts, record=record)
+    checked, record_note = _record_check(record, lerobot_root)
+    table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts, record=checked)
     per = table["episodes"]
     subitems = {}
     for k in CAP.AVAILABLE_BY + (C.INPUT_CONSISTENCY, C.RECORD):

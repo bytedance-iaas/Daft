@@ -1,95 +1,118 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "revisions/r<NNNN>/report.json (schema 2.0; 1.0 still read)",
-  "description": "Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links. 2.0 (design doc 17 §5.1): the overview names the policy, the taxonomy coverage and the findings per item, rejects are counted per blocking finding, and every module section carries the generic per-code statistics; the gates are gone. The console tells the two apart by schema_version (D59).",
-  "oneOf": [
-    {
-      "$ref": "#/$defs/report_2"
-    },
-    {
-      "$ref": "#/$defs/report_1"
-    }
+  "title": "revisions/r<NNNN>/report.json (schema 2.0)",
+  "description": "Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links. The overview names the policy, the taxonomy coverage and the findings per item, rejects are counted per blocking finding, and every module section carries the generic per-code statistics (design doc 17 §5.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "revision",
+    "overview",
+    "modules",
+    "skipped_modules",
+    "integrity",
+    "perf"
   ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version_2"
+    },
+    "revision": {
+      "$ref": "common.schema.json#/$defs/revision"
+    },
+    "overview": {
+      "$ref": "#/$defs/overview"
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/module_section"
+      }
+    },
+    "skipped_modules": {
+      "$ref": "#/$defs/skipped_modules"
+    },
+    "integrity": {
+      "$ref": "#/$defs/integrity"
+    },
+    "perf": {
+      "$ref": "#/$defs/perf"
+    }
+  },
   "$defs": {
-    "report_2": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "revision",
-        "overview",
-        "modules",
-        "skipped_modules",
-        "integrity",
-        "perf"
-      ],
-      "properties": {
-        "schema_version": {
-          "$ref": "common.schema.json#/$defs/schema_version_2"
-        },
-        "revision": {
-          "$ref": "common.schema.json#/$defs/revision"
-        },
-        "overview": {
-          "$ref": "#/$defs/overview_2"
-        },
-        "modules": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/module_section_2"
+    "skipped_modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/module_id"
+          },
+          "reason": {
+            "type": "string"
           }
-        },
-        "skipped_modules": {
-          "$ref": "#/$defs/skipped_modules"
-        },
-        "integrity": {
-          "$ref": "#/$defs/integrity"
-        },
-        "perf": {
-          "$ref": "#/$defs/perf"
         }
       }
     },
-    "report_1": {
+    "integrity": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "revision",
-        "overview",
-        "modules",
-        "skipped_modules",
-        "integrity",
-        "perf"
-      ],
+      "description": "data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight",
+      "additionalProperties": true,
       "properties": {
-        "schema_version": {
-          "$ref": "common.schema.json#/$defs/schema_version"
-        },
-        "revision": {
-          "$ref": "common.schema.json#/$defs/revision"
-        },
-        "overview": {
-          "$ref": "#/$defs/overview_1"
-        },
-        "modules": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/module_section_1"
-          }
-        },
-        "skipped_modules": {
-          "$ref": "#/$defs/skipped_modules"
-        },
-        "integrity": {
-          "$ref": "#/$defs/integrity"
-        },
-        "perf": {
-          "$ref": "#/$defs/perf"
+        "skipped_episodes": {
+          "$ref": "common.schema.json#/$defs/skipped_episodes",
+          "description": "what was not checked and why: the source manifest's list plus any found at read time"
         }
       }
     },
-    "overview_2": {
+    "perf": {
+      "type": "object",
+      "description": "summary; the full profile is perf.json in the same revision"
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt",
+        "completion",
+        "reasoning",
+        "cached",
+        "requests",
+        "requests_unknown_usage"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests_unknown_usage": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "overview": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -351,105 +374,7 @@
         }
       }
     },
-    "overview_1": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "dataset",
-        "run",
-        "counts",
-        "pass_rate",
-        "reject_reasons",
-        "token_usage",
-        "duration_s"
-      ],
-      "properties": {
-        "dataset": {
-          "type": "object"
-        },
-        "run": {
-          "type": "object"
-        },
-        "counts": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "total",
-            "passed",
-            "rejected",
-            "held",
-            "review"
-          ],
-          "properties": {
-            "total": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "passed": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "rejected": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "held": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "review": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "skipped": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "episodes left out because source files are missing (D40); not part of total"
-            }
-          }
-        },
-        "pass_rate": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "minimum": 0,
-          "maximum": 1,
-          "description": "passed / total; held is neither"
-        },
-        "reject_reasons": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "module",
-              "count"
-            ],
-            "properties": {
-              "module": {
-                "$ref": "common.schema.json#/$defs/module_id"
-              },
-              "count": {
-                "type": "integer",
-                "minimum": 0
-              }
-            }
-          }
-        },
-        "token_usage": {
-          "$ref": "#/$defs/token_usage"
-        },
-        "duration_s": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "minimum": 0
-        }
-      }
-    },
-    "module_section_2": {
+    "module_section": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -693,191 +618,6 @@
           }
         }
       ]
-    },
-    "module_section_1": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "state",
-        "gate",
-        "summary",
-        "tables",
-        "adjudication"
-      ],
-      "properties": {
-        "id": {
-          "$ref": "common.schema.json#/$defs/module_id"
-        },
-        "state": {
-          "enum": [
-            "succeeded",
-            "completed_with_errors",
-            "failed"
-          ]
-        },
-        "gate": {
-          "enum": [
-            "hard",
-            "soft",
-            "dedup",
-            "none"
-          ]
-        },
-        "summary": {
-          "type": "object"
-        },
-        "tables": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "rows",
-              "file"
-            ],
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "rows": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "file": {
-                "type": "string",
-                "description": "tables/<id>.parquet, sorted by episode_index"
-              }
-            }
-          }
-        },
-        "adjudication": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "pending"
-              ],
-              "properties": {
-                "pending": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "open questions this module raised that must be decided"
-                },
-                "appealable": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "rejects attributed to this module a person may appeal (D42); not pending"
-                }
-              }
-            }
-          ]
-        },
-        "episodes_error": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "error": {
-          "type": "string"
-        },
-        "fingerprints": {
-          "type": "object",
-          "description": "code / prompt hashes when the result came from a subtask (design doc 06, section 2)"
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "state": {
-                "const": "failed"
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "error"
-            ]
-          }
-        }
-      ]
-    },
-    "skipped_modules": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "reason"
-        ],
-        "properties": {
-          "id": {
-            "$ref": "common.schema.json#/$defs/module_id"
-          },
-          "reason": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "integrity": {
-      "type": "object",
-      "description": "data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight",
-      "additionalProperties": true,
-      "properties": {
-        "skipped_episodes": {
-          "$ref": "common.schema.json#/$defs/skipped_episodes",
-          "description": "what was not checked and why: the source manifest's list plus any found at read time"
-        }
-      }
-    },
-    "perf": {
-      "type": "object",
-      "description": "summary; the full profile is perf.json in the same revision"
-    },
-    "token_usage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "prompt",
-        "completion",
-        "reasoning",
-        "cached",
-        "requests",
-        "requests_unknown_usage"
-      ],
-      "properties": {
-        "prompt": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "completion": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "reasoning": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "cached": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "requests": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "requests_unknown_usage": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
     }
   }
 }

@@ -132,7 +132,7 @@ RELABELS = {1: "stack the cups", 0: "wipe the table"}
 
 
 def _decisions(path: str) -> str:
-    doc = {"schema_version": "1.0", "decisions": [
+    doc = {"schema_version": "2.0", "decisions": [
         {"id": i, "episode_index": ep, "line": "task_verdict", "decision": "unsure",
          "new_label": label, "note": None, "decided_by": "alice", "decided_at": 1790000000000 + i}
         for i, (ep, label) in enumerate(RELABELS.items(), start=1)]}

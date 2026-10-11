@@ -2,7 +2,7 @@
 
 It lives in the CLI process, next to the gates (the Daemon cannot reach a running
 child's semaphores): when more than ``threshold`` of the requests in the last
-``window_s`` seconds came back 429 or 5xx, all eight gates are halved together;
+``window_s`` seconds came back 429 or 5xx, all the gates are halved together;
 once a window is clean again they climb back additively, one ``increase_step`` of
 their planned size per window. Every change is reported as a C3 ``throttle`` line
 (``docs/contracts/progress.schema.json``); the Daemon logs it and raises an alert.
@@ -88,7 +88,7 @@ class ResizableGate:
 
 
 class AdaptiveThrottle:
-    """Multiplicative decrease, additive increase over the eight gates of one backend."""
+    """Multiplicative decrease, additive increase over the gates of one backend."""
 
     def __init__(self, parallelism: int, gates: Mapping[str, int], *, backend: str,
                  window_s: float = 30.0, threshold: float = 0.10, min_samples: int = 20,
