@@ -9,7 +9,7 @@ import type { ModuleState, Plan, Report, Task } from '../../api/types';
 import { MODULE_STATE_COLOR } from '../../features/tasks/ModuleSummary';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { FindingsView, LevelTag } from '../../features/findings/FindingsView';
-import { LEVELS, moduleLevels, placeLabel } from '../../lib/findings';
+import { LEVELS, moduleLevels, placeLabel, skippedReasons } from '../../lib/findings';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
@@ -47,12 +47,14 @@ interface LiveCounts {
   id: string;
   judged: number;
   error: number;
+  /** C4 7.1.0: skipped without judging (D94) */
+  skipped?: number;
   flagged: number;
 }
 
 /**
  * The live module counts of a run while it has no report yet (design doc 17 §5.3, C4 2.3.0
- * `modules` of the live episode page): per module the episodes judged, failed on, with a finding.
+ * `modules` of the live episode page): per module the episodes judged, failed on, skipped (D94), with a finding.
  */
 function useLiveCounts(task: Task, enabled: boolean): Map<string, LiveCounts> {
   const live = !isTerminalState(task.state) || Boolean(task.active_subtask);
@@ -91,6 +93,9 @@ export function ModuleStatCards({ task, plan, report }: { task: Task; plan: Plan
     const levels = section ? moduleLevels(section.summary) : null;
     const unfolded = open.includes(m.id) && section;
     const errors = m.episodes_error || live?.error || 0;
+    // D94 (design doc 28 §3): written without judging - data integrity rejected the episode, or it has no task text
+    const skipped = section ? section.summary.skipped_episodes ?? 0 : live?.skipped ?? 0;
+    const skippedWhy = section ? skippedReasons(section.summary) : null;
     return (
       <div key={m.id} className="module-stat" data-testid={`module-stat-${m.id}`}>
         <div className="module-stat-head">
@@ -135,6 +140,12 @@ export function ModuleStatCards({ task, plan, report }: { task: Task; plan: Plan
             </span>
           ) : live ? (
             <span className="nowrap">{T().flaggedCount(live.flagged)}</span>
+          ) : null}
+          {skipped ? (
+            <span className="nowrap muted" data-testid={`module-skipped-${m.id}`}>
+              {T().skippedCount(skipped)}
+              {skippedWhy ? `（${skippedWhy}）` : ''}
+            </span>
           ) : null}
           {errors ? (
             <Button type="text" size="mini" status="warning" onClick={() => toggle(errorsOpen, setErrorsOpen, m.id)}>

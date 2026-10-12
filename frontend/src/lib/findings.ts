@@ -45,20 +45,36 @@ export function unassessableTitle(reg: ModuleRegistry | undefined, reason: strin
 }
 
 /**
+ * Why a module skipped episodes without judging them (D94, design doc 28 §3), from its section's summary:
+ * «数据完整性已判废 8、没有任务标注 2», one reason alone without its count («数据完整性已判废»), or null when it
+ * skipped none.
+ */
+export function skippedReasons(summary: ReportModuleSection['summary']): string | null {
+  const rows = summary.skipped_reasons ?? [];
+  if (!summary.skipped_episodes || !rows.length) return null;
+  const name = (r: { name: string }) => zh.findings.skipReasons[r.name] ?? r.name;
+  return rows.length === 1 ? name(rows[0]) : rows.map((r) => `${name(r)} ${r.count}`).join('、');
+}
+
+/**
  * Modules whose blocking codes reject even under 只报不拒 (pipeline/policy.py REPORT_ONLY_GATES): data
  * integrity - the modules after it cannot use an empty, cut or unreadable file.
  */
 export const REPORT_ONLY_GATES: readonly string[] = ['data_integrity'];
 
+/** Codes that reject under 只报不拒 in any module (REPORT_ONLY_GATE_CODES, policy 3): a corrupt video (D93). */
+export const REPORT_ONLY_GATE_CODES: readonly string[] = ['decode_failed'];
+
 /**
  * What a module can do to an episode, for its tag: reject it (a blocking code), ask a person (a review
  * code) or only report. The registry's default levels (P18); under the report_only preset nobody is asked
- * and only data integrity rejects (design doc 17 §4.1).
+ * and only broken files reject - data integrity's, and a corrupt video in the modules that decode it
+ * (design doc 17 §4.1, design doc 28 §2).
  */
 export function moduleRole(m: Pick<ModuleSpec, 'id' | 'codes'> | undefined, preset?: string): Level {
   const levels = new Set((m?.codes ?? []).map((c) => c.level));
   if (preset === 'report_only') {
-    const gate = m !== undefined && REPORT_ONLY_GATES.includes(m.id);
+    const gate = m !== undefined && (REPORT_ONLY_GATES.includes(m.id) || m.codes.some((c) => c.level === 'blocking' && REPORT_ONLY_GATE_CODES.includes(c.code)));
     return gate && levels.has('blocking') ? 'blocking' : 'info';
   }
   return levels.has('blocking') ? 'blocking' : levels.has('review') ? 'review' : 'info';

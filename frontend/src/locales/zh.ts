@@ -925,6 +925,7 @@ export const zh = {
     assessedOf: (assessed: number, total: number) => `评估 ${assessed} / 选中 ${total} 条`,
     judgedSoFar: (judged: number, total: number) => `已判 ${judged} / 选中 ${total} 条`,
     flaggedCount: (n: number | null) => (n === null ? '' : `检出 ${n} 条`),
+    skippedCount: (n: number) => `跳过 ${n} 条`,
     toSection: '去报告',
     blockBefore: '先补任务描述',
     errorsCount: (n: number) => `${n} 条待补跑`,
@@ -1057,6 +1058,9 @@ export const zh = {
     // a module's statistics (report section, task detail)
     assessed: '评估条数',
     flagged: '检出条数',
+    // D94 (design doc 28 §3): episodes a module wrote a record for without judging them
+    skipped: '跳过条数',
+    skipReasons: { integrity_rejected: '数据完整性已判废', no_task_text: '没有任务标注' } as Record<string, string>,
     itemsTitle: '检出项',
     itemsNone: '没有检出项',
     itemsSummary: (rows: string) => `检出项：${rows}`,
@@ -1182,7 +1186,7 @@ export const zh = {
     colVerdict: '判决',
     colScore: '分数',
     colElapsed: '耗时',
-    verdict: { pass: '通过', fail: '判废', abstain: '弃权', scored: '打分', error: '出错' } as Record<string, string>,
+    verdict: { pass: '通过', fail: '判废', abstain: '弃权', scored: '打分', error: '出错', skipped: '跳过' } as Record<string, string>,
     // Performance
     perfScope: '范围',
     perfAll: '全部',
@@ -1295,6 +1299,7 @@ export const zh = {
     abstain: (n: number) => `转人工 ${n} 条`,
     eefLabels: (bad: number, maybe: number, conflicts: number) => `不一致 ${bad} 条，可能不一致 ${maybe} 条，冲突 ${conflicts} 条`,
     error: (n: number) => `出错 ${n} 条`,
+    skipped: (n: number) => `跳过 ${n} 条`,
     allPass: (n: number) => `${n} 条全部通过`,
     nothing: '没有条目',
   },
@@ -1777,6 +1782,7 @@ export const zh = {
     taskSource: (s: string) => `（来源：${s}）`,
     evidence: '证据帧',
     noResult: '这个模块没有这一条的结果',
+    skipped: (why: string) => `没有评估：${why}`,
     noFindings: '无发现',
     moduleError: '执行出错',
     unassessable: '评估不了',

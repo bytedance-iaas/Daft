@@ -52,6 +52,8 @@ export interface Counts {
   abstain: number;
   scored: number;
   error: number;
+  /** written without judging the episode (D94: no task text, data integrity rejected it) */
+  skipped: number;
 }
 
 export function countsOf(s: Summary): Counts | null {
@@ -59,12 +61,17 @@ export function countsOf(s: Summary): Counts | null {
   if (!c || typeof c !== 'object') return null;
   const o = c as Record<string, unknown>;
   const n = (k: string) => num(o[k]) ?? 0;
-  return { total: n('total'), pass: n('pass'), fail: n('fail'), abstain: n('abstain'), scored: n('scored'), error: n('error') };
+  return { total: n('total'), pass: n('pass'), fail: n('fail'), abstain: n('abstain'), scored: n('scored'), error: n('error'), skipped: n('skipped') };
+}
+
+/** The episodes a section's module checked: all its records but those it skipped without judging (D94). */
+export function checkedOf(c: Counts): number {
+  return c.total - c.skipped;
 }
 
 /** The verdict distribution of a section, for the default chart. */
 export function verdictItems(c: Counts): Item[] {
-  return (['pass', 'fail', 'abstain', 'scored', 'error'] as const).filter((k) => c[k] > 0).map((k) => ({ name: zh.report.verdict[k] ?? k, value: c[k] }));
+  return (['pass', 'fail', 'abstain', 'scored', 'error', 'skipped'] as const).filter((k) => c[k] > 0).map((k) => ({ name: zh.report.verdict[k] ?? k, value: c[k] }));
 }
 
 /** An array of objects (per-camera rows...), or null. */
@@ -115,6 +122,8 @@ export function sectionDigest(s: Summary): string | null {
     if (c.abstain) parts.push(Z.abstain(c.abstain));
   }
   if (c?.error) parts.push(Z.error(c.error));
-  if (!parts.length && c) parts.push(c.total ? Z.allPass(c.total) : Z.nothing);
+  const judged = c ? c.total - c.skipped : 0;
+  if (!parts.length && c && (judged || !c.skipped)) parts.push(judged ? Z.allPass(judged) : Z.nothing);
+  if (c?.skipped) parts.push(Z.skipped(c.skipped));
   return parts.length ? parts.join('，') : null;
 }

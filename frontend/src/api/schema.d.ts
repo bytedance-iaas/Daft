@@ -2339,7 +2339,7 @@ export interface components {
             };
             /** @default false */
             clips?: boolean;
-            /** @description The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a person and which are only reported. `default` gives every finding code its registry level (today's hard gates reject, today's suspects and abstentions are asked); `report_only` asks nothing and rejects only on data integrity's blocking findings (an empty, cut or unreadable file leaves nothing for the modules after it). Frozen at start; changing it later re-runs aggregate only. */
+            /** @description The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a person and which are only reported. `default` gives every finding code its registry level (today's hard gates reject, today's suspects and abstentions are asked); `report_only` asks nothing and rejects only on broken files: data integrity's blocking findings (an empty, cut or unreadable file leaves nothing for the modules after it) and a video the decoder finds corrupt (`decode_failed`, in whichever check decoded it). Frozen at start; changing it later re-runs aggregate only. */
             policy?: {
                 /**
                  * @default default
@@ -4503,7 +4503,7 @@ export interface components {
             state: "succeeded" | "completed_with_errors" | "failed";
             /** @description the 1.0 keys of the module's own views stay (design doc 06 §6.2); 2.0 adds the generic statistics every section has */
             summary: {
-                /** @description episodes the module judged (status ok) */
+                /** @description episodes the module judged: status ok and not skipped (D94) */
                 assessed_episodes: number;
                 /** @description of them, the episodes with at least one finding of the module (F12.5) */
                 flagged_episodes?: number;
@@ -4534,6 +4534,14 @@ export interface components {
                 score_hist?: Record<string, unknown>;
                 /** @description the module's dataset-level findings (checks/<module>/dataset.json) */
                 dataset_findings?: components["schemas"]["finding"][];
+                /** @description design doc 28 §3 (D94): episodes the module wrote a record for without judging them (details.skipped) */
+                skipped_episodes?: number;
+                /** @description the skipped episodes by reason, most first */
+                skipped_reasons?: {
+                    /** @description integrity_rejected (D92) or no_task_text (D72) */
+                    name: string;
+                    count: number;
+                }[];
             };
             tables: {
                 id: string;
@@ -4615,7 +4623,7 @@ export interface components {
             unassessable: components["schemas"]["unassessable"][];
             /** @description numbers that are no finding, for the report and the episode page */
             readings: Record<string, unknown>;
-            /** @description module-specific, field names kept from v1 (parity and the episode page) */
+            /** @description module-specific, field names kept from v1 (parity and the episode page). Two keys every module may write: skipped - the module wrote the record without judging the episode (design doc 28 §3, D94): integrity_rejected (data integrity rejected it, D92: no findings, every covered item unassessable) or no_task_text (task_success, D72); undecodable - the decoder's incidents behind a decode_failed finding (D93) */
             details: Record<string, unknown>;
             evidence: string[];
             elapsed_s: number | null;
@@ -6845,11 +6853,13 @@ export interface operations {
                         next_cursor: number | null;
                         started: number;
                         finished: number;
-                        /** @description per per-episode module so far, the episodes it judged, the ones it failed on and, of the judged, the ones with a finding (the live module cards) */
+                        /** @description per per-episode module so far, the episodes it judged, the ones it failed on, the ones it skipped without judging them (no task text, or data integrity already rejected the episode) and, of the judged, the ones with a finding (the live module cards) */
                         modules?: {
                             id: components["schemas"]["ModuleId"];
                             judged: number;
                             error: number;
+                            /** @description 7.1.0: episodes skipped without judging them */
+                            skipped?: number;
                             flagged: number;
                         }[];
                     };

@@ -1609,14 +1609,18 @@ export function pipelineRow(ep: number, revision: number, finished: boolean, quo
   };
 }
 
+/** A record its module wrote without judging the episode (D94): why, or null. */
+const skippedOf = (r: ResultRecord): string | null => (typeof r.details?.skipped === 'string' ? r.details.skipped : null);
+
 /** The live module counts of the main task (C4 listPipelineEpisodes `modules`): per module the episodes judged,
- * failed on and, of the judged, the ones with a finding. */
-export function mainModuleCounts(): { id: string; judged: number; error: number; flagged: number }[] {
+ * failed on, skipped without judging (D94) and, of the judged, the ones with a finding. */
+export function mainModuleCounts(): { id: string; judged: number; error: number; skipped: number; flagged: number }[] {
   const per = EPISODES.map((ep) => recordsOf(ep));
   return MAIN_MODULES.map((m) => {
     const recs = per.map((r) => r[m]).filter(Boolean);
-    const ok = recs.filter((r) => r.status === 'ok');
-    return { id: m, judged: ok.length, error: recs.length - ok.length, flagged: ok.filter((r) => r.findings.length).length };
+    const ok = recs.filter((r) => r.status === 'ok' && !skippedOf(r));
+    const skipped = recs.filter((r) => r.status === 'ok' && skippedOf(r)).length;
+    return { id: m, judged: ok.length, error: recs.length - ok.length - skipped, skipped, flagged: ok.filter((r) => r.findings.length).length };
   });
 }
 
@@ -1710,7 +1714,9 @@ type Section = Report['modules'][number];
 
 /** The statistics every module section has (design doc 17 §5.1), from the records of the episodes. */
 function findingsStats(module: string, records: ResultRecord[]): Record<string, unknown> {
-  const judged = records.filter((r) => r.status === 'ok');
+  const judged = records.filter((r) => r.status === 'ok' && !skippedOf(r));
+  const skipped = new Map<string, number>();
+  for (const r of records) if (r.status === 'ok' && skippedOf(r)) skipped.set(skippedOf(r)!, (skipped.get(skippedOf(r)!) ?? 0) + 1);
   const byCode = new Map<string, { item: string | null; level: string; eps: Set<number>; cams: Map<string, Set<number>> }>();
   const levels = { blocking: new Set<number>(), review: new Set<number>(), info: new Set<number>() };
   for (const r of judged) {
@@ -1728,6 +1734,8 @@ function findingsStats(module: string, records: ResultRecord[]): Record<string, 
   for (const r of judged) for (const u of r.unassessable) why.set(`${u.item}|${u.reason}`, (why.get(`${u.item}|${u.reason}`) ?? 0) + 1);
   return {
     assessed_episodes: n,
+    skipped_episodes: [...skipped.values()].reduce((a, x) => a + x, 0),
+    skipped_reasons: [...skipped.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
     flagged_episodes: new Set([...levels.blocking, ...levels.review, ...levels.info]).size,
     levels: { blocking: levels.blocking.size, review: levels.review.size, info: levels.info.size },
     items: [...byCode.entries()].map(([code, e]) => ({

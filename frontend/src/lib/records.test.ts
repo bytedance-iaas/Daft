@@ -38,6 +38,19 @@ describe('records read by verdict and score (design doc 17 §1: what the modules
     expect(recordVerdict(undefined, reg)).toBeNull();
   });
 
+  it('a record written without judging the episode is skipped, not an abstention (D94)', () => {
+    const skipped = rec('timestamp_check', {
+      assessed: [],
+      unassessable: [{ item: 'STRM-3', reason: 'integrity_rejected', message_zh: '数据完整性已判废，没有评估' }],
+      details: { skipped: 'integrity_rejected', reason: '数据完整性已判废：文件为空' },
+    });
+    expect(recordVerdict(skipped, reg)).toBe('skipped');
+    expect(asLegacyRecord(skipped, reg)).toMatchObject({ verdict: 'skipped', passed: null });
+    expect(recordVerdict(rec('task_success', { assessed: [], details: { skipped: 'no_task_text' } }), reg)).toBe('skipped');
+    // a corrupt video is a blocking finding (D93): a fail like any other
+    expect(recordVerdict(rec('visual_quality', { findings: [finding('decode_failed', 'FILE-4')] }), reg)).toBe('fail');
+  });
+
   it('a record gets the verdict words and keeps its details', () => {
     const legacy = asLegacyRecord(rec('timestamp_check', { findings: [finding('gap', 'STRM-3')] }), reg);
     expect(legacy).toMatchObject({ episode_index: 3, module: 'timestamp_check', verdict: 'fail', passed: false, score: null });

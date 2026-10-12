@@ -322,6 +322,12 @@ function ModuleBlocks({ taskId, rev, view, report, onSelect }: { taskId: string;
               <Typography.Text type="secondary">{E().noResult}</Typography.Text>
             ) : record.verdict === 'error' ? (
               <BlockError text={recordError(record.error)} />
+            ) : record.verdict === 'skipped' ? (
+              // D94: written without judging the episode - one line why (the finding behind it is in the summary
+              // above), not every item it did not assess
+              <Typography.Text type="secondary" data-testid={`episode-skipped-${id}`}>
+                {E().skipped(zh.findings.skipReasons[String(record.details.skipped)] ?? (typeof record.details.reason === 'string' && record.details.reason ? record.details.reason : String(record.details.skipped)))}
+              </Typography.Text>
             ) : (
               <>
                 {unassessable.length ? (

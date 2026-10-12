@@ -10,7 +10,7 @@ import { LazyVisible } from '../../components/LazyVisible';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
 import type { LegacySection } from '../../lib/records';
-import { anyValue, countsOf, fmt, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
+import { anyValue, checkedOf, countsOf, fmt, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
 import { formatScalar } from '../../lib/summary';
 import { zh } from '../../locales/zh';
 
@@ -174,7 +174,7 @@ function timestampModel(s: Summary): ViewModel {
   const stats: StatSpec[] = [];
   if (c) stats.push({ label: Z.failed, value: c.fail, tone: c.fail ? 'bad' : undefined });
   for (const k of ['out_of_order', 'gap', 'fragment', 'jitter']) if (k in byKind) stats.push({ label: Z.kinds[k], value: byKind[k] });
-  if (c) stats.push({ label: S().checked, value: c.total });
+  if (c) stats.push({ label: S().checked, value: checkedOf(c) });
   if (num(s.duration_total_s) !== null) stats.push({ label: Z.durationTotal, value: zh.time.duration(num(s.duration_total_s)) });
   if (num(s.duration_median_s) !== null) stats.push({ label: Z.durationMedian, value: Z.seconds(num(s.duration_median_s)!) });
   if (num(s.duration_min_s) !== null && num(s.duration_max_s) !== null) stats.push({ label: Z.durationRange, value: `${Z.seconds(num(s.duration_min_s)!)} / ${Z.seconds(num(s.duration_max_s)!)}` });
@@ -195,7 +195,7 @@ function kinematicsModel(s: Summary): ViewModel {
   if (c) {
     stats.push({ label: S().task.fail, value: c.fail });
     if (c.abstain) stats.push({ label: zh.report.verdict.abstain, value: c.abstain, tone: 'warn' });
-    stats.push({ label: S().checked, value: c.total });
+    stats.push({ label: S().checked, value: checkedOf(c) });
   }
   if (str(s.limits_profile)) stats.push({ label: Z.profile, value: str(s.limits_profile) });
   const charts: ChartSpec[] = [];
@@ -251,7 +251,7 @@ function visualModel(s: Summary): ViewModel {
   const cams = rowsOf<{ camera: string; n: number; mean: number | null; low: number; placeholder: number; hist: number[]; weight?: number }>(s.cameras) ?? [];
   const stats: StatSpec[] = [];
   if (num(s.mean_score) !== null) stats.push({ label: S().score.mean, value: fmt(num(s.mean_score)) });
-  if (c) stats.push({ label: S().checked, value: c.total, foot: cams.length ? Z.perCamera(cams.length) : undefined });
+  if (c) stats.push({ label: S().checked, value: checkedOf(c), foot: cams.length ? Z.perCamera(cams.length) : undefined });
   if (num(s.low_camera_readings) !== null) stats.push({ label: Z.low, value: num(s.low_camera_readings), tone: num(s.low_camera_readings) ? 'warn' : undefined });
   if (num(s.placeholder_readings) !== null) stats.push({ label: Z.placeholder, value: num(s.placeholder_readings) });
   if (num(s.blur_ref_var) !== null) stats.push({ label: Z.blurRef, value: formatScalar(num(s.blur_ref_var)), foot: num(s.frame_max_side) !== null ? `${Z.maxSide} ${Z.maxSideFoot(num(s.frame_max_side)!)}` : undefined });
@@ -292,7 +292,7 @@ function syncModel(s: Summary): ViewModel {
       if (k in v) stats.push({ label: Z.verdicts[k], value: v[k], foot: Z.verdictFoot[k], tone: k === 'misaligned' && v[k] ? 'bad' : undefined });
     }
   } else if (c) {
-    stats.push({ label: Z.verdicts.misaligned, value: c.fail, tone: c.fail ? 'bad' : undefined }, { label: S().checked, value: c.total });
+    stats.push({ label: Z.verdicts.misaligned, value: c.fail, tone: c.fail ? 'bad' : undefined }, { label: S().checked, value: checkedOf(c) });
   }
   if (num(s.flagged_camera_readings) !== null) stats.push({ label: Z.flagged, value: `${num(s.flagged_camera_readings)} ${Z.flaggedUnit}` });
   const tol = num(s.lag_tol_s) ?? 0.25;
@@ -362,7 +362,7 @@ function taskModel(s: Summary, section: LegacySection): ViewModel {
   const c = countsOf(s);
   const stats: StatSpec[] = [];
   if (c) {
-    stats.push({ label: Z.checked, value: c.total });
+    stats.push({ label: Z.checked, value: checkedOf(c) });
     stats.push({ label: Z.pass, value: c.pass, tone: 'good' });
     stats.push({ label: Z.fail, value: c.fail, tone: c.fail ? 'bad' : undefined, foot: section.adjudication?.appealable ? zh.report.goAppeal(section.adjudication.appealable) : undefined });
     stats.push({ label: Z.abstain, value: c.abstain, foot: Z.abstainFoot, tone: c.abstain ? 'warn' : undefined });
@@ -396,7 +396,7 @@ function duplicateModel(s: Summary): ViewModel {
   const Z = S().duplicate_check;
   const c = countsOf(s);
   const stats: StatSpec[] = [];
-  if (c) stats.push({ label: S().checked, value: c.total });
+  if (c) stats.push({ label: S().checked, value: checkedOf(c) });
   if (num(s.groups) !== null) stats.push({ label: Z.groups, value: num(s.groups) });
   if (num(s.duplicated) !== null) stats.push({ label: Z.duplicated, value: num(s.duplicated), foot: Z.duplicatedFoot, tone: num(s.duplicated) ? 'warn' : undefined });
   const charts: ChartSpec[] = [];

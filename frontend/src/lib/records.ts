@@ -3,12 +3,13 @@
 // §6.2). Records and reports are C2 2.0 only (D90); this is how those views read them, with the same rules as the
 // backend's `records.legacy_verdict`: a finding whose code blocks by default is a fail, a review finding an
 // abstention, a score makes it scored; none of the items its own per-episode codes report on assessed, or not what
-// the module rejects on, is an abstention too. Details are the module's own and stay as they are. The findings views
+// the module rejects on, is an abstention too; a record the module wrote without judging the episode (details.skipped:
+// no task text, data integrity rejected it - D94) is skipped. Details are the module's own and stay as they are. The findings views
 // (src/lib/findings.ts) read records and reports as they are.
 import type { ModuleRegistry, Report, ReportModuleSection, ResultRecord } from '../api/types';
 
 /** The verdict words the modules' own views use. */
-export type LegacyVerdict = 'pass' | 'fail' | 'abstain' | 'scored' | 'error';
+export type LegacyVerdict = 'pass' | 'fail' | 'abstain' | 'scored' | 'error' | 'skipped';
 
 /** A record as the modules' own views read it. */
 export interface LegacyRecord {
@@ -32,6 +33,7 @@ export function recordScore(r: ResultRecord | null | undefined): number | null {
 export function recordVerdict(r: ResultRecord | null | undefined, reg: ModuleRegistry | undefined): LegacyVerdict | null {
   if (!r) return null;
   if (r.status === 'error') return 'error';
+  if (typeof r.details?.skipped === 'string' && r.details.skipped) return 'skipped';
   const spec = reg?.modules.find((m) => m.id === r.module);
   const levelOf = (code: string) => spec?.codes.find((c) => c.code === code)?.level ?? 'info';
   const levels = new Set(r.findings.map((f) => levelOf(f.code)));

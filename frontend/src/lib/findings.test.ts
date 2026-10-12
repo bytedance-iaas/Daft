@@ -15,6 +15,8 @@ import {
   reportersOf,
   scopeText,
   scoreHists,
+  skippedReasons,
+  unassessableTitle,
 } from './findings';
 
 const reg = modulesJson as unknown as ModuleRegistry;
@@ -35,9 +37,12 @@ describe('the findings views read the registry and the report', () => {
   it('a module rejects, asks or only reports by its codes; under report_only only data integrity rejects', () => {
     expect(moduleRole(spec('timestamp_check'))).toBe('blocking');
     expect(moduleRole(spec('eef_video_consistency'))).toBe('review');      // registry 5.0 (D81): a conflict asks, nothing rejects
-    expect(moduleRole(spec('visual_quality'))).toBe('info');
-    expect(moduleRole(spec('task_success'), 'report_only')).toBe('info');
+    expect(moduleRole(spec('duplicate_check'))).toBe('info');            // D87: duplicates are only reported
+    expect(moduleRole(spec('visual_quality'))).toBe('blocking');         // registry 7.1 (D93): a corrupt video rejects
     expect(moduleRole(spec('timestamp_check'), 'report_only')).toBe('info');
+    expect(moduleRole(spec('duplicate_check'), 'report_only')).toBe('info');
+    // policy 3 (D93): a corrupt video rejects in the modules that decode it, under report_only too
+    expect(moduleRole(spec('task_success'), 'report_only')).toBe('blocking');
     // an empty or cut file still rejects (requester 2026-10-05)
     expect(moduleRole(spec('data_integrity'), 'report_only')).toBe('blocking');
   });
@@ -116,5 +121,28 @@ describe('one episode', () => {
     expect(intervalOf({ frames: [10, 10] })).toEqual({ text: '第 11 帧', seekS: null });
     expect(intervalOf({ frames: [0, 9] })?.text).toBe('第 1–10 帧');
     expect(intervalOf({})).toBeNull();
+  });
+});
+
+describe('episodes a module skipped without judging them (D94, design doc 28 §3)', () => {
+  type Summary = Report['modules'][number]['summary'];
+  const summary = (over: Partial<Summary>) => ({ assessed_episodes: 38, items: [], unassessable: [], ...over }) as Summary;
+
+  it('says why, most first, in the registry\'s words', () => {
+    const s = summary({ skipped_episodes: 10, skipped_reasons: [{ name: 'integrity_rejected', count: 8 }, { name: 'no_task_text', count: 2 }] });
+    expect(skippedReasons(s)).toBe('数据完整性已判废 8、没有任务标注 2');
+    // one reason: its name alone, the count is the figure next to it
+    expect(skippedReasons(summary({ skipped_episodes: 6, skipped_reasons: [{ name: 'integrity_rejected', count: 6 }] }))).toBe('数据完整性已判废');
+    expect(skippedReasons(summary({ skipped_episodes: 1, skipped_reasons: [{ name: 'something_new', count: 1 }] }))).toBe('something_new');
+  });
+
+  it('says nothing when the module skipped none (or an older report has no such keys)', () => {
+    expect(skippedReasons(summary({ skipped_episodes: 0, skipped_reasons: [] }))).toBeNull();
+    expect(skippedReasons(summary({}))).toBeNull();
+  });
+
+  it('the registry names the two new reasons a module could not assess an item for (registry 7.1)', () => {
+    expect(unassessableTitle(reg, 'integrity_rejected')).toBe('数据完整性已判废，没有评估');
+    expect(unassessableTitle(reg, 'video_undecodable')).toBe('视频解不开（文件损坏）');
   });
 });

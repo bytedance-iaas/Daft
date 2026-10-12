@@ -4,7 +4,7 @@ import { useModules } from '../../api/queries';
 import type { ReportModuleSection } from '../../api/types';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
-import { LEVELS, LEVEL_COLOR, LEVEL_TAG, itemLabel, levelTitle, moduleItems, moduleLevels, readingName, scoreHists, unassessableTitle, type Level } from '../../lib/findings';
+import { LEVELS, LEVEL_COLOR, LEVEL_TAG, itemLabel, levelTitle, moduleItems, moduleLevels, readingName, scoreHists, skippedReasons, unassessableTitle, type Level } from '../../lib/findings';
 import { zh } from '../../locales/zh';
 import { ChartBlock, type ChartSpec } from '../../pages/report/sectionViews';
 
@@ -55,7 +55,7 @@ export function itemsChart(moduleId: string, summary: ReportModuleSection['summa
 
 /**
  * What every module section of a report has (design doc 17 §5.2): the episodes it assessed, those it
- * found something in, per level; its 检出项 (codes by level, with their share and cameras); the
+ * found something in, per level, those it skipped without judging and why (D94); its 检出项 (codes by level, with their share and cameras); the
  * distributions of its 0-1 readings; why it could not assess some episodes; its dataset-level findings.
  * Drawn from the section's summary alone, so a new module needs no frontend change.
  */
@@ -102,6 +102,7 @@ export function FindingsView({
           <StatCell key={lv} label={levelTitle(reg.data, lv)} value={levels[lv]} tone={lv === 'blocking' ? 'bad' : lv === 'review' ? 'warn' : undefined} testId={`level-count-${moduleId}-${lv}`} />
         ))}
         {unassessed ? <StatCell label={F().unassessableTitle} value={unassessed} /> : null}
+        {s.skipped_episodes ? <StatCell label={F().skipped} value={s.skipped_episodes} foot={skippedReasons(s) ?? undefined} testId={`skipped-${moduleId}`} /> : null}
       </div>
       {!items ? <Typography.Text type="secondary">{F().itemsNone}</Typography.Text> : null}
       {charts.length ? (

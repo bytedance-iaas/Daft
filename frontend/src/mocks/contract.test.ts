@@ -90,7 +90,7 @@ describe('fixtures match the contract', () => {
     const items = mainEpisodes(new Map([[29, ['task_success']]]));
     expectValid(S('TaskEpisodePage'), { items, next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 42, reject: 6, held: 2, review: 1 }, revision: 2 });
     expect(items.find((e) => e.episode_index === 18)?.levels).toContain('blocking');
-    expect(mainModuleCounts().every((m) => m.judged + m.error === 50)).toBe(true);
+    expect(mainModuleCounts().every((m) => m.judged + m.error + m.skipped === 50)).toBe(true);
     for (const id of registry.modules.map((m) => m.id)) {
       const summary = sampleSummary(id, 40);
       expect(summary.counts, id).toBeTruthy();
