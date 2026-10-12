@@ -127,7 +127,7 @@
     │
     ├─▶ ④ check · 两块并行（设计 17）  每段一个常驻进程，episode 逐条交接；每段都拿全部所选条目
     │     CPU 块  integrity → numeric → frame（同进程共享一次解码）→ duplicate；选了 EEF 另有一条根链 vlm_prep
-    │     VLM 块  vlm：task_success（随附 camera_defects，不增加请求）与 EEF 的模型半段
+    │     VLM 块  vlm：task_success（随附 camera_defects：画面缺陷、遮挡与机位身份，不增加请求）与 EEF 的模型半段
     │        └ 数据完整性判废的条目，其它模块只记跳过；VLM 块逐条等完整性的结论再派发（D92，设计 28）
     │     ★ 结果按模块分目录落盘：checks/<module>/…，所以单个模块可以被单独重跑覆盖
     │

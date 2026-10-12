@@ -25,7 +25,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → check（一次跑一段）→ aggregate → report → verify`，另有 `adjudicate-apply`、REST 薄客户端 `curation task …`、把 UMI 原始会话转成 LeRobot 的离线工具 `stage-umi` 和运维命令 `ls`、`prune`、`fetch`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分段、并发、VLM 闸门（`episode`、`probe`）；请求合并与自适应降并发的框架在这里，现有模块都不合并；`curation plan` 与 Daemon 共用 |
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`streams/`、`declaration/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、机器人规格库、读取器、报告生成（`export/`）、编排壳、VLM 客户端与视频输入、按块读 TOS 与块缓存（`streams/`，设计 23）、数据集声明的校验与起草（`declaration/`，C7）；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
-| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12、25）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，骑在 task_success 那一次判定请求上作答，设计 13） |
+| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12、25）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷与机位身份，骑在 task_success 那一次判定请求上作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
 | 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（按检测项的 precision / recall、与基线比较） |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |

@@ -9,7 +9,7 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一段跑、能报哪些细码、覆盖哪些检测项、有哪些参数 | 注册表 7.1（D93，2026-10-11；7.0 是 D90）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷（随任务成败判定的请求作答）；细码与覆盖指向分类表 2.0；两块：CPU 块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep），VLM 块 vlm，全部逐条交接，没有全量段和补描述段（无标注条目不判成败，无法评估原因 `no_task_text`）；每个细码有缺省级别 blocking / review / info，review 级写明裁决线（`task_verdict`、`reject_appeal`、`eef_check`、`integrity_check`），blocking 级写明可否复议；`depends_on` 3.2 起为空；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一段跑、能报哪些细码、覆盖哪些检测项、有哪些参数 | 注册表 7.2（2026-10-12，画面缺陷多视觉遮挡与机位身份；7.1 是 D93）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷（随任务成败判定的请求作答）；细码与覆盖指向分类表 2.0；两块：CPU 块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep），VLM 块 vlm，全部逐条交接，没有全量段和补描述段（无标注条目不判成败，无法评估原因 `no_task_text`）；每个细码有缺省级别 blocking / review / info，review 级写明裁决线（`task_verdict`、`reject_appeal`、`eef_check`、`integrity_check`），blocking 级写明可否复议；`depends_on` 3.2 起为空；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（17 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；记录只有 2.0（D90）：`status` 是 `ok / error`（`error` 必须带出错明细），加发现、评估过与评估不了的检测项；判决由 `aggregate` 按任务策略算：`keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
 | C4 REST API `openapi.yaml`（OpenAPI 3.1，7.1.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
@@ -526,3 +526,18 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **行为**：完整性判废的条目，其它模块不读数据、不调模型，只写跳过记录（D92）；Daemon 里完整性所在链之外的链逐条等完整性的结论。
   解码器报 `InvalidDataError`、找不到 moov 或视频流是文件坏了，记成判废发现，不算执行出错（D93）；网络、超时仍是执行出错。
 - **策略版本 3**：预设 `report_only` 多一条规则，任何模块的 `decode_failed` 仍判废（和数据完整性的致命问题一样）；已冻结旧版本的任务照旧。
+
+## 画面缺陷多两项：视觉遮挡与机位身份（2026-10-12）
+
+需求方 16 项清单里的视觉遮挡（IMG-8）与左右手 / 机位身份一致（MV-2）此前没有模块覆盖。两项都只看画面就能判，
+所以并进任务成败判定那一次请求里每路相机的 `camera_check`，不增加模型调用。
+
+- **C1 7.2**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，严重度 medium，按机位），
+  明细表加 `occlusion`、`occlusion_coverage`、`occlusion_region`、`occlusion_duration_s`、`view_matches_name`、`identity` 六列；
+  `covers` 相应多 IMG-8、MV-2。其他模块不变。
+- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/5`，`items` 多 `occlusion`，
+  新增 `identity`（`consistent` / `inconsistent` / `unknown`）与 `arms`（左右臂是否在相机之间串线的原始回答），
+  `per_camera` 每路多 `occlusion`（`level`、`times`、`source`、`coverage`、`region`、`duration_s`、`share`）与 `view`
+  （`kind`、`arm`、`matches_name`、`same_as`、`note`）；旧协议的记录视为过期，重试会重判，读出来 IMG-8 / MV-2 记 unassessable。
+  `task_success` 记录里 `cameras[*].camera_check` 同样多这两块，`arms` 在 detail 顶层。
+- **C4 不变**；报告小节 `summary` 多 `occlusion` 计数、`identity` 计数与遮挡的总秒数 / 最大比例（都是开放字段）。

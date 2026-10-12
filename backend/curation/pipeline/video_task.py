@@ -69,6 +69,7 @@ def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标�
 
     cameras = primary.get("cameras") or {}
     detail["cameras"] = cameras
+    detail["arms"] = primary.get("arms") or {}      # the episode's arm identity (MV-2, camera_defects)
     votes = {cam: _VOTE.get(entry.get("verdict"), "unavail") for cam, entry in cameras.items()}
     detail["cam_votes"] = votes
     yes, no = list(votes.values()).count("yes"), list(votes.values()).count("no")

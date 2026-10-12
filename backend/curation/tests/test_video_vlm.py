@@ -214,7 +214,9 @@ def test_an_episode_without_a_task_text_gets_the_picture_defect_request_alone(mo
         "shake": {"level": "none", "times": [], "note": ""},
         "contamination": {"level": "severe", "kind": "water", "times": [], "note": "persistent"}}}}})
     got = parse_cameras_only(answer, clips)
-    assert set(got) == {"cameras"} and set(got["cameras"]) == {"cam", "wrist"}
+    # the arm block rides along here too: an episode with no task text can still show crossed arms
+    assert set(got) == {"cameras", "arms"} and set(got["cameras"]) == {"cam", "wrist"}
+    assert got["arms"]["identity"] == "unknown"
     cam, wrist = got["cameras"]["cam"], got["cameras"]["wrist"]
     assert cam["verdict"] == "unavail" and cam["camera_check"]["glitch"]["level"] == "minor"
     assert cam["camera_check"]["contamination"]["kind"] == "water"
@@ -286,7 +288,10 @@ def test_resume_rejudges_old_frame_records_and_keeps_current_video_records(monke
 def _check(**over):
     base = {"glitch": {"level": "none", "times": [], "note": ""},
             "shake": {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"},
-            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"}}
+            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"},
+            "occlusion": {"level": "minor", "source": "arm", "region": "left", "coverage": 0.3,
+                          "duration_s": 0.5, "times": [[1.0, 1.5]], "note": "arm in front"},
+            "view": {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}}
     base.update(over)
     return base
 
@@ -321,14 +326,31 @@ def test_a_cameras_defect_report_is_normalised():
     assert got["glitch"] == {"level": "none", "times": [], "note": ""}
     assert got["shake"] == {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"}
     assert got["contamination"]["level"] == "severe" and got["contamination"]["kind"] == "smudge"
+    # occlusion answers three things of its own: how much of the picture, where, how long
+    assert got["occlusion"]["source"] == "arm" and got["occlusion"]["region"] == "left"
+    assert got["occlusion"]["coverage"] == 0.3 and got["occlusion"]["duration_s"] == 0.5
+    assert got["occlusion"]["share"] == 0.25                  # 0.5 s of a 2 s window
+    assert got["view"] == {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}
+    assert got["problems"] == []
     # malformed pieces degrade to unknown / are dropped, never raise
     bad = parse_camera_check({"glitch": {"level": "awful", "times": [[5, 9], [1, "x"], [0, 1]]},
-                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"}}, [clip()])
+                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"},
+                              "occlusion": {"level": "severe", "source": "ghost"},
+                              "view": {"kind": "drone", "arm": "left", "matches_name": "no", "same_as": 3}}, [clip()])
     assert bad["glitch"]["level"] == "unknown" and bad["glitch"]["times"] == [[0, 1]]
     assert bad["shake"]["level"] == "unknown"
     assert bad["contamination"] == {"level": "minor", "times": [], "note": "", "kind": "other"}
-    assert len(bad["problems"]) == 5          # level, two intervals, missing shake, kind
+    # severe with no stretch named covers the whole clip; an unknown source reads other, and the
+    # three numbers of its own are repaired from what else is known rather than left out
+    assert bad["occlusion"] == {"level": "severe", "times": [], "note": "", "source": "other",
+                                "region": "unknown", "coverage": None, "duration_s": 2.0, "share": 1.0}
+    assert bad["view"] == {"kind": "unknown", "arm": "left", "matches_name": "no", "same_as": "", "note": ""}
+    assert len(bad["problems"]) == 8          # level, two intervals, missing shake, kind, source, view kind, same_as
     assert parse_camera_check("nope", [clip()])["problems"] == ["camera_check is not an object"]
+    # the members added later missing: the items read unknown and the slip is named, nothing raises
+    old = parse_camera_check({k: v for k, v in _check().items() if k in ("glitch", "shake", "contamination")}, [clip()])
+    assert old["occlusion"]["level"] == "unknown" and old["view"]["matches_name"] == "unknown"
+    assert old["problems"] == ["occlusion: missing or not an object", "view: missing or not an object"]
     # the five core fields and the cameras block are exactly required
     with pytest.raises(ValueError):
         parse_assessment(json.dumps(dict(judged(), extra=1)), [clip()])
@@ -377,8 +399,9 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     assert len(sent) == 1                                # the verdict was never sent back for repair
     assert out["verdict"] == "success" and out["completion"] == 0.9
     check = out["cameras"]["cam"]["camera_check"]
-    assert {k: v["level"] for k, v in check.items() if isinstance(v, dict)} == \
-        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown"}
+    assert {k: v["level"] for k, v in check.items() if isinstance(v, dict) and "level" in v} == \
+        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown", "occlusion": "unknown"}
+    assert check["view"]["matches_name"] == "unknown"
     assert any("not valid JSON" in p for p in check["problems"])
 
     # a core field broken is still a repair and then an error
@@ -387,3 +410,20 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     with pytest.raises(ValueError):
         make_video_assessor("http://test/v1", "video-model")([clip()], "pick up")
     assert len(sent) == 2
+
+
+def test_the_arm_block_is_lenient_and_refuses_a_vague_crossing():
+    """The arms block never raises and never becomes a finding on its own word: a crossing has to
+    name a camera that was actually supplied, else it reads unknown with the slip recorded."""
+    from curation.adapters.video_vlm import parse_arms
+
+    clips = [clip(), clip(camera="wrist")]
+    ok = parse_arms({"identity": "crossed", "crossed": ["wrist"], "note": "only the right arm moved"}, clips)
+    assert ok == {"identity": "crossed", "crossed": ["wrist"], "note": "only the right arm moved", "problems": []}
+    vague = parse_arms({"identity": "crossed", "crossed": []}, clips)
+    assert vague["identity"] == "unknown" and "no supplied camera was named" in vague["problems"][0]
+    unknown = parse_arms({"identity": "crossed", "crossed": ["nowhere"]}, clips)
+    assert unknown["identity"] == "unknown" and "not supplied" in unknown["problems"][0]
+    assert parse_arms(None, clips)["identity"] == "unknown"
+    assert parse_arms("nope", clips)["problems"] == ["arms is not an object"]
+    assert parse_arms({"identity": "maybe"}, clips)["problems"][0].startswith("arms: identity")

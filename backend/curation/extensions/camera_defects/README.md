@@ -1,14 +1,20 @@
-# camera_defects · 镜头画面缺陷（花屏 / 抖动 / 镜头污染）
+# camera_defects · 镜头画面缺陷（花屏 / 抖动 / 镜头污染 / 视觉遮挡）与机位身份
 
 设计：`docs/design/13-video-native-vlm.md`「逐机位画面缺陷」。注册表：C1 1.14 起，
-`ModuleSpec(id="camera_defects", rides_on="task_success")`；2.0（设计 17）起有三个细码 `glitch`（IMG-5）、`shake`（IMG-6）、
-`contamination`（IMG-7），默认级别都是 info：只出结果，不影响判决。
+`ModuleSpec(id="camera_defects", rides_on="task_success")`；2.0（设计 17）起有细码 `glitch`（IMG-5）、`shake`（IMG-6）、
+`contamination`（IMG-7），7.2 起加 `occlusion`（IMG-8）与 `identity`（MV-2），默认级别都是 info：只出结果，不影响判决。
 
 ## 它是什么
 
 `task_success` 每条 episode 只发一次请求（D71），多机位连续视频一起看。答复里每路相机一项（`cameras`），每项带一个 `camera_check` 字段，
-报告这路相机自己的三项画面缺陷；没有任务标注的条目不判成败，只发一次只问画面缺陷的请求（`CAMERAS_ONLY_PROMPT`，D73）。
+报告这路相机自己的四项画面缺陷和它物理上是什么；答复里另有一个 `arms` 块，说各路相机对左右臂的身份是否一致。
+没有任务标注的条目不判成败，只发一次只问画面缺陷的请求（`CAMERAS_ONLY_PROMPT`，D73）。
 这个模块把各路答案汇成每条 episode 一条记录。
+
+四项是花屏、抖动、镜头污染、视觉遮挡。**遮挡单独给三个数**：`coverage`（最严重时遮住画面的比例）、`region`（遮挡物在画面里的
+位置）、`duration_s`（被挡住的总秒数）；提示词里逐条写明光照变化、机器人自己的手臂与搬运物、只是在场景里的人和物、
+对着别处的画面都不算遮挡。**左右臂串线**（`arms`）是一路相机看不出来的事，要把各路放在一起才能判：找一段只有一条臂在动的
+时间，跟住同一条物理臂，再和各路命名对照。
 
 - **不增加模型调用**：请求次数和发送的视频都不变，只是答复里每路相机多一个字段。
 - **每次都问**：没有开关，界面上也不勾选。它是 `task_success` 的随附模块，宿主在跑它就出结果。
@@ -17,10 +23,17 @@
 - **不拖累宿主**：请求带 `response_format: {"type": "json_object"}` 让服务端约束出合法 JSON；万一 `camera_check` 还是写坏，
   解析时把它整块剪掉、保住五个核心字段，三项记 unknown 并在 `problems` 里写明。
 
-三项：`glitch`（花屏：撕裂、块状、拖影、糊掉，或带伪影的画面冻结）、`shake`（相机本体晃动；腕部
-相机随手臂运动属正常，只报超出的抖动）、`contamination`（镜头脏污、油污、水渍、遮挡物）。
+四项：`glitch`（花屏：撕裂、块状、拖影、糊掉，或带伪影的画面冻结）、`shake`（相机本体晃动；腕部
+相机随手臂运动属正常，只报超出的抖动）、`contamination`（镜头脏污、油污、水渍、遮挡物贴在镜头上）、
+`occlusion`（镜头干净，但操作区被镜头与场景之间的东西挡住：机械臂、机身、人、物件、线缆）。
 每项四档 `none` / `minor` / `severe` / `unknown`，附时间段（口径同 `evidence`：episode 相对秒）和一句说明；
-污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`）。
+污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`），遮挡另给 `source`（`arm` / `body` / `person` /
+`object` / `cable` / `other`）和解析时算出的 `share`（时间段合计占这路窗口的比例）。
+
+机位身份 `view`：`kind`（`wrist` / `fixed`）、`arm`（`left` / `right` / `single`）、`matches_name`（画面是否与相机命名相符，
+只在明显矛盾时答 `no`；单臂或双目命名里的 left / right 答 `unknown`）、`same_as`（与另一路是同一份录像时写它的名字，
+解析时核对必须是本次送的另一路）。整条的 `identity`：有一路 `no` 或 `same_as` → `inconsistent`；有一路 `yes` 且无人反对 →
+`consistent`；否则 `unknown`（MV-2 记 unassessable）。
 
 ## 代码在哪
 
@@ -31,6 +44,7 @@
 | `pipeline/check_stage.py` | `_vlm_modules` 在 `task_success` 之后补这条记录（无标注、内部出错的条目也有一条，三项 unknown）；`--resume` 时 `details.protocol` 不是 `camera-check/2` 的记录算过期、重做；熔断器不看随附模块 |
 | `pipeline/findings.py` | `_camera_defects`：把记录换成发现（minor → low、severe → medium） |
 | `contracts/modules.py` | 注册表条目与 `riders_of` / `with_riders`；`cli/check.py`、planner、`cli/preflight.py`、`daemon/`、`pipeline/reporting.py` 都经 `with_riders` 展开清单 |
+| `tools/parity/fakevlm.py` | 假模型的 `_fake_camera_check`：按相机名与窗口给出每一档、漏一项、整个不答、一路与命名不符 |
 
 记录的 `details`：`protocol`（`camera-check/2`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
 （已答项里判为 `none` 的比例）、`reason`（为什么是 unknown：成败判定没产生结果 / 没有任务标注且画面缺陷请求没有结果 / 判定请求没有按相机作答 /
@@ -40,13 +54,14 @@
 ## 手动验证步骤
 
 ```bash
-# 1. 单测：解析器、汇总、报告
-cd backend && ../.venv/bin/python -m pytest -q curation/tests/test_video_vlm.py curation/tests/test_camera_defects.py
+# 1. 单测：解析器、汇总、发现、报告
+cd backend && ../.venv/bin/python -m pytest -q curation/tests/test_video_vlm.py curation/tests/test_camera_defects.py tests/cli/test_findings.py
 
 # 2. 端到端（假模型）：不列出它也每条一条记录，请求次数不变，单独跑报参数错误，报告里有小节和表
 cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_camera_defects.py
 
 # 3. 真数据：本机 Daemon 建任务，正常勾选（不必也不能勾它），跑完看
-#    runs/<task>/checks/camera_defects/results.jsonl 每条三项都有值，
-#    报告页有「镜头画面缺陷」小节，usage.jsonl 的请求数与不带它时相同
+#    runs/<task>/checks/camera_defects/results.jsonl 每条四项与 identity 都有值，
+#    报告页有「镜头画面缺陷」小节（四项计数加机位身份计数），episode 明细里机位不符的那一路另起一行；
+#    usage.jsonl 的请求数与不带它时相同
 ```

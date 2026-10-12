@@ -143,15 +143,15 @@ def test_not_assessed_comes_from_the_records_and_errors_from_their_status(tmp_pa
     assert row["recall"] == 1.0 and row["recall_end_to_end"] == round(1 / 3, 4)
 
 
-def test_an_item_no_module_covers_is_a_gap(tmp_path):
-    exp = expectation(episode(0, problems=["MV-2", "FILE-4"]), episode(1, clean=["MV-2"]))
+def test_an_item_no_module_covers_is_a_gap_in_a_run_of_findings(tmp_path):
+    exp = expectation(episode(0, problems=["MV-1", "FILE-4"]), episode(1, clean=["MV-1"]))
     recs = [record2(0, "data_integrity", [finding("decode_failed", "FILE-4")]), record2(1, "data_integrity")]
     doc = score2(tmp_path, exp, recs)
     items = doc["items"]
-    assert "MV-2" not in COVERS
-    assert items["MV-2"]["mapped"] is False and (items["MV-2"]["present"], items["MV-2"]["absent"]) == (1, 1)
-    assert items["MV-2"]["recall"] is None and items["FILE-4"]["tp"] == 1
-    assert "no module covers them" in S.markdown(doc) and "MV-2" in S.markdown(doc)
+    assert "MV-1" not in COVERS
+    assert items["MV-1"]["mapped"] is False and (items["MV-1"]["present"], items["MV-1"]["absent"]) == (1, 1)
+    assert items["MV-1"]["recall"] is None and items["FILE-4"]["tp"] == 1
+    assert "no module covers them" in S.markdown(doc) and "MV-1" in S.markdown(doc)
 
 
 def test_a_finding_on_one_camera_matches_that_camera(tmp_path):

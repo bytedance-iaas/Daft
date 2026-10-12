@@ -107,6 +107,29 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
              "per_camera": {"observation.images.a": {"answered": True, "glitch": {"level": "none"},
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
+# registry 7.2: occlusion per camera with its share, place and length, and the camera's own identity
+CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
+            "items": {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "severe"},
+            "per_camera": {
+                "observation.images.wrist": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "severe", "source": "person", "times": [[1.0, 4.0]],
+                                                           "share": 0.3, "coverage": 0.45, "region": "center", "duration_s": 3.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "no", "same_as": "",
+                                                      "note": "scene never moves with the arm"}},
+                "observation.images.front": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
+                                                      "note": ""}}}}
+# registry 7.2: the arms are crossed BETWEEN cameras - every camera agrees with its own name, and
+# only the set of them shows that the one called left rides the right arm
+CAM_ARMS = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
+            "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+            "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+                     "note": "only the right arm moves at 4-6 s"},
+            "per_camera": {"observation.images.left_wrist": {"answered": True},
+                           "observation.images.right_wrist": {"answered": True}}}
 
 #: registry 5.0 (design doc 25 §7): the merged cells - a conflict between the CPU and the model's review ...
 _CPU_ISSUE = {"verdict": "issue", "p": 0.9, "confidence": 0.8}
@@ -211,9 +234,12 @@ CASES = [
     ("task_success", None, None, TASK_UNSURE, {"uncertain"}, set()),
     ("task_success", None, None, TASK_SKIPPED, {"task_text_missing"}, {"TASK-4"}),
     ("task_success", True, None, {"verdict": "success", "task_desc_source": "原始标注"}, set(), set()),
-    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
-    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
-    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
+    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6", "IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, {"IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_VIEW, {"occlusion", "identity"}, set()),
+    ("camera_defects", None, None, CAM_ARMS, {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(),
+     {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
     # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
     ("eef_video_consistency", True, None, EEF_RECORD, {"inconsistent", "record_mismatch"}, {"AV-1"}),

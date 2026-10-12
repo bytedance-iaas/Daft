@@ -440,7 +440,9 @@ class StageRun:
                 detail["video_inputs"] = [c.metadata() for c in clips]
                 detail["cams"] = [c.camera for c in clips]
                 asked = wrap_call(clients.cameras, log, step="probe", call_kind="probe")
-                detail["cameras"] = asked(clips)["cameras"]
+                answer = asked(clips)
+                detail["cameras"] = answer["cameras"]
+                detail["arms"] = answer.get("arms") or {}
             except Exception as e:  # noqa: BLE001 - the episode's own error, held like any other
                 if not log:
                     log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
