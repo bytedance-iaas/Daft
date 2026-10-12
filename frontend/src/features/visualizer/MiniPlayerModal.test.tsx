@@ -161,7 +161,7 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     ran();
     const view = await episode(6);
     const base = view.findings![0];
-    const eef = { ...view, findings: [{ ...base, module: 'eef_video_consistency', level: 'info' as const, finding: { ...base.finding, code: 'opinion_mismatch', item: 'MV-4', message_zh: '模型认为末端投影与画面不符', frames: undefined, time_s: [2.67, 6.33] as [number, number], scope: { camera: 'ext' } } }] };
+    const eef = { ...view, findings: [{ ...base, module: 'eef_video_consistency', level: 'info' as const, finding: { ...base.finding, code: 'inconsistent', item: 'MV-4', message_zh: '模型认为末端投影与画面不符', frames: undefined, time_s: [2.67, 6.33] as [number, number], scope: { camera: 'ext' } } }] };
     renderWithProviders(<Harness view={eef} start={0} />);
     const canvas = await screen.findByTestId('vz-eef-ext');
     await waitFor(() => expect(document.querySelectorAll('.vz-cell.kind-curve')).toHaveLength(0));

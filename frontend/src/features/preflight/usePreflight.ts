@@ -94,7 +94,7 @@ export function probeMessage(code: string | undefined, message: string | undefin
   return (code && zh.taskForm.probeCode[code]) || zh.taskForm.probeCode.failed;
 }
 
-/** The delivery write probe (07 §3: on blur, a real write; v1 behaviour kept). */
+/** The delivery write probe (07 §3: on blur, a real write). */
 export function useDeliveryProbe() {
   const [state, setState] = useState<ProbeState>({ key: '', status: 'idle', message: '', code: '', at: 0, credential: '' });
   const seq = useRef(0);

@@ -701,11 +701,11 @@ export function seedDatasets(now: number): DatasetDetail[] {
 export const MAIN_TASK = 'task_01HXR2D8';
 export const RUNNING_TASK = 'task_01HXR4M7';
 
-// the mock tasks select v1's eight; the EEF module (opt-in, needs a file) and the camera defects, which ride
-// on task_success and are never selected, are not among them
-const V1_MODULES = registry.modules.filter((m) => !m.rides_on && !(m.needs as string[]).includes('eef_input'));
-export const ALL_MODULES = V1_MODULES.map((m) => m.id);
-const NON_VLM = V1_MODULES.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
+// the mock tasks select the eight that need no file; the EEF module (opt-in, needs a file) and the camera defects,
+// which ride on task_success and are never selected, are not among them
+const SELECTABLE_MODULES = registry.modules.filter((m) => !m.rides_on && !(m.needs as string[]).includes('eef_input'));
+export const ALL_MODULES = SELECTABLE_MODULES.map((m) => m.id);
+const NON_VLM = SELECTABLE_MODULES.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
 
 export interface TaskSeed {
   id: string;
@@ -754,7 +754,6 @@ export function buildTask(s: TaskSeed): Task {
     run_id: s.runId !== undefined ? s.runId : started ? new Date(started).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15) : null,
     episodes: s.episodes,
     embodiment_id: s.embodiment ?? null,
-    // No `snapshot`: C4 1.1.0 composes it with the closed VlmChoice, so no instance with it validates.
     vlm: vlm ? { backend: s.vlmChoice?.backend ?? 'ark-prod', model: s.vlmChoice?.model ?? 'doubao-seed-2-0-pro-260215', reasoning_effort: null } : null,
     params: { start_now: s.state !== 'created', vlm_retry: 3, vlm_hedge: true, clips: false },
     source: started ? { objects: 204, bytes: 1_520_331_122, digest: DIGEST2 } : null,
@@ -1075,7 +1074,7 @@ export function seedDeletedTask(now: number): Task {
 
 // ------------------------------------------------------------------ the main task's details
 
-/** The modules the main task selected: v1's checks and the duplicate check, without data integrity (not asked for)
+/** The modules the main task selected: the per-episode checks and the duplicate check, without data integrity (not asked for)
  * and kinematic limits (no robot type). */
 export const MAIN_MODULES = ALL_MODULES.filter((id) => id !== 'kinematic_limits' && id !== 'data_integrity');
 
@@ -1549,7 +1548,6 @@ export function episodeView(ep: number, revision: number, quotaRun = false): Epi
   // like review.json: a reject whose blocking findings may all be appealed is asked on the appeals tab
   const blocking = findings.filter((f) => f.level === 'blocking');
   if (blocking.length && blocking.every((f) => f.appealable)) review.push({ module: blocking[0].module, kind: 'reject_appeal', text: blocking[0].finding.message_zh });
-  const scope: 'delivery' | 'input' = list === 'passed' ? 'delivery' : 'input';
   return {
     episode_index: ep,
     revision,
@@ -1565,7 +1563,8 @@ export function episodeView(ep: number, revision: number, quotaRun = false): Epi
       scope: 'input' as const,
       origin: 'source_dataset' as const,
       path: `videos/chunk-000/${camera}/file-000.mp4`,
-      ...(scope === 'input' ? { from_ts: ep * 14, to_ts: ep * 14 + 14 } : {}),
+      from_ts: ep * 14,
+      to_ts: ep * 14 + 14,
     })),
   };
 }

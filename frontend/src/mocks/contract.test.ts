@@ -1,8 +1,8 @@
 // The mocks cannot drift from the contract: every fixture and every mock response is validated
-// against docs/contracts/openapi.yaml (C4 1.1.0) and the C2 schemas it references; request bodies
+// against docs/contracts/openapi.yaml and the C2 schemas it references; request bodies
 // the UI sends are validated by the hook installed in src/test/setup.ts.
 import { describe, expect, it } from 'vitest';
-import { contractVersion, formatErrors, loadOpenApi, makeContract, versionBefore, KNOWN_CONTRACT_DEFECTS, type ContractDefect } from '../test/contract';
+import { formatErrors } from '../test/contract';
 import { contract } from '../test/setup';
 import { cardsOf, db, toListItem } from './db';
 import {
@@ -112,26 +112,6 @@ describe('fixtures match the contract', () => {
   });
 });
 
-describe('the known contract defects are still there (remove the patch when they are fixed)', () => {
-  const doc = loadOpenApi();
-  const version = contractVersion(doc);
-  const raw = makeContract(doc);
-  const instances: Record<ContractDefect['id'], () => [string, unknown]> = {
-    DatasetDetail: () => ['DatasetDetail', db.datasets[0]],
-    Decision: () => ['Decision', cardsOf(MAIN_TASK, 'review').flatMap((c) => c.questions).find((q) => q.latest_decision)?.latest_decision],
-    'Task.vlm': () => ['Task', { ...db.tasks[3], vlm: { backend: 'ark-prod', model: 'm', reasoning_effort: null, snapshot: {} } }],
-  };
-  for (const d of KNOWN_CONTRACT_DEFECTS) {
-    const fixed = d.fixedIn !== undefined && !versionBefore(version, d.fixedIn);
-    it(`C4 ${version}: ${d.what} ${fixed ? `is fixed (since ${d.fixedIn})` : 'still rejects valid instances'}`, () => {
-      const [schema, instance] = instances[d.id]();
-      expect(instance).toBeTruthy();
-      // A defect that disappears before its recorded fix means: delete it from KNOWN_CONTRACT_DEFECTS.
-      expect(raw.validator(raw.schemaRef(schema))(instance)).toBe(fixed);
-    });
-  }
-});
-
 // ------------------------------------------------------------------ every operation, over HTTP
 
 interface Call {
@@ -236,7 +216,7 @@ const calls = (): Call[] => [
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?status=all` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=task_success` },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 6, line: 'reject_appeal', decision: 'restore' }] } },
-  { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 29, line: 'label', decision: 'custom_label', new_label: 'pour rice into the bowl' }] } },
+  { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 29, line: 'task_verdict', decision: 'failure', new_label: 'pour rice into the bowl' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 18, line: 'reject_appeal', decision: 'restore' }] } },
   { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: {} },
   { op: 'signMedia', method: 'GET', path: `/media/sign?task=${T}&scope=input&path=videos/chunk-000/wrist/file-000.mp4&ttl=600` },

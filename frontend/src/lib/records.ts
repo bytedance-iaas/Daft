@@ -67,12 +67,9 @@ export function asLegacyRecord(r: ResultRecord, reg: ModuleRegistry | undefined)
 /** A report section as its module's own view reads it: the summary is the module's own keys. */
 export type LegacySection = Omit<ReportModuleSection, 'summary'> & { summary: Record<string, unknown> };
 
-/** A report whose sections are read by the modules' own views. */
-export type LegacyReport = Omit<Report, 'modules'> & { modules: LegacySection[] };
-
 /** The statistics every module section has (design doc 17 §5.1): the findings views show them; the modules' own
  * views would list them as unknown fields. */
-const FINDINGS_SUMMARY_KEYS = ['assessed_episodes', 'flagged_episodes', 'levels', 'items', 'unassessable', 'dataset_findings', 'dataset_readings', 'delivered_family_distribution'];
+const FINDINGS_SUMMARY_KEYS = ['assessed_episodes', 'flagged_episodes', 'levels', 'items', 'unassessable', 'skipped_episodes', 'skipped_reasons', 'dataset_findings', 'dataset_readings'];
 
 /** A section as its module's own view reads it: the findings statistics left out, and the composite score's
  * distribution (one of the 0-1 readings' in score_hist) as the module's own score_hist. */
@@ -85,11 +82,6 @@ export function asLegacySection(s: ReportModuleSection): LegacySection {
     if (Array.isArray(score)) summary.score_hist = score;
   }
   return { ...s, summary };
-}
-
-/** A report with its sections as the modules' own views read them. */
-export function asLegacyReport(r: Report): LegacyReport {
-  return { ...r, modules: r.modules.map(asLegacySection) };
 }
 
 /** The rejects per module (the overview counts them per blocking finding: an episode with findings of several

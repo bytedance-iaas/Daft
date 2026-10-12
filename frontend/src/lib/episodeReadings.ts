@@ -159,7 +159,7 @@ export function visualRows(d: Details): CameraScoreRow[] {
 
 // ---------------------------------------------------------------------------- sync
 
-/** The episode's sync badge: v1's four readings, 疑似错位 for an annotation with only suspects. */
+/** The episode's sync badge: its four readings, 疑似错位 for an annotation with only suspects. */
 export function syncBadge(d: Details): { key: string; text: string; color: string } {
   const v = str(d.verdict) ?? '';
   const suspectOnly = v === 'annotated' && Array.isArray(d.suspect_cameras) && d.suspect_cameras.length > 0 && !(Array.isArray(d.flagged_cameras) && d.flagged_cameras.length);

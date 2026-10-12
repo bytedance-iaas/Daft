@@ -46,7 +46,6 @@ export function useDecisions(taskId: string) {
   const save = useCallback(
     async (ep: number, line: AdjudicationLine, decision: DecisionValue, newLabel: string | null = null): Promise<boolean> => {
       const key = decisionKey(ep, line);
-      // Numbered in click order: a follow-up's answer stands only when newer than the one that opened it.
       const entry = clicked(decision, newLabel);
       let previous: LocalDecisions[string] | undefined;
       setLocal((cur) => {

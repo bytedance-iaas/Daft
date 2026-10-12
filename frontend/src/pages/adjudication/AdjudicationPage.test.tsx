@@ -201,7 +201,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const final = await screen.findByTestId('final-rejects');
     expect(final).toHaveTextContent('时间戳检查：1 条');
     expect(final).not.toHaveTextContent('任务成败判定');
-    expect(screen.getByText(/物理与结构硬门.*的拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定');
+    expect(screen.getByText(/视频解码失败的判废是终局/)).toHaveTextContent('可复议的只有：任务成败判定');
     // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
     const q = within(card(6)).getByTestId('q-6-reject_appeal');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);

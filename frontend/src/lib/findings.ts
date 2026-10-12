@@ -2,7 +2,7 @@
 // form the report, the task detail and the Episode tab draw. Every name - levels, items, dimensions,
 // codes, the reasons an item could not be assessed - comes from the registry (C1 2.x, GET /modules);
 // nothing here knows a module. Pure functions, unit tested.
-import type { EpisodeFinding, Finding, ModuleRegistry, ModuleSpec, Report, ReportModuleSection } from '../api/types';
+import type { Finding, ModuleRegistry, ModuleSpec, Report, ReportModuleSection } from '../api/types';
 import { zh } from '../locales/zh';
 import { progressStageLabel } from './taskView';
 
@@ -262,9 +262,4 @@ export function intervalOf(f: Pick<Finding, 'frames' | 'time_s'>): { text: strin
   if (f.time_s) return { text: zh.findings.seconds(f.time_s[0], f.time_s[1]), seekS: f.time_s[0] };
   if (f.frames) return { text: zh.findings.frames(f.frames[0], f.frames[1]), seekS: null };
   return null;
-}
-
-/** The modules whose findings an episode view lists, in the report's order. */
-export function findingModules(findings: readonly EpisodeFinding[]): string[] {
-  return [...new Set(findings.map((f) => f.module))];
 }

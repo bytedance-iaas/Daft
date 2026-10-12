@@ -146,7 +146,7 @@ export function usageByCallKind(rows: readonly UsageRow[], scope: 'all' | 'main'
   return [...out.values()];
 }
 
-/** Call kinds keep their v1 labels (a data contract of vlm_latency.csv); the Chinese name is a hint. */
+/** Call kinds keep their English labels (a data contract of vlm_latency.csv); the Chinese name is a hint. */
 export function callKindLabel(kind: string): string {
   const zhName = zh.report.callKind[kind];
   return zhName ? `${zhName} · ${kind}` : kind;

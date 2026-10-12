@@ -31,35 +31,19 @@ export interface PrecheckItem {
   target?: string;
 }
 
-/**
- * precheck_failed: C4 1.1.0 only says «a per-check reason». The W8 Daemon sends
- * details.checks = [{id: input|output|vlm, ok, code, reason (Chinese), target, elapsed_ms}];
- * older shapes ({check|name, ok, reason} or a map {input: {ok, reason} | "reason"}) still read.
- */
+/** precheck_failed: the per-check results of C4 PrecheckDetails, details.checks = [{id: input|output|vlm, ok, code, reason, target}]. */
 export function precheckItems(details: Record<string, unknown> | undefined): PrecheckItem[] {
-  if (!details) return [];
-  const raw = (details.checks ?? details) as unknown;
-  if (Array.isArray(raw)) {
-    return raw
-      .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
-      .map((x) => ({
-        check: String(x.id ?? x.check ?? x.name ?? ''),
-        ok: Boolean(x.ok),
-        code: typeof x.code === 'string' ? x.code : undefined,
-        reason: x.reason ? String(x.reason) : undefined,
-        target: typeof x.target === 'string' && x.target ? x.target : undefined,
-      }));
-  }
-  if (raw && typeof raw === 'object') {
-    return Object.entries(raw as Record<string, unknown>)
-      .filter(([k]) => ['input', 'output', 'vlm'].includes(k))
-      .map(([check, v]) =>
-        typeof v === 'string'
-          ? { check, ok: false, reason: v }
-          : { check, ok: Boolean((v as Record<string, unknown>)?.ok), reason: (v as Record<string, unknown>)?.reason as string | undefined },
-      );
-  }
-  return [];
+  const raw = details?.checks;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
+    .map((x) => ({
+      check: String(x.id ?? ''),
+      ok: Boolean(x.ok),
+      code: typeof x.code === 'string' ? x.code : undefined,
+      reason: x.reason ? String(x.reason) : undefined,
+      target: typeof x.target === 'string' && x.target ? x.target : undefined,
+    }));
 }
 
 export function showPrecheckFailure(err: ApiError): void {

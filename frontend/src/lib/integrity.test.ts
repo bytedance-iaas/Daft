@@ -42,7 +42,7 @@ describe('数据包完整性 in Chinese (F6.2)', () => {
       integrity: {
         format: { kind: 'lerobot', version: null, supported: false, detail: 'only LeRobot v2/v3 is supported' },
         validation: ['meta/info.json is malformed'],
-        warnings: ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out like v1 does", 'camera wrist has no video files', 'something new happened'],
+        warnings: ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out: not checked, in no list, listed in the report", 'camera wrist has no video files', 'something new happened'],
         labels: null,
         robot_type: 'so101',
         extra_check: { passed: 3, failed: 1 },
@@ -56,7 +56,7 @@ describe('数据包完整性 in Chinese (F6.2)', () => {
     expect(value(items, 'validation')).toBe('meta/info.json is malformed');
     expect(items.find((i) => i.key === 'warnings')).toMatchObject({ full: true, warn: true });
     expect(value(items, 'warnings')).toBe(
-      '3 条缺少 parquet 或某一路相机的视频（212, 587, 901）：照 v1 的做法剔除，不参与质检、不进任何清单，名单见下表；相机 wrist 没有视频文件；命令行原文：something new happened',
+      '3 条缺少 parquet 或某一路相机的视频（212, 587, 901）：剔除，不参与质检、不进任何清单，名单见下表；相机 wrist 没有视频文件；命令行原文：something new happened',
     );
     expect(value(items, 'extra_check')).toBe('passed 3 · 不合格 1');
     expect(items.find((i) => i.key === 'profile')).toBeUndefined(); // older reports: no row

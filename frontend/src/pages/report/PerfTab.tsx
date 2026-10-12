@@ -55,7 +55,7 @@ export function perfStages(stages: readonly PerfStage[]): { id: string; label: s
 }
 
 /**
- * 性能剖析 (07 §5, 06 §6.1): latency by call kind (v1 labels verbatim, wall-clock, never
+ * 性能剖析 (07 §5, 06 §6.1): latency by call kind (English labels verbatim, wall-clock, never
  * count × mean), effective concurrency, stage wall shares, retries and merging, interrupted
  * redo count (D26); all calls, main run only, or one subtask.
  */

@@ -13,8 +13,6 @@ export interface EffectiveDecision {
   decision: DecisionValue;
   new_label: string | null;
   applied: boolean;
-  /** Clicks of this page session are numbered in order; absent on a decision the server sent. */
-  seq?: number;
 }
 
 /** Decisions recorded in this page session, by `${episode}:${line}`. */
@@ -22,20 +20,14 @@ export type LocalDecisions = Record<string, EffectiveDecision>;
 
 export const decisionKey = (ep: number, line: AdjudicationLine): string => `${ep}:${line}`;
 
-let clicks = 0;
-
-/** A decision clicked in this page session, numbered after every earlier click. */
+/** A decision clicked in this page session. */
 export function clicked(decision: DecisionValue, new_label: string | null = null): EffectiveDecision {
-  clicks += 1;
-  return { decision, new_label, applied: false, seq: clicks };
+  return { decision, new_label, applied: false };
 }
 
 export type CardStatus = AdjudicationCard['status'];
 
 export type ReviewCatalog = readonly ReviewLine[];
-
-/** The lines with a dedicated view on the adjudication page. */
-export const KNOWN_LINES: readonly string[] = ['task_verdict', 'reject_appeal', 'eef_check'];
 
 /** The one line whose answer may carry a rewritten task text. */
 export const RELABEL_LINE = 'task_verdict';

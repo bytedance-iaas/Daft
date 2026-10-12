@@ -1140,7 +1140,7 @@ function genericReport(t: Task, revision: number): Report {
     integrity: {
       format: { kind: 'lerobot', version: 'v2', supported: true, detail: 'LeRobot v2.1' },
       validation: [],
-      warnings: t.id === SO101_TASK ? ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out like v1 does: not checked, in no list, listed in the report"] : [],
+      warnings: t.id === SO101_TASK ? ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out: not checked, in no list, listed in the report"] : [],
       labels: { with_task: s.total, without_task: 0 },
       profile: null,
       robot_type: t.embodiment_id,
@@ -1347,8 +1347,7 @@ const report = [
     if (!t) return err(404, 'not_found', '任务不存在');
     const b = await body<{ decisions: DecisionInput[] }>(request, 'submitAdjudication');
     // C4 1.5 (D43): a decision must be one of its line's catalog decisions, on a question the
-    // episode's card has; 1.5.1 adds a follow-up the card's answer on another line opened (and
-    // Anything else is 400. Appeal cards only exist for appealable modules (D42); only a task
+    // episode's card has. Anything else is 400. Appeal cards only exist for appealable modules (D42); only a task
     // verdict answer may carry a rewritten task text (new_label).
     const catalog = reviewCatalog();
     for (const d of b.decisions) {

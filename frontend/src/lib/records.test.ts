@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import modulesJson from '../../../docs/contracts/modules.json';
 import type { ModuleRegistry, Report, ResultRecord } from '../api/types';
-import { asLegacyRecord, asLegacyReport, asLegacySection, recordScore, recordVerdict, rejectsByModule } from './records';
+import { asLegacyRecord, asLegacySection, recordScore, recordVerdict, rejectsByModule } from './records';
 
 const reg = modulesJson as unknown as ModuleRegistry;
 
@@ -76,10 +76,12 @@ describe('a report read by the modules\' own views', () => {
   } as unknown as Report;
 
   it('a section keeps its own keys and the composite score distribution; the findings statistics are left out', () => {
-    const legacy = asLegacyReport(report);
-    expect(legacy.modules[0].summary).toEqual({ counts: {}, score_hist: [{ name: '0.9–1.0', count: 8 }] });
-    expect('score_hist' in legacy.modules[1].summary).toBe(false);
+    expect(asLegacySection(report.modules[0]).summary).toEqual({ counts: {}, score_hist: [{ name: '0.9–1.0', count: 8 }] });
+    expect('score_hist' in asLegacySection(report.modules[1]).summary).toBe(false);
     expect(asLegacySection(report.modules[1]).summary).toEqual({ counts: {} });
+    // D94: the skip counts are findings statistics too
+    const skipped = { ...report.modules[1], summary: { ...report.modules[1].summary, skipped_episodes: 2, skipped_reasons: [{ name: 'integrity_rejected', count: 2 }] } };
+    expect(asLegacySection(skipped as Report['modules'][number]).summary).toEqual({ counts: {} });
   });
 
   it('sums the rejects per module', () => {
