@@ -230,7 +230,7 @@ export function eefHandheldRecord(ep: number): ResultRecord {
         rows: 287,
         cameras: {
           robot0: { status: 'ok', reason: null, pairing_rate: 0.9987, intrinsics: 'camera_info', first_decodable: 0 },
-          robot1: { status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: 0 },
+          robot1: { status: 'unsupported', reason: '缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: 0 },
         },
         suspects: [{ code: 'timing_suspect', row: 7, camera: 'robot0', detail: '有画面的帧里只有 88% 配上了位姿（容差 20 ms）' }],
       },
@@ -270,7 +270,7 @@ export function eefHandheldRecord(ep: number): ResultRecord {
  * without camera_info under the built-in calibration. The opinion did not look, asks nobody and passes.
  */
 export function eefUnderivedRecord(ep: number): ResultRecord {
-  const why = '这一条推不出轨迹；robot0：这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback';
+  const why = '这一条推不出轨迹；robot0：缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback';
   const base = eefOpinionRecord(ep);
   return {
     ...base,
@@ -291,7 +291,7 @@ export function eefUnderivedRecord(ep: number): ResultRecord {
         status: 'unsupported',
         reason: 'trajectory_not_derived',
         rows: 0,
-        cameras: { robot0: { status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: null } },
+        cameras: { robot0: { status: 'unsupported', reason: '缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback', pairing_rate: null, intrinsics: null, first_decodable: null } },
         suspects: [],
       },
     },

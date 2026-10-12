@@ -4,7 +4,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
 import { server } from '../../mocks/server';
+import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
+
+/** The 轨迹 button once the page has looked and it can be clicked (grey while it looks, 2026-10-12). */
+async function clickableOverlay(): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const b = screen.getByTestId('vz-overlay');
+      if (b.closest('[data-testid="vz-overlay-off"]')) throw new Error('still grey');
+      return b;
+    },
+    { timeout: 8000 },
+  );
+}
 
 describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
   beforeEach(() => {
@@ -139,7 +152,7 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     expect(db.vizDisplays.get('ds_droid200')?.config?.cameras).toEqual([{ key: 'exterior_1' }, { key: 'exterior_2', hidden: true }, { key: 'wrist' }]);
   });
 
-  it('draws the EEF marks the dataset declaration generates, once they are made; the cameras it cannot draw on are greyed (design doc 25 §5.1)', async () => {
+  it('makes the EEF marks the dataset declaration generates when asked, then draws them; the cameras it cannot draw on are greyed (design doc 25 §5.1)', async () => {
     const SRC = 'observation.images.exterior_image_1_left';
     db.declarations.set('ds_droid100', {
       doc: {
@@ -155,11 +168,23 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
       version: 1,
       updatedAt: 1,
     });
+    const seen = recordRequests();
     const { user } = renderApp('/visualize?dataset=ds_droid100&ep=0');
-    expect(await screen.findByTestId('vz-overlay-making')).toHaveTextContent('轨迹生成中 40%');       // 202 first: being made
-    const button = await screen.findByTestId('vz-overlay', {}, { timeout: 8000 });
+    // switching only looks (2026-10-12): the button is there and clickable, nothing is made yet
+    const button = await clickableOverlay();
     expect(button).toHaveTextContent(/^轨迹$/);                                                         // 「叠加」 until 2026-10-10
+    const looks = () => seen.filter((r) => r.path.endsWith('/eef-overlay'));
+    expect(looks().length).toBeGreaterThan(0);
+    expect(looks().every((r) => r.query.get('generate') === 'false')).toBe(true);
     await user.click(button);
+    const ask = await screen.findByTestId('vz-overlay-generate');
+    expect(ask).toHaveTextContent(zh.viz.overlay.notMade);
+    await user.click(within(ask).getByTestId('vz-overlay-generate-link'));
+    expect(looks().some((r) => r.query.get('generate') === 'true')).toBe(true);
+    expect(await screen.findByTestId('vz-overlay-making')).toHaveTextContent('轨迹生成中 40%');       // 202 while it is made
+    // made: the marks are drawn and the 轨迹 button opens the layer menu
+    await waitFor(() => expect(document.querySelectorAll('[data-testid^="vz-eef-"]').length).toBeGreaterThan(0), { timeout: 8000 });
+    await user.click(screen.getByTestId('vz-overlay'));
     const menu = await screen.findByTestId('vz-overlay-menu');
     expect(within(menu).queryByRole('button', { name: zh.viz.overlay.presets.model })).toBeNull();   // nothing a model saw
     const off = within(menu).getByTestId('vz-overlay-unavailable');
@@ -169,7 +194,10 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
 
   it('a handheld gripper\'s wrist cameras come with their note (design doc 25 §5.4)', async () => {
     const { user } = renderApp('/visualize?dataset=ds_umi&ep=0');
-    await user.click(await screen.findByTestId('vz-overlay', {}, { timeout: 8000 }));
+    await user.click(await clickableOverlay());
+    await user.click(await screen.findByTestId('vz-overlay-generate-link'));
+    await waitFor(() => expect(document.querySelectorAll('[data-testid^="vz-eef-"]').length).toBeGreaterThan(0), { timeout: 8000 });
+    await user.click(screen.getByTestId('vz-overlay'));
     expect(await screen.findByTestId('vz-overlay-wrist-note')).toHaveTextContent(zh.viz.overlay.wristNote);
     // the menu says it; the 轨迹 section of 详细信息 does not again, nor how the marks are timed (2026-10-10)
     await user.click(screen.getByRole('button', { name: zh.viz.info }));
@@ -186,21 +214,25 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     const { user } = renderApp('/visualize?dataset=ds_droid100&ep=0');
     const note = await screen.findByTestId('vz-overlay-declare', {}, { timeout: 8000 });
     expect(note).toHaveTextContent(zh.viz.overlay.declare);
-    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+    expect(screen.getByTestId('vz-overlay')).toBeDisabled();                              // there, grey: nothing to make
+    expect(screen.getByTestId('vz-overlay-off')).toHaveAttribute('title', zh.viz.overlay.declare);
     await user.click(within(note).getByRole('button', { name: zh.viz.overlay.declareGo }));
     await waitFor(() => expect(currentLocation()).toBe('/datasets/ds_droid100?declaration=1'));
   });
 
-  it('an episode the platform cannot make a trajectory for says why, the others still draw', async () => {
-    const why = 'episode 0 生成不出轨迹：robot0：这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback';
+  it('an episode the platform cannot make a trajectory for says why in the notice strip, its 轨迹 button grey', async () => {
+    const why = '这一条画不了轨迹：robot0、robot1 缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback';
     server.use(
       http.get('*/api/v1/datasets/:id/episodes/:index/eef-overlay', () =>
         HttpResponse.json({ error: { code: 'not_found', message: why, details: { reason: 'not_generated', source: { kind: 'derived' } } } }, { status: 404 }),
       ),
     );
     renderApp('/visualize?dataset=ds_umi&ep=0');
-    expect(await screen.findByTestId('vz-overlay-none', {}, { timeout: 8000 })).toHaveTextContent(why);
-    expect(screen.queryByTestId('vz-overlay')).toBeNull();
+    const notice = await screen.findByTestId('vz-notice', {}, { timeout: 8000 });
+    expect(notice).toHaveTextContent(why);
+    expect(notice).toHaveClass('vz-warn');                                                     // the yellow strip under the head
+    expect(screen.getByTestId('vz-overlay')).toBeDisabled();
+    expect(screen.getByTestId('vz-overlay-off')).toHaveAttribute('title', why);
   });
 
   it('says an mcap dataset needs its mapping confirmed first', async () => {

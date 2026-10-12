@@ -2232,6 +2232,12 @@ export const zh = {
       } as Record<string, string>,
       wristNote: '腕部相机的标记检验不了本手的位姿（本手在画面里不动），看自运动一致性',
       making: (pct: number | null) => (pct === null ? '轨迹生成中…' : `轨迹生成中 ${Math.round(pct * 100)}%`),
+      // the visualize page makes a trajectory when asked (2026-10-12)
+      checking: '正在查这一条能不能画轨迹',
+      notMade: '这一条的轨迹还没生成，生成要一会儿，视频可以照常看',
+      generate: '生成轨迹',
+      noCameras: '这一条没有能画轨迹的相机',
+      generateFailed: (m: string) => `上次没生成出来：${m}`,
       declare: '数据集里有位姿记录：补全数据集声明后，这里能在画面上叠加末端轨迹',
       declareGo: '去补全声明',
       labels: '标签（点名、开口）',

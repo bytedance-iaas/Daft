@@ -343,7 +343,7 @@ describe('质检报告 (07 §5)', () => {
     expect(op).not.toHaveTextContent('模型看整段视频');
     const src = screen.getByTestId('eef-source');
     expect(src).toHaveTextContent('这一条推不出轨迹');
-    expect(src).toHaveTextContent('robot0：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(src).toHaveTextContent('robot0：不支持（缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback）');
     expect(screen.queryByTestId('eef-ego')).toBeNull();
   });
 
@@ -368,7 +368,7 @@ describe('质检报告 (07 §5)', () => {
     const src = screen.getByTestId('eef-source');
     expect(src).toHaveTextContent('轨迹由平台从录制推出内置的 DEMO 标定（das_gripper）按假设值：T_camera_tcp、body_to_optical、pose_frame');
     expect(src).toHaveTextContent('robot0：配对 99.9%，内参来自录制里的 camera_info');
-    expect(src).toHaveTextContent('robot1：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(src).toHaveTextContent('robot1：不支持（缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback）');
     expect(src).toHaveTextContent('导出检查的可疑项：有画面的帧里只有 88% 配上了位姿（容差 20 ms）');
     expect(within(ego).getByTestId('eef-ego-verdict')).toHaveTextContent('不好');
     expect(ego).toHaveTextContent('ext：位姿约晚 0.47 s（第 51–251 帧，中）');

@@ -1,9 +1,11 @@
 import { Button, Space } from '@arco-design/web-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/PageHeader';
 import { DisplayConfigDrawer } from '../../features/datasets/DisplayConfigDrawer';
-import { useDatasetEefOverlay, useVizModel, type VizRef } from '../../features/visualizer/data';
+import { generateDatasetEefOverlay, useDatasetEefOverlay, useVizModel, type VizRef } from '../../features/visualizer/data';
+import type { OverlayGate } from '../../features/visualizer/OverlayMenu';
 import { Player, type PlayerControl, type PlayerOverlays } from '../../features/visualizer/Player';
 import { parseChoice, type OverlayChoice } from '../../lib/eefOverlay';
 import { readPrefs, writePrefs } from '../../lib/prefs';
@@ -74,9 +76,36 @@ export function VisualizePage() {
   const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
   // an mcap dataset without a confirmed mapping (the model says so even when the list is stale)
   const pending = item?.viz?.state === 'mapping_pending' || model.data?.mapping.state === 'none';
-  // the registration's EEF marks (design doc 25 §5.1): from its record and declaration, made once (202 meanwhile)
+  // the registration's EEF marks (design doc 25 §5.1): from its record and declaration. Switching episodes only
+  // looks (2026-10-12): the trajectory is made when the viewer asks (生成轨迹 in the 轨迹 menu), 202 meanwhile
   const eef = useDatasetEefOverlay(datasetId, current, !!model.data && !pending, choice.maxGapMs);
   const ready = eef.data?.state === 'ready' ? eef.data.overlay : null;
+  const qc = useQueryClient();
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  useEffect(() => setGenerateError(null), [datasetId, current]);
+  const generate = useCallback(async () => {
+    if (!datasetId || current === null) return;
+    setGenerateError(null);
+    try {
+      await generateDatasetEefOverlay(datasetId, current);
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : String(e));
+    }
+    await qc.invalidateQueries({ queryKey: ['eef-overlay', 'dataset', datasetId, current] });
+  }, [datasetId, current, qc]);
+  // the 轨迹 button while there are no marks to draw, and what the notice strip says about them
+  const { gate, notices } = useMemo((): { gate: OverlayGate | null; notices: string[] } => {
+    const d = eef.data;
+    if (!d && eef.isError) return { gate: { state: 'none', reason: zh.viz.overlay.failed }, notices: [] };
+    if (!d) return { gate: { state: 'checking' }, notices: [] };
+    if (d.state === 'pending') return { gate: { state: 'making', progress: d.progress }, notices: [] };
+    if (d.state === 'failed') return { gate: { state: 'can', onGenerate: () => void generate(), error: d.message }, notices: [zh.viz.overlay.failed] };
+    if (d.state === 'ready') return { gate: { state: 'none', reason: zh.viz.overlay.noCameras }, notices: [] };
+    if (d.reason === 'not_made') return { gate: { state: 'can', onGenerate: () => void generate(), error: generateError }, notices: [] };
+    // this episode has no trajectory (the others may): the server says why, in the notice strip
+    if (d.reason === 'not_generated') return { gate: { state: 'none', reason: d.message }, notices: [d.message] };
+    return { gate: { state: 'none', reason: d.kind === 'missing_declaration' ? zh.viz.overlay.declare : d.message }, notices: [] };
+  }, [eef.data, eef.isError, generate, generateError]);
   const overlays: PlayerOverlays | null = useMemo(() => {
     const cams = (ready?.cameras ?? []).filter((c) => c.viz_camera && !c.skipped && c.layers.length);
     if (!ready || !cams.length) return null;
@@ -135,25 +164,12 @@ export function VisualizePage() {
             </div>
           ) : source && current !== null ? (
             <div style={{ marginBottom: 16 }}>
-              {eef.data?.state === 'pending' ? (
-                <div className="vz-note muted" data-testid="vz-overlay-making">
-                  {zh.viz.overlay.making(eef.data.progress)}
-                </div>
-              ) : eef.data?.state === 'none' && eef.data.reason === 'not_generated' ? (
-                // this episode has no trajectory (the others may): the server says why
-                <div className="vz-note muted" data-testid="vz-overlay-none">
-                  {eef.data.message}
-                </div>
-              ) : eef.data?.state === 'none' && eef.data.kind === 'missing_declaration' ? (
+              {eef.data?.state === 'none' && eef.data.kind === 'missing_declaration' ? (
                 <div className="vz-note muted" data-testid="vz-overlay-declare">
                   {zh.viz.overlay.declare}
                   <Button type="text" size="mini" onClick={() => navigate(`/datasets/${encodeURIComponent(datasetId)}?declaration=1`)}>
                     {zh.viz.overlay.declareGo}
                   </Button>
-                </div>
-              ) : eef.data?.state === 'failed' ? (
-                <div className="vz-warn" role="alert" data-testid="vz-overlay-failed">
-                  {zh.viz.overlay.failed}
                 </div>
               ) : null}
               <Player
@@ -167,6 +183,8 @@ export function VisualizePage() {
                 lead={unfold}
                 prefetch={next}
                 overlays={overlays}
+                overlayGate={gate}
+                notices={notices}
               />
             </div>
           ) : model.isError ? (

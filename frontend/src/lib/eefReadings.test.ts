@@ -97,7 +97,7 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(src).toMatchObject({ gripper: 'das_gripper', builtin: true, assumed: ['T_camera_tcp', 'body_to_optical', 'pose_frame'], reason: null });
     expect(src.cameras).toEqual([
       { hand: 'robot0', status: 'ok', reason: null, pairingRate: 0.9987, intrinsics: 'camera_info' },
-      { hand: 'robot1', status: 'unsupported', reason: '这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback', pairingRate: null, intrinsics: null },
+      { hand: 'robot1', status: 'unsupported', reason: '缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback', pairingRate: null, intrinsics: null },
     ]);
     expect(src.suspects).toEqual(['有画面的帧里只有 88% 配上了位姿（容差 20 ms）']);
     expect(eefTrajectorySource(eefOpinionRecord(3).details as Record<string, unknown>)).toBeNull();     // an uploaded file

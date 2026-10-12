@@ -9,6 +9,53 @@ const O = () => zh.viz.overlay;
 /** The layer list's sections: the marks first, the measured ones last; the dataset record's own (dashed) after. */
 const GROUP_ORDER: readonly LayerEntry['group'][] = ['declared', 'axes', 'trail_past', 'trail_future', 'observed', 'residual', 'record'];
 
+/**
+ * The 轨迹 button before there are marks to draw (2026-10-12): the visualize page only looks when it switches
+ * episodes, so the button is always there - grey while it looks or when the episode cannot have a trajectory (the
+ * reason is its title), clickable when the trajectory can be made (its menu has 生成轨迹) or is being made (the
+ * menu shows how far).
+ */
+export type OverlayGate =
+  | { state: 'checking' }
+  | { state: 'none'; reason: string }
+  | { state: 'can'; onGenerate: () => void; error?: string | null }
+  | { state: 'making'; progress: number | null };
+
+/** The 轨迹 button of an {@link OverlayGate}. */
+export function OverlayGateButton({ gate }: { gate: OverlayGate }) {
+  if (gate.state === 'checking' || gate.state === 'none') {
+    const why = gate.state === 'checking' ? O().checking : gate.reason;
+    return (
+      // a disabled button shows no tooltip: the span carries it
+      <span title={why} data-testid="vz-overlay-off">
+        <Button size="small" icon={<IconEye />} disabled data-testid="vz-overlay">
+          {O().menu}
+        </Button>
+      </span>
+    );
+  }
+  const content =
+    gate.state === 'making' ? (
+      <div className="vz-ovm" data-testid="vz-overlay-making">
+        {O().making(gate.progress)}
+      </div>
+    ) : (
+      <div className="vz-ovm" data-testid="vz-overlay-generate">
+        <div className="note">{gate.error ? O().generateFailed(gate.error) : O().notMade}</div>
+        <Button type="text" size="mini" onClick={gate.onGenerate} data-testid="vz-overlay-generate-link">
+          {O().generate}
+        </Button>
+      </div>
+    );
+  return (
+    <Popover trigger="click" position="br" content={content}>
+      <Button size="small" icon={<IconEye />} title={O().menuTitle} data-testid="vz-overlay">
+        {O().menu}
+      </Button>
+    </Popover>
+  );
+}
+
 /** A camera nothing is drawn on, by its player name, and why (a registration's overlay, C4 5.3.0). */
 export interface UnavailableCamera {
   name: string;

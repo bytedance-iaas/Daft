@@ -1425,7 +1425,9 @@ export interface paths {
          *     version and kept: 202 (`VizMediaPending`) while it is made, then 200. The cameras the declaration cannot
          *     draw on are listed with their reason in `unavailable_cameras`. 404 `no_trajectory` when the platform cannot
          *     have the dataset's trajectory (`details.missing` names what the declaration lacks), `not_generated` when
-         *     this episode has none, `format_not_generated` for a format it does not draw.
+         *     this episode has none (the message says why), `format_not_generated` for a format it does not draw.
+         *     With `generate=false` the request only looks (7.2.0): 200 when the trajectory is made, 202 while it is being
+         *     made, 404 `not_made` when nobody asked for it yet - nothing is started.
          */
         get: operations["getDatasetEpisodeEefOverlay"];
         put?: never;
@@ -7004,6 +7006,8 @@ export interface operations {
     getDatasetEpisodeEefOverlay: {
         parameters: {
             query?: {
+                /** @description false: only look, never start making the episode's trajectory (404 `not_made` when it is neither made nor being made); default true */
+                generate?: boolean;
                 /** @description bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals */
                 max_gap_ms?: number;
             };

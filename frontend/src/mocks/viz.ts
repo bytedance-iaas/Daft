@@ -48,6 +48,8 @@ interface Source {
 
 /** The registration overlays made so far (the first ask of each answers 202, as the Daemon's making does). */
 const madeOverlays = new Set<string>();
+/** episodes whose trajectory is being made: how many more looks answer 202 before the marks are there */
+const makingOverlays = new Map<string, number>();
 
 function datasetSource(id: string): Source | Response {
   const d = db.datasets.find((x) => x.id === id);
@@ -253,8 +255,9 @@ export const vizHandlers = [
     return HttpResponse.json(eefOverlay(s.id, index, modelOf(s).cameras[0]?.key ?? null, measured));
   })),
   // a registration's EEF marks (design doc 25 §5.1, C4 5.3.0): its confirmed declaration, or a handheld gripper's
-  // own data, makes the trajectory - 202 the first time an episode is asked (it is being made), then the marks
-  http.get(`${API}/datasets/:id/episodes/:index/eef-overlay`, withSource(datasetSource, (s, _request, params) => {
+  // own data, makes the trajectory when asked (C4 7.2.0: generate=false only looks - 404 not_made until then);
+  // being made it answers 202 for one more look, then the marks
+  http.get(`${API}/datasets/:id/episodes/:index/eef-overlay`, withSource(datasetSource, (s, request, params) => {
     const index = episodeOf(s, params.index);
     if (index instanceof Response) return index;
     const d = s.dataset;
@@ -265,9 +268,20 @@ export const vizHandlers = [
         reason: 'no_trajectory', kind: doc.trajectory.kind, missing: 'missing' in doc.trajectory ? (doc.trajectory.missing ?? []) : [],
       });
     const key = `${d.id}:${doc.version}:${index}`;
+    const pending = () => HttpResponse.json({ state: 'pending', progress: 0.4, message: '轨迹生成中' }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
     if (!madeOverlays.has(key)) {
+      const left = makingOverlays.get(key);
+      if (left === undefined) {
+        if (new URL(request.url).searchParams.get('generate') === 'false') return err(404, 'not_found', '这一条的轨迹还没生成', { reason: 'not_made' });
+        makingOverlays.set(key, 1);
+        return pending();
+      }
+      if (left > 0) {
+        makingOverlays.set(key, left - 1);
+        return pending();
+      }
+      makingOverlays.delete(key);
       madeOverlays.add(key);
-      return HttpResponse.json({ state: 'pending', progress: 0.4, message: '轨迹生成中' }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
     }
     const first = modelOf(s).cameras[0]?.key ?? null;
     const base = eefOverlay('', index, first, false);
