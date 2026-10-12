@@ -361,6 +361,11 @@ VLM 块：check task_success（及 EEF 的模型半段 --prepared，接在 vlm_p
 块内的逐条段由 Daemon 的流水线逐条交接（`check --pipeline-state … --pipeline-next …`，常驻 worker）：一条在本段有了记录（判完或出错）就交给下一段，
 判废的发现、执行出错都不拦它。判决只在两块都结束后由 `aggregate` 按任务策略算一次。
 
+例外是完整性拦截（D92，设计 28）：`check` 动手前先看完整性对这条的记录，按任务策略判废了就不读数据、不调模型，给每个所选模块写一条跳过记录
+（`details.skipped = "integrity_rejected"`，算 `ok`、不算出错，`--resume` 不重做）；VLM 块与 `vlm_prep` 逐条等完整性有了结论才派发。
+视频解不开（`InvalidDataError`、找不到 moov 或视频流）是文件坏了：视觉质量、同步、任务成败各报一条判废的 `decode_failed`（FILE-4），不进待补跑（D93）。
+`--json` 每个模块多 `skipped_reasons`（按理由的条数），文字输出写「skipped: integrity_rejected 6」（D94）。
+
 人工裁决后的重跑（新版本 N+1，旧版本原样保留）：
 
 ```

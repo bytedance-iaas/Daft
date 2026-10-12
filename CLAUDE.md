@@ -37,7 +37,9 @@ Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走�
 **两块并行**（设计 17，D57，F12.4 起的执行）：CPU 块 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）
 → `frame`（visual_quality、video_action_sync）→ `duplicate`（duplicate_check）；VLM 块 `vlm`（eef_video_consistency、task_success，camera_defects 骑在
 task_success 的请求上；没有任务标注的条目不判成败、只发一次画面缺陷请求，D72 / D73；每条恰好一次模型请求，没有复核、仲裁和判废护栏）。两块同时跑、互不过滤：每一段都拿全部所选条目，一条在本段有了记录（判完或出错）就交给
-本块下一段。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。**重复检测只报告**（D87，设计 26）：动作与各路画面字节相同的一组条目，每一条都得到
+本块下一段。例外是**完整性拦截**（D92，设计 28）：完整性判废的条目，其它模块不读数据、不调模型，只写一条跳过记录（`details.skipped`），VLM 块
+逐条等完整性有了结论再派发；**坏视频是发现**（D93）：解码器报文件损坏（`InvalidDataError` 等）时，视觉质量、同步、任务成败各报一条判废的
+`decode_failed`（FILE-4），不算执行出错、不进待补跑；跳过的条目在计数、报告与控制台里单列（D94）。task_success 让 VLM 读多机位连续视频判定成败（设计 13）。**重复检测只报告**（D87，设计 26）：动作与各路画面字节相同的一组条目，每一条都得到
 一条 SET-1 的 info 发现、写明同组其余几条；不判废、不留第一条、不能复议（精确去重已删）。控制台把段**按组显示**（D88）：数据完整性、CPU 检查
 （numeric、frame、duplicate、vlm_prep）、模型检查（vlm）、生成报告；后台的段、计划与日志仍用段 id，前端负责归组（`frontend/src/lib/taskView.ts` 的 `STAGE_GROUPS`）。
 **判决是策略判决**（F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），两块都结束后 `aggregate` 用任务的策略
@@ -100,6 +102,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 25 | EEF 重构：只出意见与置信度、不判废，两个渠道按分项取大、冲突才出裁决卡；数据集声明（C7 扩成 `dataset-declaration/1.0`：来源→角色、语义、标定）取代上传件里的声明，轨迹由声明 + 记录生成；叠加分数据集级与任务级（`25-eef-opinion-and-dataset-declaration.md`，D81–D86；首节是开工指引，§10 是开工时的缺省选择；F5.22–F5.26 已落地：注册表 5.4、C4 5.3.1，§9.1–§9.6 是落地记录） |
 | 26 | 重复检测取代精确去重；进度按三组显示（`26-duplicate-check-and-progress-groups.md`，D87–D88；首节是开工指引：不留兼容，注册表 6.0、C4 6.0.0） |
 | 27 | 删掉 v1 与旧格式（`27-remove-v1-and-old-formats.md`，D89–D91）：v1 代码删掉、`ls` / `prune` / `fetch` 留作运维命令；C2 只有 2.0，漏斗、`relabel_rerun`、旧任务兼容都删；对账与回归打分只认 2.0（注册表 7.0、C4 7.0.0） |
+| 28 | 完整性拦截与坏视频（`28-integrity-gate-and-broken-video.md`，D92–D94）：完整性判废的条目其它模块只写跳过记录、VLM 块等完整性结论；解码器认定损坏的视频是判废发现 `decode_failed`；跳过单独记账（注册表 7.1、C4 7.1.0） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

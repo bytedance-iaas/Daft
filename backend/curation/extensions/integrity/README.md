@@ -3,8 +3,10 @@
 设计：[`docs/design/14-data-integrity.md`](../../../../docs/design/14-data-integrity.md)，决策 D50–D52。
 
 CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文件是不是完整、可读。新建任务时默认勾选（「完整」「快速」两个预设都有），可以取消。
-它和别的模块一样只报发现，判决由 `aggregate` 按任务策略定（设计 17）：默认策略下判废的细码是 blocking，可疑的是 review。段与段之间不过滤，
-被判废的条照样跑完后面各段（D57）。
+它和别的模块一样只报发现，判决由 `aggregate` 按任务策略定（设计 17）：默认策略下判废的细码是 blocking，可疑的是 review。
+2026-10-11 起（D92，设计 28）它判废的条目其它模块不再评估：后面各段与模型块只给它写一条跳过记录（`details.skipped = "integrity_rejected"`），
+不读数据、不调模型，报告里单列「跳过」；可疑的条目照常往下走。缺省只读文件头尾（L1），视频流中段损坏查不出，这类条目由视觉质量、同步、
+任务成败解码时报判废的 `decode_failed`（D93）。
 
 | 结论 | 什么时候 | 去向 |
 |---|---|---|
@@ -93,7 +95,20 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    `appealable: false`），不出现在「被拒复议」。转人工的发现留在 passed，出「完整性存疑」卡片（裁决线 `integrity_check`）。裁决取值 `intact`（数据无误，保留）/
    `broken`（确有问题，判废：人工的 blocking 发现）/ `unsure`。
 
-6. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
+6. 完整性拦截与坏视频（设计 28，D92–D93）：接着第 2 步的运行目录，再弄坏第 7 条外部相机视频的中段（文件头尾完好，L1 查不出），跑数值段与帧段：
+
+   ```bash
+   PYTHONPATH=. $PY -c "from tests.cli import integrity_samples as S; import sys; p=S.video(sys.argv[1],'exterior',7); [S.garble_sample(p,k) for k in range(10,40)]" "$D/bad"
+   $C check --modules timestamp_check,kinematic_limits,motion_quality --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7
+   $C check --modules visual_quality,video_action_sync --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7
+   $C aggregate --run-dir "$D/run_bad" --revision 1 --episodes 0-7
+   ```
+
+   每个模块的行尾都是 `skipped: integrity_rejected 4`、`error 0`：0、1、2、4 不读数据，记录是 `details.skipped = "integrity_rejected"`、没有发现
+   （第 2 条的 parquet 被截，原来整段「数据集读不了」，现在语义抽样跳过它）。帧段多 `decode_failed 1`：第 7 条外部相机解不开，判废的发现、
+   不是执行出错。终判 `passed 2, reject 6, held 0`，没有待补跑。
+
+7. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
 
 样本集：`PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"` 生成 `lerobot_v2/`、`lerobot_v3/`、`mcap/` 三份损坏样本，每份的 `damage.json` 写明每条动了什么、应得什么结论；测试用的就是这几个函数。
 

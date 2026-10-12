@@ -4,7 +4,7 @@
 
 > **注册表 2.0（2026-10-01，设计 17，D56–D58，F12.1 已落地）**：模块不再按漏斗的「门」描述，改成三件事——
 > **在哪跑**：`block`（`cpu` / `vlm`）与块内的段 `stage`（CPU 块 `integrity → numeric → frame → duplicate`（D87 起 `dedup` 段改名，模块换成只报告的重复检测，设计 26），VLM 块
-> `vlm`；D70 起每段都是逐条的，没有全量步骤；D72 起没有补描述段），两块并行、互不过滤，`depends_on` 只留数据依赖的位置
+> `vlm`；D70 起每段都是逐条的，没有全量步骤；D72 起没有补描述段），两块并行、互不过滤（D92 起完整性判废的条目其它模块只写跳过记录，设计 28），`depends_on` 只留数据依赖的位置
 > （3.2 起为空）；**能报什么**：`codes`，每个细码对应分类表（C6，`docs/contracts/taxonomy.json` 1.1）的一项，带缺省严重度、
 > 默认策略下的级别（blocking / review / info，P18）、review 级的裁决线、blocking 级可否复议；**覆盖什么**：`covers`
 > （细码的项，加只给读数的项 `also_covers`）。去掉了 `gate`、`input_scope`、`affects_dataset_verdict`、`produces_adjudication`、

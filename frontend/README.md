@@ -313,6 +313,19 @@ ep 4、9、13、16、22、29、33、36、40、47，其中 ep 4、9、13、16 已
     数据集详情的「可视化配置」里「展示配置」一行写「已保存第 N 版」。抽屉的「曲线分组」：「新建分组」后把两条 gripper 线的「所属分组」改成它、把 `action` 第 0 维改「不画」，
     保存后曲线组跟着变；「恢复自动分组」再保存回到自动分组；「恢复默认」确认后整份清空。warehouse_mcap 的抽屉里曲线分组只写「由字段映射决定」。
     接真 Daemon：`backend/daemon/viz/README.md` 第 25 步。
+21. **完整性拦截与坏视频（设计 28，D92–D94，要真 Daemon）**：在 `backend/` 下造一份损坏的数据集（八条里六条有完整性问题，第 7 条外部相机视频中段损坏）：
+
+    ```bash
+    L=${TMPDIR:-/tmp}/curator-local/inputs
+    PYTHONPATH=../tools ../.venv/bin/python -m parity make-fixture --out "$L/f18_broken"
+    PYTHONPATH=.:../tools ../.venv/bin/python -c "import sys; from tests.cli import integrity_samples as S; r=sys.argv[1]; S.damage_lerobot_v2(r); p=S.video(r,'exterior',7); [S.garble_sample(p,k) for k in range(10,40)]" "$L/f18_broken"
+    ```
+
+    起 `curator-fakevlm` 与 `curator-daemon-local`（先 `npm run build`），从「添加数据集」的本地挂载路径登记 `f18_broken`，建任务勾全部可用模块（含数据完整性）、
+    判决策略选「只报不拒」、模型选假模型。跑完：任务没有「待补跑」，报告概览 8 条里拒绝 7、通过 1。任务详情「模块」里除数据完整性外每一行都有灰字
+    「跳过 6 条（数据完整性已判废）」、「评估 2 / 选中 8 条」，没有「N 条待补跑」。报告「视觉质量」小节标签是「可判废」，统计里多一格「跳过条数 6」，
+    小字「数据完整性已判废」，检出项里有判废的「视频解码失败（文件损坏）（FILE-4）」。Episode 明细选 ep 0：除数据完整性外每个模块的块只有一行
+    「没有评估：数据完整性已判废」；选 ep 7：判废 3 条，视觉质量、视频-动作同步、任务成败判定各一条「exterior 相机的视频解不开，文件已损坏」。
 
 ## 手动验证：API 文档（真 Daemon）
 

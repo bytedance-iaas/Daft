@@ -52,6 +52,8 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `default`；设计 17 §4.1），aggregate 按它判，每个结果版本另存一份 `policy.json`。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
 - **执行**（计划 2.0，设计 17 §3，`blocks.py`）：CPU 块（integrity → numeric → frame → duplicate）与 VLM 块（vlm）各一个线程同时跑，互不过滤。
+  例外（D92，设计 28 §1）：完整性所在的链之外的链（VLM 块，选了 EEF 时还有 `vlm_prep`）的第一段逐条等完整性的结论——这条在完整性那条链上
+  过了 `integrity` 段，或 `integrity` 段整体失败——再派发（`run_episodes(wait_for=…)`；给外部 CLI 包装用的批处理路径等全部所选条目都有了结论才开始）；完整性判废的条目由 `check` 自己写跳过记录。
   块内的逐条段各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给本块的下一段——判废的发现、执行出错都不拦它；空出的执行槽立即补入已就绪条目。
   没有任务标注的条目 vlm 段不判成败（D72）；重复检测的 `duplicate` 段（D87，只报告）是 CPU 块最后一个逐条段，和前面的段交叠（D70），并发恒为 1。
   这些段 id 是后台的；控制台按组显示进度（D88，设计 26 §2）：数据完整性（`integrity`）、CPU 检查（`numeric`、`frame`、`duplicate`、`vlm_prep`）、

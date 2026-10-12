@@ -209,6 +209,9 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 > 前端按 `schema_version` 分流（D59）。
 > F12.5 再加三项（可选，C2 报告 2.0 的增补）：`overview.reject_items`（被拒条目按检测项计，一条每项只记一次；人工整条弃用没有项，记 null）、
 > 每个小节的 `summary.flagged_episodes`（评估过的条目里有发现的条数）与 `summary.levels`（有 blocking / review / info 级发现的条数）。
+> 2026-10-11（D94，设计 28 §3）：模块写了记录却没有评估的条目（`details.skipped`：完整性已判废、没有任务标注）叫「跳过」，不数进
+> `assessed_episodes`，小节 `summary` 多 `skipped_episodes`、`skipped_reasons`（`[{name, count}]`），`counts` 多 `skipped`；`report.md`
+> 的模块行写「评估 N 条；跳过 M 条（数据完整性已判废）；检出：…」（几种理由时各带条数）。任务成败小节的判定分布、弃权原因与转人工都不数跳过的条目。
 > 下面是 1.0 的结构。
 
 ```jsonc

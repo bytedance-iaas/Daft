@@ -174,7 +174,7 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 
 没有任务标注的条目不再由模型补描述：`check --modules task_success` 碰到这样的条目写一条「没判」的记录
 （`details.skipped = "no_task_text"`、`task_desc_source = "无"`，LABEL-2 的 `task_text_missing` 仅报告），不发模型请求；
-这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。
+这条 episode 的去留由其余检查决定，通过时交付清单里 `task_text` 为 null。D94 起这样的记录叫「跳过」（判定词 `skipped`），不算评估、不算转人工（设计 28 §3）。
 
 ### 3.5 `curation check` — 跑检查
 
@@ -237,8 +237,18 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 ```jsonc
 {"schema_version": "2.0", "modules": {"task_success": {"part": "0001", "input_digest": "sha256:…",
    "episodes": {"total": 49, "ok": 47, "error": 2}, "error_episodes": [14, 31],
-   "findings": {"failure": 6, "uncertain": 3}}}}
+   "findings": {"failure": 6, "uncertain": 3},
+   "skipped_reasons": {"integrity_rejected": 8, "no_task_text": 3}}}}   // 没有跳过时不出现（D94）
 ```
+
+**完整性拦截与坏视频**（2026-10-11，设计 28，D92–D93）：
+- 不是完整性本身的调用，动手前先看完整性对这条的记录（运行目录的分片，流水线下是同一份存储）；按任务策略有 blocking 发现的，不读数据、
+  不解码、不调模型，给每个所选模块写一条跳过记录：`status: ok`、没有发现、覆盖的每一项记无法评估 `integrity_rejected`，
+  `details = {"skipped": "integrity_rejected", "reason": "数据完整性已判废：…"}`。跳过的条目算 `ok`，不进 `error_episodes`，`--resume` 不重做。
+- 视觉质量、同步、任务成败解码时遇到 `InvalidDataError`、找不到 moov 或视频流，记 `status: ok` 加一条 blocking 的 `decode_failed`（FILE-4，
+  范围是坏的那一路相机），解码器原话在 `details.undecodable`；网络、超时等照旧是执行出错。
+- 读数据集要先在前几条 episode 上抽样认语义；抽到读不了的文件时逐条读、跳过坏的那条，不再让整段失败（`pipeline/rows.py`）。
+- 文字输出（不带 `--json`）在模块行尾写 `skipped: integrity_rejected 6`。
 
 三个行为开关，默认全关：
 
@@ -269,7 +279,7 @@ curation aggregate --run-dir <dir> --revision N [--phase final] --json
 
 判决是策略判决（设计 17 §4，D58）：模块只报发现，策略表给每条发现定级 blocking / review / info。有 blocking 发现就拒，`reasons` 列出全部
 blocking 发现；否则任一已勾选模块出错或没有记录就 held（待补跑）；否则通过，review 级发现按各自的裁决线进 `review.json`。默认策略复刻硬门
-（P18），没有软分拒绝；预设 `report_only` 只报不拒（数据完整性的致命问题仍判废）。策略取 `run.json` 的 `policy`（开跑时冻结，连同各模块细码的
+（P18），没有软分拒绝；预设 `report_only` 只报不拒（数据完整性的致命问题与各模块的 `decode_failed` 仍判废，策略版本 3）。策略取 `run.json` 的 `policy`（开跑时冻结，连同各模块细码的
 缺省级别），每个结果版本写一份 `policy.json`。
 
 写进 `<run-dir>/revisions/r<NNNN>/`：

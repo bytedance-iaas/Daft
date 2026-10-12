@@ -1,6 +1,6 @@
 # 28 · 完整性拦截与坏视频
 
-> 状态：**实施稿 v1.0（2026-10-11）**。D92–D94 登记在 00 §7；账本阶段 18（F18.0–F18.4）。
+> 状态：**已实施（2026-10-11）**。D92–D94 登记在 00 §7；账本阶段 18（F18.0–F18.4）；§6 是落地时的细化。
 > 来源：需求方 2026-10-11 在 dataverse 集群跑 droid200-test（46 条，`report_only`）：完整性判废了 8 条，后面的模块照样跑这 8 条，
 > 读数据行、解码视频全报执行出错（数值段 4 条、画面段与任务成败各 11 条）；14、15、27 三条的视频流中段损坏，完整性缺省只读文件头尾没查出，
 > 画面类模块与任务成败判定把解码失败记成执行出错，这三条一直「待补跑」，重试也救不回来。需求方选：完整性判废的条目后面的模块「不再跑」，
@@ -24,13 +24,17 @@ blocking 照样是 blocking，策略版本 2）。review 级的「完整性存�
 ```jsonc
 {"episode_index": 30, "module": "timestamp_check", "status": "ok",
  "findings": [], "assessed": [],
- "unassessable": [{"item": "STRM-3", "reason": "integrity_rejected", "text": "数据完整性已判废，没有评估"}, …],   // 本模块覆盖的每一项
+ "unassessable": [{"item": "STRM-3", "reason": "integrity_rejected", "message_zh": "数据完整性已判废，没有评估"}, …],   // 本模块覆盖的每一项
  "readings": {},
  "details": {"skipped": "integrity_rejected", "reason": "数据完整性已判废：数据不合规：ep000030: action 含 35 个 NaN/Inf"},
  "evidence": [], "elapsed_s": 0.0, "error": null}
 ```
 
 完整性还没有这条的记录（没选完整性、完整性整体失败、手工跑时还没跑完整性）就照常判，不等。
+
+**读数据集的抽样**：数值段、画面段读数据行之前，要从前几条 episode 抽样认出数据集的语义（动作与状态列、相机）。抽到的若正是一条坏掉的
+parquet，原来整段都会失败（「数据集读不了」）。现在抽样逐条读、读不了的跳过、换下一条；任务成败判定要的任务文字在读不了数据行时退回只读
+`meta/`（`pipeline/rows.py`）。被跳过的那条照常由完整性判废、其它模块写跳过记录。
 
 **Daemon 的顺序**：CPU 块里完整性本来就在最前面，后面的段拿到的条目都已有完整性的结论。VLM 块的链（`vlm_prep → vlm`，或只有 `vlm`）
 和完整性并排开跑，所以它的第一段要等：一条 episode 的完整性有了结论才派发。「有了结论」指在完整性所在的那条链上，这条已经过了完整性那一段
@@ -62,7 +66,12 @@ blocking 照样是 blocking，策略版本 2）。review 级的「完整性存�
 | `decode_failed` | FILE-4 视频解码失败 | blocking | 否 | 坏的那一路相机 | 解码器原话（截到 200 字） |
 
 记录是 `status: ok`；本模块其它项记无法评估，理由 `video_undecodable`（「视频解不开（文件损坏）」）。几路相机里只有一路坏的，帧段照旧给出
-能算的读数和发现，再加这一条；任务成败判定一次请求要全部机位，坏一路就不发请求。
+能算的读数和发现，再加这一条；任务成败判定一次请求要全部机位，坏一路就不发请求。解码器的原话留在 `details.undecodable`。
+
+视觉质量原先只有只报告的细码，加了 `decode_failed` 以后它也能判废：控制台「本次质检范围」里它的作用从「只报告」变成「判废」，单条页上它的
+块不再标「建议性，不影响判决」。`report_only` 下 `decode_failed` 照样判废，和数据完整性的判废一样不降级（策略版本 3：预设多一条
+「细码 `decode_failed` 的 blocking 仍是 blocking」）：损坏的视频和完整性查出的坏文件是同一类问题，只是晚一步、由解码的模块发现
+（droid200-test 就是只报不拒的任务，需求方要的是这三条判废）。只报不拒的任务里这三个模块的标签因此是「可判废」。
 
 ### 2.3 镜头画面缺陷
 
@@ -86,11 +95,11 @@ blocking 照样是 blocking，策略版本 2）。review 级的「完整性存�
 
 | 地方 | 改成 |
 |---|---|
-| 判定词（`records.legacy_verdict`） | 新词 `skipped`，报告的 `counts` 与模块视图按它数 |
+| 判定词（`records.legacy_verdict`，前端 `lib/records.ts` 同一套规则） | 新词 `skipped`，报告的 `counts` 与模块视图按它数；单条页上这个模块的块只写一行「没有评估：<原因>」 |
 | 报告模块小节（C2 report） | `assessed_episodes` 不数跳过；summary 多 `skipped_episodes` 与 `skipped_reasons`（`[{name, count}]`，`name` 是跳过的理由）；`counts` 多 `skipped` |
 | 任务成败小节 | 判定结论分布、弃权原因、「转人工」都不数 `no_task_text` |
-| `report.md` | 模块行「评估 N 条；跳过 M 条（数据完整性已判废 K）；检出：…」 |
-| `check --json`（C2 check） | 每个模块多 `skipped`（条数） |
+| `report.md` | 模块行「评估 N 条；跳过 M 条（数据完整性已判废）；检出：…」（几种理由时各带条数） |
+| `check --json`（C2 check） | 每个模块多 `skipped_reasons`（`{理由: 条数}`，没有跳过时不出现）；文字输出加「skipped: integrity_rejected 6」 |
 | 任务详情的模块卡片（C4 `PipelineEpisodes.modules[]`） | 多 `skipped`；`judged` 不含跳过 |
 | 控制台 | 模块卡片、报告小节写「跳过 M 条」，悬停或小字说明原因 |
 
@@ -98,7 +107,7 @@ blocking 照样是 blocking，策略版本 2）。review 级的「完整性存�
 
 - **C1 → 7.1**（只加）：`visual_quality`、`video_action_sync`、`task_success` 各加细码 `decode_failed`（FILE-4，blocking，不可复议），覆盖随之多
   FILE-4；无法评估的理由加 `integrity_rejected`（「数据完整性已判废，没有评估」）与 `video_undecodable`（「视频解不开（文件损坏）」）。
-- **C2**：结果记录的形状不变，`details.skipped` 的取值写进说明；`check` 每个模块多可选的 `skipped`；报告模块小节多可选的 `skipped_episodes`、
+- **C2**：结果记录的形状不变，`details.skipped` 的取值写进说明；`check` 每个模块多可选的 `skipped_reasons`；报告模块小节多可选的 `skipped_episodes`、
   `skipped_reasons`，`counts` 多可选的 `skipped`。都是可选字段，`schema_version` 不变。
 - **C3**：不变。
 - **C4 → 7.1.0**：流水线模块计数多 `skipped`；变更记录（中英）写「完整性判废的条目其它模块不再评估，单列为跳过；损坏的视频判废」。
@@ -110,3 +119,16 @@ blocking 照样是 blocking，策略版本 2）。review 级的「完整性存�
 2. Daemon：VLM 块等完整性的结论再派发；完整性整体失败时不等；编排用例覆盖等待与放行。
 3. 报告与控制台：模块的评估、出错条数不含跳过的条目，写明跳过了几条、为什么；任务成败小节不再把没有任务标注的条算成转人工。
 4. 本机真 Daemon 跑一个带损坏样本的任务；推送后 CI 四项全绿；需求方过目。
+
+## 6. 落地时的细化（2026-10-11）
+
+- **只报不拒也判废坏视频**：本机按 droid200-test 的设置（只报不拒）跑损坏样本，第 7 条的 `decode_failed` 降成了只报告、条目通过——和需求方
+  「记成判废发现」的本意不符。策略升到版本 3：`report_only` 预设多一条规则，任何模块的 `decode_failed` 仍是 blocking（§2.2）。已冻结版本 2 的任务照旧。
+- **发现的文字**：`decode_failed` 写「exterior 相机的视频解不开，文件已损坏」；解码器原话放在发现的读数 `cause` 与记录的 `details.undecodable`。
+  任务成败判定准备视频时出的错带上是哪一路相机（`VideoPreparationError.camera`，取自 `video_input.prepare_videos` 给异常标的相机）。
+- **流水线里读完整性的结论**：`check` 的逐条工人线程各自开一个 SQLite 连接读完整性的记录（`episode_state.read_record`）；运行目录的分片只在不走流水线时读。
+- **批处理路径**（给外部 CLI 包装用）：完整性所在链之外的链等全部所选条目都有完整性结论才开始。
+- **语义抽样容错**：数值段、画面段读前几条认语义时，抽到读不了的文件就逐条读、跳过坏的；任务文字在读不了数据行时只读 `meta/`（`pipeline/rows.py`）。
+- **控制台**：模块卡片与报告小节只有一种跳过理由时只写理由（「跳过 6 条（数据完整性已判废）」），几种理由时各带条数；单条页的块写「没有评估：数据完整性已判废」。
+- **本机验收**：`curator-daemon-local` 上的 f18_broken（前端 README 手动验证第 21 步）：只报不拒，8 条里拒绝 7、通过 1、待补跑 0；各模块评估 2、跳过 6、出错 0。
+
