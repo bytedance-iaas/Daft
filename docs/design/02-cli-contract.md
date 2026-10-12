@@ -46,7 +46,7 @@ episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,
 
 **mcap / Lance 数据集**（D44）另有两处约定：
 
-- 读源数据的命令（`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
+- 读源数据的命令（`check`、`aggregate`）接受 `--selection <整个任务的所选>`。
   v1 用所选 episode 的前 100 条判定这两种数据集的语义（控制模式、单位等），而 v2 的一条命令只读某一档的幸存者，
   所以 Daemon 把整个任务的所选另外传进来；不传时取 `--episodes`。LeRobot 数据集的语义样本是数据集本身的前 100 条，不看它。
 - v1 的两个读取器只认本地目录，`tos://` 上的数据先拉到本地副本再读：环境变量 `CURATION_SOURCE_CACHE` 指定副本放在哪
@@ -180,7 +180,7 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 
 ```bash
 curation check --modules visual_quality,video_action_sync --input tos://... --run-dir <dir> \
-               --episodes @survivors.txt --part 0003 \
+               --episodes @frame.txt --part 0003 \
                [--resume] [--vlm-backend <name>] [--vlm-reasoning-effort <档位>] \
                [--plan-stage stage.json] [--concurrency N] [--retry N] [--hedge] --json
 ```
@@ -272,10 +272,10 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 ### 3.6 `curation aggregate` — 聚合判决
 
 ```bash
-curation aggregate --run-dir <dir> --revision N [--phase final] --json
+curation aggregate --run-dir <dir> --revision N --json
 ```
 
-纯计算，秒级，**每次全量重算**。只有一个阶段：`--phase final` 仍然接受，不写也一样（漏斗的 `funnel` 阶段随 D90 删掉）。
+纯计算，秒级，**每次全量重算**（漏斗的 `funnel` 阶段随 D90 删掉，2026-10-12 起 `--phase` 参数也删了）。
 
 判决是策略判决（设计 17 §4，D58）：模块只报发现，策略表给每条发现定级 blocking / review / info。有 blocking 发现就拒，`reasons` 列出全部
 blocking 发现；否则任一已勾选模块出错或没有记录就 held（待补跑）；否则通过，review 级发现按各自的裁决线进 `review.json`。默认策略复刻硬门

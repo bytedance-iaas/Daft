@@ -86,7 +86,7 @@
 - **EEF**：记录比对的来源全部来自数据集声明（`semantics.pose` / `semantics.joints`），预检的 `subitems.record_consistency` 也按声明核对列与 topic；
   手持夹爪的标定只有声明里的 `calibration.handheld` 和内置的 DAS DEMO 两种来处（`derive_mcap.Derived` 去掉了上传标定的分支），控制台的轨迹来源
   写「数据集声明里的夹爪标定」。报告 EEF 一节去掉了 4.x 的判过 / 判废 / 转人工计数，控制台去掉了 5.0 以前记录的结论块。
-- **`check --survivors-out`**：没有漏斗之后，写出的是本段每个所选模块都有记录的条（D57）。任务成败的报告统计 `layers` 只剩 `probe`、`endstate`。
+- **`check --survivors-out`**（2026-10-12 改名 `--done-out`）：没有漏斗之后，写出的是本段每个所选模块都有记录的条（D57）。任务成败的报告统计 `layers` 只剩 `probe`、`endstate`。
 - **计划的 `bound_by: site` 留着**：§2 原想删，但站点上限照样能卡住 VLM 并行度（`planner/limits.py` 写的就是 `site`），删了会让合法的计划
   过不了 Schema。预检里没人写的 `drafts`（F5.23 起记录映射不再起草）暂留在 C2 的 Schema 里，下次改预检契约时一起删。
 - **站点配置**：Daemon 读站点配置时把旧闸门名连同 D54 的 CPU 键一起忽略并告警（`orchestr/config.py`；原来只带 `vlm.gates` 的旧配置会让读取出错）。

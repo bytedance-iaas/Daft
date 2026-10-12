@@ -197,13 +197,13 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
 - LeRobot v2 的某条缺数据 parquet 或任一机位的视频时，这条跳过（D40）：记进 `skipped_episodes`（写明缺了哪些文件），不进任何清单、不计入总数，
   报告的完整性一块列出。v3 数据集不跳，缺文件的条在检查时读不了，记为出错。mcap / Lance 记的对象不同，见下文。
 
-**check**：`curation check --modules <一段的模块> --input … --run-dir … --episodes 表达式 [--source-manifest …] [--declaration …] [--selection …] [--part NNNN] [--resume] [--plan-stage …] [--survivors-out 文件] [--prep | --prepared] [--param 模块.键=值] [--max-episodes N] [VLM 参数] [行为开关] --json`
+**check**：`curation check --modules <一段的模块> --input … --run-dir … --episodes 表达式 [--source-manifest …] [--declaration …] [--selection …] [--part NNNN] [--resume] [--plan-stage …] [--done-out 文件] [--prep | --prepared] [--param 模块.键=值] [--max-episodes N] [VLM 参数] [行为开关] --json`
 
 - 一次只跑一段（D18）：`data_integrity`（`integrity`，CPU 块最前，设计 14）、`timestamp_check,kinematic_limits,motion_quality`（`numeric`）、
   `visual_quality,video_action_sync`（`frame`，共用一次解码）、`duplicate_check`（`duplicate`，设计 26）、`eef_video_consistency --prep`（`vlm_prep`）、
   `task_success`（`vlm`，带上 `camera_defects`，可与 `eef_video_consistency --prepared` 同一调用）。混段是参数错误。
 - 每条做完立刻追加到 `checks/<module>/parts/<part>.jsonl`（整行写入并 fsync）；`--part` 不给时取比现有最大编号大一的号。结束时重写 `results.jsonl`。
-- **判废的发现、执行出错都不拦人**（D57）：`--survivors-out` 写出本段每个所选模块都有了记录的条，EEF 的 CPU 半段留好请求包的条也算。
+- **判废的发现、执行出错都不拦人**（D57）：`--done-out` 写出本段每个所选模块都有了记录的条，EEF 的 CPU 半段留好请求包的条也算。
   Daemon 的流水线不用这个文件（逐条交接）；手工按段跑时可以把它当下一段的 `--episodes @文件`。
 - **出错与拿不准分开**（D33）：模型正常答了「看不清 / 拿不准」，是一条 review 级的发现（`uncertain`），不是错。一次模型调用最终失败、一路机位解码失败、
   样本读不了、进程两次死在这条上，这条记录就是 `status: error`，`error.incidents` 写明步骤、调用类型、机位、原因和尝试次数。单条出错不影响其他条，
@@ -230,7 +230,7 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
 
 **aggregate**：`curation aggregate --run-dir … --revision N [--modules a,b] [--episodes 表达式] [--input …] [--selection …] --json`
 
-- 纯计算，秒级，每次全量重算。模块取 `--modules`，否则取 `plan.json`；episode 取 `--episodes`，否则取有结果的全部。`--phase final` 仍然接受（只有这一种）。
+- 纯计算，秒级，每次全量重算。模块取 `--modules`，否则取 `plan.json`；episode 取 `--episodes`，否则取有结果的全部。
 - 判决按策略（设计 17 §4，D58）：模块只报发现，任务的策略（`run.json` 的 `policy`，开跑时冻结，连同各模块细码的缺省级别；没有时是 `default`）
   给每条发现定级 blocking / review / info。有 blocking 发现即拒，每条 blocking 发现都是理由，对它执行出错的模块写进原因「另有…执行出错，不影响结论」（D35）；
   否则所需模块出错或没有记录即 held（「待补跑」）；否则通过，review 级发现进 review。`report_only` 只留数据完整性的 blocking，其余都是 info。

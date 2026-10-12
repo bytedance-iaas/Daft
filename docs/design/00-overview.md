@@ -117,7 +117,7 @@
     │     ↓ 前端据此渲染「可跑 / 需补充 / 不支持」三态
     │
     ├─▶ ② plan          Daemon 内部 planner，必经（也有 CLI 形态便于调试）
-    │     出：分档、每档并发度与各闸门、VLM 请求合并分组（在用户设的上限之内）
+    │     出：分段、每段并发度与各闸门（在用户设的上限之内）
     │
     ├─▶ ②′ snapshot     curation snapshot —— 固化源文件清单与版本指纹
     │     之后每一步读源数据都按它校验；中途发现源数据变了，任务失败并提示重新预检
@@ -125,29 +125,25 @@
     ├─▶ ③ ~~autolabel~~  D72 起没有这一步：没有任务标注的条目，任务成败判定直接不判（记录写明 no_task_text），
     │     其余检查照常；平台不再替它补描述
     │
-    ├─▶ ④ check · 漏斗   档的划分与顺序照搬 v1；一档一个进程，前一档的幸存者是后一档的 --episodes
-    │     数值档  check --modules timestamp_check,kinematic_limits,motion_quality
-    │        └ 硬门①（时间戳、运动学）
-    │     帧档    check --modules visual_quality,video_action_sync   ← 同进程共享一次全帧率解码
-    │        └ 硬门②（视频-动作同步）
-    │     VLM 档  check --modules task_success                        ← 只跑幸存者
-    │        └ 随附 camera_defects：判定请求的逐机位回答里顺带报花屏 / 抖动 / 镜头污染，不增加请求
+    ├─▶ ④ check · 两块并行（设计 17）  每段一个常驻进程，episode 逐条交接；每段都拿全部所选条目
+    │     CPU 块  integrity → numeric → frame（同进程共享一次解码）→ duplicate；选了 EEF 另有一条根链 vlm_prep
+    │     VLM 块  vlm：task_success（随附 camera_defects，不增加请求）与 EEF 的模型半段
+    │        └ 数据完整性判废的条目，其它模块只记跳过；VLM 块逐条等完整性的结论再派发（D92，设计 28）
     │     ★ 结果按模块分目录落盘：checks/<module>/…，所以单个模块可以被单独重跑覆盖
     │
-    ├─▶ ⑤ aggregate --phase funnel
-    │     六项检查合成判决 keep / drop；弃权条目仍是 keep，带「待裁决」标记
+    ├─▶ ⑤ ~~aggregate --phase funnel~~  D90 起没有这一步：判决只在两块都结束后算一次
     │
     ├─▶ ⑥ ~~check · 判决之后~~  D87 起没有这一步：重复检测是 CPU 块的 duplicate 段（check --modules duplicate_check），
     │     和其他段一样逐条跑全部所选条目，一组重复的每一条都记一条 SET-1 发现，只报告、不改判
     │
-    ├─▶ ⑦ aggregate --phase final     出 passed / reject / held 三份互斥清单 + review 复核视图
+    ├─▶ ⑦ aggregate     按任务的策略给每条发现定级（D58），出 passed / reject / held 三份互斥清单 + review 复核视图
     ├─▶ ⑧ report        报告 + 性能剖析
     └─▶ ⑨ verify        交付核验：逐文件回读，写成功不等于读得到（交付的就是运行目录：清单、报告与明细）
 ```
 
-漏斗优化（硬门先跑、VLM 垫底只跑幸存者）在 v1 里是 DataFrame 链的隐式行为，
-v2 里变成 **planner 的显式决策**：计划里写明每一档跑哪些模块、吃哪份幸存者名单。
-省下来的 VLM 调用一分不少，但现在是可观测的 —— 生成的计划随任务存档，可经 API 只读查看。
+v1 的漏斗（硬门先跑、VLM 垫底只跑幸存者）在 v2 里取消了（D57）：两块并行、互不过滤，每个模块对每条 episode 都给结论，
+拒不拒由任务的策略在 aggregate 时算；例外只有完整性判废的条目，其它模块不再评估（D92）。执行计划（分段、并发、闸门）
+随任务存档，可经 API 只读查看。
 
 **三个维度各说各的**：质量判决（通过 / 拒绝）、执行完整性（完整 / 待补跑）、人工复核（要不要人看）。
 v1 的 `review` 本来就是一个复核视图，不是和通过、拒绝并列的第三个桶。
