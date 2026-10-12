@@ -385,8 +385,10 @@ def render(payload: dict) -> str:
     for m, entry in payload["modules"].items():
         c = entry["episodes"]
         found = ", ".join(f"{code} {n}" for code, n in (entry.get("findings") or {}).items())
+        skipped = ", ".join(f"{why} {n}" for why, n in (entry.get("skipped_reasons") or {}).items())
         lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - ok {c['ok']}, "
-                     f"error {c['error']}" + (f"; findings: {found}" if found else ""))
+                     f"error {c['error']}" + (f"; skipped: {skipped}" if skipped else "")
+                     + (f"; findings: {found}" if found else ""))
         if entry["error_episodes"]:
             shown = ", ".join(str(e) for e in entry["error_episodes"][:10])
             more = ", ..." if len(entry["error_episodes"]) > 10 else ""

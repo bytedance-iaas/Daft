@@ -19,12 +19,13 @@ import hashlib
 import json
 import os
 import time
+from collections import Counter
 
 from ..contracts import modules as registry
 from .aggregate import NAMES_CN
 from .records import (CRASHES_NAME, LATENCY_FILE, PLAN_NAME, SOURCE_MANIFEST_NAME, USAGE_FILE,
                       is_error, latest_results, legacy_verdict, module_dir, parts_used, read_jsonl,
-                      score_of, write_json_atomic, write_text_atomic)
+                      score_of, skipped_reason, write_json_atomic, write_text_atomic)
 
 SCHEMA_VERSION = "1.0"                  # perf.json and commit.json
 #: report.json: C2 2.0 (design doc 17 §5.1) - findings per item, coverage, the policy; no gates
@@ -142,7 +143,7 @@ def redone_after_interruption(run_dir: str, modules) -> int:
 # ---------------------------------------------------------------- modules
 
 def _counts(results: dict) -> dict:
-    c = {"total": len(results), "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0}
+    c = {"total": len(results), "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0, "skipped": 0}
     for rec in results.values():
         c[legacy_verdict(rec)] += 1
     return c
@@ -210,7 +211,8 @@ def _summary(rev: Revision, m: str) -> dict:
                 why[key] = why.get(key, 0) + 1
         out["fail_kinds"] = why
     if res and not registry.is_rider(m):                  # a rider's views are its own (camera_defects)
-        out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
+        judged = [res[e] for e in sorted(res) if not skipped_reason(res[e])]     # D94: skipped ones apart
+        out.update(_chart_stats(rev, m, judged, scores))
     out.update(finding_stats(rev, m))
     return out
 
@@ -232,7 +234,8 @@ def finding_stats(rev: Revision, m: str) -> dict:
     from . import report_stats as S
 
     res = rev.results[m]
-    judged = {e: r for e, r in res.items() if not is_error(r)}
+    judged = {e: r for e, r in res.items() if not is_error(r) and not skipped_reason(r)}
+    skipped = Counter(skipped_reason(r) for r in res.values() if skipped_reason(r))
     codes: dict[str, dict] = {}
     unassessable: dict[tuple, int] = {}
     levels: dict[str, set] = {"blocking": set(), "review": set(), "info": set()}
@@ -269,6 +272,9 @@ def finding_stats(rev: Revision, m: str) -> dict:
         m, res, rev.module_params(m),
         integrity=_read(os.path.join(base, "dataset.json"), None) if m == "data_integrity" else None)
     out = {"assessed_episodes": n,
+           # D94 (design doc 28 §3): the episodes it wrote a record for without judging them, and why
+           "skipped_episodes": sum(skipped.values()),
+           "skipped_reasons": [{"name": k, "count": v} for k, v in sorted(skipped.items(), key=lambda kv: -kv[1])],
            "flagged_episodes": len(set().union(*levels.values())),
            "levels": {lv: len(eps) for lv, eps in levels.items()}, "items": items,
            "unassessable": [{"item": item, "reason": reason, "count": c}
@@ -782,6 +788,8 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
 
 
 _LEVEL_ZH = {"blocking": "判废", "review": "转人工", "info": "只报告"}
+#: why a module skipped an episode (design doc 28 §3, D94)
+_SKIP_ZH = {"integrity_rejected": "数据完整性已判废", "no_task_text": "没有任务标注"}
 
 
 def _findings_lines(module: str, s: dict) -> list[str]:
@@ -791,7 +799,12 @@ def _findings_lines(module: str, s: dict) -> list[str]:
         return []
     found = "、".join(f"{_code_name({'module': module, **x}).lstrip('·')} {x['episodes']} 条"
                      f"({_LEVEL_ZH.get(x['level'], x['level'])})" for x in s.get("items") or [])
-    out = [f"- 评估 {s['assessed_episodes']} 条;检出:{found or '无'}"]
+    skipped = ""
+    if s.get("skipped_episodes"):
+        rows = s.get("skipped_reasons") or []
+        why = "、".join(_SKIP_ZH.get(x["name"], x["name"]) + ("" if len(rows) == 1 else f" {x['count']}") for x in rows)
+        skipped = f";跳过 {s['skipped_episodes']} 条({why})"
+    out = [f"- 评估 {s['assessed_episodes']} 条{skipped};检出:{found or '无'}"]
     una = s.get("unassessable") or []
     if una:
         out.append("- 评估不了:" + "、".join(f"{x.get('item') or ''} {x['reason']} {x['count']} 条".strip()

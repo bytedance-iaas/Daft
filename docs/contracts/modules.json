@@ -1,5 +1,5 @@
 {
- "registry_version": "7.0",
+ "registry_version": "7.1",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -85,6 +85,14 @@
   {
    "id": "no_task_text",
    "title_zh": "没有任务标注，没有做任务成败判定"
+  },
+  {
+   "id": "integrity_rejected",
+   "title_zh": "数据完整性已判废，没有评估"
+  },
+  {
+   "id": "video_undecodable",
+   "title_zh": "视频解不开（文件损坏）"
   }
  ],
  "review_lines": [
@@ -1462,6 +1470,15 @@
      "level": "info",
      "scope_kind": "camera",
      "appealable": false
+    },
+    {
+     "code": "decode_failed",
+     "item": "FILE-4",
+     "name_zh": "视频解码失败（文件损坏）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "camera",
+     "appealable": false
     }
    ],
    "covers": [
@@ -1469,7 +1486,8 @@
     "IMG-2",
     "IMG-3",
     "IMG-4",
-    "STRM-1"
+    "STRM-1",
+    "FILE-4"
    ],
    "param_schema": {
     "type": "object",
@@ -1584,12 +1602,22 @@
      "level": "info",
      "scope_kind": "episode",
      "appealable": false
+    },
+    {
+     "code": "decode_failed",
+     "item": "FILE-4",
+     "name_zh": "视频解码失败（文件损坏）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "camera",
+     "appealable": false
     }
    ],
    "covers": [
     "AV-1",
     "AV-3",
-    "MV-3"
+    "MV-3",
+    "FILE-4"
    ],
    "param_schema": {
     "type": "object",
@@ -1985,11 +2013,21 @@
      "level": "info",
      "scope_kind": "episode",
      "appealable": false
+    },
+    {
+     "code": "decode_failed",
+     "item": "FILE-4",
+     "name_zh": "视频解码失败（文件损坏）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "camera",
+     "appealable": false
     }
    ],
    "covers": [
     "TASK-4",
-    "LABEL-2"
+    "LABEL-2",
+    "FILE-4"
    ],
    "param_schema": {
     "type": "object",

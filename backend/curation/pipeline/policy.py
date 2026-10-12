@@ -16,7 +16,8 @@ review (there is nobody to ask) and stays as it was.
 
 Two presets ship (``PRESETS``): ``default`` (no rule) and ``report_only`` (nobody is asked and every
 finding is reported; only data integrity's blocking findings still reject - an empty, cut or unreadable
-file leaves nothing for the modules after it, requester 2026-10-05). The task names one in ``params.policy`` (C4 ``TaskParams.policy``); the Daemon freezes
+file leaves nothing for the modules after it, requester 2026-10-05 - and so does a video the decoder finds
+corrupt, whichever module decoded it: ``decode_failed``, D93). The task names one in ``params.policy`` (C4 ``TaskParams.policy``); the Daemon freezes
 the full table into ``run.json`` at start (``policy``) and every result revision keeps a copy
 (``policy.json``), so a task keeps the rules it started with.
 
@@ -31,19 +32,24 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 
-#: 2 (2026-10-05): report_only keeps data integrity's blocking findings.
-POLICY_VERSION = "2"
+#: 2 (2026-10-05): report_only keeps data integrity's blocking findings. 3 (2026-10-11, D93): and every
+#: module's ``decode_failed``.
+POLICY_VERSION = "3"
 LEVELS = tuple(lv for lv, _ in registry.FINDING_LEVELS)
 MATCH_KEYS = ("module", "code", "item", "severity", "level")
 
 #: Modules whose blocking findings reject even under report_only: the modules after them cannot use
 #: an episode whose files are empty, cut short or unreadable (requester, 2026-10-05).
 REPORT_ONLY_GATES = ("data_integrity",)
+#: Codes that reject under report_only in any module: a corrupt video (design doc 28 §2, D93) is a broken file
+#: like those data integrity rejects, only found later by the modules that decode it.
+REPORT_ONLY_GATE_CODES = ("decode_failed",)
 
 #: The presets a task can name (C4 TaskParams.policy.preset).
 PRESETS: dict[str, tuple[dict, ...]] = {
     "default": (),
     "report_only": tuple({"match": {"module": m, "level": "blocking"}, "level": "blocking"} for m in REPORT_ONLY_GATES)
+    + tuple({"match": {"code": c, "level": "blocking"}, "level": "blocking"} for c in REPORT_ONLY_GATE_CODES)
     + ({"match": {"level": "any"}, "level": "info"},),
 }
 #: Chinese names for the report and the console.

@@ -100,19 +100,51 @@ class EpisodeMissingSource(EpisodeReadError):
         self.missing = list(missing)
 
 
+def _tolerant_source():
+    """v1's lazy-scan source with a semantics sample that survives unreadable episodes (design doc 28 §1): the
+    dataset's semantics are voted on its first episodes; when reading them fails as a whole, they are read one by
+    one and the ones that cannot be read are left out (data integrity rejects them) - one broken file among the
+    first 100 no longer stops every episode of every stage. A readable sample is read exactly as before."""
+    from ..ingest import lerobot_reader as lr_
+    from ..ingest.daft_source import LeRobotDataSource, resolve_dataset_semantics
+
+    class Source(LeRobotDataSource):
+        def _resolve_semantics(self):
+            try:
+                return super()._resolve_semantics()
+            except Exception:  # noqa: BLE001 - which file breaks the sample is the data's business
+                n = min(lr_.SEMANTICS_VOTE_EPISODES, self._max) if self._max else lr_.SEMANTICS_VOTE_EPISODES
+                if self._v3:
+                    order = [int(i) for i in lr_._v3_ep_meta(self._dir, n)["episode_index"]]
+                else:
+                    order = [int(ep["episode_index"]) for ep in lr_._v2_episode_list(self._dir, n)]
+                sample = []
+                for idx in order:
+                    try:
+                        sample += lr_.read_lerobot_rows(self._dir, validate=False, skip_missing=self._skip_missing,
+                                                        episode_indices={idx})
+                    except Exception:  # noqa: BLE001 - this episode's own files
+                        continue
+                if not sample:
+                    raise
+                name = os.path.basename(str(self._dir).rstrip("/"))
+                return resolve_dataset_semantics(self._info, sample, name, self._embodiment)
+
+    return Source
+
+
 class RowSource:
     """Per-episode rows of one LeRobot v2 / v3 dataset (thread-safe, v3 groups cached)."""
 
     def __init__(self, input_dir: str, episodes: Iterable[int], *,
                  embodiment_id: str | None = None, max_episodes: int | None = None):
-        from ..ingest.daft_source import LeRobotDataSource
-
         wanted = {int(e) for e in episodes}
         self.input_dir = input_dir
         self.embodiment_id = embodiment_id
-        # the very object v1's lazy scan builds (semantics resolved the same way)
-        self.src = LeRobotDataSource(input_dir, max_episodes, embodiment_id, validate=True,
-                                     skip_missing=True, episode_indices=wanted)
+        # the very object v1's lazy scan builds (semantics resolved the same way; an unreadable sample episode
+        # is left out of the vote rather than failing the stage, design doc 28 §1)
+        self.src = _tolerant_source()(input_dir, max_episodes, embodiment_id, validate=True,
+                                      skip_missing=True, episode_indices=wanted)
         self.info = self.src._info
         self.v3 = self.src._v3
         self._lock = threading.Lock()
@@ -344,9 +376,39 @@ def meta_rows(input_dir: str, episodes: Iterable[int] | None, *,
     if fmt != "lerobot":
         return _readers(fmt)[1](input_dir, max_episodes=max_episodes, episode_indices=wanted,
                                 embodiment_id=embodiment_id, skip_missing=True)
-    return lr.read_lerobot_meta(input_dir, max_episodes=max_episodes,
-                                episode_indices=wanted, embodiment_id=embodiment_id,
-                                skip_missing=True)
+    try:
+        return lr.read_lerobot_meta(input_dir, max_episodes=max_episodes,
+                                    episode_indices=wanted, embodiment_id=embodiment_id,
+                                    skip_missing=True)
+    except Exception:  # noqa: BLE001 - see below
+        # the reader votes the dataset's semantics on its first episodes and fails when one of their files cannot
+        # be read (data integrity rejects that episode, design doc 28 §1); the callers want each episode's task text
+        # alone, which does not depend on the vote
+        return _task_texts(input_dir, max_episodes, wanted)
+
+
+def _task_texts(input_dir: str, max_episodes: int | None, wanted: set[int] | None) -> list[dict]:
+    """``episode_id`` / ``episode_index`` / ``instruction`` of LeRobot episodes, read from ``meta/`` only - what
+    :func:`meta_rows` gives without the semantics vote."""
+    info = lr._load_info(input_dir)
+    out = []
+    if str(info["codebase_version"]).startswith("v3"):
+        meta = lr._v3_ep_meta(input_dir, max_episodes, episode_indices=wanted)
+        tmap, tidx = {}, {}
+        if any(not lr._v3_instruction(ep) for _, ep in meta.iterrows()):
+            tmap = lr._load_tasks_map(input_dir)
+            if tmap:
+                tidx = lr._v3_task_index_of(input_dir, info, meta)
+        for _, ep in meta.iterrows():
+            idx = int(ep["episode_index"])
+            out.append({"episode_id": f"ep{idx:06d}", "episode_index": idx,
+                        "instruction": lr._v3_instruction(ep, tmap, tidx.get(idx))})
+    else:
+        for ep in lr._v2_episode_list(input_dir, max_episodes, episode_indices=wanted):
+            idx, tasks = int(ep["episode_index"]), ep.get("tasks") or []
+            out.append({"episode_id": f"ep{idx:06d}", "episode_index": idx,
+                        "instruction": str(tasks[0]) if tasks else ""})
+    return out
 
 
 def index_of(episode_id: str) -> int:

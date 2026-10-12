@@ -148,10 +148,12 @@ def prepare_videos(video: dict, *, max_side: int = 720,
                                max_side=max_side, max_bytes=remaining, fps=fps,
                                options=REMOTE_OPEN_OPTIONS if remote and handle is None else None)
                 break
-            except ValueError:
+            except ValueError as exc:                   # PyAV's InvalidDataError is one too
+                exc.curation_camera = str(camera)           # whose video it was (design doc 28 §2.2)
                 raise
-            except Exception:
+            except Exception as exc:
                 if not remote or attempt == REMOTE_ATTEMPTS - 1:
+                    exc.curation_camera = str(camera)
                     raise
         remaining -= clip.byte_size
         clips.append(clip)

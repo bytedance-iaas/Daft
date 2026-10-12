@@ -26,7 +26,7 @@ def test_the_default_policy_is_the_registry_default_levels():
     assert pol.appealable("task_success", _f("failure")) and not pol.appealable("timestamp_check", _f("gap"))
 
 
-def test_report_only_asks_nobody_and_rejects_only_on_data_integrity():
+def test_report_only_asks_nobody_and_rejects_only_on_broken_files():
     pol = P.Policy.of("report_only")
     levels = {(s.id, c.code): pol.level(s.id, _f(c.code, c.item, c.severity)) for s in registry.MODULES for c in s.codes}
     # an empty, cut or unreadable file still rejects (requester 2026-10-05): nothing after it can use it
@@ -34,8 +34,11 @@ def test_report_only_asks_nobody_and_rejects_only_on_data_integrity():
     for c in integrity.codes:
         assert levels[("data_integrity", c.code)] == ("blocking" if c.level == "blocking" else "info"), c.code
     assert levels[("data_integrity", "file_empty")] == "blocking"
+    # a corrupt video still rejects in whichever module decoded it (policy 3, D93)
+    for m in ("visual_quality", "video_action_sync", "task_success"):
+        assert levels[(m, "decode_failed")] == "blocking", m
     # everything else is reported only, and nobody is asked
-    assert {lv for (m, _), lv in levels.items() if m != "data_integrity"} == {"info"}
+    assert {lv for (m, code), lv in levels.items() if m != "data_integrity" and code != "decode_failed"} == {"info"}
     assert "review" not in levels.values()
 
 

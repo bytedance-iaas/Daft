@@ -107,7 +107,9 @@ def test_a_run_of_findings_is_scored_from_the_findings_themselves(tmp_path):
     doc = score2(tmp_path, exp, recs)
     row = doc["items"]["FILE-4"]
     assert (row["tp"], row["fn"], row["fp"], row["tn"]) == (1, 1, 1, 1)
-    assert row["modules"] == ["data_integrity"] and row["mapped"] is True
+    # registry 7.1 (D93): every module that decodes the videos covers FILE-4 too
+    assert row["modules"] == ["data_integrity", "task_success", "video_action_sync", "visual_quality"]
+    assert row["mapped"] is True
     assert doc["schema_version"] == "2.0"
     assert row["by_module"]["data_integrity"]["precision"] == 0.5
 
@@ -199,7 +201,7 @@ def test_the_episode_level_reads_the_final_lists(tmp_path):
     reason = lambda m: {"module": m, "kind": "finding", "code": "x", "item": "FILE-4", "text": "x"}  # noqa: E731
     lists = {"reject": [{"episode_index": 0, "reasons": [reason("data_integrity")]},
                         {"episode_index": 1, "reasons": [reason("data_integrity")]},
-                        {"episode_index": 2, "reasons": [reason("task_success")]}],
+                        {"episode_index": 2, "reasons": [reason("timestamp_check")]}],     # covers no FILE-4
              "held": [{"episode_index": 3, "reasons": [{"module": "duplicate_check", "kind": "execution_error", "text": "x"}]}]}
     el = score2(tmp_path, exp, recs, lists=lists)["episode_level"]
     assert (el["tp"], el["fp"], el["dropped_outside_checked"], el["held_clean"]) == (1, 1, 1, 1)

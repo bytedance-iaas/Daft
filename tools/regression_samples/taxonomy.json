@@ -134,7 +134,10 @@
    "platform_status": "能判",
    "platform_codes": [
     "data_integrity.decode_failed",
-    "data_integrity.decode_concealed"
+    "data_integrity.decode_concealed",
+    "visual_quality.decode_failed",
+    "video_action_sync.decode_failed",
+    "task_success.decode_failed"
    ],
    "kind": "defect",
    "level": "episode",

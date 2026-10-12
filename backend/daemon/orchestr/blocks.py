@@ -68,15 +68,29 @@ def prepare_store(run, plan: dict, selection: list[int]) -> None:
         store.close()
 
 
-def run_block(run, block: str, stages: list[dict], selection: list[int], abort: threading.Event) -> None:
-    """One chain's stages in order (module docstring); ``block``: the chain's name."""
+#: the stage whose rejects no other chain judges (D92, design doc 28 §1)
+INTEGRITY_STAGE = "integrity"
+
+
+def integrity_chain(blocks: dict[str, list[dict]]) -> str | None:
+    """The chain the data integrity stage is in, or None when the plan has no such stage."""
+    for name, stages in blocks.items():
+        if any(st["id"] == INTEGRITY_STAGE for st in stages):
+            return name
+    return None
+
+
+def run_block(run, block: str, stages: list[dict], selection: list[int], abort: threading.Event,
+              wait_for: tuple[str, str] | None = None) -> None:
+    """One chain's stages in order (module docstring); ``block``: the chain's name; ``wait_for``: the integrity
+    stage a chain without it waits for, episode by episode (D92)."""
     from .pipeline import run_funnel
 
     pool_key = run.cpu_key if block == "cpu" else (*run.cpu_key, block)
     run.check_intent()
     chain = [st for st in stages if st.get("command") == "check"]
     if chain and not all(run.journal.done(s["id"]) for s in chain):
-        run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block)
+        run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block, wait_for=wait_for)
 
 
 def _first(errors: list[BaseException]) -> BaseException:
@@ -102,9 +116,12 @@ def run_blocks(run, plan: dict, selection: list[int]) -> None:
     errors: list[BaseException] = []
     lock = threading.Lock()
 
+    gate = integrity_chain(blocks)
+
     def job(block: str, stages: list[dict]) -> None:
+        wait_for = (gate, INTEGRITY_STAGE) if gate is not None and block != gate else None
         try:
-            run_block(run, block, stages, selection, abort)
+            run_block(run, block, stages, selection, abort, wait_for)
         except BaseException as exc:  # noqa: BLE001 - handed to the caller below
             with lock:
                 errors.append(exc)

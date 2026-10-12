@@ -215,10 +215,14 @@ def cpu_pool_of(run, size: int) -> CpuPool:
 
 
 def run_episodes(run, stages: list[dict], selection: list[int], *,
-                 abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
+                 abort: threading.Event | None = None, pool_key=None, chain: str | None = None,
+                 wait_for: tuple[str, str] | None = None) -> None:
     """The layers of one chain over ``selection``. ``abort``: shared with the other chains (set when one
     fails, :mod:`.blocks`); ``pool_key``: whom the CPU pool books this chain's slots to; ``chain``: its name in
-    the episode store (:func:`.blocks.chains_of`; its first stage's block by default)."""
+    the episode store (:func:`.blocks.chains_of`; its first stage's block by default); ``wait_for``: (chain,
+    stage) of another chain whose verdict on an episode this chain waits for before it takes the episode - data
+    integrity's (D92, design doc 28 §1): an episode goes once it is past that stage there (judged, left out for
+    missing files, or let through when the stage failed as a whole)."""
     from .pipeline import cpu_shares_for, effective_batch_size
 
     if not stages:
@@ -258,6 +262,12 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
             dest = saved.get(ep, layers[0].sid)
             if dest in by_id:
                 by_id[dest].ready.append(ep)
+        # D92: the first layer takes an episode only once the other chain's stage has its verdict
+        waiting: list[int] = []
+        if wait_for is not None and layers[0].ready:
+            waiting = list(layers[0].ready)
+            layers[0].ready.clear()
+        next_look = 0.0
         from curation.contracts import modules as registry
 
         title = registry.BLOCK_TITLES.get(stages[-1].get("block"), "") if block else ""
@@ -273,6 +283,16 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
         while not all(layer.done for layer in layers):
             run.check_intent()
             changed = False
+            if waiting and time.monotonic() >= next_look:
+                next_look = time.monotonic() + 0.25
+                gate_chain, gate_stage = wait_for
+                past = store.positions(waiting, gate_chain)
+                failed = gate_stage in store.failed_stages()
+                released = {e for e in waiting if failed or past.get(e) not in (None, gate_stage)}
+                if released:
+                    layers[0].ready.extend(e for e in waiting if e in released)
+                    waiting = [e for e in waiting if e not in released]
+                    changed = True
             # Drain completion messages before allocating any new credits.
             for i, layer in enumerate(layers):
                 proc = layer.child
@@ -404,7 +424,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
                         if layer.sid in shares:
                             cpu_active += len(episodes)
                     changed = True
-                upstream_done = i == 0 or layers[i - 1].done
+                upstream_done = (not waiting) if i == 0 else layers[i - 1].done
                 if upstream_done and not layer.ready and not layer.active:
                     if layer.child is not None and not layer.closing:
                         try:

@@ -201,12 +201,12 @@ CASES = [
                                               "fluency_low", "idle_opening"}, set()),
     ("motion_quality", None, 0.9, MQ_NO_STATE, {"idle_closing"}, {"ACT-4", "ACT-5", "ACT-8"}),
     ("visual_quality", None, 0.4, VQ, {"frozen", "exposure_low", "sharpness_low", "information_death", "dead_or_padded"}, set()),
-    ("visual_quality", None, None, {}, set(), {"IMG-1", "IMG-2", "IMG-3", "IMG-4", "STRM-1"}),
+    ("visual_quality", None, None, {}, set(), {"IMG-1", "IMG-2", "IMG-3", "IMG-4", "STRM-1", "FILE-4"}),
     ("video_action_sync", False, None, SYNC_ALL, {"misaligned_all"}, set()),
     ("video_action_sync", True, None, SYNC_ONE, {"camera_misaligned", "lag_inconsistent"}, set()),
     ("video_action_sync", True, None, SYNC_WEAK, {"undecidable"}, set()),
     ("video_action_sync", True, None, SYNC_SUSPECT, {"suspect"}, set()),
-    ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3"}),
+    ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3", "FILE-4"}),
     ("task_success", False, None, TASK_FAIL, {"failure"}, set()),
     ("task_success", None, None, TASK_UNSURE, {"uncertain"}, set()),
     ("task_success", None, None, TASK_SKIPPED, {"task_text_missing"}, {"TASK-4"}),
@@ -253,9 +253,48 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
 NO_SOURCE_YET: set[tuple[str, str]] = set()
 
 
+#: what the decoder said about a corrupt video (D93): the frame stage and task success's video preparation
+CORRUPT = [{"step": "decode", "camera": "wrist", "cause": "InvalidDataError: [Errno 1094995529] Invalid data found "
+                                                       "when processing input: 'avcodec_send_packet()'"}]
+
+
+@pytest.mark.parametrize("module", ["visual_quality", "video_action_sync", "task_success"])
+def test_a_corrupt_video_is_a_blocking_finding_not_an_error(module):
+    """D93 (design doc 28 §2): the decoder's InvalidDataError is the file's fault - ``decode_failed`` on the camera,
+    blocking, not appealable; the other items unassessable; the incidents kept in the details."""
+    rec = _record(module, None, None, {"reason": "解码失败"}, incidents=CORRUPT)
+    assert schemas.errors("cli/result-record.schema.json", rec) == []
+    assert rec["status"] == "ok" and rec["error"] is None
+    assert [(f["code"], f["item"], f["scope"]) for f in rec["findings"]] == [("decode_failed", "FILE-4", {"camera": "wrist"})]
+    assert rec["details"]["undecodable"] == CORRUPT
+    assert {u["reason"] for u in rec["unassessable"]} == {"video_undecodable"}
+    assert "FILE-4" in rec["assessed"] and "FILE-4" not in {u["item"] for u in rec["unassessable"]}
+    assert legacy_verdict(rec) == "fail"
+
+
+def test_a_frame_stage_that_judged_the_other_cameras_keeps_their_findings():
+    """One camera of several corrupt: what the frame stage measured on the others stays, plus decode_failed."""
+    rec = _record("visual_quality", None, 0.4, VQ, incidents=CORRUPT)
+    assert {f["code"] for f in rec["findings"]} == {"frozen", "exposure_low", "sharpness_low", "information_death",
+                                                   "dead_or_padded", "decode_failed"}
+    assert rec["unassessable"] == []
+
+
+@pytest.mark.parametrize("cause", ["TimeoutError: read timed out", "ConnectionResetError: [Errno 54] reset",
+                                   "MemoryError", "HTTP 503 from tos"])
+def test_a_failure_of_the_run_stays_an_error(cause):
+    """Anything else - network, timeouts, memory - is still an execution error and waits for a retry (D33)."""
+    rec = _record("visual_quality", None, None, {}, incidents=[{"step": "decode", "camera": "wrist", "cause": cause}])
+    assert rec["status"] == "error" and rec["findings"] == []
+    mixed = _record("visual_quality", None, None, {}, incidents=CORRUPT + [{"step": "read", "cause": cause}])
+    assert mixed["status"] == "error"                       # one transient failure: the whole record waits
+
+
 def test_every_code_is_drawn_from_a_real_answer():
     """F12.2 acceptance ②: every code of §2.2 has a fixture (dataset-level ones in the next test)."""
     seen = {(m, f["code"]) for m, passed, score, d, *_ in CASES for f in _record(m, passed, score, d)["findings"]}
+    seen |= {(m, f["code"]) for m in ("visual_quality", "video_action_sync", "task_success")
+             for f in _record(m, None, None, {}, incidents=CORRUPT)["findings"]}
     wanted = {(s.id, c.code) for s in registry.MODULES for c in s.codes if c.scope_kind != "dataset"}
     assert wanted - seen == NO_SOURCE_YET
 

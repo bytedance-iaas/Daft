@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.0.0
+  version: 7.1.0
   description: |
     ## Overview
 
@@ -239,6 +239,15 @@ info:
     `arbitration`, `caption` and `llm` from `params.vlm_timeouts_s`, and the episode-reason kinds of the older
     format.
 
+    **7.1.0** (2026-10-11): an episode data integrity rejects is not judged by the other checks any more: they record it
+    as skipped (the finding's unassessable reason `integrity_rejected`, the record's `details.skipped`), read none of its
+    files and ask no model, so its reject lists data integrity's reasons alone. A video the decoder finds corrupt is a
+    blocking finding `decode_failed` (item FILE-4) of visual quality, video-action sync and task success - it used to be
+    an execution error that left the episode waiting for a retry; picture defects then marks its items unassessable
+    (`video_undecodable`). Under `report_only` a corrupt video still rejects, like data integrity's findings. The live
+    module counts of `GET /tasks/{id}/pipeline/episodes` add `skipped`; `judged` no longer counts skipped episodes, nor an
+    episode without a task text.
+
   x-description-zh: |
     ## 概览
 
@@ -386,6 +395,12 @@ info:
     （4.2.0 起就不再报出，所以它不再覆盖 TASK-10 与 LABEL-4），上传种类 `eef_record_mapping` 与 `eef_gripper_calibration`
     （数据集声明里都有），裁决问题的 `caption`、`suggestion` 与 `priority`（复核项的同名字段也去掉），执行裁决时的 `relabel_rerun`（改了标注的条目按新标注、用同一次请求重判），
     `params.vlm_timeouts_s` 里的调用种类 `endstate`、`arbitration`、`caption`、`llm`，以及旧格式的条目原因种类。
+
+    **7.1.0**（2026-10-11）：数据完整性判废的条目，其它检查不再评估：它们把这条记为跳过（无法评估的理由 `integrity_rejected`，记录里
+    `details.skipped`），不读它的文件、不调模型，拒绝理由只有数据完整性的发现。解码器认定损坏的视频，由视觉质量、视频-动作同步和任务成败判定
+    各报一条判废发现 `decode_failed`（检测项 FILE-4）；以前算执行出错，这条一直待补跑。镜头画面缺陷随之把几项记为无法评估（`video_undecodable`）。
+    「只报不拒」（`report_only`）下损坏的视频照样判废，和数据完整性的发现一样。
+    `GET /tasks/{id}/pipeline/episodes` 的模块计数多 `skipped`，`judged` 不再算跳过的条目，也不算没有任务标注的条目。
 
 servers:
   - url: "{base}/api/v1"
@@ -2818,8 +2833,9 @@ paths:
                   modules:
                     type: array
                     description: >-
-                      per per-episode module so far, the episodes it judged, the ones it failed on and, of the
-                      judged, the ones with a finding (the live module cards)
+                      per per-episode module so far, the episodes it judged, the ones it failed on, the ones it
+                      skipped without judging them (no task text, or data integrity already rejected the episode)
+                      and, of the judged, the ones with a finding (the live module cards)
                     items:
                       type: object
                       additionalProperties: false
@@ -2828,6 +2844,7 @@ paths:
                         id: {$ref: "#/components/schemas/ModuleId"}
                         judged: {type: integer, minimum: 0}
                         error: {type: integer, minimum: 0}
+                        skipped: {type: integer, minimum: 0, description: "7.1.0: episodes skipped without judging them"}
                         flagged: {type: integer, minimum: 0}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/pipeline/episodes/{index}:
@@ -4497,8 +4514,9 @@ components:
             The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a
             person and which are only reported. `default` gives every finding code its registry level
             (today's hard gates reject, today's suspects and abstentions are asked); `report_only`
-            asks nothing and rejects only on data integrity's blocking findings (an empty, cut or
-            unreadable file leaves nothing for the modules after it). Frozen at start; changing it later
+            asks nothing and rejects only on broken files: data integrity's blocking findings (an empty,
+            cut or unreadable file leaves nothing for the modules after it) and a video the decoder finds
+            corrupt (`decode_failed`, in whichever check decoded it). Frozen at start; changing it later
             re-runs aggregate only.
           properties:
             preset: {enum: [default, report_only], default: default}

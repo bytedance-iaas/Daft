@@ -95,6 +95,14 @@
               "minimum": 0
             }
           }
+        },
+        "skipped_reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "design doc 28 §3 (D94): of the episodes with a record, those the module wrote without judging them, by reason (details.skipped): integrity_rejected (data integrity rejected the episode, D92), no_task_text (task_success, D72). They count as ok, not as errors; absent when there are none"
         }
       }
     },

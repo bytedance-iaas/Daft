@@ -54,6 +54,19 @@ class IncidentLog:
             return bool(self._items)
 
 
+#: what a decoder says about a video that is itself corrupt (design doc 28 §2.1, D93): reading it again gives the
+#: same answer, so it is a finding of the video, not an execution error. FFmpeg's AVERROR_INVALIDDATA (PyAV's
+#: ``InvalidDataError``) and a container without its index or without a video stream.
+CORRUPT_VIDEO_MARKERS = ("InvalidDataError", "Invalid data found when processing input", "moov atom not found",
+                         "no video stream")
+
+
+def corrupt_video(incident: dict) -> bool:
+    """Whether an incident is a decoder's verdict on a corrupt video (D93) rather than an execution error."""
+    cause = str(incident.get("cause") or "")
+    return any(m in cause for m in CORRUPT_VIDEO_MARKERS)
+
+
 def failure_info(exc: BaseException) -> dict:
     """``cause`` / ``attempts`` of a failed call, as the transport policy marked it."""
     info = getattr(exc, "curation_failure", None)

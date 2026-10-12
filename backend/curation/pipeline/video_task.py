@@ -24,7 +24,11 @@ _VOTE = {"success": "yes", "failure": "no", "uncertain": "unclear"}
 
 
 class VideoPreparationError(RuntimeError):
-    """Media preparation failed, rather than the model being unable to judge."""
+    """Media preparation failed, rather than the model being unable to judge. ``camera``: whose video, when known."""
+
+    def __init__(self, message: str, camera: str | None = None):
+        super().__init__(message)
+        self.camera = camera
 
 
 def prepare_clips(cfg, video) -> list:
@@ -37,7 +41,8 @@ def prepare_clips(cfg, video) -> list:
                               max_cams=int(cfg.get("pipeline", {}).get("max_endstate_cams", 4)),
                               fps=float(opts.get("fps", 5)))
     except Exception as exc:
-        raise VideoPreparationError(f"视频准备失败: {type(exc).__name__}: {exc}") from exc
+        raise VideoPreparationError(f"视频准备失败: {type(exc).__name__}: {exc}",
+                                    getattr(exc, "curation_camera", None)) from exc
 
 
 def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标注", hints="") -> CheckResult:

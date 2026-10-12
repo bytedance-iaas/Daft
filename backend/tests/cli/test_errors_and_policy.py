@@ -160,7 +160,9 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
     assert any(lines[e]["verdict"] == "held" for e in hit)
 
 
-def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
+def test_a_camera_that_does_not_decode_is_a_blocking_finding(dataset, tmp_path):
+    """D93 (design doc 28 §2): a video the decoder calls corrupt is the episode's fault, not the run's - a blocking
+    ``decode_failed`` on that camera, nothing to retry."""
     path = os.path.join(dataset, "videos", "chunk-000", WRIST, "episode_000001.mp4")
     with open(path, "wb") as fh:
         fh.write(b"\x00" * 4096)
@@ -171,11 +173,14 @@ def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
     for m in ("visual_quality", "video_action_sync"):
         recs = results(rd, m)
         assert recs[0]["error"] is None
-        assert recs[1]["status"] == "error", (m, recs[1])
-        incidents = recs[1]["error"]["incidents"]
+        assert recs[1]["status"] == "ok" and recs[1]["error"] is None, (m, recs[1])
+        assert [(f["code"], f["scope"]) for f in recs[1]["findings"] if f["code"] == "decode_failed"] == \
+            [("decode_failed", {"camera": "wrist"})], (m, recs[1]["findings"])
+        incidents = recs[1]["details"]["undecodable"]
         assert any(i["step"] == "decode" and i.get("camera") == "wrist" for i in incidents), \
             (m, incidents)
-        assert res.doc["modules"][m]["error_episodes"] == [1]
+        assert verdict_of(recs[1]) == "fail"
+        assert res.doc["modules"][m]["error_episodes"] == []
 
 
 def test_an_episode_without_a_task_text_is_not_judged(vlm_stage, tmp_path):
@@ -231,10 +236,11 @@ def test_a_changed_source_stops_the_commands(dataset, tmp_path):
         res = run("check", "--modules", "task_success", *guard, "--episodes", "6",
                   *vlm_args, vlm.url)
     assert res.rc == 6 and res.doc["error"]["code"] == "source_changed", res.doc
-    # without the manifest the broken file ends the stage: no episode can be judged
+    # without the manifest the semantics come from the next readable episode (design doc 28 §1): the stage goes on
     res = run("check", "--modules", Chain.NUMERIC, "--input", dataset, "--run-dir", rd,
               "--episodes", "5-7")
-    assert res.rc == 4 and "cannot be read" in res.doc["error"]["message"], res.doc
+    assert res.rc == 0, res.doc
+    assert all(r["status"] == "ok" for r in results(rd, "timestamp_check").values() if r["episode_index"] >= 5)
 
 
 def test_changed_metadata_stops_every_check(dataset, tmp_path):

@@ -99,7 +99,11 @@ class Run:
         return {}
 
 
-def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(), broken=None):
+def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(), broken=None, slow=None,
+                    module_failed=frozenset()):
+    """``slow``: stage -> answer only every n-th look; ``module_failed``: stages whose worker fails as a whole."""
+    slow = {"frame": frame_every, **(slow or {})}
+
     class Worker:
         requested = "term"
         term_grace_s = int_grace_s = 0
@@ -118,7 +122,9 @@ def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(
             self.ticks += 1
             assert self.ticks < 5000, "dispatcher did not make progress"
             sid = self.layer.sid
-            if self.pending and not (sid == "frame" and self.ticks % frame_every):
+            if sid in module_failed:
+                return "result", {"returncode": 4}
+            if self.pending and not (sid in slow and self.ticks % slow[sid]):
                 e = self.pending.pop(0)
                 failed = sid == "numeric" and e in numeric_error
                 records = {m: {"module": m, "episode_index": e, "status": "error" if failed else "ok",
@@ -140,7 +146,9 @@ def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(
             pass
 
         def outcome(self, payload):
-            return CliOutcome(returncode=0, status="ok", doc={}, message=None)
+            rc = payload["returncode"]
+            return CliOutcome(returncode=rc, status="module_failed" if rc else "ok", doc={},
+                              message="injected module failure" if rc else None)
 
     def start(run_, layer, selection, path, next_stage):
         if layer.sid == broken:
@@ -221,3 +229,39 @@ def test_a_failing_block_stops_the_other(tmp_path, monkeypatch):
     else:
         raise AssertionError("the failure was not raised")
     assert run._pipeline_abort is None
+
+
+#: a plan with data integrity first in the CPU block (design doc 28 §1)
+GATED = {"schema_version": "2.0", "stages": [
+    {"id": "integrity", "kind": "cpu", "command": "check", "block": "cpu", "concurrency": 4,
+     "modules": ["data_integrity"], "episodes": "selected"},
+    {"id": "numeric", "kind": "cpu", "command": "check", "block": "cpu", "after": "integrity", "concurrency": 4,
+     "modules": ["timestamp_check"], "episodes": "selected"},
+    {"id": "vlm", "kind": "vlm", "command": "check", "block": "vlm",
+     "modules": ["task_success"], "episodes": "selected", "gates": {"episode": 2}},
+    {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"},
+]}
+
+
+def test_the_vlm_block_takes_an_episode_once_integrity_has_judged_it(tmp_path, monkeypatch):
+    """D92: the VLM block's chain waits, episode by episode, for data integrity's verdict - so ``check`` can skip
+    what integrity rejected instead of reading its broken files."""
+    events: list = []
+    run = Run(tmp_path, events)
+    install_workers(monkeypatch, run, slow={"integrity": 7})
+    selection = list(range(6))
+    blocks.run_blocks(run, GATED, selection)
+    for e in selection:
+        assert at(events, "integrity", "done", e) < at(events, "vlm", "start", e), e
+    assert run.stages == {"integrity": "succeeded", "numeric": "succeeded", "vlm": "succeeded"}
+
+
+def test_a_failed_integrity_stage_holds_nobody_back(tmp_path, monkeypatch):
+    """The module failing as a whole lets every episode through to the VLM block (nothing to wait for)."""
+    events: list = []
+    run = Run(tmp_path, events)
+    install_workers(monkeypatch, run, module_failed={"integrity"})
+    selection = list(range(4))
+    blocks.run_blocks(run, GATED, selection)
+    assert sorted(e for sid, kind, e in events if sid == "vlm" and kind == "done") == selection
+

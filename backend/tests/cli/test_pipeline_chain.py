@@ -196,7 +196,11 @@ def test_report_summaries_are_chart_ready(chain):
     assert sum(v["count"] for v in sync["verdicts"]) == 8 and sync["lag_tol_s"] == 0.25
     assert [c["camera"] for c in sync["cameras"]] == ["exterior", "wrist"] and sync["sync_advice"]
     task = s["task_success"]
-    assert sum(j["count"] for j in task["judgements"]) == task["counts"]["total"] - task["counts"]["error"]
+    # 4 and 6 have no task text: skipped, in no judgement (D94)
+    assert task["counts"]["skipped"] == 2 and task["skipped_episodes"] == 2
+    assert task["skipped_reasons"] == [{"name": "no_task_text", "count": 2}]
+    assert sum(j["count"] for j in task["judgements"]) == \
+        task["counts"]["total"] - task["counts"]["error"] - task["counts"]["skipped"]
     assert [x["name"] for x in task["layers"]] == ["probe", "endstate"]
     assert "abstain_reasons" in task
     assert s["duplicate_check"]["group_sizes"] == [{"name": "2", "count": 1}]

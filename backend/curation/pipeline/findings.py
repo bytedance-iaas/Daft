@@ -470,8 +470,9 @@ def _camera_defects(passed, score, d, p) -> Derived:
     items = d.get("items") if isinstance(d.get("items"), dict) else {}
     if not per:
         why = str(d.get("reason") or "没有逐机位复核的回答")
+        reason = "video_undecodable" if d.get("undecodable") else "model_no_answer"     # D93
         for _, item, _ in _CAMERA_ITEMS:
-            out.cannot(item, "model_no_answer", why[:200])
+            out.cannot(item, reason, why[:200])
         return out
     for key, item, name in _CAMERA_ITEMS:
         if items.get(key, "unknown") == "unknown":

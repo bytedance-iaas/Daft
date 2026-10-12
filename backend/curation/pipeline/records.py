@@ -73,10 +73,89 @@ def record_from_struct(module: str, episode_index: int, struct: dict | None, *,
     score = struct.get("score")
     score = None if score is None else float(score)
     details = parse_detail(struct.get("detail"))
-    error = {"kind": "execution", "incidents": list(incidents)} if incidents else None
     elapsed = None if elapsed_s is None else round(float(elapsed_s), 3)
+    if incidents and module in DECODING_MODULES:
+        from .incidents import corrupt_video
+
+        if all(corrupt_video(i) for i in incidents):      # D93: the video is corrupt, not the run
+            return record_undecodable(module, episode_index, passed, score, details, list(incidents),
+                                      evidence=evidence, elapsed_s=elapsed, params=params, context=context)
+    error = {"kind": "execution", "incidents": list(incidents)} if incidents else None
     return record_v2(module, episode_index, passed, score, details, error=error,
                      evidence=evidence, elapsed_s=elapsed, params=params, context=context)
+
+
+#: the modules that decode an episode's videos themselves and report a corrupt one (design doc 28 §2.2, D93)
+DECODING_MODULES = ("visual_quality", "video_action_sync", "task_success")
+_CAMERA_IN_PATH = re.compile(r"observation\.images\.([A-Za-z0-9_.-]+?)/")
+
+
+def _camera_of(incident: dict) -> str | None:
+    if incident.get("camera"):
+        return str(incident["camera"]).split(".")[-1]
+    m = _CAMERA_IN_PATH.search(str(incident.get("cause") or ""))
+    return m.group(1) if m else None
+
+
+def record_undecodable(module: str, episode_index: int, passed: bool | None, score: float | None, details: dict,
+                       incidents: list[dict], *, evidence: Iterable[str] | None = None,
+                       elapsed_s: float | None = None, params: dict | None = None,
+                       context: dict | None = None) -> dict:
+    """A record of an episode whose video the decoder found corrupt (design doc 28 §2.2, D93): ``status: ok`` with a
+    blocking ``decode_failed`` finding per camera (FILE-4), what the module could still judge from the other cameras
+    (frame stage), and every other item unassessable (``video_undecodable``). The incidents stay in ``details``."""
+    from . import findings
+
+    judged = (passed is not None or score is not None) and not details.get("internal_error")
+    got = findings.derive(module, passed, score, details, params, context) if judged else findings.Derived()
+    by_camera: dict[str | None, str] = {}
+    for i in incidents:
+        by_camera.setdefault(_camera_of(i), str(i.get("cause") or ""))
+    for cam, cause in by_camera.items():
+        # the decoder's own words stay in the readings and in details.undecodable
+        got.add(module, "decode_failed", (f"{cam} 相机的" if cam else "") + "视频解不开，文件已损坏",
+                scope={"camera": cam} if cam else None, readings={"cause": cause[:200]})
+    if not judged:
+        for item in registry_get(module).covers:
+            if item != "FILE-4":
+                got.cannot(item, "video_undecodable", "视频解不开（文件损坏）")
+    details = {**details, "undecodable": incidents}
+    return {"episode_index": int(episode_index), "module": module, "details": details,
+            "evidence": list(evidence or []), "elapsed_s": elapsed_s, "status": "ok",
+            "findings": got.findings, "assessed": findings.assessed(module, got.unassessable),
+            "unassessable": got.unassessable, "readings": got.readings, "error": None}
+
+
+#: why a module wrote a record without judging the episode (``details.skipped``, design doc 28 §3, D94)
+SKIP_NO_TASK_TEXT = "no_task_text"
+SKIP_INTEGRITY = "integrity_rejected"
+
+
+def record_skipped(module: str, episode_index: int, reason: str, text: str, *,
+                   elapsed_s: float | None = None) -> dict:
+    """A record of an episode the module did not look at (D92: data integrity rejected it): ``status: ok``, no
+    findings, every item it covers unassessable for ``reason``. Not an error: retries leave it alone."""
+    title = dict(registry_reasons()).get(reason, reason)
+    return {"episode_index": int(episode_index), "module": module,
+            "details": {"skipped": reason, "reason": text[:300]},
+            "evidence": [], "elapsed_s": elapsed_s, "status": "ok", "findings": [], "assessed": [],
+            "unassessable": [{"item": item, "reason": reason, "message_zh": title}
+                             for item in registry_get(module).covers],
+            "readings": {}, "error": None}
+
+
+def skipped_reason(rec: dict | None) -> str | None:
+    """Why the record holds no judgement (``details.skipped``), or None (D94)."""
+    if not isinstance(rec, dict) or rec.get("status") != "ok":
+        return None
+    reason = (rec.get("details") or {}).get("skipped")
+    return str(reason) if reason else None
+
+
+def registry_reasons() -> tuple[tuple[str, str], ...]:
+    from ..contracts import modules as registry
+
+    return registry.UNASSESSABLE_REASONS
 
 
 def record_v2(module: str, episode_index: int, passed: bool | None, score: float | None,
@@ -130,6 +209,8 @@ def legacy_verdict(rec: dict | None) -> str | None:
         return None
     if rec.get("status") == "error":
         return "error"
+    if skipped_reason(rec):                  # D94: the module did not judge the episode (no task text, integrity)
+        return "skipped"
     levels = {default_level(rec["module"], f) for f in rec.get("findings") or []}
     if "blocking" in levels:
         return "fail"

@@ -38,8 +38,9 @@ from dataclasses import dataclass, field
 from ..contracts import modules as registry_mod
 from . import funnel
 from .incidents import IncidentLog, camera_names, wrap_call, wrap_decode
-from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error, latest_results,
-                      module_dir, pid_alive, read_inflight, record_from_struct, write_json_atomic)
+from .records import (CRASHES_NAME, SKIP_INTEGRITY, Inflight, PartWriter, check_counts, compact, is_error,
+                      latest_results, module_dir, pid_alive, read_inflight, record_from_struct, record_skipped,
+                      skipped_reason, write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
 FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
@@ -47,6 +48,8 @@ FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate"
 #: its model half will write the record - nothing to write in this stage
 PREPARED = "prepared"
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
+#: the module whose rejects no other module judges (D92, design doc 28 §1)
+INTEGRITY = "data_integrity"
 #: P15: this many consecutive failures on one infrastructure cause at the start
 #: of a VLM stage fail the module instead of timing out episode by episode.
 BREAKER_LIMIT = 20
@@ -206,6 +209,10 @@ class StageRun:
         self._dc_order: list[int] = []
         self._dc_seeded: list[int] = []
         self._dc_written: dict[int, tuple[int, ...]] = {}
+        #: D92 (design doc 28 §1): data integrity's records, for every other stage to skip what it rejected
+        self._gate = opts.stage != "integrity" and INTEGRITY not in opts.modules
+        self._gate_cache: dict[int, dict] | None = None
+        self._gate_policy = None
 
     # ------------------------------------------------------------ bookkeeping
     def _stale_inflight(self) -> dict[int, int]:
@@ -376,7 +383,12 @@ class StageRun:
                 # or with an internal error still gets its (all-unknown) record
                 from ..extensions import camera_defects
 
-                structs["camera_defects"] = camera_defects.struct_from_task(s.get("task_success"))
+                from .incidents import corrupt_video
+
+                task_log = logs["task_success"].items()
+                undecodable = bool(task_log) and all(corrupt_video(i) for i in task_log)     # D93
+                structs["camera_defects"] = camera_defects.struct_from_task(s.get("task_success"),
+                                                                            undecodable=undecodable)
         if self.o.eef is not None:
             s, e = self.o.eef.judge(ep, logs[self.o.eef.module])
             structs[self.o.eef.module] = s
@@ -401,7 +413,7 @@ class StageRun:
                 self.o.cfg, deps, row["video"], text, protocol_src, column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = funnel.internal_error_struct(e)
-            log.add("internal", cause=f"{type(e).__name__}: {e}")
+            log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
         if src == "人工改标":
             detail = json.loads(struct.get("detail") or "{}")
             # what aggregate checks the relabel was judged with, and how
@@ -432,7 +444,7 @@ class StageRun:
                 detail["cameras"] = asked(clips)["cameras"]
             except Exception as e:  # noqa: BLE001 - the episode's own error, held like any other
                 if not log:
-                    log.add("internal", cause=f"{type(e).__name__}: {e}")
+                    log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
                 return {"task_success": funnel.internal_error_struct(e)}
         return {"task_success": {"passed": None, "score": None,
                                  "detail": json.dumps(detail, ensure_ascii=False)}}
@@ -653,6 +665,36 @@ class StageRun:
             source.release(row)
         return self._records(ep, {m: struct}, logs, time.monotonic() - t0)
 
+    def _integrity_record(self, ep: int) -> dict | None:
+        """Data integrity's record of the episode, if it has one yet: the pipeline's store (the integrity worker
+        commits before it hands on; read on a connection of this thread's own), else the run directory read once."""
+        if self._store is not None:
+            from .episode_state import read_record
+
+            rec = read_record(self._store.path, INTEGRITY, ep)
+            if rec is not None:
+                return rec
+        if self._gate_cache is None:
+            self._gate_cache = latest_results(self.o.run_dir, INTEGRITY)
+        return self._gate_cache.get(int(ep))
+
+    def _rejected_by_integrity(self, ep: int) -> str | None:
+        """D92: why the episode is not judged here - data integrity rejected it under the task's policy - or None
+        (no record of it yet: not selected, failed as a whole, or not run yet when called by hand)."""
+        if not self._gate:
+            return None
+        rec = self._integrity_record(ep)
+        if not rec or is_error(rec):
+            return None
+        if self._gate_policy is None:
+            from .policy import load as load_policy
+
+            self._gate_policy = load_policy(self.o.run_dir)
+        for f in rec.get("findings") or []:
+            if self._gate_policy.level(INTEGRITY, f) == "blocking":
+                return "数据完整性已判废：" + str(f.get("message_zh") or f.get("code") or "")
+        return None
+
     def _work(self, source: RowSource, ep: int) -> dict[str, dict] | None:
         """The records of one episode; None when its source files are missing (D40)."""
         t0 = time.monotonic()
@@ -660,6 +702,10 @@ class StageRun:
         evidence = None
         if self.o.stage == "integrity":
             return self._integrity(source, ep, t0, logs)
+        why = self._rejected_by_integrity(ep)
+        if why is not None:                         # D92: not read, not decoded, no model asked
+            elapsed = round(time.monotonic() - t0, 3)
+            return {m: record_skipped(m, ep, SKIP_INTEGRITY, why, elapsed_s=elapsed) for m in self.o.modules}
         try:
             row = source.get(ep)
         except EpisodeMissingSource as e:          # v1 leaves it out: no result line
@@ -902,12 +948,20 @@ class StageRun:
         prepared = getattr(o, "prepared", None)
         kept = set(prepared(judged)) if prepared is not None else set()
         for m in o.modules:
-            _, counts, errors, found = check_counts(latest_results(o.run_dir, m, judged), judged)
+            recs = latest_results(o.run_dir, m, judged)
+            _, counts, errors, found = check_counts(recs, judged)
             if getattr(o, "prep", False) and kept:   # a CPU half kept for its model half: ok here, judged there
                 errors = [e for e in errors if e not in kept]
                 counts = {**counts, "ok": counts["total"] - len(errors), "error": len(errors)}
             entry = {"part": o.part, "input_digest": digest, "episodes": counts,
                      "error_episodes": errors, "findings": found}
+            why: dict[str, int] = {}
+            for rec in recs.values():                # D94: records written without judging the episode
+                reason = skipped_reason(rec)
+                if reason:
+                    why[reason] = why.get(reason, 0) + 1
+            if why:
+                entry["skipped_reasons"] = dict(sorted(why.items()))
             if o.resume:
                 entry["skipped_existing"] = skipped
             if self.missing:

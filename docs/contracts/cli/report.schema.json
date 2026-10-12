@@ -407,7 +407,7 @@
             "assessed_episodes": {
               "type": "integer",
               "minimum": 0,
-              "description": "episodes the module judged (status ok)"
+              "description": "episodes the module judged: status ok and not skipped (D94)"
             },
             "flagged_episodes": {
               "type": "integer",
@@ -536,6 +536,33 @@
                 "$ref": "common.schema.json#/$defs/finding"
               },
               "description": "the module's dataset-level findings (checks/<module>/dataset.json)"
+            },
+            "skipped_episodes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "design doc 28 §3 (D94): episodes the module wrote a record for without judging them (details.skipped)"
+            },
+            "skipped_reasons": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "count"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "integrity_rejected (D92) or no_task_text (D72)"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              },
+              "description": "the skipped episodes by reason, most first"
             }
           }
         },

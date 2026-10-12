@@ -57,7 +57,7 @@
     },
     "details": {
       "type": "object",
-      "description": "module-specific, field names kept from v1 (parity and the episode page)"
+      "description": "module-specific, field names kept from v1 (parity and the episode page). Two keys every module may write: skipped - the module wrote the record without judging the episode (design doc 28 §3, D94): integrity_rejected (data integrity rejected it, D92: no findings, every covered item unassessable) or no_task_text (task_success, D72); undecodable - the decoder's incidents behind a decode_failed finding (D93)"
     },
     "evidence": {
       "type": "array",

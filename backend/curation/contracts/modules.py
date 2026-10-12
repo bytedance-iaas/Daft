@@ -87,6 +87,10 @@ No reader is kept for tasks that selected the old module.
 (``gripper_calibration``, ``record_mapping``), and ``full_set_stages`` (no stage has needed the whole selection
 since D70); task_success's ``recovery`` (TASK-10) and ``label_conflict_suspect`` (LABEL-4), which the one video
 request (D71) and the end of the label guard (D73) left without a producer - the module no longer covers either item.
+7.1 (design doc 28 §2, §4, D92-D93): ``visual_quality``, ``video_action_sync`` and ``task_success`` report a video their
+decoder finds corrupt as ``decode_failed`` (FILE-4, blocking, not appealable) - it was an execution error, held for a retry
+that could never help - and so cover FILE-4 as far as the frames they read; two reasons an item goes unassessed:
+``integrity_rejected`` (the module skipped an episode data integrity rejected) and ``video_undecodable``.
 """
 from __future__ import annotations
 
@@ -94,7 +98,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "7.0"
+REGISTRY_VERSION = "7.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -143,6 +147,8 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
     ("no_task_text", "没有任务标注，没有做任务成败判定"),
+    ("integrity_rejected", "数据完整性已判废，没有评估"),
+    ("video_undecodable", "视频解不开（文件损坏）"),
 )
 
 #: v1's evidence modes (``pipeline.sync_plots`` / ``pipeline.evidence_frames``).
@@ -591,7 +597,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("exposure_low", "IMG-2", "曝光不良", "medium", scope_kind="camera"),
                _info("information_death", "IMG-3", "信息死亡帧偏多", "medium", scope_kind="camera"),
                _info("sharpness_low", "IMG-4", "画面模糊", "medium", scope_kind="camera"),
-               _info("dead_or_padded", "STRM-1", "相机没有信号或被填充", "medium", scope_kind="camera")),
+               _info("dead_or_padded", "STRM-1", "相机没有信号或被填充", "medium", scope_kind="camera"),
+               # 7.1 (design doc 28 §2, D93): the decoder says the video is corrupt
+               _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
         param_schema=_visual_params(),
         tables=(TableSpec("visual_quality", "逐机位打分", ("episode_index", "score", "camera")),)),
     ModuleSpec(
@@ -602,7 +610,8 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("camera_misaligned", "AV-1", "单路相机与动作错位", "medium", scope_kind="camera"),
                _info("suspect", "AV-1", "疑似错位"),
                _info("undecidable", "AV-3", "测不准：有动作但画面运动对不上"),
-               _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium")),
+               _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium"),
+               _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
         param_schema=_sync_params(),
         tables=(TableSpec("video_action_sync", "逐机位同步读数",
                           ("episode_index", "lag_s", "corr_peak")),)),
@@ -648,7 +657,8 @@ MODULES: tuple[ModuleSpec, ...] = (
         depends_on=(),
         codes=(_blocking("failure", "TASK-4", "任务失败", appealable=True),
                _review("uncertain", "TASK-4", "任务成败拿不准", "task_verdict"),
-               _info("task_text_missing", "LABEL-2", "没有任务标注，没有做任务成败判定")),
+               _info("task_text_missing", "LABEL-2", "没有任务标注，没有做任务成败判定"),
+               _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},

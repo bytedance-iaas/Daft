@@ -3,7 +3,7 @@
 并行开发的地基：CLI、Daemon、前端之间只通过这里的文件对话，谁都不直接 import 对方的内部模块（设计 11 篇 §1）。
 
 先读 [`SUMMARY.md`](SUMMARY.md)：一页讲清各份契约的要点、冻结时定下的细节和待拍板的事项（2.0 的改动在第十五节，删掉 1.0 与旧任务兼容的
-C1 7.0 / C4 7.0.0 在第二十二节）。
+C1 7.0 / C4 7.0.0 在第二十二节，完整性拦截与坏视频的 C1 7.1 / C4 7.1.0 在第二十三节）。
 
 | # | 契约 | 文件 | 谁读 |
 |---|---|---|---|
@@ -83,7 +83,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
 - 注册表与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
   `curl -s localhost:8080/curation/api/v1/modules | jq '.registry_version, .taxonomy_version, [.blocks[].stages], (.modules[] | {id, block, stage, covers})'`
-  应得到 `"7.0"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
+  应得到 `"7.1"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
   不起 Daemon 时对 `docs/contracts/modules.json` 跑同样的 `jq`。`jq '.modules[] | select(.id=="task_success") | .codes'` 列出它的三个细码
   （`failure` 是 blocking 且可复议，`uncertain` 是 review、裁决线 `task_verdict`，`task_text_missing` 是 info）。改了细码或覆盖要重新生成回归样本分类表的平台注记
   （`PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry`）。

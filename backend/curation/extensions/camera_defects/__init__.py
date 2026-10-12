@@ -27,8 +27,9 @@ NAME_ZH = {"glitch": "花屏", "shake": "抖动", "contamination": "镜头污染
 LEVEL_ZH = {"none": "无", "minor": "轻微", "severe": "严重", UNKNOWN: "未知"}
 
 
-def struct_from_task(task_struct: dict | None) -> dict:
-    """v1-shaped ``{passed, score, detail}`` for one episode, from task_success's struct."""
+def struct_from_task(task_struct: dict | None, *, undecodable: bool = False) -> dict:
+    """v1-shaped ``{passed, score, detail}`` for one episode, from task_success's struct. ``undecodable``: the
+    episode's video is corrupt, so the request was never sent (D93) - every item is unassessable for that."""
     detail = _parse_detail(task_struct)
     # the per-camera answers of the one judgement request (D71: ``cameras``, one entry per
     # supplied camera, each with its ``camera_check``)
@@ -68,7 +69,9 @@ def struct_from_task(task_struct: dict | None) -> dict:
         clean += sum(1 for lv in seen if lv == "none")
         items[item] = max(seen, key=_RANK.__getitem__) if seen else UNKNOWN
 
-    if task_struct is None:
+    if undecodable:
+        reason = "视频解不开（文件损坏），判定请求没有发出"             # D93 (design doc 28 §2.3)
+    elif task_struct is None:
         reason = "任务成败判定没有产生结果，无法读取逐机位复核"
     elif reviews is None and detail.get("skipped") == "no_task_text":
         reason = "没有任务标注，画面缺陷请求没有得到结果"             # D73: it gets that request alone
@@ -81,6 +84,8 @@ def struct_from_task(task_struct: dict | None) -> dict:
     out = {"protocol": CAMERA_CHECK_PROTOCOL, "source": f"{HOST}.cameras", "cams": cams,
            "known": known, "clean_ratio": (clean / known) if known else None, "reason": reason,
            "items": items, "per_camera": per_camera}
+    if undecodable:
+        out["undecodable"] = True
     return {"passed": None, "score": None, "detail": json.dumps(out, ensure_ascii=False, default=str)}
 
 

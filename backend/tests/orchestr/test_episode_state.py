@@ -78,17 +78,40 @@ def test_recent_episodes_follow_completion_order_and_cursor(tmp_path):
 
 
 def test_module_counts_so_far(tmp_path):
-    """The live module cards (design doc 17 §5.3): per module the episodes judged, failed on and with a finding."""
+    """The live module cards (design doc 17 §5.3): per module the episodes judged, failed on, skipped without
+    judging (D94: data integrity rejected them) and, of the judged, those with a finding."""
     store = _store(tmp_path)
     try:
         ok = {"module": "visual_quality", "status": "ok", "findings": [], "error": None}
         found = {**ok, "findings": [{"code": "frozen", "item": "IMG-1", "severity": "low", "message_zh": "冻结"}]}
         failed = {**ok, "status": "error", "error": {"kind": "execution", "incidents": []}}
-        for ep, rec in ((0, ok), (1, found), (2, failed), (3, found)):
+        skipped = {**ok, "details": {"skipped": "integrity_rejected", "reason": "数据完整性已判废：文件为空"}}
+        for ep, rec in ((0, ok), (1, found), (2, failed), (3, found), (4, skipped)):
             store.finish("frame", ep, {"visual_quality": {**rec, "episode_index": ep}}, "done")
         assert store.module_counts(["visual_quality", "task_success"]) == {
-            "visual_quality": {"judged": 3, "error": 1, "flagged": 2},
-            "task_success": {"judged": 0, "error": 0, "flagged": 0}}
+            "visual_quality": {"judged": 3, "error": 1, "skipped": 1, "flagged": 2},
+            "task_success": {"judged": 0, "error": 0, "skipped": 0, "flagged": 0}}
         assert store.module_counts([]) == {}
+    finally:
+        store.close()
+
+
+def test_a_record_is_read_from_another_thread(tmp_path):
+    """D92: the check stage's episode workers read data integrity's record while the stage's own store connection
+    belongs to its main thread."""
+    import threading
+
+    from curation.pipeline.episode_state import read_record
+
+    store = _store(tmp_path)
+    try:
+        rec = {"module": "data_integrity", "episode_index": 3, "status": "ok", "findings": [], "error": None}
+        store.finish("numeric", 3, {"data_integrity": rec}, "frame")
+        got = {}
+        t = threading.Thread(target=lambda: got.update(
+            hit=read_record(store.path, "data_integrity", 3), miss=read_record(store.path, "data_integrity", 4)))
+        t.start()
+        t.join()
+        assert got == {"hit": rec, "miss": None}
     finally:
         store.close()

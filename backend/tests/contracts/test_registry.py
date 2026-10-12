@@ -130,9 +130,13 @@ def test_the_default_policy_reproduces_todays_gates():
     the EEF module rejects nothing (D81): a person may, answering a conflict."""
     blocking = {m.id for m in M.MODULES if any(c.level == "blocking" for c in m.codes)}
     assert blocking == {"data_integrity", "timestamp_check", "kinematic_limits", "video_action_sync",
-                        "task_success"}
+                        "task_success", "visual_quality"}
     for soft in ("motion_quality", "visual_quality", "camera_defects"):
-        assert {c.level for c in M.get(soft).codes} == {"info"}, soft
+        # 7.1 (D93): a corrupt video rejects in the modules that decode it, visual quality included
+        assert {c.level for c in M.get(soft).codes if c.code != "decode_failed"} == {"info"}, soft
+    for m in ("visual_quality", "video_action_sync", "task_success"):
+        c = M.finding_code(m, "decode_failed")
+        assert (c.item, c.level, c.appealable) == ("FILE-4", "blocking", False) and "FILE-4" in M.get(m).covers
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
     assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {

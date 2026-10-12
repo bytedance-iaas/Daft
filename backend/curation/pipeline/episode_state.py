@@ -21,11 +21,12 @@ def state_path(run_dir: str | Path) -> Path:
 
 
 def index_verdict(rec: dict) -> str:
-    """The verdict column of a record: ``error`` when the module failed on the episode, else ``ok``
-    (the live module cards count the errors, :meth:`EpisodeState.module_counts`)."""
-    from .records import is_error
+    """The verdict column of a record: ``error`` when the module failed on the episode, ``skipped`` when it wrote
+    the record without judging the episode (D94), else ``ok`` (the live module cards count them,
+    :meth:`EpisodeState.module_counts`)."""
+    from .records import is_error, skipped_reason
 
-    return "error" if is_error(rec) else "ok"
+    return "error" if is_error(rec) else "skipped" if skipped_reason(rec) else "ok"
 
 
 def index_findings(rec: dict) -> int | None:
@@ -37,6 +38,20 @@ def index_findings(rec: dict) -> int | None:
 
 #: a record's row: (module, episode, record, verdict, findings)
 _PUT = "INSERT OR REPLACE INTO results (module, episode, record, verdict, findings) VALUES (?, ?, ?, ?, ?)"
+
+
+def read_record(path: str | Path, module: str, episode: int) -> dict | None:
+    """One record of the store at ``path``, read on a connection of its own: safe from any thread (an
+    :class:`EpisodeState` connection belongs to the thread that opened it). The check stage's episode workers read
+    data integrity's record with it (D92, design doc 28 §1)."""
+    con = sqlite3.connect(str(path), timeout=30)
+    try:
+        con.execute("PRAGMA busy_timeout=30000")
+        row = con.execute("SELECT record FROM results WHERE module=? AND episode=?",
+                          (module, int(episode))).fetchone()
+    finally:
+        con.close()
+    return json.loads(row[0]) if row else None
 
 
 class EpisodeState:
@@ -300,17 +315,19 @@ class EpisodeState:
         return out
 
     def module_counts(self, modules: list[str]) -> dict[str, dict[str, int]]:
-        """Per module so far: the episodes it judged, the ones it failed on and, of the judged ones, those
-        with a finding (the live module cards, design doc 17 §5.3)."""
+        """Per module so far: the episodes it judged, the ones it failed on, those it skipped without judging
+        (D94: no task text, data integrity rejected them) and, of the judged ones, those with a finding (the live
+        module cards, design doc 17 §5.3)."""
         if not modules:
             return {}
         slots = ",".join("?" for _ in modules)
-        out = {m: {"judged": 0, "error": 0, "flagged": 0} for m in modules}
-        for module, total, errors, flagged in self.db.execute(
-                "SELECT module, count(*), sum(verdict='error'), sum(findings > 0) "
-                f"FROM results WHERE module IN ({slots}) GROUP BY module", tuple(modules)):
-            out[module] = {"judged": int(total or 0) - int(errors or 0), "error": int(errors or 0),
-                           "flagged": int(flagged or 0)}
+        out = {m: {"judged": 0, "error": 0, "skipped": 0, "flagged": 0} for m in modules}
+        for module, total, errors, skipped, flagged in self.db.execute(
+                "SELECT module, count(*), sum(verdict='error'), sum(verdict='skipped'), "
+                f"sum(findings > 0 AND verdict='ok') FROM results WHERE module IN ({slots}) GROUP BY module",
+                tuple(modules)):
+            out[module] = {"judged": int(total or 0) - int(errors or 0) - int(skipped or 0),
+                           "error": int(errors or 0), "skipped": int(skipped or 0), "flagged": int(flagged or 0)}
         return out
 
     def counts(self, module: str) -> tuple[int, int]:

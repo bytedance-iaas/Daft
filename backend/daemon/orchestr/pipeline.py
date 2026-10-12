@@ -51,26 +51,53 @@ def cpu_shares_for(stages: list[dict]) -> dict[str, int]:
 
 
 def run_funnel(run, stages: list[dict], selection: list[int], *,
-               abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
-    """A chain of per-episode stages over ``selection`` (``abort``, ``pool_key``, ``chain``: see
-    :func:`.episode_pipeline.run_episodes`)."""
+               abort: threading.Event | None = None, pool_key=None, chain: str | None = None,
+               wait_for: tuple[str, str] | None = None) -> None:
+    """A chain of per-episode stages over ``selection`` (``abort``, ``pool_key``, ``chain``, ``wait_for``: see
+    :func:`.episode_pipeline.run_episodes`; the batch path for external CLI wrappers waits for the whole selection's
+    integrity verdicts before it starts)."""
     if not os.environ.get("CURATOR_CLI"):
         from .episode_pipeline import run_episodes
 
-        return run_episodes(run, stages, selection, abort=abort, pool_key=pool_key, chain=chain)
-    return run_batches(run, stages, selection, abort=abort, chain=chain)
+        return run_episodes(run, stages, selection, abort=abort, pool_key=pool_key, chain=chain,
+                            wait_for=wait_for)
+    return run_batches(run, stages, selection, abort=abort, chain=chain, wait_for=wait_for)
+
+
+def _wait_for_gate(run, selection: list[int], wait_for: tuple[str, str], abort: threading.Event | None) -> None:
+    """Until every episode of ``selection`` is past the other chain's stage (D92: data integrity's verdict is in),
+    or that stage failed as a whole."""
+    import time
+
+    gate_chain, gate_stage = wait_for
+    path = state_path(run.wd.root)
+    while abort is None or not abort.is_set():
+        run.check_intent()
+        store = EpisodeState(path)
+        try:
+            past = store.positions(selection, gate_chain)
+            failed = gate_stage in store.failed_stages()
+        finally:
+            store.close()
+        if failed or all(past.get(e) not in (None, gate_stage) for e in selection):
+            return
+        time.sleep(0.25)
 
 
 def run_batches(run, stages: list[dict], selection: list[int], *,
-                abort: threading.Event | None = None, pool_key=None, chain: str | None = None) -> None:
+                abort: threading.Event | None = None, pool_key=None, chain: str | None = None,
+                wait_for: tuple[str, str] | None = None) -> None:
     """Compatibility path for external CLI wrappers and batch comparison tests.
 
     Every worker commits each episode into SQLite before publishing its batch's
     survivor list. The queues hold at most two batches, so a fast upstream layer
-    cannot fill memory while a slow VLM layer is working.
+    cannot fill memory while a slow VLM layer is working. ``wait_for``: the chain
+    starts once the whole selection has data integrity's verdict (D92).
     """
     if not stages:
         return
+    if wait_for is not None:
+        _wait_for_gate(run, selection, wait_for, abort)
     cpu_shares = cpu_shares_for(stages)
     stages = [{**s, "_pipeline_concurrency": cpu_shares.get(s["id"])} for s in stages]
     ids = [s["id"] for s in stages]
