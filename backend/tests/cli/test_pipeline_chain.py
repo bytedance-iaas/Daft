@@ -211,7 +211,7 @@ def test_report_summaries_are_chart_ready(chain):
 def test_a_committed_revision_is_never_rewritten(chain):
     from .pipeline import run
 
-    res = run("aggregate", "--run-dir", chain.rd, "--phase", "final", "--revision", "1",
+    res = run("aggregate", "--run-dir", chain.rd, "--revision", "1",
               "--episodes", "0-7")
     assert res.rc == 2 and "committed" in res.doc["error"]["message"]
     res = run("report", "--run-dir", chain.rd, "--revision", "1")

@@ -40,15 +40,9 @@ def _missing(rev: Revision, episode: int, reason: str, message: str) -> ApiError
 
 
 def _cameras(doc: dict) -> dict[str, dict]:
-    """``{camera: {t, flow, speed, ...}}``: the multi-camera format (2026-08-07 on) or the
-    single-camera one before it (``export.sync_plots._normalize_curves``)."""
+    """``{camera: {t, flow, speed, ...}}`` of a curves file (``pipeline/episode_checks.py`` writes ``{"cameras": ...}``)."""
     if isinstance(doc.get("cameras"), dict):
         return {str(k): v for k, v in doc["cameras"].items() if isinstance(v, dict)}
-    if "t" in doc:
-        det = doc.get("detail") if isinstance(doc.get("detail"), dict) else {}
-        return {"camera": {"t": doc.get("t"), "flow": doc.get("flow"), "speed": doc.get("speed"),
-                           "lag_s": det.get("lag_s"), "corr_peak": det.get("corr_peak"),
-                           "code": det.get("code")}}
     return {}
 
 

@@ -162,12 +162,6 @@ def depth_features(info: dict) -> list[str]:
     return out
 
 
-def image_features(info: dict) -> list[str]:
-    """``dtype: image`` frame sequences (not shown in this phase, design doc 18 §2)."""
-    return [str(k) for k, f in (info.get("features") or {}).items()
-            if isinstance(f, dict) and f.get("dtype") == "image"]
-
-
 def raw_detail(entry: Any, prefix: str = "") -> dict[str, Any]:
     """A metadata entry key by key as the dataset writes it (design doc 21 §3, D71): nested objects with
     their keys joined by dots (``info.video.codec``), lists as JSON text, scalars as they are."""

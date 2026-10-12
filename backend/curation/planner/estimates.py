@@ -19,7 +19,6 @@ AGGREGATE_S = 1.0
 
 #: the call graph per episode (04 §4.1, D71) for the two existing VLM modules.
 TASK_SUCCESS_PROBES = 1       # one multi-camera video judgement, answering for every camera too
-MAX_ENDSTATE_CAMS = 4         # pipeline.max_endstate_cams
 
 
 def _units_per_episode(spec: Any) -> int:

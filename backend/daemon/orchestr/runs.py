@@ -28,7 +28,7 @@ from curation.contracts import modules as registry
 
 from . import planning, resources
 from .runbase import Run, TaskFailure, input_digest
-from .workdir import read_json, read_lines, write_json_atomic, write_lines
+from .workdir import read_json, write_json_atomic
 
 log = logging.getLogger("daemon.orchestr")
 
@@ -46,16 +46,15 @@ class StageRun(Run):
     """The stage runners the main run and the retry share."""
 
     # -- a check stage --------------------------------------------------------------
-    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool) -> list[int]:
-        """Run one plan stage of ``check`` over ``episodes``; returns the survivors.
+    def check_stage(self, st: dict, episodes: list[int], *, fresh: bool) -> None:
+        """Run one plan stage of ``check`` over ``episodes`` as one command (a retry's stages).
 
         ``fresh``: the main run (modules without episodes become succeeded with 0);
         a retry leaves modules it has nothing for untouched.
         """
         sid, mods = st["id"], list(st["modules"])
-        out_file = self.wd.episodes_file(self.run_key, f"{sid}.out")
         if self.journal.done(sid):
-            return read_lines(out_file) or []
+            return
         self.progress(sid, state="running", done=0, total=len(episodes))
         own = [m for m in mods if self.last_stage_of(m) in (None, sid)]   # a CPU half's module is judged later
         if not episodes:
@@ -63,16 +62,15 @@ class StageRun(Run):
                 for m in own:
                     self.module_result(m, "succeeded", total=0, errors=0,
                                        digest=input_digest([]))
-            write_lines(out_file, [])
             self.stage_done(sid, "skipped")
-            self.progress(sid, note="没有 episode 进入这一档", force=True)
-            return []
+            self.progress(sid, note="没有 episode 进入这一段", force=True)
+            return
         self.modules_running(mods)
         vlm = st.get("kind") == "vlm" and self.stage_asks_model(mods)   # an EEF stage without a model: no model
         argv = ["check", "--modules", ",".join(mods), *self.source_args(),
                 "--run-dir", str(self.wd.root),
                 "--episodes", self.episodes_arg(f"{sid}.in", episodes),
-                "--plan-stage", str(self.wd.plan), "--survivors-out", str(out_file)]
+                "--plan-stage", str(self.wd.plan)]
         argv.append("--resume")
         argv += self.half_args(st, mods)       # a module of two halves: which one, and the model's settings
         argv += self.module_param_args(mods)
@@ -96,9 +94,8 @@ class StageRun(Run):
                     shown = entry.get("error_episodes") or []
                     self.log(sid, "warn", f"{names([m])}有 {errors} 条执行出错，待补跑"
                                           + (f"：{', '.join(map(str, shown[:20]))}" if shown else ""))
-            survivors = read_lines(out_file) or []
             self.stage_done(sid, "completed_with_errors" if any_error else "succeeded")
-            return survivors
+            return
         if outcome.status == "module_failed":
             msg = outcome.message or outcome.reason()
             for m in own:
@@ -106,9 +103,8 @@ class StageRun(Run):
                 self.module_result(m, "failed", total=total, errors=errors,
                                    digest=input_digest(episodes), error=msg[:2000])
             self.log(sid, "error", f"{names(mods)}整体失败：{msg}。别的模块照常跑；这些条目都待补跑，等「重试」")
-            write_lines(out_file, episodes)                # the next stage takes them all the same
             self.stage_done(sid, "failed")
-            return list(episodes)
+            return
         self.fail_on(outcome, sid)
         raise AssertionError("unreachable")
 
@@ -176,7 +172,7 @@ class StageRun(Run):
         if not modules:
             raise TaskFailure("no_modules", "这个任务没有能在这个数据集上运行的模块")
         self.progress(sid, state="running", done=0, total=1)
-        argv = ["aggregate", "--run-dir", str(self.wd.root), "--phase", "final",
+        argv = ["aggregate", "--run-dir", str(self.wd.root),
                 "--revision", str(rev), "--modules", ",".join(modules),
                 "--episodes", self.episodes_arg("selected", selection)]
         argv += self.source_args(manifest=False, semantics=True)

@@ -5778,7 +5778,7 @@ components:
               required: [text, source]
               properties:
                 text: {type: string}
-                source: {type: string, description: "原始标注 / 人工改标 / 自产描述"}
+                source: {type: string, description: "原始标注 / 人工改标"}
         timeline: {$ref: "#/components/schemas/VizTimeline"}
         cameras: {type: array, items: {$ref: "#/components/schemas/VizEpisodeCamera"}}
         streams: {type: array, items: {$ref: "#/components/schemas/VizEpisodeStream"}, description: "depth streams and their packs (2.7.0)"}

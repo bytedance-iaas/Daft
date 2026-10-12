@@ -1,13 +1,12 @@
 """Human decisions of one task: storing them and what they do (design doc 02 §3.8, 06 §5).
 
-``curation adjudicate-apply`` is the first step of v1's ``rejudge``: it records
-the task's decisions as applied - never calling a model and never exporting (D9)
-- and names what has to run next. The effect on the verdicts is computed by
-``aggregate --phase final`` every time, from the applied decisions, so applying
+``curation adjudicate-apply`` records the task's decisions as applied - never calling a
+model and never exporting (D9) - and names what has to run next. The effect on the verdicts is computed by
+``aggregate`` every time, from the applied decisions, so applying
 is idempotent and a later decision on the same episode and line replaces an
 earlier one (v1's CSVs: the last row wins).
 
-v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
+The rules, in this order (v1's, unchanged):
 
 1. **"discard" wins**: the episode is rejected whatever else was decided for it;
 2. a relabel - the ``new_label`` a person sent with their task verdict - is judged
@@ -59,8 +58,8 @@ LINE_DECISIONS = {
     "eef_check": ("consistent", "inconsistent", "unsure"),
     "integrity_check": ("intact", "broken", "unsure"),
 }
-#: v1's words in the self-contained CSV copies (``dataset_level/decisions.py``)
-V1_WORDS = {"unsure": "拿不准", "discard": "弃用该条",
+#: the words of the self-contained CSV copies (v1's CSV schema, :func:`write_human_copies`)
+CSV_WORDS = {"unsure": "拿不准", "discard": "弃用该条",
             "success": "判成功", "failure": "判失败", "restore": "捞回",
             "keep_rejected": "维持拒绝", "consistent": "一致", "inconsistent": "不一致",
             "intact": "数据无误", "broken": "数据确有问题"}
@@ -267,7 +266,7 @@ def write_human_copies(run_dir: str, decisions: Decisions) -> None:
             at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(d["decided_at"]) / 1000))
             row = {"episode_id": f"ep{int(d['episode_index']):06d}", "note": d.get("note") or "",
                    "at": at}
-            word = V1_WORDS[d["decision"]]
+            word = CSV_WORDS[d["decision"]]
             if line in ("eef_check", "integrity_check"):
                 row["decision"] = word
             elif line == "task_verdict":

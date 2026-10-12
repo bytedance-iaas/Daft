@@ -1,5 +1,5 @@
-# 默认流水线配置(L1 配置层,DESIGN.md §11.1)。客户从这份改,不从零配。
-# ⚠️ 权重/阈值当前为工程默认,P5.1 校准集扫 ROC 后固化正式值。
+# 默认流水线配置。站点配置与任务参数在这份之上覆盖,不从零配。
+# ⚠️ 权重/阈值当前为工程默认,还没有用校准集定过正式值。
 pipeline:
   sync_plots: flagged            # 同步曲线证据图:flagged=只画非'过'(默认)/all=全画/off=不画
   evidence_frames: flagged       # 任务成败证据帧:flagged=只存拒绝/待裁决(默认)/all=全存/off=不存
@@ -9,24 +9,18 @@ pipeline:
                                    #   2026-07-21 由"主相机+wrist"放开为全部路:DROID ep34 的关键
                                    #   视角 exterior_2 曾被按名字过滤挡掉。
 ingest:
-  # rerun(.rrd)格式总开关(2026-08-21):release 只对外支持 LeRobot v2/v3,默认关。
-  # 关着时 .rrd 目录会被明确拒绝("RRD 质检暂未开放");打开即恢复全部 RRD 能力
-  # (六维质检/裁决闭环/审片/rrd_curated 交付,黄金对账与浸泡都验过)。
+  # rerun(.rrd)格式:v2 不支持,预检直接拒绝。这两个键只给原样搬来的读取器(A 类)读,保持关。
   rrd_enabled: false
-  # rerun(.rrd)输入的采集帧率。RRD 里常常只有 frame_index、没有时间线;文件内能推出
-  # 时间(VideoFrameReference 时间戳/录制属性)时以文件为准,推不出才用这里的值。
-  # 留空 = 不替客户猜:推不出时间就报错,让他显式给(--set ingest.rrd_fps=30)。
   rrd_fps: null
   # lance 格式总开关(2026-09-21 用户定:**默认开**,多格式是产品要支持的能力;
   # 个别实例要关走站点配置/环境变量)。只支持官方 lerobot-lance-convert ≥0.3.0
   # 的三表布局 frames/videos/meta(info.json 带 storage_format:"lance" 标记;
   # 0.3.0 前旧插件的单表布局官方已废弃,不支持)。--input 指转换产出的根目录即可
   # 质检 —— meta/ 就是标准 LeRobot v3 元数据,型号/任务/fps 全自动。
-  # 原格式交付本版本未做,交付以 episodes_parquet + 判决清单为准。
   lance_enabled: true
   # mcap 格式总开关(2026-09-21 用户定:**默认开**,同上)。--input 指一目录 N 个
   # episode_N.mcap 即可质检(topic 约定见 ingest/mcap_reader.DEFAULT_MAPPING;
-  # 时间轴取 action topic 的 log_time,不需要 fps 配置),交付落 mcap_curated/。
+  # 时间轴取 action topic 的 log_time,不需要 fps 配置)。
   mcap_enabled: true
   # topic 指认覆盖(2026-09-21):默认约定认不出、内置 UMI 识别(/robotN/vio/eef_pose
   # 形状零配置命中)也不命中时,在站点配置里显式指认。action 散在多路时用来源列表:
@@ -173,8 +167,8 @@ vlm_backends:
     service_type: 自托管 vLLM
 
 # 公共数据集镜像(2026-08-21):一个匿名可读的 TOS 桶,HF 数据集按 <prefix>/<名字>/ 镜像,
-# 桶根有 {名字: [对象 key…]} 的清单。配了桶名,界面「数据来源」多出「公共数据集」一项、
-# CLI 多出 `curation public`;不配 = 功能整个不出现。桶名/地区是部署常量,写站点配置。
+# 桶根有 {名字: [对象 key…]} 的清单。配了桶名,界面「数据来源」多出「HuggingFace 缓存桶」一项;
+# 不配 = 功能整个不出现。桶名/地区是部署常量,写站点配置。
 public_datasets:
   bucket: null                    # 镜像桶名(null = 关闭)
   region: null                    # 桶所在地区(如 cn-beijing)

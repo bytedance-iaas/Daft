@@ -25,7 +25,6 @@ from . import resources
 from .cpupool import CpuPool
 from .runbase import TaskFailure, input_digest
 from .stage_worker import StageWorker
-from .workdir import write_lines
 
 
 @dataclass
@@ -174,8 +173,6 @@ def _finish_stage(run, layer, store):
     if run.journal.done(sid):
         return
     inputs = sorted(set(store.stage_inputs(mods)) | layer.seen)
-    survivors = inputs if layer.failed else store.survivors(mods)
-    write_lines(run.wd.episodes_file(run.run_key, f"{sid}.out"), survivors)
     errors_found = False
     last = getattr(run, "last_stage_of", None)
     for module in mods:
@@ -318,7 +315,7 @@ def run_episodes(run, stages: list[dict], selection: list[int], *,
                             layer.record_time(ep, processing_times(store.episode_records(ep)).get(layer.sid))
                             layer.completed += 1
                             layer.crashes = 0
-                            if payload["survivor"]:
+                            if payload["recorded"]:
                                 if downstream is not None:
                                     downstream.ready.append(ep)
                         elif kind == "result":

@@ -4,7 +4,7 @@ tools/parity's mini mcap dataset holds the same pictures as the mini LeRobot one
 per time step on ``/observation.images.<camera>`` - so a trajectory.json whose views name the episode's
 ``.mcap`` file and that topic must give what the LeRobot trajectory gives on the LeRobot dataset: the
 same frames in the same order, the same sub-item readings and the same outcomes. On a (fake) TOS the
-module reads the episode files where the funnel's readers do: streamed, ranged reads only (PR #159).
+module reads the episode files where the other stages' readers do: streamed, ranged reads only (PR #159).
 """
 from __future__ import annotations
 

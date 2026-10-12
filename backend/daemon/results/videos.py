@@ -34,7 +34,7 @@ from typing import Iterable
 from curation.cli import lerobot_meta as M
 
 from ..repo import protocol as P
-from .files import cached_json, identity
+from .files import cached_json
 from .revision import Revision
 
 log = logging.getLogger("daemon.results")

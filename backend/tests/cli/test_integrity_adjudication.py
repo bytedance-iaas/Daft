@@ -44,7 +44,7 @@ def integrity(rd: RunDir, ep: int, verdict: str) -> RunDir:
 def final(run_dir: str, episodes: str, revision: int = 1) -> dict[str, dict[int, dict]]:
     import json
 
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "final", "--revision", str(revision),
+    res = run("aggregate", "--run-dir", run_dir, "--revision", str(revision),
               "--modules", MODULES, "--episodes", episodes)
     assert res.rc == 0, res.doc
     out = {}

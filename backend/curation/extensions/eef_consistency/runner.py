@@ -24,7 +24,7 @@ from . import timeline as TL
 from . import tracking as TR
 from . import template as TP
 from . import video as V
-from .load import EefSample, declared_point_ids
+from .load import EefSample
 from .profile import Profile
 
 
@@ -165,10 +165,6 @@ def measure_episode(sample: EefSample, cfg: RunConfig) -> EpisodeMeasure:
         if series is not None and len(series.t) >= 16:
             l0 = MO.l0_metrics(series)
     return EpisodeMeasure(sample, cap, cams, l0, {"measure_s": round(time.perf_counter() - t0, 3)})
-
-
-def declared_points(sample: EefSample, camera_id: str) -> list[str]:
-    return declared_point_ids(sample, camera_id)
 
 
 def ensure_dir(path: str | os.PathLike) -> pathlib.Path:

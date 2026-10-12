@@ -19,7 +19,6 @@ from curation.declaration import draft as DD
 from ..errors import ApiError
 from ..repo import protocol as P
 from .source import dataset_source
-from .status import is_mcap
 
 
 def _preflight(ds: P.Dataset) -> dict:

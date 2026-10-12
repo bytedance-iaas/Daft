@@ -91,7 +91,7 @@ class RunDir:
 
 def machine(run_dir: str, episodes: str) -> dict[int, dict]:
     """The machine's verdict lines (``verdicts.jsonl``) of revision 1."""
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "final", "--revision", "1",
+    res = run("aggregate", "--run-dir", run_dir, "--revision", "1",
               "--modules", ",".join(ALL), "--episodes", episodes)
     assert res.rc == 0, res.doc
     lines = read_jsonl(os.path.join(run_dir, "revisions", "r0001", "verdicts.jsonl"))
@@ -101,7 +101,7 @@ def machine(run_dir: str, episodes: str) -> dict[int, dict]:
 
 
 def final(run_dir: str, episodes: str, revision: int = 1) -> dict[str, dict[int, dict]]:
-    res = run("aggregate", "--run-dir", run_dir, "--phase", "final", "--revision",
+    res = run("aggregate", "--run-dir", run_dir, "--revision",
               str(revision), "--modules", ",".join(ALL), "--episodes", episodes)
     assert res.rc == 0, res.doc
     out = {}

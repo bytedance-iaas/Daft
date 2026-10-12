@@ -2,7 +2,7 @@
 
 Like ``tests/cli/test_aggregate.py``, the module records are written by hand as part
 files (the ``check`` record format, records 2.0 written from the module's answer);
-``curation aggregate --phase final`` and
+``curation aggregate`` and
 ``curation report`` then run in process - the real W3 commands, every ``--json``
 checked against C2 - so the readers are tested against the files the CLI writes.
 
@@ -315,7 +315,7 @@ class World:
 
     def revision(self, n: int, *, subtask_id: str | None = None, modules: tuple = MODULES) -> None:
         rd = str(self.run_dir)
-        cli("aggregate", "--run-dir", rd, "--phase", "final", "--revision", str(n),
+        cli("aggregate", "--run-dir", rd, "--revision", str(n),
             "--modules", ",".join(modules), "--episodes", "0-8")
         review_as_of_c2_1_4(self.run_dir, n)
         argv = ["report", "--run-dir", rd, "--revision", str(n), "--modules", ",".join(modules)]

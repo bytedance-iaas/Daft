@@ -60,7 +60,7 @@ def test_snapshot_of_selected_episodes(cli, dataset, tmp_path):
                      "--out", str(tmp_path / "m.json")).doc)
     assert sorted(_keys(doc)) == _selected(0, 1, 2, 7)
     listfile = tmp_path / "eps.txt"
-    listfile.write_text("# survivors\n3\n\n5-6\n")
+    listfile.write_text("# episodes\n3\n\n5-6\n")
     doc = _valid(cli("snapshot", "--input", dataset, "--episodes", f"@{listfile}",
                      "--out", str(tmp_path / "m2.json")).doc)
     assert sorted(_keys(doc)) == _selected(3, 5, 6)
@@ -102,7 +102,7 @@ def test_files_missing_from_the_dataset_are_left_out_with_a_warning(cli, dataset
     doc = _valid(res.doc)
     assert doc["skipped_episodes"] == [{"episode_index": 4, "missing": [_episode_keys(4)[2]]}]
     assert not set(_episode_keys(4)) & set(_keys(doc))   # never read: nothing to pin
-    assert any("left out like v1 does" in e.get("msg", "") for e in res.events)
+    assert any("they are left out: not checked" in e.get("msg", "") for e in res.events)
     complete = _valid(cli("snapshot", "--input", dataset, "--episodes", "0-3",
                           "--out", str(tmp_path / "m2.json")).doc)
     assert "skipped_episodes" not in complete

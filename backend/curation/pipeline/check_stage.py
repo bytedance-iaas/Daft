@@ -4,7 +4,7 @@ The stages and their order are a block's segments (design doc 17 §3): ``numeric
 (timestamp_check, kinematic_limits, motion_quality), ``frame`` (visual_quality and
 video_action_sync on one shared decode per camera), ``vlm`` (task_success), ``duplicate``
 (identical episodes, streaming, reported only - see :meth:`StageRun._duplicate`). Each
-episode goes through the module bodies of ``pipeline.funnel`` - the very
+episode goes through the module bodies of ``pipeline.episode_checks`` - the very
 functions v1's DataFrame chain wraps in UDFs - with the row v1's lazy scan would
 build (``pipeline.rows``). What the shell adds, per episode:
 
@@ -36,18 +36,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..contracts import modules as registry_mod
-from . import funnel
+from . import episode_checks
 from .incidents import IncidentLog, camera_names, wrap_call, wrap_decode
 from .records import (CRASHES_NAME, SKIP_INTEGRITY, Inflight, PartWriter, check_counts, compact, is_error,
                       latest_results, module_dir, pid_alive, read_inflight, record_from_struct, record_skipped,
                       skipped_reason, write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
-FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
+CHECK_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate")
 #: a module's half kept for the next stage (registry 5.3, design doc 23 §2.1): the struct a CPU half returns when
 #: its model half will write the record - nothing to write in this stage
 PREPARED = "prepared"
-NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
 #: the module whose rejects no other module judges (D92, design doc 28 §1)
 INTEGRITY = "data_integrity"
 #: P15: this many consecutive failures on one infrastructure cause at the start
@@ -137,8 +136,8 @@ class StageOptions:
 
     def __post_init__(self) -> None:
         stages = {registry_mod.get(m).prep_stage if self.prep else stage_of(m) for m in self.modules}
-        if len(stages) != 1 or not stages <= set(FUNNEL_STAGES):
-            raise ValueError(f"modules {self.modules} are not one funnel stage")
+        if len(stages) != 1 or not stages <= set(CHECK_STAGES):
+            raise ValueError(f"modules {self.modules} are not of one stage")
         self.stage = stages.pop()
 
 
@@ -315,15 +314,15 @@ class StageRun:
         for m in self.o.modules:
             try:
                 if m == "timestamp_check":
-                    out[m] = funnel.make_timestamp_check(cfg)(row["timestamps"], row["fps"])
+                    out[m] = episode_checks.make_timestamp_check(cfg)(row["timestamps"], row["fps"])
                 elif m == "kinematic_limits":
-                    out[m] = funnel.make_kinematic_check(cfg, reg)(
+                    out[m] = episode_checks.make_kinematic_check(cfg, reg)(
                         row["action"], row["embodiment_id"], row["fps"],
                         column(row, "action_space", "joint"),
                         column(row, "control_mode", "unknown"), row["proprio_state"],
                         column(row, "proprio_space", "joint"))
                 elif m == "motion_quality":
-                    out[m] = funnel.make_motion_check(cfg, reg)(
+                    out[m] = episode_checks.make_motion_check(cfg, reg)(
                         row["action"], row["proprio_state"], row["fps"],
                         column(row, "action_space", "joint"),
                         column(row, "control_mode", "unknown"),
@@ -337,8 +336,8 @@ class StageRun:
 
     def _frame(self, ep: int, row: dict, logs) -> dict:
         shared = IncidentLog()
-        decode = wrap_decode(funnel._default_decode, shared, camera_names(row.get("video")))
-        body = funnel.make_frame_checks(self.o.cfg, self.registry, decode=decode)
+        decode = wrap_decode(episode_checks._default_decode, shared, camera_names(row.get("video")))
+        body = episode_checks.make_frame_checks(self.o.cfg, self.registry, decode=decode)
         try:
             out = body(row["video"], row["proprio_state"], row["timestamps"], row["fps"],
                        column(row, "proprio_space", "joint"), row["embodiment_id"])
@@ -405,14 +404,14 @@ class StageRun:
         if problem is not None:
             return self._picture_only(ep, row, log), {}
         clients = self.o.task_clients
-        deps = funnel.TaskDeps(vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
+        deps = episode_checks.TaskDeps(vlm_completion=wrap_call(clients.vlm_completion, log, step="probe",
                                                         call_kind="probe"))
         try:
             protocol_src = "原始标注" if src == "人工改标" else src
-            struct = funnel.task_check_episode(
+            struct = episode_checks.task_check_episode(
                 self.o.cfg, deps, row["video"], text, protocol_src, column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
-            struct = funnel.internal_error_struct(e)
+            struct = episode_checks.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
         if src == "人工改标":
             detail = json.loads(struct.get("detail") or "{}")
@@ -445,7 +444,7 @@ class StageRun:
             except Exception as e:  # noqa: BLE001 - the episode's own error, held like any other
                 if not log:
                     log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
-                return {"task_success": funnel.internal_error_struct(e)}
+                return {"task_success": episode_checks.internal_error_struct(e)}
         return {"task_success": {"passed": None, "score": None,
                                  "detail": json.dumps(detail, ensure_ascii=False)}}
 
@@ -794,7 +793,7 @@ class StageRun:
 
                 record(o.run_dir, self.missing)
                 ctx.log("warn", f"{len(self.missing)} episode(s) have missing source files and "
-                                f"are left out like v1 does: {sorted(self.missing)[:10]}")
+                                f"are left out: {sorted(self.missing)[:10]}")
             if self._store is not None:
                 self._store.close()
         ctx.check_stop(f"{self.label}: {self.done}/{total} episodes done")
@@ -830,7 +829,7 @@ class StageRun:
                 self._committed(ep, records)
             inflight.remove(ep)
             self.done += 1
-            stream.completed(ep, records is not None)     # the next stage takes every judged episode (D57)
+            stream.completed(ep, records is not None)     # the next stage takes every episode with records (D57)
             ctx.progress(self.label, self.done, total, episode_index=ep)
 
         try:
@@ -969,9 +968,9 @@ class StageRun:
             out[m] = entry
         return {"schema_version": "2.0", "modules": out}
 
-    def survivors(self) -> list[int]:
-        """Episodes of this call that go on to the next stage: every one judged (findings and errors stop
-        nothing, D57), and a CPU half kept for its model half."""
+    def finished(self) -> list[int]:
+        """Episodes of this call that go on to the next stage: every one with a record from each module
+        (findings and errors stop nothing, D57), and a CPU half kept for its model half."""
         cur = {m: latest_results(self.o.run_dir, m, self.o.episodes)
                for m in self.o.modules}
         prepared = getattr(self.o, "prepared", None)

@@ -24,7 +24,6 @@ model, preprocessing), so a rerun or ``--resume`` asks nothing it already asked.
 """
 from __future__ import annotations
 
-import base64
 import dataclasses
 import hashlib
 import json
@@ -482,10 +481,6 @@ def cache_key(text: str, images: list[dict], model: str) -> str:
                          "images": [[i["role"], i["frame_index"], hashlib.sha256(i["jpeg"]).hexdigest()]
                                     for i in images]}, sort_keys=True).encode())
     return h.hexdigest()
-
-
-def data_url(jpeg: bytes) -> str:
-    return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
 
 
 # ----------------------------------------------------------------------------------- answers

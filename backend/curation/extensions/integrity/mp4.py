@@ -20,7 +20,6 @@ ReadRange = Callable[[int, int], bytes]
 
 #: ftyp + a moov with one video track cannot be smaller (design doc 14 §1)
 MIN_BYTES = 512
-_CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"dinf"}
 
 
 class Mp4Error(Exception):

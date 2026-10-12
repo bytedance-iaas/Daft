@@ -106,8 +106,8 @@ def test_without_the_copy_no_video_content_is_read(cli, dataset, run_dir):
 
 def test_the_duplicates_go_on(cli, dataset, run_dir, tmp_path):
     """What the segment hands the next step: everything - a duplicate is reported, not dropped (D87)."""
-    out = tmp_path / "survivors.txt"
-    check(cli, dataset, run_dir, "0-7", "--survivors-out", str(out))
+    out = tmp_path / "done.txt"
+    check(cli, dataset, run_dir, "0-7", "--done-out", str(out))
     assert [int(ln) for ln in out.read_text().split()] == list(range(8))
 
 

@@ -1,6 +1,6 @@
 """Source rows for the v2 stages, built exactly as v1's lazy scan builds them.
 
-v1's funnel reads the dataset through ``ingest.daft_source.LeRobotDataSource``:
+v1's readers read the dataset through ``ingest.daft_source.LeRobotDataSource``:
 dataset semantics resolved once (on the first ``min(100, max_episodes)``
 episodes, whatever the selection), then per episode ``_row_v2`` (v2) or
 ``_rows_v3_group`` (v3, one data file at a time), ``_attach_semantics`` and the
@@ -234,7 +234,7 @@ class ContainerRowSource:
     v1 reads the task's whole selection in one go (``read_mcap_lazy`` /
     ``read_lance_lazy``) and resolves the dataset semantics - control mode, action and
     proprio spaces, gripper columns, the velocity calibration - on its first 100 rows.
-    A v2 stage reads only its own episodes (the survivors of the stage before), so the
+    A v2 stage reads only its own episodes (those the stage before handed on), so the
     semantics are resolved here on those same rows - the first ``min(100,
     max_episodes)`` of ``selection``, the task's selection - and attached to every row
     this source returns; everything else in a row does not depend on which other

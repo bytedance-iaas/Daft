@@ -27,7 +27,7 @@ from curation.contracts import schemas  # noqa: E402
 from .conftest import ENV_VARS  # noqa: E402
 from .fakes import FakeCloud  # noqa: E402
 from .fakevlm_server import FakeVlmServer  # noqa: E402
-from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
+from .pipeline import Chain, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
 PASSED, REJECT = [0, 3, 4, 6, 7], [1, 2, 5]       # the one judgement (D71): 1 5 fail; 4 6 have no task text (D72)
@@ -231,7 +231,7 @@ def test_chain_verdicts_are_the_lerobot_fixtures(chain):
 
 def test_chain_semantics_come_from_the_selection(chain):
     """Every stage attaches the semantics v1 resolves on the task's selection, however
-    few survivors it reads (the frame stage reads 6 of 8)."""
+    few episodes it reads (the frame stage reads 6 of 8)."""
     rec = results(chain.rd, "motion_quality")[0]
     assert verdict_of(rec) in ("pass", "fail", "scored", "abstain")
     assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 8   # every one (D57)
@@ -299,7 +299,7 @@ def test_tos_source_cache(cli, tos, mini_mcap, mini_lance, fmt, tmp_path, monkey
     common = ["--input", uri, "--run-dir", str(run_dir), "--source-manifest", sm,
               "--selection", EPISODES]
     num = cli("check", "--modules", "timestamp_check,kinematic_limits,motion_quality", *common,
-              "--episodes", EPISODES, "--survivors-out", str(run_dir / "numeric.txt"))
+              "--episodes", EPISODES, "--done-out", str(run_dir / "numeric.txt"))
     assert num.rc == 0, num.doc
     assert num.doc["modules"]["timestamp_check"]["findings"] == {"gap": 1, "fragment": 1}
     def data_gets():                             # whole objects that are episode data

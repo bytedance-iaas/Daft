@@ -1069,15 +1069,6 @@
       "pending": 7
      },
      "episodes_error": 2
-    },
-    {
-     "id": "skill_profile",
-     "state": "failed",
-     "gate": "none",
-     "summary": {},
-     "tables": [],
-     "adjudication": null,
-     "error": "VLM endpoint unreachable"
     }
    ],
    "skipped_modules": [

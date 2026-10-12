@@ -6,7 +6,6 @@ snapshot frozen at start; a deleted access key shows as ``credential: null``).
 """
 from __future__ import annotations
 
-import pathlib
 from typing import Any
 from urllib.parse import quote
 
@@ -317,9 +316,3 @@ def dataset_detail(ds: P.Dataset, *, tasks: list[P.Task], checks: list[P.Dataset
             "tasks": [task_ref(t) for t in tasks], "links": [], "annotations": annotations}
 
 
-def is_under(path: pathlib.Path, root: pathlib.Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False

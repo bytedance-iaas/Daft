@@ -29,7 +29,7 @@ def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:
 
 def _in_vlm_stage(d, task_id: str, *, results: int = 0):
     """The VLM stage is running with at least ``results`` records, and the stages before it
-    are done. The funnel is pipelined: the VLM stage can write its first result while the
+    are done. The stages are pipelined: the VLM stage can write its first result while the
     numeric and frame stages still work on later episodes, and these tests are about
     interrupting the VLM stage alone (a slow CI runner paused or stopped the frame stage too,
     2026-09-24)."""

@@ -56,7 +56,7 @@ class Revision:
             doc = _read(os.path.join(self.dir, f"{name}.json"))
             if doc is None:
                 raise FileNotFoundError(f"{self.dir}/{name}.json is missing: run "
-                                        f"aggregate --phase final --revision {revision} first")
+                                        f"aggregate --revision {revision} first")
             self.lists[name] = doc
         self.verdicts = read_jsonl(os.path.join(self.dir, "verdicts.jsonl"))
         self.results = {m: latest_results(run_dir, m) for m in self.modules}

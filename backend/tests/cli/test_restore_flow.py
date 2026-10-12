@@ -72,7 +72,7 @@ def flow(tmp_path_factory, mini_dataset):
                      "decided_by": "alice", "decided_at": 1790000000000 + i}
                     for i, ep in enumerate((0, 6), start=1)]}, fh)
             c.step("apply", "adjudicate-apply", "--run-dir", c.rd, "--decisions", path)
-            c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
+            c.step("final2", "aggregate", "--run-dir", c.rd,
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
             c.deliver(delivery)

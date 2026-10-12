@@ -134,7 +134,7 @@ def install_workers(monkeypatch, run, *, frame_every=6, numeric_error=frozenset(
                 store.finish(sid, e, records, self.next)
                 store.close()
                 run.note(sid, "done", e)
-                return "episode", {"episode": e, "survivor": True}
+                return "episode", {"episode": e, "recorded": True}
             if self.ended and not self.pending:
                 return "result", {"returncode": 0}
             return None

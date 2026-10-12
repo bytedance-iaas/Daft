@@ -4,8 +4,7 @@ The Daemon's adjudication sequence (doc 02 §3.8, doc 06 §5) on the fixture,
 after a complete first run:
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> aggregate funnel
-    -> aggregate final -> report -> verify
+    -> aggregate -> report -> verify
 
 all on revision 2, with revision 1 left as it was. The CPU checks are not run again: the
 duplicate check's group {3, 7} stands, both members reported and passed (D87) until a
@@ -21,7 +20,7 @@ import pytest
 
 from .conftest import ENV_VARS
 from .fakevlm_server import FakeVlmServer
-from .pipeline import Chain, read_jsonl, run
+from .pipeline import Chain, read_jsonl
 
 NEW_LABEL = "wipe the table"
 
@@ -64,7 +63,7 @@ def flow(tmp_path_factory, mini_dataset):
             rerun = applied.doc["rerun_task_success"]
             c.step("rejudge", "check", "--modules", "task_success", *c.common(),
                    "--episodes", ",".join(map(str, rerun)), *c.vlm)
-            c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
+            c.step("final2", "aggregate", "--run-dir", c.rd,
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
             c.deliver(delivery)

@@ -85,5 +85,5 @@ def _decode_once(src: str, from_ts: float, to_ts: float, *,
 
 # 占位/黑帧通道识别曾经在这里(probe_live_cameras):报告阶段逐条 episode、逐相机
 # **再解一遍帧**,只为看一帧的亮度/方差。2026-08-14 并进视觉质量那一遍(判据搬去
-# core/checks/visual_quality.is_live_channel,数据由 funnel 顺手产出),整整一遍解码
+# core/checks/visual_quality.is_live_channel,数据由帧段顺手产出),整整一遍解码
 # 就此省掉,故连同函数一起删掉不留死代码。

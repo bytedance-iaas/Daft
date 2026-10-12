@@ -85,7 +85,7 @@ def worker(dataset: str, ep: int, out: str) -> dict:
 
     review = review_episode(s, {"details": detail, "verdict": "abstain"}, run_dir=run_dir,
                             media_root=str(truth.lerobot_root(dataset)), ask=ask, cache=R.Cache(None), model="stand-in",
-                            per_camera=3, frames_per_window=6, out_dir=module_dir(run_dir, "eef_video_review"))
+                            per_camera=3, frames_per_window=6, out_dir=module_dir(run_dir, "eef_video_consistency"))
     u2 = resource.getrusage(resource.RUSAGE_SELF)
     cams = len(s.cameras)
     return {"episode_index": ep, "n_frames": s.n_frames, "detail": detail, "review_summary": review["summary"],

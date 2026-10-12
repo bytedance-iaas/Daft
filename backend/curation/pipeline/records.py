@@ -22,8 +22,6 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-#: The format ``record_from_struct`` writes (C2 result-record): 2.0 since the policy verdicts (F12.3).
-RECORD_VERSION = "2.0"
 
 CHECKS_DIR = "checks"
 PARTS_DIR = "parts"
@@ -126,8 +124,6 @@ def record_undecodable(module: str, episode_index: int, passed: bool | None, sco
             "unassessable": got.unassessable, "readings": got.readings, "error": None}
 
 
-#: why a module wrote a record without judging the episode (``details.skipped``, design doc 28 §3, D94)
-SKIP_NO_TASK_TEXT = "no_task_text"
 SKIP_INTEGRITY = "integrity_rejected"
 
 

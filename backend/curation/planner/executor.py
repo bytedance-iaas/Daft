@@ -39,8 +39,6 @@ from .merge import (MERGED_CALL_KIND, FramePolicy, MergeGroup, MergeLimits, Merg
 from .retry import CallFailed, Failure, RetryPolicy, RetryStats, call_with_retry
 from .usage import UsageLedger, parse_usage
 
-RECEIPTS = ("merged", "split", "fallback", "single")
-
 
 @dataclass(frozen=True)
 class VlmRequest:

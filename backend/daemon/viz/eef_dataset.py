@@ -20,7 +20,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import tempfile
 import threading
 from pathlib import Path

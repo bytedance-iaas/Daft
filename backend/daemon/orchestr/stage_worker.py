@@ -55,8 +55,9 @@ class EpisodeStream:
         message = self.conn.recv()
         return None if message is None else message["episodes"]
 
-    def completed(self, episode, survivor):
-        self.output.send(("episode", {"episode": episode, "survivor": survivor}))
+    def completed(self, episode, recorded):
+        """``recorded``: the episode has its records (not left out for missing files): the next stage takes it."""
+        self.output.send(("episode", {"episode": episode, "recorded": recorded}))
 
 
 def _release(prepared: dict | None) -> None:
@@ -102,7 +103,7 @@ def _serve(conn, argv: list[str], env: dict[str, str], cwd: str | None) -> None:
                 break
             batch = type(args)(**vars(args))
             batch.episodes = request["episodes"]
-            batch.survivors_out = request["survivors_out"]
+            batch.done_out = None
             batch._worker_cache = cache
             streaming = request.get("stream", False)
             if streaming:
@@ -166,20 +167,8 @@ class StageWorker:
     def running(self):
         return self.process.is_alive()
 
-    def exchange(self, episodes: str, survivors_out: str) -> CliOutcome:
-        self.conn.send({"episodes": episodes, "survivors_out": survivors_out})
-        while True:
-            try:
-                kind, payload = self.conn.recv()
-            except EOFError as exc:
-                raise RuntimeError(f"{self.cmd.stage} worker exited ({self.process.exitcode})") from exc
-            if kind == "event":
-                self.on_line(payload)
-                continue
-            return self.outcome(payload)
-
     def start_stream(self, episodes: str) -> None:
-        self.conn.send({"stream": True, "episodes": episodes, "survivors_out": None})
+        self.conn.send({"stream": True, "episodes": episodes})
 
     def submit(self, episodes: list[int]) -> None:
         self.conn.send({"episodes": episodes})

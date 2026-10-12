@@ -32,7 +32,7 @@ def test_check_pool_refills_after_fast_episode_and_commits_before_notification(t
         def receive(self, timeout=0):
             return incoming.popleft() if incoming else []
 
-        def completed(self, episode, survivor):
+        def completed(self, episode, recorded):
             check = EpisodeState(path)
             try:
                 assert check.positions([episode], "cpu") == {episode: "frame"}
@@ -62,7 +62,7 @@ def test_check_pool_refills_after_fast_episode_and_commits_before_notification(t
     stage._work = work
     assert stage.run()["modules"]["timestamp_check"]["episodes"] == {"total": 3, "ok": 3, "error": 0}
     assert completions == [1, 2, 0]
-    assert stage.survivors() == [0, 1, 2]
+    assert stage.finished() == [0, 1, 2]
 
 
 def test_stream_pause_drains_active_work_without_admitting_more(tmp_path):
@@ -77,7 +77,7 @@ def test_stream_pause_drains_active_work_without_admitting_more(tmp_path):
         def receive(self, timeout=0):
             return incoming.popleft() if incoming else None
 
-        def completed(self, episode, survivor):
+        def completed(self, episode, recorded):
             completed.append(episode)
             ctx.stop_requested = True
 

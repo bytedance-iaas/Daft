@@ -80,7 +80,7 @@ def run(dataset: str, out: pathlib.Path, vlm: dict, episodes: list[int] | None, 
         review = review_episode(s, {"details": detail, "verdict": "abstain"}, run_dir=run_dir,
                                 media_root=str(truth.lerobot_root(dataset)), ask=ask, cache=R.Cache(None),
                                 model=str(vlm["model"]), per_camera=per_camera, frames_per_window=frames_per_window,
-                                out_dir=module_dir(run_dir, "eef_video_review"))
+                                out_dir=module_dir(run_dir, "eef_video_consistency"))
         rows.append({"episode_index": ep, "sample": s, "detail": detail, "review": review})
         n = sum(len(c.get("windows") or []) for c in review["cameras"].values())
         print(f"ep{ep}: {n} windows, {round(time.perf_counter() - t0, 1)} s", file=sys.stderr, flush=True)

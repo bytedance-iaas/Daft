@@ -34,7 +34,7 @@ def add_parser(sub, parents) -> None:
     p = sub.add_parser(
         "check", parents=parents,
         help="run the modules of one stage over a set of episodes",
-        description="Run quality-check modules of one funnel stage (or one dataset-level "
+        description="Run quality-check modules of one stage (or one dataset-level "
                     "module) over the given episodes. One result line per episode is "
                     "appended to the run directory as soon as it is done.")
     p.add_argument("--modules", required=True, metavar="IDS",
@@ -49,8 +49,9 @@ def add_parser(sub, parents) -> None:
                    help="skip episodes that already have a result that is not an error")
     p.add_argument("--plan-stage", metavar="FILE",
                    help="this stage of plan.json (gates, concurrency, merge proposal)")
-    p.add_argument("--survivors-out", metavar="FILE",
-                   help="write the episodes that go on to the next stage, one per line")
+    p.add_argument("--done-out", metavar="FILE",
+                   help="write the episodes of this call that now have a record from every module (judged or "
+                        "failed; the next stage takes them), one per line")
     p.add_argument("--pipeline-state", metavar="SQLITE",
                    help=argparse.SUPPRESS)
     p.add_argument("--pipeline-next", metavar="STAGE",
@@ -113,7 +114,6 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm_prep", "vlm", "duplicate"):
         raise UsageError("--pipeline-state is only valid for a block's segments")
     src = runctx.open_source(ctx, args)
-    storage = src.storage
     available, info = runctx.dataset_episodes(ctx, src)
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
@@ -131,17 +131,16 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                            f"datasets only, not {src.kind}; preflight marks it unsupported, leave it out",
                            {"modules": eef, "format": src.kind})
     if stage == "integrity":
-        payload, survivors = _integrity(ctx, args, modules, run_dir, src, episodes, part,
+        payload, done = _integrity(ctx, args, modules, run_dir, src, episodes, part,
                                         plan_stage, guard)
     elif stage in ("numeric", "frame", "duplicate"):
-        payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
+        payload, done = _cpu_stage(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
     else:
-        payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, src, episodes,
+        payload, done = _vlm_stage(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard)
-    if args.survivors_out:
-        records.write_text_atomic(os.path.abspath(args.survivors_out),
-                                  "".join(f"{e}\n" for e in survivors))
+    if args.done_out:
+        records.write_text_atomic(os.path.abspath(args.done_out), "".join(f"{e}\n" for e in done))
     if src.container and stage in ("numeric", "frame", "vlm"):
         from .containers import write_source_info
 
@@ -183,7 +182,7 @@ def _episode_blocks(src):
     return lambda: blockcache.episode(src.storage, src.listing)
 
 
-def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard,
+def _cpu_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard,
                 info):
     from ..pipeline.check_stage import StageOptions, StageRun
     from ..registry.registry import EmbodimentRegistry
@@ -211,11 +210,11 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
                         episode_stream=getattr(args, "_episode_stream", None),
                         **_container_options(args, src))
     stage = StageRun(ctx, opts, registry)
-    return stage.run(), stage.survivors()
+    return stage.run(), stage.finished()
 
 
 def _integrity(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
-    """The data integrity module (design doc 14): v2's own gate, first in the funnel. Its
+    """The data integrity module (design doc 14): the first stage of the CPU block. Its
     judge does the dataset-level work once per process (a pipeline worker keeps it)."""
     from ..extensions.integrity import MODULE_ID, IntegrityJudge
     from ..pipeline.check_stage import StageOptions, StageRun
@@ -251,7 +250,7 @@ def _integrity(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
     if MODULE_ID in payload.get("modules", {}):
         # decode_test and the thresholds are part of the module's input
         payload["modules"][MODULE_ID]["input_digest"] = judge.input_digest(list(opts.episodes))
-    return payload, stage.survivors()
+    return payload, stage.finished()
 
 
 def _merge_strategy(ctx, plan_stage, cfg, modules):
@@ -273,7 +272,7 @@ def _merge_strategy(ctx, plan_stage, cfg, modules):
     return strategy
 
 
-def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
+def _vlm_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
     from ..pipeline.rows import index_of
     from ..pipeline.tasktext import TaskText
@@ -377,7 +376,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     if judge is not None and judge.module in payload.get("modules", {}):
         # the file, seeds, template, configuration and model are part of the module's input
         payload["modules"][judge.module]["input_digest"] = judge.input_digest(list(opts.episodes))
-    return payload, stage.survivors()
+    return payload, stage.finished()
 
 
 def render(payload: dict) -> str:

@@ -106,12 +106,11 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if skipped:
         ctx.log("warn", f"{len(skipped)} selected episodes miss their parquet or a camera's "
                         f"video ({episode_sel.preview([s['episode_index'] for s in skipped])})"
-                        f"; they are left out like v1 does: not checked, in no list, "
-                        f"listed in the report")
+                        f"; they are left out: not checked, in no list, listed in the report")
     if incomplete:
         ctx.log("warn", f"{len(incomplete)} selected episodes miss data or video files "
                         f"({episode_sel.preview(incomplete)}); LeRobot v3 episodes are not "
-                        f"left out (v1 reads them): their checks will fail to read them")
+                        f"left out (the reader reads them anyway): their checks will fail to read them")
     doc = source_manifest.build(storage.uri, [listing[k] for k in keys], skipped=skipped)
     ctx.check_stop("before writing the manifest")
     try:

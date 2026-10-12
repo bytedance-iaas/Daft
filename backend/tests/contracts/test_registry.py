@@ -106,7 +106,7 @@ def test_the_taxonomy_matches_the_sample_sets():
 
 
 def test_v1_facts():
-    """Design doc 05 section 1 / 17 §3: the funnel checks, then the duplicate check (D87: reported only)."""
+    """Design doc 05 section 1 / 17 §3: the per-episode checks, then the duplicate check (D87: reported only)."""
     assert {m.id for m in M.by_stage("duplicate")} == {"duplicate_check"}
     assert "dedup" not in M.ids() and "dedup" not in M.STAGES, "exact dedup and its stage were removed (D87)"
     assert "profile" not in M.STAGES, "the skill profile and its stage were removed"

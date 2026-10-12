@@ -14,7 +14,7 @@ takes the whole selection, a stage without modules is left out:
                 frame      checks sharing one full-rate decode  cpu
                 duplicate  identical episodes (reported only)   cpu, concurrency always 1
     vlm block   vlm        the VLM checks                       vlm gates, merge proposal
-    final       aggregate --phase final: the policy verdicts (design doc 17 §4)
+    final       aggregate: the policy verdicts (design doc 17 §4)
 
 Every segment is per-episode (D70): no stage waits for the whole selection. An episode without a
 task text is not judged by task_success (D72; the plan notes how many there are). Modules the
@@ -32,8 +32,6 @@ from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
 from .merge import declared_frame_policy
 
 SCHEMA_VERSION = "2.0"
-#: the stages that hand episodes on one at a time (the Daemon's episode pipeline)
-STREAM_STAGES = ("integrity", "numeric", "frame", "vlm_prep", "vlm")
 
 
 class PlanError(ValueError):

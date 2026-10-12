@@ -14,7 +14,7 @@ from .conftest import ROBOT_CURATION, run_parity
 def test_classification():
     assert aclass.is_a_class("core/checks/kinematics.py")
     assert aclass.is_a_class("pipeline/verdict.py")
-    assert not aclass.is_a_class("pipeline/funnel.py")      # B class
+    assert not aclass.is_a_class("pipeline/episode_checks.py")      # B class
     assert not aclass.is_a_class("cli/app.py")
     assert not aclass.is_a_class("coreutils.py")
 
@@ -24,7 +24,7 @@ def frozen(tmp_path):
     """A small curation tree and the manifest that freezes it."""
     tree = tmp_path / "curation"
     for rel, text in (("core/checks/kinematics.py", "LIMIT = 1\n"), ("ingest/reader.py", "x = 2\n"),
-                      ("pipeline/funnel.py", "# B class\n")):
+                      ("pipeline/episode_checks.py", "# B class\n")):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         (tree / rel).write_text(text)
     manifest = tmp_path / "manifest.json"
@@ -43,7 +43,7 @@ def test_the_frozen_tree_passes_and_edits_are_caught(frozen, monkeypatch):
     assert aclass.check(str(tree), manifest, str(declared))["changed"] == []
     with open(tree / "core" / "checks" / "kinematics.py", "a") as fh:
         fh.write("# tweak\n")
-    (tree / "pipeline" / "funnel.py").write_text("# B class may change\n")
+    (tree / "pipeline" / "episode_checks.py").write_text("# B class may change\n")
     (tree / "core" / "new_check.py").write_text("x = 1\n")
     res = aclass.check(str(tree), manifest, str(declared))
     assert res["changed"] == ["core/checks/kinematics.py"] and res["added"] == ["core/new_check.py"]

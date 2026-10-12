@@ -50,14 +50,14 @@ def test_episode_resume_state_is_durable_with_nonfinite_details(tmp_path):
         assert reopened.blocks == {b: [(sid, mods) for sid, mods in chain] for b, chain in CHAINS.items()}
         assert reopened.positions([7], "cpu") == {7: "frame"} and reopened.positions([7], "vlm") == {}
         assert reopened.counts("timestamp_check") == (1, 0)
-        assert reopened.survivors(["timestamp_check"]) == [7]
+        assert reopened.completed(["timestamp_check"]) == [7]
         assert math.isnan(latest_results(str(tmp_path), "timestamp_check", [7])[7]["details"]["value"])
         failed = {"module": "task_success", "episode_index": 7, "status": "error", "findings": [],
                   "details": {}, "error": {"kind": "execution", "incidents": []}}
         reopened.finish("vlm", 7, {"task_success": failed}, "done")
         assert reopened.positions([7], "vlm") == {7: "done"}
         assert reopened.counts("task_success") == (1, 1)
-        assert reopened.survivors(["task_success"]) == [7]                # an error stops nothing either
+        assert reopened.completed(["task_success"]) == [7]                # an error stops nothing either
         assert reopened.stage_states(7) == {"numeric": "done", "frame": "waiting", "vlm": "error"}
     finally:
         reopened.close()

@@ -343,7 +343,3 @@ class EpisodeState:
         return [row[0] for row in self.db.execute(
             f"SELECT DISTINCT episode FROM results WHERE module IN ({slots}) ORDER BY episode",
             modules)]
-
-    def survivors(self, modules: list[str]) -> list[int]:
-        """The episodes that go on after ``modules``: every one with their records (:meth:`completed`, D57)."""
-        return self.completed(modules)

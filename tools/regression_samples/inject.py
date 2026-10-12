@@ -24,7 +24,6 @@ import time
 
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 
 try:
     import av
@@ -453,12 +452,6 @@ def fault_timestamps(b, ctx, sev, rnd):
     rewrite(pq_path, fn)
     return {"item": "STRM-4", "scope": {"stream": "timestamp"}, "frames": [a - 1, a + (3 if sev == "obvious" else 0)],
             "params": {"kind": "backwards" if sev == "obvious" else "duplicate"}}
-
-
-def position_dims(b):
-    names = [str(x).lower() for x in b.action_names]
-    pos = [i for i, nm in enumerate(names) if nm in ("x", "y", "z") or nm.endswith(("_x", "_y", "_z", ".x", ".y", ".z"))]
-    return pos[:3]
 
 
 def fault_spike(b, ctx, sev, rnd):

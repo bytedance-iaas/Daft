@@ -356,7 +356,7 @@ def test_workdir_layout(tmp_path):
 
 
 def test_a_pause_lets_a_finished_stages_upload_finish_and_a_stop_cuts_it(tmp_path):
-    """The pipelined funnel uploads a finished stage next to later ones: a pause coming in meanwhile
+    """The pipeline uploads a finished stage next to later ones: a pause coming in meanwhile
     waits for that upload (a paused task has its finished stages delivered), a stop cuts it short."""
     import contextlib
     from types import SimpleNamespace

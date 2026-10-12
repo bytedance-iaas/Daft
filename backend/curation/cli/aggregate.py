@@ -2,7 +2,7 @@
 
 Pure computation in seconds, recomputed in full every time. The modules' findings are graded by the
 task's policy (``run.json``'s ``policy``, frozen at start; the default policy when there is none), the
-applied human decisions are added, and ``--phase final --revision N`` writes ``passed`` / ``reject`` /
+applied human decisions are added, and ``--revision N`` writes ``passed`` / ``reject`` /
 ``held`` (disjoint and complete), the ``review`` view (C2 2.0), the policy it used (``policy.json``), the
 machine's verdict lines (``verdicts.jsonl``) and the kept set (``keep.txt``) into ``revisions/r<NNNN>/``.
 A revision that already has ``commit.json`` is never written again.
@@ -29,8 +29,6 @@ def add_parser(sub, parents) -> None:
         help="compute the verdicts: the four lists of a result revision",
         description="Recompute the verdicts of a run directory from its module results.")
     runctx.add_run_dir(p)
-    p.add_argument("--phase", choices=("final",), default="final",
-                   help="final (the only phase; kept so the Daemon's argv reads as before)")
     p.add_argument("--revision", type=int, metavar="N", required=True,
                    help="the result revision to write")
     p.add_argument("--modules", metavar="IDS",

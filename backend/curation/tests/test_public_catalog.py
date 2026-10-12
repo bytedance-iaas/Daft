@@ -161,20 +161,6 @@ def test_dsfs_picks_anonymous_client_per_bucket(monkeypatch):
     dsfs.configure(None)
 
 
-def test_probe_on_public_bucket_goes_anonymous_and_reads_as_readonly(monkeypatch):
-    pc.apply_config(_cfg())
-    seen = []
-    fake = _FakeClient()
-    orig = tos_store.make_store_for
-
-    def spy(bucket, region=None, client=None):
-        seen.append(bucket)
-        return orig(bucket, region, client=fake)
-    monkeypatch.setattr(tos_store, "make_store_for", spy)
-    r = tos_store.probe_writable(f"tos://{BKT}/deliveries", "cn-beijing")
-    assert seen == [BKT] and r["kind"] == "readonly", "公共桶的真相是只读,不是'密钥没权限'"
-
-
 # ── 清单 ────────────────────────────────────────────────────────────────────
 
 def test_catalog_filters_lerobot_and_enriches():

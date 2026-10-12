@@ -159,9 +159,9 @@ class Chain:
         """check numeric, check frame, the duplicate check: every stage on the whole selection."""
         os.makedirs(self.path("stages"), exist_ok=True)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
-                  "--episodes", episodes, "--survivors-out", self.path("stages", "numeric.txt"))
+                  "--episodes", episodes, "--done-out", self.path("stages", "numeric.txt"))
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),
-                  "--episodes", episodes, "--survivors-out", self.path("stages", "frame.txt"))
+                  "--episodes", episodes, "--done-out", self.path("stages", "frame.txt"))
         self.step("duplicate", "check", "--modules", "duplicate_check", *self.common(), "--episodes", episodes)
 
     def checks(self, episodes: str = "0-7") -> None:
@@ -173,7 +173,7 @@ class Chain:
     def post(self, revision: int = 1, episodes: str = "0-7") -> None:
         """The final verdicts and the report."""
         r = str(revision)
-        self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
+        self.step("final", "aggregate", "--run-dir", self.rd,
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
         self.step("report", "report", "--run-dir", self.rd, "--revision", r)
 

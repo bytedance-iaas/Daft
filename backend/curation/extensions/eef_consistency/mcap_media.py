@@ -4,7 +4,7 @@ An mcap dataset has no video files: a camera is a topic of compressed image mess
 episode's ``.mcap`` file (``media.uri`` names the file, ``media.topic`` the topic). Its frames are
 the topic's messages in log_time order, numbered from 0 - what ``video_frame_index`` counts. They are
 written once into a local mp4 without re-encoding (JPEG into an mjpeg mp4, H.264 Annex-B re-muxed:
-v1's ``ingest/mcap_reader`` helpers, the same as the funnel's modules read) on a uniform timeline of
+v1's ``ingest/mcap_reader`` helpers, the same as the other modules read) on a uniform timeline of
 ``RATE`` frames per second, so decoding numbers them by position; the message times are not needed
 here - the trajectory's own timeline and ``video_frame_index`` carry the timing.
 

@@ -2,10 +2,9 @@
 
 On tools/parity's mini dataset the exterior camera shows a red block that moves with joint 0 over a
 static checkerboard. A 2D-only trajectory.json declares the block centre for episodes 0-6 (episode 1
-lags the video by 4 frames, episode 2 is offset by 9 px) with P-A seeds from the true centre. Since
-D49 the module is a vlm-tier hard gate: it runs on the frame stage's survivors, measures with the CPU,
-asks the model (the parity fake here) and passes, rejects or leaves an episode to a person; only its
-rejects change the verdict. With seeds every 15 frames the 128x96 clips are too poor for the tracker,
+lags the video by 4 frames, episode 2 is offset by 9 px) with P-A seeds from the true centre. The module
+runs on the episodes the frame stage handed on, measures with the CPU and asks the model (the parity fake
+here); since design 25 (D81) it gives opinions and rejects nothing, a conflict goes to a person. With seeds every 15 frames the 128x96 clips are too poor for the tracker,
 which abstains between the seeds (``coverage_insufficient``); that is a person's question now, never a
 fake ok. The verdict branches with scripted answers are in test_eef_review.py.
 """
@@ -449,8 +448,8 @@ def test_a_remote_dataset_streams_the_media_it_needs(cli, cloud, mini_dataset, t
 
 @pytest.fixture(scope="module")
 def chain(vlm_stage, tmp_path_factory):
-    """The reference run through final + report as r0001, then the EEF module on the frame stage's
-    survivors against the fake model, then r0002 with it."""
+    """The reference run through final + report as r0001, then the EEF module on the episodes the frame
+    stage handed on against the fake model, then r0002 with it."""
     from .fakevlm_server import FakeVlmServer
 
     tmp = tmp_path_factory.mktemp("eef-chain")
@@ -458,25 +457,25 @@ def chain(vlm_stage, tmp_path_factory):
     shutil.copytree(vlm_stage["reference_dir"], rd)
     traj = _files(tmp)
     ds = vlm_stage["dataset"]
-    survivors = [int(x) for x in open(vlm_stage["episodes"][1:]).read().split()]
+    handed_on = [int(x) for x in open(vlm_stage["episodes"][1:]).read().split()]
     with FakeVlmServer() as vlm:
         c = Chain(ds, rd, vlm.url)
         c.post(revision=1)
         eef = c.step("eef", "check", "--modules", EEF, *c.common(), *c.vlm, "--episodes", vlm_stage["episodes"],
-                     "--param", f"{EEF}.trajectory_json={traj}", "--survivors-out", c.path("stages", "eef.txt"))
+                     "--param", f"{EEF}.trajectory_json={traj}", "--done-out", c.path("stages", "eef.txt"))
         mods = f"{MODS},{EEF}"
-        c.step("final2", "aggregate", "--run-dir", rd, "--phase", "final", "--revision", "2", "--episodes", "0-7",
+        c.step("final2", "aggregate", "--run-dir", rd, "--revision", "2", "--episodes", "0-7",
                "--modules", mods, "--input", ds)
         c.step("report2", "report", "--run-dir", rd, "--revision", "2", "--modules", mods)
-    return {"rd": rd, "chain": c, "eef": eef, "survivors": survivors}
+    return {"rd": rd, "chain": c, "eef": eef, "handed_on": handed_on}
 
 
-def test_the_frame_survivors_are_judged(chain):
-    rd, survivors = chain["rd"], chain["survivors"]
+def test_the_episodes_the_frame_stage_handed_on_are_judged(chain):
+    rd, handed_on = chain["rd"], chain["handed_on"]
     recs = results(rd, EEF)
-    assert sorted(recs) == sorted(survivors)                      # D49: the frame stage's survivors, not the selection
+    assert sorted(recs) == sorted(handed_on)                      # what the frame stage handed on, not the selection
     counts = chain["eef"].doc["modules"][EEF]["episodes"]
-    assert counts["total"] == len(survivors) and counts["error"] == 0
+    assert counts["total"] == len(handed_on) and counts["error"] == 0
     for ep, r in recs.items():
         d = r["details"]
         assert r["status"] == "ok" and "score" not in r["readings"] and d["assessment_mode"] == "verdict"
@@ -519,7 +518,7 @@ def test_the_report_shows_the_eef_section(chain):
     rep = json.loads(open(os.path.join(chain["rd"], "revisions", "r0002", "report.json")).read())
     (sec,) = [s for s in rep["modules"] if s["id"] == EEF]
     s = sec["summary"]
-    n = len(chain["survivors"])
+    n = len(chain["handed_on"])
     assert sum(x["count"] for x in s["labels"]) == n and s["uncalibrated"] and s["confidence_uncalibrated"]
     assert not {"judged_pass", "judged_reject", "to_human", "outcomes", "reject_subitems"} & set(s)   # 4.x's (D90)
     assert sum(x["count"] for x in s["p_bins"]) == n - next(x["count"] for x in s["labels"] if x["name"] == "cannot_tell")
@@ -539,7 +538,7 @@ def test_the_report_shows_the_eef_section(chain):
     tdir = os.path.join(chain["rd"], "revisions", "r0002", "tables")
     cams = pd.read_parquet(os.path.join(tdir, "eef_camera_metrics.parquet"))
     assert {"episode_index", "camera", "position", "lag_s", "coverage"} <= set(cams.columns)
-    assert set(cams["episode_index"]) == set(chain["survivors"])
+    assert set(cams["episode_index"]) == set(chain["handed_on"])
     wins = pd.read_parquet(os.path.join(tdir, "eef_review_windows.parquet"))
     assert {"episode_index", "camera", "kind", "point", "status", "review_status"} <= set(wins.columns)
     ops = pd.read_parquet(os.path.join(tdir, "eef_opinions.parquet"))

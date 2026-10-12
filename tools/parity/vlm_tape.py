@@ -23,7 +23,6 @@ import collections
 import gzip
 import hashlib
 import importlib
-import io
 import json
 import threading
 import time
@@ -510,13 +509,6 @@ def summarize_tape(path: str) -> dict:
                           "exc_type": e.get("exc_type"),
                           "exc_message": (e.get("exc_message") or "")[:200]}
                          for e in fails]}
-
-
-def dumps_jsonl(rows: Iterable[dict]) -> str:
-    buf = io.StringIO()
-    for row in rows:
-        buf.write(json.dumps(row, ensure_ascii=False, allow_nan=True) + "\n")
-    return buf.getvalue()
 
 
 def main(argv: list[str]) -> int:

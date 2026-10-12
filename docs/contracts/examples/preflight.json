@@ -302,12 +302,6 @@
        "not_drafted": []
       }
      }
-    },
-    {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "the VLM review of EEF-video consistency is not part of the DEMO's first cut",
-     "reason_code": "eef_review_not_available"
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -377,24 +371,8 @@
      ]
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
-     "reason_code": "format_unsupported_by_module",
-     "reason_args": {
-      "format": "mcap"
-     }
-    },
-    {
      "id": "duplicate_check",
      "availability": "available"
-    },
-    {
-     "id": "skill_profile",
-     "availability": "available",
-     "notes": [
-      "2 episodes have no task text; the model will caption them first"
-     ]
     }
    ],
    "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
@@ -462,24 +440,8 @@
      ]
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
-     "reason_code": "format_unsupported_by_module",
-     "reason_args": {
-      "format": "lance"
-     }
-    },
-    {
      "id": "duplicate_check",
      "availability": "available"
-    },
-    {
-     "id": "skill_profile",
-     "availability": "available",
-     "notes": [
-      "2 episodes have no task text; the model will caption them first"
-     ]
     }
    ],
    "meta_fingerprint": "sha256:6d540cc16c051b1aa5f07af381ba463e4d2a0978dc7342ea648c42fc6c7c99ce",
@@ -560,25 +522,7 @@
      }
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
-     "reason_code": "format_disabled",
-     "reason_args": {
-      "format": "mcap"
-     }
-    },
-    {
      "id": "duplicate_check",
-     "availability": "unsupported",
-     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
-     "reason_code": "format_disabled",
-     "reason_args": {
-      "format": "mcap"
-     }
-    },
-    {
-     "id": "skill_profile",
      "availability": "unsupported",
      "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
      "reason_code": "format_disabled",
@@ -653,24 +597,8 @@
      ]
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
-     "reason_code": "format_unsupported_by_module",
-     "reason_args": {
-      "format": "mcap"
-     }
-    },
-    {
      "id": "duplicate_check",
      "availability": "available"
-    },
-    {
-     "id": "skill_profile",
-     "availability": "available",
-     "notes": [
-      "2 episodes have no task text; the model will caption them first"
-     ]
     }
    ],
    "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
@@ -921,24 +849,8 @@
      ]
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
-     "reason_code": "format_unsupported_by_module",
-     "reason_args": {
-      "format": "mcap"
-     }
-    },
-    {
      "id": "duplicate_check",
      "availability": "available"
-    },
-    {
-     "id": "skill_profile",
-     "availability": "available",
-     "notes": [
-      "2 episodes have no task text; the model will caption them first"
-     ]
     }
    ],
    "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
@@ -1257,12 +1169,6 @@
      "notes": [
       "trajectory.json sha256 e97111c9176a…: 7 of 8 episode(s) declared; the others are unsupported (projection_missing)"
      ]
-    },
-    {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "the VLM review of EEF-video consistency is not part of the DEMO's first cut",
-     "reason_code": "eef_review_not_available"
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -1334,12 +1240,6 @@
      "notes": [
       "trajectory.json sha256 e97111c9176a…: 7 of 8 episode(s) declared; the others are unsupported (projection_missing)"
      ]
-    },
-    {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "the VLM review of EEF-video consistency is not part of the DEMO's first cut",
-     "reason_code": "eef_review_not_available"
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -1409,24 +1309,8 @@
      ]
     },
     {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
-     "reason_code": "format_unsupported_by_module",
-     "reason_args": {
-      "format": "lance"
-     }
-    },
-    {
      "id": "duplicate_check",
      "availability": "available"
-    },
-    {
-     "id": "skill_profile",
-     "availability": "available",
-     "notes": [
-      "2 episodes have no task text; the model will caption them first"
-     ]
     }
    ],
    "meta_fingerprint": "sha256:6d540cc16c051b1aa5f07af381ba463e4d2a0978dc7342ea648c42fc6c7c99ce",
@@ -1579,12 +1463,6 @@
        "not_drafted": []
       }
      }
-    },
-    {
-     "id": "eef_video_review",
-     "availability": "unsupported",
-     "reason": "the VLM review of EEF-video consistency is not part of the DEMO's first cut",
-     "reason_code": "eef_review_not_available"
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",

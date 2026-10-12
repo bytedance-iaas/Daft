@@ -10,8 +10,8 @@ D68), judged again by ``check --modules task_success`` with the new label in the
 decisions not applied yet (D32); a decision already applied is skipped by id,
 so running it twice changes nothing. A line without an apply rule here, or an
 appeal on an episode with no reject a person may appeal (D42), is refused
-(exit 2), never skipped. The priorities are applied by ``aggregate --phase
-final``: "discard" beats any task verdict, a relabel with a human task verdict
+(exit 2), never skipped. The priorities are applied by ``aggregate``:
+"discard" beats any task verdict, a relabel with a human task verdict
 is not re-judged, an appeal lifts the episode's blocking findings and is admitted
 only when every one of them is appealable (D42 by finding, design doc 17 §4.4),
 "unsure" changes nothing.

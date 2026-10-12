@@ -29,11 +29,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from .merge import MERGED_CALL_KIND, SINGLE_CALL_KINDS, check_single_call_kind
+from .merge import MERGED_CALL_KIND, check_single_call_kind
 
 LEDGERS = ("actual", "attributed")
-#: The kinds v1 knows plus ``merged``; a new module may book under its own kind (C3 1.1).
-USAGE_CALL_KINDS = SINGLE_CALL_KINDS + (MERGED_CALL_KIND,)
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens")
 COUNT_FIELDS = ("requests", "requests_unknown_usage")
 FIELDS = COUNT_FIELDS + TOKEN_FIELDS

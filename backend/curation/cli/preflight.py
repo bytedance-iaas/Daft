@@ -5,8 +5,9 @@ and returns in seconds. Output: ``docs/contracts/cli/preflight.schema.json``.
 
 Rules (F2.7, doc 05 §2-§4, D6, D34):
 
-* Anything but LeRobot v2/v3 (``.rrd``, mcap, Lance, other LeRobot versions,
-  unknown layouts) greys out every module with the reason.
+* A layout v2 cannot read (``.rrd``, other LeRobot versions, unknown layouts) greys out every
+  module with the reason. mcap and Lance (D44) are read like LeRobot, modules that need what the
+  format lacks are greyed out by their own needs; a raw UMI session has the EEF module only.
 * ``info.json`` problems go to ``validation`` verbatim (v1's ``validate_info``)
   and make the dataset unsupported.
 * Kinematic limits: robot type read and in the embodiment registry ->
@@ -19,10 +20,10 @@ Rules (F2.7, doc 05 §2-§4, D6, D34):
   unjudged (D72), which a note says.
 * ``--modules`` narrows the report to the selected modules: nothing is asked
   about a module that is not selected.
-* EEF-video consistency (registry 1.4, design doc 12): ``--param
-  eef_video_consistency.trajectory_json=PATH`` is validated against the dataset and
-  the entry carries the per sub-item capability table; without the file the module
-  is unsupported (the console cannot take the file before F5.5).
+* EEF-video consistency (design docs 12, 24, 25): a ``--param
+  eef_video_consistency.trajectory_json=PATH`` is validated against the dataset; without one
+  the trajectory is generated from the dataset declaration or the handheld recording, and
+  the module needs input when it cannot be. The entry carries the per sub-item capability table.
 * Warnings only, never a change of availability (D52, design doc 14 §1): data and video
   files that are empty or too small to be valid (the listing), mcap recordings cut off
   (no end marker) and mcap summary sections failing their CRC (the bytes the summary
@@ -329,12 +330,12 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
 
         if meta.fmt.version == "v2":
             warnings.append(f"{_plural(len(missing_eps), 'episode')} miss their parquet or a "
-                            f"camera's video ({preview(missing_eps)}); they are left out like "
-                            f"v1 does: not checked, in no list, listed in the report")
+                            f"camera's video ({preview(missing_eps)}); they are left out: "
+                            f"not checked, in no list, listed in the report")
         else:
             warnings.append(f"{_plural(len(missing_eps), 'episode')} miss data or video files "
                             f"({preview(missing_eps)}); LeRobot v3 episodes are not left out "
-                            f"(v1 reads them): their checks will fail to read them")
+                            f"(the reader reads them anyway): their checks will fail to read them")
     for cam in meta.cameras:
         if cam not in cams_with_files and n:
             warnings.append(f"camera {lerobot_meta.short_camera(cam)} has no video files")

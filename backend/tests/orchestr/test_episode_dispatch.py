@@ -145,7 +145,7 @@ def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False
                 if lost_completion and sid == "numeric" and not lost:
                     lost = True
                     raise EOFError("commit succeeded, completion notification lost")
-                return "episode", {"episode": e, "survivor": verdict == "pass"}
+                return "episode", {"episode": e, "recorded": verdict == "pass"}
             if self.ended and not self.pending:
                 return "result", {"returncode": 0}
             return None

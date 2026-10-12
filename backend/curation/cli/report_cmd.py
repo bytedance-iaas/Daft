@@ -2,7 +2,7 @@
 
 Writes ``report.md``, ``report.json`` (``cli/report.schema.json``), ``perf.json``
 and ``tables/*.parquet`` into ``revisions/r<NNNN>/`` - next to the four lists
-``aggregate --phase final`` wrote there - and ``commit.json`` last: which parts
+``aggregate`` wrote there - and ``commit.json`` last: which parts
 of each module's results and which human decisions this revision was built
 from. Readers trust only a revision with ``commit.json``; which one is in force
 is the Daemon's switch, after it is uploaded and verified (D25). A committed

@@ -40,11 +40,6 @@ SESSION_FILES = ("camera_trajectory.csv", "slam_stdout.txt", "tx_slam_tag.json",
 RUN_COPY = os.path.join("inputs", "eef", "trajectory.json")
 
 
-def dataset_key(listing) -> str | None:
-    """The dataset's own bundle among ``listing`` (keys relative to the dataset), or None."""
-    return DATASET_KEY if DATASET_KEY in listing else None
-
-
 def source_of(listing) -> str | None:
     """How the trajectory is had: ``session`` (a raw UMI session read in place), ``generate``, ``dataset_file``
     or None (the module cannot run)."""

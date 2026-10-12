@@ -39,7 +39,6 @@ from ..repo import protocol as P
 from ..secrets import service_of
 from ..secrets.effort import EffortNotAllowed
 from ..util import canonical_json, sha256_hex
-from . import rules
 from .backfill import Restorer
 from .browse import Browser
 from .config import OrchestratorConfig

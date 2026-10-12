@@ -103,7 +103,7 @@ class Chain:
         if rerun:
             self.run("check task_success", "check", "--modules", "task_success", *common,
                      "--episodes", ",".join(str(e) for e in rerun), *self.vlm)
-        self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
+        self.run("aggregate final", "aggregate", "--run-dir", rd,
                  "--revision", revision, "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", revision)
 
@@ -132,7 +132,7 @@ class Chain:
         self.run("check vlm", "check", "--modules", "task_success", *common,
                  "--episodes", episodes, *self.vlm)
         self.run("check duplicate", "check", "--modules", "duplicate_check", *common, "--episodes", episodes)
-        self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
+        self.run("aggregate final", "aggregate", "--run-dir", rd,
                  "--revision", "1", "--episodes", episodes, "--input", ds)
         self.run("report", "report", "--run-dir", rd, "--revision", "1")
         if self.delivery:

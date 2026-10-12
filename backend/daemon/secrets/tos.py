@@ -8,7 +8,7 @@ Four things the Daemon does against TOS itself, each with one small helper here:
   checked separately, permissions only against a concrete task);
 * **read check** before a task starts - a real ``GET`` of ``meta/info.json`` under the input;
 * **write probe** - put a zero-byte object under the delivery directory and delete it (the
-  only reliable answer to "can this key write here", v1 ``tos_store.probe_writable``);
+  only reliable answer to "can this key write here");
 * **presigned GET URLs** for the browser, always on the public endpoint (08 §6.3).
 
 Errors from the SDK become a :class:`TosFailure` (kind + scrubbed provider text), which the
@@ -30,7 +30,7 @@ from .scrub import Scrubber, clip
 DEFAULT_REGION = tos_store.DEFAULT_REGION
 
 #: The probe object under a delivery directory; a fixed name, so a failed delete leaves at
-#: most one stray object per directory (v1 ``tos_store.PROBE_NAME`` idea, v2 name).
+#: most one stray object per directory.
 PROBE_OBJECT = ".curator-write-probe"
 
 #: Error codes that mean "TOS did not accept this key", as opposed to "not allowed".

@@ -71,10 +71,10 @@ def test_a_clean_dataset_passes_its_byte_copies_included(cli, dataset, tmp_path)
 def test_each_kind_of_damage_rejects_its_episode(cli, dataset, tmp_path):
     truth = S.damage_lerobot_v2(dataset)
     rd = str(tmp_path / "run")
-    survivors = str(tmp_path / "integrity.txt")
-    check(cli, dataset, rd, "0-7", "--survivors-out", survivors)
+    done = str(tmp_path / "integrity.txt")
+    check(cli, dataset, rd, "0-7", "--done-out", done)
     recs = results(rd)
-    with open(survivors, encoding="utf-8") as fh:                   # what goes on to the numeric stage:
+    with open(done, encoding="utf-8") as fh:                   # what goes on to the numeric stage:
         assert fh.read().split() == [str(e) for e in range(8)]      # every one judged, a reject stops nothing (D57)
     assert verdicts(recs) == {0: "fail", 1: "fail", 2: "fail", 3: "fail", 4: "fail", 5: "pass",
                               6: "fail", 7: "pass"}
@@ -325,7 +325,7 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
                "--episodes", "0-7", "--out", c.path("plan.json"))
         os.makedirs(c.path("stages"))
         c.step("integrity", "check", "--modules", MOD, *c.common(), "--episodes", "0-7",
-               "--survivors-out", c.path("stages", "integrity.txt"))
+               "--done-out", c.path("stages", "integrity.txt"))
         c.checks("@" + c.path("stages", "integrity.txt"))
         c.post()
     with open(c.path("stages", "integrity.txt"), encoding="utf-8") as fh:

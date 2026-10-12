@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""测试数据下载(PLAN.md §1.1 ⑤;数据落持久盘 /data03/hao/data)。
+"""测试数据下载(内核单测里读真数据集的用例用;数据落持久盘 /data03/hao/data)。
 
 小数据集(冒烟/功能)走 snapshot_download 全量。
 大数据集(DROID/Bridge,LeRobot v2 格式)⚠️ 不能用 snapshot_download —— 它先递归列全 repo 树

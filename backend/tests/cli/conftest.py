@@ -53,7 +53,7 @@ def vlm_stage(tmp_path_factory, mini_dataset) -> dict:
     ``base`` went through preflight, plan, snapshot and the numeric and
     frame stages; ``reference`` holds the task_success
     records of ``check --modules task_success`` run with default options on a
-    copy of it; ``episodes`` is the frame stage's survivors (``@file``). Tests copy
+    copy of it; ``episodes`` is what the frame stage handed on (``@file``). Tests copy
     ``base`` before changing anything.
     """
     from .fakevlm_server import FakeVlmServer

@@ -34,8 +34,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {
@@ -100,8 +99,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {
@@ -153,8 +151,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {
@@ -206,8 +203,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {
@@ -257,8 +253,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {
@@ -306,8 +301,7 @@
     },
     "visual_quality",
     "task_success",
-    "duplicate_check",
-    "skill_profile"
+    "duplicate_check"
    ],
    "embodiment_id": "franka",
    "vlm": {

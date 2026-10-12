@@ -15,7 +15,7 @@ import hashlib
 import json
 import os
 import pathlib
-from typing import Iterable, Iterator, Protocol
+from typing import Iterable, Iterator
 
 import numpy as np
 
@@ -201,14 +201,6 @@ class ObservationBatch:
         return cls(camera_id, method, model_version, n,
                    {p: np.full((n, 2), np.nan) for p in pids}, {p: np.full(n, NO_OBSERVATION, object) for p in pids},
                    {p: np.zeros(n) for p in pids}, {p: np.full(n, np.nan) for p in pids}, {}, {})
-
-
-class ObservationProvider(Protocol):
-    method: str
-    model_version: str
-
-    def locate(self, frames: Iterable[DecodedFrame], targets: PointTargets,
-               ctx: ProviderContext) -> ObservationBatch: ...
 
 
 def media_path(sample: EefSample, camera_id: str, media_root: str | os.PathLike) -> str:

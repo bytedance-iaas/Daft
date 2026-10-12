@@ -113,7 +113,7 @@ def test_streaming_results_and_requests_match_batch_execution(daemon, monkeypatc
     streamed = d.wait(d.create(params=params)["id"])
     assert streamed["state"] == "succeeded", streamed
     with monkeypatch.context() as patch:
-        patch.setattr(pipeline, "run_funnel", pipeline.run_batches)
+        patch.setattr(pipeline, "run_chain", pipeline.run_batches)
         batched = d.wait(d.create(params=params)["id"])
     assert batched["state"] == "succeeded", batched
     left, right = d.run_dir(batched["id"]), d.run_dir(streamed["id"])

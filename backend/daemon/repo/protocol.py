@@ -57,8 +57,8 @@ VerifyState = Literal["unverified", "ok", "failed"]
 BackendKind = Literal["ark", "custom"]
 ModelSource = Literal["listed", "manual"]
 Ledger = Literal["actual", "attributed"]
-#: v1's call kinds are probe, endstate, arbitration, caption and llm; ``merged`` marks a request that
-#: carried several modules. New modules send under kinds of their own (C3 1.1), so this is open.
+#: The call kinds today are probe and eef_review (``curation/vlm_call_kinds.py``); ``merged`` marks a request
+#: that carried several modules. New modules send under kinds of their own (C3 1.1), so this is open.
 CallKind = str
 DatasetCheckState = Literal["ok", "changed"]
 DatasetCheckTrigger = Literal["add", "recheck", "task_start", "repreflight"]

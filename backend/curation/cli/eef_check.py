@@ -117,7 +117,7 @@ class EefJudge:
 
     def __init__(self, ctx, args, run_dir: str, source, vcfg: dict, gates: dict):
         """``source``: the command's input (``runctx.Source``; a bare ``Storage`` reads LeRobot). An
-        mcap dataset (F5.13) is read where the funnel's readers read it: a local directory, or on TOS
+        mcap dataset (F5.13) is read where the other stages' readers read it: a local directory, or on TOS
         the dataset the source streams (``streams.objects``, ranged reads - nothing to fetch first)."""
         from ..contracts import modules as registry
         from ..extensions.eef_consistency import load, profile, runner

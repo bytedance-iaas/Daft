@@ -1,6 +1,6 @@
 """v1's rows of single episodes for the data integrity module (design doc 14 §2.3, D51).
 
-The funnel's row sources (``pipeline.rows``) resolve the dataset semantics first, from
+The stages' row sources (``pipeline.rows``) resolve the dataset semantics first, from
 the data of the first hundred episodes - a read that one corrupt early episode can break
 for every episode, and that has no bearing on what ``validate_episode_row`` checks. This
 source builds each episode's row with the same v1 readers and helpers, without the

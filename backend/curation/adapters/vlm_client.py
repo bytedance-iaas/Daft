@@ -16,8 +16,8 @@ import uuid
 # HTTP 计时探针(诊断用,始终累计,开销可忽略)。判读:
 #   Σ请求耗时 / VLM段墙钟 ≈ 有效并发度;≈1 说明请求实际被串行化了。
 #   Σ请求耗时 / 请求数     = 平均单请求延迟;并发下明显变大 = 服务端在排队。
-# 2026-07-28 升级为分桶收集器(同事要定量延时档案):四个调用点各挂静态标签
-# (probe 渐变问询 / endstate 二值复核 / caption 画像 / llm 归纳审计),逐请求
+# 2026-07-28 升级为分桶收集器(同事要定量延时档案):每个调用点挂一个静态标签
+# (当时是 probe / endstate / caption / llm 四种,如今只剩 probe 与 eef_review,见 vlm_call_kinds),逐请求
 # 记 (标签, 秒, 成败, 发出时刻),run 结束汇总进报告 + details/vlm_latency.csv。
 # 注意口径:这是**客户端视角**延时 = 网络 + 服务端排队 + 推理;并发大时单请求
 # 变慢通常是排队挪到了服务端,不是模型变慢。
@@ -258,7 +258,7 @@ class SharedGate:
     共享语义:同一实例传给多个工厂 = 这些工厂共用一副在飞许可(pickle 的 memo 机制
     保证一次 dumps 里同一实例反序列化后仍是同一实例,共享不因序列化而裂开)。
     ⚠️ 跨进程各自重建各自的信号量,闸门只在进程内生效 —— 与裸 Semaphore 的语义一致
-    (它本来就锁不住别的进程),不是退化。容量在构造期定死:每次 run_funnel 按当时
+    (它本来就锁不住别的进程),不是退化。容量在构造期定死:每次运行按当时
     配置新建实例,同进程内改配置重跑并发度即生效;跑到一半改配置不生效是有意的
     (在飞许可换容量没有安全语义)。
     """
@@ -463,7 +463,7 @@ def list_models(endpoint: str, api_key_env: str | None = None,
                 timeout_s: float = 5.0) -> list[str]:
     """GET <endpoint>/models → 服务端模型 id 列表(探活+发现一体,失败抛异常)。
 
-    供 `curation backends` 子命令与运维探查用;托管端点(方舟)自动带鉴权头。
+    供命令行没给 --vlm-model 时自动发现模型名(:func:`resolve_model`)与运维探查用;托管端点(方舟)自动带鉴权头。
     """
     import json
     import urllib.request

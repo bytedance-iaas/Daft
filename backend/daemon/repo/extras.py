@@ -1,7 +1,6 @@
 """Helpers around the repository queries that joined C5 in 1.3 (overview, dataset lookup).
 
-The queries themselves are now part of :class:`daemon.repo.protocol.Repository`;
-``RepositoryExtras`` remains as an alias for older imports.
+The queries themselves are now part of :class:`daemon.repo.protocol.Repository`.
 
 C5 (``protocol.py``) is frozen, so the few reads the overview page and the task
 configuration need are declared here until a contract revision takes them in.
@@ -60,7 +59,3 @@ def dataset_format(preflight: dict | None) -> str:
 def token_slot(at: int) -> int:
     """Start of the timeline slot that holds epoch millisecond ``at``."""
     return int(at) - int(at) % TOKEN_SLOT_MS
-
-
-#: C5 1.3 took these queries into the protocol.
-RepositoryExtras = Repository

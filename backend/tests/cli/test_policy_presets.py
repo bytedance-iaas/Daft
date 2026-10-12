@@ -1,6 +1,6 @@
 """The two policy presets end to end on the 8-episode fixture (design doc 17 §4, D58; F12.3 acceptance 2, 4).
 
-``report_only`` reports every finding and rejects nobody: every stage of the funnel sees every episode,
+``report_only`` reports every finding and rejects nobody: every stage sees every episode,
 every episode a module could judge is kept and nobody is asked. The run is then switched to the default
 policy by its ``run.json`` alone: ``aggregate`` runs again - nothing else does - the module records stay
 byte for byte, and the verdicts are today's (``test_pipeline_chain``: 2 and 5 stop on their timestamps,

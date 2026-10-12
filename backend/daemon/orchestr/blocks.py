@@ -2,7 +2,7 @@
 
 The CPU block (integrity -> numeric -> frame -> duplicate) and the VLM block (vlm)
 run in two threads and never filter each other. Inside a block the stages run in the plan's order,
-as one chain of the episode pipeline (:func:`.pipeline.run_funnel`): every episode with a record of a
+as one chain of the episode pipeline (:func:`.pipeline.run_chain`): every episode with a record of a
 stage goes on to the next one, findings and errors stop nothing (since D70 no stage needs the whole
 selection at once).
 
@@ -84,13 +84,13 @@ def run_block(run, block: str, stages: list[dict], selection: list[int], abort: 
               wait_for: tuple[str, str] | None = None) -> None:
     """One chain's stages in order (module docstring); ``block``: the chain's name; ``wait_for``: the integrity
     stage a chain without it waits for, episode by episode (D92)."""
-    from .pipeline import run_funnel
+    from .pipeline import run_chain
 
     pool_key = run.cpu_key if block == "cpu" else (*run.cpu_key, block)
     run.check_intent()
     chain = [st for st in stages if st.get("command") == "check"]
     if chain and not all(run.journal.done(s["id"]) for s in chain):
-        run_funnel(run, chain, selection, abort=abort, pool_key=pool_key, chain=block, wait_for=wait_for)
+        run_chain(run, chain, selection, abort=abort, pool_key=pool_key, chain=block, wait_for=wait_for)
 
 
 def _first(errors: list[BaseException]) -> BaseException:

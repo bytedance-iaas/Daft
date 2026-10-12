@@ -64,7 +64,7 @@ def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标�
                   task_type=primary["task_type"], task_type_source="video",
                   video_completion=primary["completion"], reason=primary["reason"],
                   video_evidence=list(primary["evidence"]))
-    # task_success is a hard verdict. Keep the model's estimate in detail;
+    # task_success gives a verdict, not a score. Keep the model's estimate in detail;
     # a non-null CheckResult.score would turn an abstention into "scored".
 
     cameras = primary.get("cameras") or {}

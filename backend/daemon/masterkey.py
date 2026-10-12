@@ -83,8 +83,3 @@ def load(environ: Mapping[str, str] | None = None) -> MasterKey:
     return MasterKey(key=key, version=int(raw_version), next_key=next_key)
 
 
-def scrub_environment(environ: dict | None = None) -> None:
-    """Drop key material from ``os.environ`` once loaded, so CLI children never inherit it."""
-    env = os.environ if environ is None else environ
-    for name in (KEY_ENV, NEXT_KEY_ENV):
-        env.pop(name, None)

@@ -208,9 +208,6 @@ def batch_frames(col, shape: tuple[int, int]) -> list[np.ndarray | None]:
 
 # ---------------------------------------------------------------- features
 
-#: dtypes a depth picture is stored in
-DEPTH_DTYPES = frozenset({"uint16", "uint32", "float32", "float64"})
-
 
 def depth_shape(feature: dict) -> tuple[int, int] | None:
     """(H, W) of a depth feature (``[H, W]`` or ``[H, W, 1]``)."""

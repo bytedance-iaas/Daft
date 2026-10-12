@@ -26,7 +26,6 @@ ANSWER_SCHEMA = "eef/opinion_output.schema.json"
 MAX_CLIP_S = 60.0                     # a longer clip is cut into consecutive parts of about this long
 FLAG_CONFIDENCE = 0.5                 # a segment at least this sure counts as flagged in the report
 VIDEO_MAX_SIDE = 448                  # the marked clip sent to the model (the shared vlm.video max_side is 720)
-ASPECTS = ("position", "orientation", "both", "action")
 NAMES = {"position": "中心", "orientation": "朝向", "both": "中心与朝向", "action": "动作合理性"}
 
 

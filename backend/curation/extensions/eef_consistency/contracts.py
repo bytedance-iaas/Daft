@@ -13,7 +13,6 @@ SCHEMA_VERSION = "eef-video/1.0.0"
 SCHEMA_VERSION_1_1 = "eef-video/1.1.0"
 CONTAINER = "trajectory-bundle/1.0"
 MODULE_ID = "eef_video_consistency"
-REVIEW_MODULE_ID = "eef_video_review"
 MODULE_VERSION = "0.1.0-demo"
 #: Version of the per-episode ``detail`` payload written into result records.
 DETAIL_SCHEMA_VERSION = "eef-detail/0.1"
@@ -71,7 +70,6 @@ DECODE_FAILED = "decode_failed"
 VLM_BACKEND_MISSING = "vlm_backend_missing"
 # additions of the first cut (documented in design 12 §5.1 revision notes)
 TRAJECTORY_MISSING = "trajectory_missing"
-EEF_BASE_UNAVAILABLE = "eef_base_unavailable"          # registry 1.6-1.7 only (the separate review module)
 TRAJECTORY_INVALID = "trajectory_invalid"
 OBSERVATION_SEED_MISSING = "observation_seed_missing"   # no seeds and no gripper template (F5.8)
 TEMPLATE_INVALID = "template_invalid"

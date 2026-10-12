@@ -55,11 +55,6 @@ def interp_track(t_src: np.ndarray, x_src: np.ndarray, t_query: np.ndarray, *,
     return out[:, 0] if squeeze else out
 
 
-def shift_track(t: np.ndarray, x: np.ndarray, lag_s: float, *, gap_factor: float = 2.0) -> np.ndarray:
-    """``x(t + lag)`` sampled on ``t`` (used to compensate a declared track by a lag, D-E8)."""
-    return interp_track(t, x, np.asarray(t, float) + lag_s, gap_factor=gap_factor)
-
-
 def slerp_rotations(t_src: np.ndarray, R_src: np.ndarray, t_query: np.ndarray) -> np.ndarray:
     """Shortest-arc SLERP of (N, 3, 3) rotations at ``t_query`` (NaN outside the support)."""
     t_src = np.asarray(t_src, float)
@@ -85,15 +80,6 @@ def _exp(rotvec: np.ndarray) -> np.ndarray:
     k = rotvec / theta
     Kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
     return np.eye(3) + np.sin(theta) * Kx + (1 - np.cos(theta)) * Kx @ Kx
-
-
-def zero_order_hold(t_src: np.ndarray, x_src: np.ndarray, t_query: np.ndarray) -> np.ndarray:
-    t_src = np.asarray(t_src, float)
-    j = np.searchsorted(t_src, t_query, side="right") - 1
-    out = np.full(len(t_query), np.nan)
-    ok = j >= 0
-    out[ok] = np.asarray(x_src, float)[j[ok]]
-    return out
 
 
 def uniform_grid(t: np.ndarray, step: float | None = None) -> np.ndarray:

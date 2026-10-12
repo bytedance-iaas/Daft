@@ -1,6 +1,6 @@
 """数据完整性 - the data integrity module (design doc 14, D50-D52; F7.2-F7.4).
 
-The first gate of the funnel (stage ``integrity``, before ``numeric``): per episode, are
+The first stage of the CPU block (``integrity``, before ``numeric``): per episode, are
 its files whole and readable? Four parts, cheapest first:
 
 * dataset level, once per call (:meth:`judge.IntegrityJudge.open`): the file plan, the

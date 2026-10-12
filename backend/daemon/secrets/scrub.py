@@ -60,4 +60,3 @@ def clip(text: str, limit: int = MAX_DETAIL) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-NO_SECRETS = Scrubber()

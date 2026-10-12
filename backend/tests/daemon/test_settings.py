@@ -11,7 +11,7 @@ import pytest
 
 from daemon import masterkey
 from daemon.app import create_app
-from daemon.masterkey import MasterKey, MasterKeyError
+from daemon.masterkey import MasterKeyError
 from daemon.settings import ConfigError, Settings, normalize_base_path, parse_tz_offset
 
 BACKEND = pathlib.Path(__file__).resolve().parents[2]
@@ -110,12 +110,9 @@ def test_create_app_refuses_without_a_master_key(tmp_path):
         create_app(settings)
 
 
-def test_scrub_environment():
+def test_scrub_secrets():
     from daemon.settings import scrub_secrets
 
-    env = {"CURATOR_MASTER_KEY": "x", "CURATOR_MASTER_KEY_NEXT": "y", "PATH": "/bin"}
-    masterkey.scrub_environment(env)
-    assert env == {"PATH": "/bin"}
     env = {"CURATOR_MASTER_KEY": "x", "CURATOR_AUTH_PASSWORD": "p", "CURATION_UI_PASSWORD": "q",
            "CURATOR_AUTH_USER": "demo", "PATH": "/bin"}
     scrub_secrets(env)                                  # CLI children inherit no password either
