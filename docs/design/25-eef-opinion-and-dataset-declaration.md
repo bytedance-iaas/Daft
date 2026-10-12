@@ -183,8 +183,8 @@
   缓存键 = 数据集 id + 声明版本 + episode；生成结果落本地盘缓存（与转码缓存同一处，`CURATOR_VIZ_*`）。
 - 页面：预检说这路相机 `drawable` 就出现「叠加」菜单，图层与缺省开关同迷你版；算不出的相机在菜单里置灰并给原因（缺内参、缺外参、会动的相机）。
 - 它展示的是「从原始数据与声明直接得到的几何」，没有观测点、残差、模型意见——那些是任务的产物，只在迷你版。
-- 首次打开要读位姿列（LeRobot parquet / mcap 小文件），TOS 上的大数据集有几秒延迟；缺省按需生成，数据集预检成功后由 Daemon 在后台预生成前 3 条（§10 第一行；
-  预检是 CLI 子进程，缓存是 Daemon 的，CLI 不写 Daemon 的缓存）。
+- 首次打开要读位姿列（LeRobot parquet / mcap 小文件），TOS 上的大数据集有几秒延迟；缺省按需生成（§10 第一行）。2026-10-12 需求方：换条时生成会让页面卡住，
+  改成换条只查、用户点「生成轨迹」才生成（C4 7.2.0 `generate=false` / 404 `not_made`），预检后预生成前 3 条也去掉了（见 §9.5 末尾）。
 
 ### 5.2 迷你版（任务级，现状）
 
@@ -455,8 +455,8 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   整份读；机械臂按声明逐条生成（LeRobot、mcap，`declared.Generated` / `GeneratedMcap`）；原始手持夹爪 mcap 逐条从录制推出（声明里的手持标定，没有就用内置 DEMO 标定）。
   在可视化的构建池里做（`Builder.ensure`，做的时候 202），落可视化磁盘缓存 `eef/<登记、指纹、声明版本、来源>/ep<N>.json`；生成不出的条目留一个小的
   `{"unsupported": 轨迹来源}`，接口回 404 `not_generated`，原因取各路相机的原因（如「这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback」）。
-  做包的任务顺带按缺省插值间隔算好图层（内存缓存），预生成过的条目第一次打开就直接出图。预生成：登记、重新预检、改声明之后（`refresh_preflight`）
-  在后台做前 3 条（`warm_overlay`）。图层与任务级同一套（`overlay.episode_overlay`），全部 `in_model = false`；`unavailable_cameras` 是声明里算不出的相机，
+  做包的任务顺带按缺省插值间隔算好图层（内存缓存），生成过的条目再打开就直接出图。（原先登记、重新预检、改声明之后在后台预生成前 3 条
+  `warm_overlay`，2026-10-12 随按需生成去掉。）图层与任务级同一套（`overlay.episode_overlay`），全部 `in_model = false`；`unavailable_cameras` 是声明里算不出的相机，
   已经画上的不列。
 - **手持夹爪的识别**（`viz/declaration._handheld`）：登记的预检说 EEF 的轨迹「从录制推出」（`trajectory_source.kind = mcap_derive`，读取器认出了夹爪的 topic），
   或映射以内置 UMI 为底（声明的，或声明只到映射这一层时登记自己的）。F5.23 原先拿预检的 `dataset.profile` 比 `umi_das`——那是数据集语义档案，永远对不上——
@@ -483,6 +483,12 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   右侧「叠加」一节写「腕部相机的标记检验不了本手的位姿（本手在画面里不动），看自运动一致性」；ep1（这条录制没有 camera_info，内置标定不带内参兜底）
   在播放器上方写明原因。测试：`tests/viz/test_declaration.py`（按声明画、缓存、覆盖时的记录组、手持夹爪的识别）、`tests/viz/test_eef_overlay.py`
   （原始 DAS 录制、缓存命中不重读）、`tests/orchestr/test_episode_stream.py`（worker 释放判定器），前端 `VisualizePage`、`eefOverlay`、`sectionViews` 的用例。
+
+- **按需生成（2026-10-12，C4 7.2.0）**：需求方说切换 episode 时页面卡在「轨迹生成中」——做包在 Daemon 进程的构建池里跑，Python 计算拖慢同一进程的其它
+  请求。可视化页换条改为只查（`generate=false`，`eef_dataset.peek` 只看缓存与在做的任务，不起新任务）：做过的 200、在做的 202、没人要过的 404 `not_made`；
+  「轨迹」按钮一直在，能生成时菜单里有「生成轨迹」，点了才带 `generate=true` 做包。`not_generated` 的原因改短，原因相同的相机合在一起
+  （`_why`；手持夹爪缺内参的原因改为「缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback」，缓存里的旧说法照新的写），
+  前端放进播放器顶栏下的黄底提示条。预检后预生成前 3 条（`warm_overlay`）去掉。
 
 ### 9.6 F5.26 落地记录（2026-10-10）
 

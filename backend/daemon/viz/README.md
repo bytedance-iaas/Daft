@@ -19,7 +19,7 @@
 | `media.py` | 磁盘缓存（`CURATOR_VIZ_CACHE_DIR`，LRU，上限 `CURATOR_VIZ_CACHE_GB`；第一次扫描时删掉一小时以前的 `*.part`；删登记时删它当前指纹下的产物）、转码任务池（子进程 `python -m curation.viz.transcode`，`CURATOR_VIZ_TRANSCODE_WORKERS` 路，不占质检的 CPU 名额池；到点不出声的子进程也杀，Daemon 关停时杀掉在跑的）、带 Range 的本地文件应答 |
 | `service.py` | 按格式挑读取器、内存缓存（按指纹）、相机地址（直连预签名 / Daemon 路由 / 帧包 / 转码兜底）、外部标注文件的解析；mcap 的探测、映射的校验与保存、模版库 |
 | `eef_overlay.py` | EEF 模型意见的标记（设计 20，C4 2.6.0 `EefOverlay`）：读任务冻结的 trajectory.json（运行目录 `inputs/` 的副本，工作目录清理过先取回，再不行用上传件），只解析一条 episode，用内核 `eef_consistency/overlay.py` 算每帧图层，按 `media.uri` / `topic` 对上 `VizEpisode` 的相机；手持夹爪的位姿缺测按 `max_gap_ms`（缺省 3 个样本间隔，C4 4.4.0）补上再画，`interpolation` 说补了多少；没传 trajectory.json 的手持夹爪任务读质检推出的单条轨迹包（`checks/eef_video_consistency/trajectory/`，设计 22 §5.4），还没推出时 404 `not_derived`；按任务、文件、episode 与间隔缓存在内存，不落盘 |
-| `eef_dataset.py` | 数据集级的 EEF 标记（设计 25 §5，F5.25，C4 5.3.0）：登记的数据集按自己的记录与声明出轨迹（与声明抽屉同一个判断：机械臂按声明逐条生成，原始手持夹爪 mcap 逐条从录制推出，UMI 会话与数据集自带的 trajectory.json 整份读），在构建池里做、落磁盘缓存 `eef/<登记、指纹、声明版本、来源>/`，做的时候 202；顺带按缺省间隔算好图层放内存缓存；登记、重新预检、改声明后预生成前 3 条（`warm`）；缓存里的包按 inode 认、读时不逐帧校验 Schema。上传件覆盖任务的轨迹时，`record_layers` 用任务冻结的声明画数据集记录的虚线组（`record`，缓存在 `eef-record/`） |
+| `eef_dataset.py` | 数据集级的 EEF 标记（设计 25 §5，F5.25，C4 5.3.0）：登记的数据集按自己的记录与声明出轨迹（与声明抽屉同一个判断：机械臂按声明逐条生成，原始手持夹爪 mcap 逐条从录制推出，UMI 会话与数据集自带的 trajectory.json 整份读），在构建池里做、落磁盘缓存 `eef/<登记、指纹、声明版本、来源>/`，做的时候 202；`generate=false` 只查不做（`peek`，没人要过的 404 `not_made`，可视化页换条时用，2026-10-12）；顺带按缺省间隔算好图层放内存缓存；缓存里的包按 inode 认、读时不逐帧校验 Schema。上传件覆盖任务的轨迹时，`record_layers` 用任务冻结的声明画数据集记录的虚线组（`record`，缓存在 `eef-record/`） |
 | `../routes/viz.py` | 路由：数据集级的模型、episode 列表、元数据预览、episode、曲线、相机 `.mp4|.frames|.json`、外部标注、映射；探测与模版库；任务级的模型、episode、曲线、帧包（任务级的 `.mp4` 在 `routes/results.py`） |
 
 内核（`backend/curation/viz/`）：`lerobot_info.py`（features、names 的几种写法、相机编码与 `needs_transcode`、RFC 6381 编码串）、`groups.py`（曲线分组 §5.3）、
@@ -263,7 +263,8 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `trajectory_source.kind` 是 `generate`。把位姿列写成 `observation.state.nope` 再 PUT 回 400，`details.errors` 是 `declaration.semantics.pose.key`。
     建一个只勾 EEF、不传 trajectory.json 的任务：运行目录 `inputs/declaration.json` 是第 1 版，`checks/eef_video_consistency/trajectory/episode_*.json` 逐条生成。
 27. **数据集级 EEF 叠加（设计 25 §5，F5.25）**：接着上一步（`eef_ds2_lr3` 的声明已确认）：
-    `curl -s -o /dev/null -w '%{http_code}\n' $B/datasets/$D/episodes/0/eef-overlay` 第一次可能是 202（轨迹包在做，`VizMediaPending`；改声明后的前 3 条已在后台做过），
+    `curl -s -o /dev/null -w '%{http_code}\n' "$B/datasets/$D/episodes/0/eef-overlay?generate=false"` 是 404 `not_made`（只查不做，什么也没生成）；
+    `curl -s -o /dev/null -w '%{http_code}\n' $B/datasets/$D/episodes/0/eef-overlay` 第一次是 202（轨迹包在做，`VizMediaPending`），
     再请求是 200：`curl -s $B/datasets/$D/episodes/0/eef-overlay | jq '{task_id, dataset_id, trajectory, unavailable: .unavailable_cameras, cams: [.cameras[] | {camera_id, viz_camera, mount, layers: [.layers[].id]}]}'`
     是 `task_id: null`、`trajectory: {kind: generate, declaration_version: 1}`、两路 `fixed_external` 相机，图层有 `point`、`finger_axis`、`axis_x/y/z`、`axis`、
     `trail_past`、`trail_future`，没有观测与残差，`in_model` 全是 false；和上一步那个任务的 `$B/tasks/$T/episodes/0/eef-overlay` 逐层 `frames`、`times_s` 相同。
