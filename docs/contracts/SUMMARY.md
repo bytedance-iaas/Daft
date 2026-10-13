@@ -1,7 +1,7 @@
 # 契约要点与冻结时的取舍（2026-09-22，1.5.2 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
-第一节的表按现状写（2026-10-12：注册表 7.1、C2 只有 2.0、C4 7.2.0）；第二节起按时间记各次修订，后来的修订常常改掉前面的做法，
+第一节的表按现状写（2026-10-12：注册表 7.1、C2 只有 2.0、C4 7.3.0）；第二节起按时间记各次修订，后来的修订常常改掉前面的做法，
 读历史小节时以最后一节（第二十二节）和契约文件为准。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
 
@@ -12,7 +12,7 @@
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一段跑、能报哪些细码、覆盖哪些检测项、有哪些参数 | 注册表 7.1（D93，2026-10-11；7.0 是 D90）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷（随任务成败判定的请求作答）；细码与覆盖指向分类表 2.0；两块：CPU 块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep），VLM 块 vlm，全部逐条交接，没有全量段和补描述段（无标注条目不判成败，无法评估原因 `no_task_text`）；每个细码有缺省级别 blocking / review / info，review 级写明裁决线（`task_verdict`、`reject_appeal`、`eef_check`、`integrity_check`），blocking 级写明可否复议；`depends_on` 3.2 起为空；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（17 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；记录只有 2.0（D90）：`status` 是 `ok / error`（`error` 必须带出错明细），加发现、评估过与评估不了的检测项；判决由 `aggregate` 按任务策略算：`keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，7.2.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，7.3.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 C6 分类表、C7 数据集声明是后来加的，见第十五、十六节与 `README.md` 的契约表。
@@ -532,3 +532,9 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **C4 → 7.2.0（只加）**：`GET /datasets/{id}/episodes/{index}/eef-overlay` 多可选参数 `generate`（缺省 true，行为不变）；`generate=false` 只查不做：
   做过的 200、在做的 202、没人要过的 404 `not_made`。控制台换条时只查，用户点「生成轨迹」才做。`not_generated` 的说明更短，原因相同的相机合在一起；
   登记后不再预生成前几条。中英变更记录。C1、C2、C3 不变。
+
+## 二十五、HuggingFace 缓存桶列出平台能读的全部格式（2026-10-12）
+
+- **C4 → 7.3.0（只加）**：`BrowsedDataset.format_hint` 多 `umi_session`；`GET /datasets/browse?source=public` 不再只列 LeRobot，按桶根清单
+  `dataset_files.json` 的文件列表认 LeRobot v2 / v3、Lance、mcap、UMI 原始会话，镜像仓库里能读的子目录也列（`<仓库>/<路径>`）。
+  实现在 B 类的 `curation/public_formats.py`，A 类的 `ingest/public_catalog.py` 不动（它的配置与匿名桶登记照用）。C1、C2、C3 不变。

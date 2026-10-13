@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.2.0
+  version: 7.3.0
   description: |
     ## Overview
 
@@ -254,6 +254,10 @@ info:
     says why in fewer words, cameras with the same reason named together; a registration no longer has its first
     episodes' trajectories made ahead.
 
+    **7.3.0** (2026-10-12): `GET /datasets/browse?source=public` lists the HuggingFace cache bucket's datasets in every
+    format the platform reads - LeRobot, Lance, mcap and raw UMI sessions - not only LeRobot, including readable
+    directories inside a mirrored repository (`<repository>/<path>`); `format_hint` adds `umi_session`.
+
   x-description-zh: |
     ## 概览
 
@@ -411,6 +415,9 @@ info:
     **7.2.0**（2026-10-12）：`GET /datasets/{id}/episodes/{index}/eef-overlay` 多一个参数 `generate=false`，只查不生成：这一条的轨迹
     既没生成过、也不在生成中时回 404 `not_made`，不会因此开始生成。控制台换条时只查，用户要看时才生成。生成不了轨迹的条目，原因写得更短，
     原因相同的相机合在一起说；登记数据集后不再预先生成前几条的轨迹。
+
+    **7.3.0**（2026-10-12）：`GET /datasets/browse?source=public` 列出 HuggingFace 缓存桶里平台能读的全部格式——LeRobot、Lance、mcap
+    与 UMI 原始会话，不再只有 LeRobot；镜像仓库里能读的子目录也列出来（名字是 `<仓库>/<路径>`）；`format_hint` 多 `umi_session`。
 
 servers:
   - url: "{base}/api/v1"
@@ -943,6 +950,10 @@ paths:
       tags: [datasets]
       operationId: browseDatasets
       summary: List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register
+      description: |
+        `source=public` lists the HuggingFace cache bucket's datasets in every format the platform reads, told from the
+        bucket's file list: LeRobot v2 / v3, Lance, mcap and raw UMI sessions (7.3.0; before, LeRobot only). A
+        readable directory inside a mirrored repository is listed too, named `<repository>/<path>`.
       parameters:
         - $ref: "#/components/parameters/Source"
         - name: uri
@@ -4111,7 +4122,7 @@ components:
       properties:
         name: {type: string}
         uri: {type: string}
-        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, rrd, unknown]}
+        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, umi_session, rrd, unknown]}
         episodes: {type: [integer, "null"]}
     DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, umi_session, unsupported]}
     DatasetItemFields:
