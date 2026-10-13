@@ -130,7 +130,8 @@ def test_crossed_arms_are_the_episodes_identity():
     assert d["identity"] == "consistent" and d["arms"]["identity"] == "consistent"
     d = json.loads(CD.struct_from_task(_task({"a": _review(_check(view=_view(matches="unknown")))}))["detail"])
     assert d["identity"] == "unknown"
-    assert d["arms"] == {"identity": "unknown", "crossed": [], "note": "", "basis": "", "readings": {}}
+    assert d["arms"] == {"identity": "unknown", "crossed": [], "note": "", "basis": "",
+                         "reason": "", "readings": {}}
 
 
 def test_the_dataset_says_how_many_arms_it_has():

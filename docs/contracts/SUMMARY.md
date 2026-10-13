@@ -532,6 +532,8 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 需求方 16 项清单里的视觉遮挡（IMG-8）与左右手 / 机位身份一致（MV-2）此前没有模块覆盖。两项都只看画面就能判，
 所以并进任务成败判定那一次请求里每路相机的 `camera_check`，不增加模型调用。
 
+- **C1 7.3**：评估不了的原因多一个 `measurement_inconclusive`（量过了，证据不够下结论）——MV-2 的左右臂配对是实测，
+  判不出来时不该记成「模型没答」（模型根本没被问）。只是新增一项，旧记录照旧。
 - **C1 7.2**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，严重度 medium，按机位），
   明细表加 `occlusion`、`occlusion_coverage`、`occlusion_region`、`occlusion_duration_s`、`view_matches_name`、`identity` 六列；
   `covers` 相应多 IMG-8、MV-2。其他模块不变。

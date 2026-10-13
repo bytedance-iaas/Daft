@@ -98,7 +98,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "7.2"
+REGISTRY_VERSION = "7.3"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -144,6 +144,7 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("no_action", "没有动作"),
     ("format_unsupported_by_module", "本模块不支持这种数据格式"),
     ("model_no_answer", "模型没有回答这一项"),
+    ("measurement_inconclusive", "量过了，但证据不够下结论"),
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
     ("no_task_text", "没有任务标注，没有做任务成败判定"),

@@ -480,7 +480,9 @@ def _camera_defects(passed, score, d, p) -> Derived:
         reason = "video_undecodable" if d.get("undecodable") else "model_no_answer"     # D93
         for _, item, _ in _CAMERA_ITEMS:
             out.cannot(item, reason, why[:200])
-        out.cannot("MV-2", reason, why[:200])
+        # the arm pairing is this module's own measurement: it stands even when the request that
+        # carried the picture questions brought nothing back
+        _camera_identity(out, m, d, {})
         return out
     for key, item, name in _CAMERA_ITEMS:
         if items.get(key, "unknown") == "unknown":
@@ -520,12 +522,21 @@ def _camera_defects(passed, score, d, p) -> Derived:
                     severity=CAMERA_LEVELS[level], scope={"camera": short_camera(cam)},
                     time_s=(float(times[0][0]), float(times[0][1])) if times else None,
                     readings={"level": level, "times": times[:8], **extra})
-    # the camera identity: what the picture says the camera is, against what the dataset declares,
-    # and which arm each camera measurably rides - the reading no single camera can give (MV-2)
+    _camera_identity(out, m, d, per)
+    return out
+
+
+def _camera_identity(out: Derived, m: str, d: dict, per: dict) -> None:
+    """MV-2: which arm each camera measurably rides (the reading no single camera can give) and what
+    each camera's own picture says it is, against what the dataset declares for it."""
     arms = d.get("arms") if isinstance(d.get("arms"), dict) else {}
     if str(d.get("identity") or "unknown") == "unknown":
         why = str(arms.get("note") or "").strip()
-        out.cannot("MV-2", "model_no_answer",
+        # which half was missing: the model's mount comparison, or the measurement that was taken
+        # and did not settle it. Never "the model did not answer" about a reading nobody asked it for.
+        cause = str(arms.get("reason") or "") or ("video_undecodable" if d.get("undecodable")
+                                                  else "model_no_answer")
+        out.cannot("MV-2", cause,
                    "没有一路相机的画面被对照过数据集的说明，也没有测出左右臂是否串线"
                    + (f"（{why[:120]}）" if why else ""))
     if arms.get("identity") == "crossed":
@@ -538,7 +549,7 @@ def _camera_defects(passed, score, d, p) -> Derived:
                 readings={"arms": "crossed", "crossed": crossed,
                           "basis": arms.get("basis") or None,
                           "margin": (arms.get("readings") or {}).get("margin")})
-    for cam, e in sorted(per.items()):
+    for cam, e in sorted((per or {}).items()):
         view = (e or {}).get("view") or {}
         what = "、".join(x for x in (_VIEW_KIND.get(view.get("kind")), _VIEW_ARM.get(view.get("arm"))) if x)
         note = str(view.get("note") or "").strip()
@@ -552,7 +563,6 @@ def _camera_defects(passed, score, d, p) -> Derived:
                                    + (f"：{note[:120]}" if note else ""),
                     severity="medium", scope={"camera": short_camera(cam)},
                     readings={"kind": view.get("kind"), "arm": view.get("arm")})
-    return out
 
 
 @deriver("eef_video_consistency")

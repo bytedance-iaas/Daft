@@ -1,5 +1,5 @@
 {
- "registry_version": "7.2",
+ "registry_version": "7.3",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -73,6 +73,10 @@
   {
    "id": "model_no_answer",
    "title_zh": "模型没有回答这一项"
+  },
+  {
+   "id": "measurement_inconclusive",
+   "title_zh": "量过了，但证据不够下结论"
   },
   {
    "id": "single_description",

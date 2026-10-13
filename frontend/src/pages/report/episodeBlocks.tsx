@@ -555,7 +555,10 @@ interface CdArms {
 function cdArmsLine(arms: CdArms | undefined): string {
   const K = E().cameraDefects;
   if (arms?.identity !== 'crossed') return '';
-  return K.armsCrossed((arms.crossed ?? []).join('、')) + (arms.note ? `：${arms.note}` : '');
+  // the measurement's own words name each camera and the arm it rides, which is more than the list
+  // of crossed cameras; the list stands in only when there are no words
+  const crossed = (arms.crossed ?? []).map((c) => c.split('.').pop() ?? c);
+  return arms.note ? `${K.armsCrossed('')}：${arms.note}` : K.armsCrossed(crossed.join('、'));
 }
 
 function cdIdentityLine(view: CdView | undefined): string {

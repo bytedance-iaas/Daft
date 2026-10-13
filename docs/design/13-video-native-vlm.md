@@ -131,7 +131,8 @@ video:
 - **只出结果，不影响判决**：`affects_dataset_verdict=False`，记录永远是 `passed=score=null`（`abstain`），
   不进 keep / drop / held，不提复核问题。注册表 2.0（设计 17，2026-10-01）去掉了这个字段：细码 `glitch`（IMG-5）、
   `shake`（IMG-6）、`contamination`（IMG-7）、`occlusion`（IMG-8）、`identity`（MV-2）默认级别都是 info，效果相同；它骑在任务成败判定的请求上（`rides_on`），从不单独待补跑，
-  模型没回答（unknown）在记录 2.0 里是 unassessable `model_no_answer`。
+  模型没回答（unknown）在记录 2.0 里是 unassessable `model_no_answer`；MV-2 的左右臂配对是实测，量不出结论记
+  `measurement_inconclusive`、数据集没有可比的两条臂记 `not_applicable`（注册表 7.3），不记成「模型没答」。
 - **解析永不失败**：缺字段、档位写错、时间段越界都只记进 `problems`，三项按 `unknown` 落盘，绝不触发
   格式修复重试，也不影响 `verdict`、`completion` 和 `evidence` 的校验。
 - **写坏了也只赔自己**：整份回答解析不了时，先按花括号配对把 `camera_check` 这一个字段整块剪掉再解析

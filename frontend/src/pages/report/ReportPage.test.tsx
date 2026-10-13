@@ -460,7 +460,7 @@ describe('质检报告 (07 §5)', () => {
     expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
     expect(body).toHaveTextContent('机位身份与命名不符');
     // the crossing no single camera can show, measured from the recorded motion (registry 7.2)
-    expect(body).toHaveTextContent('左右臂、机位身份串线：robot0_sensor_camera0：只有右臂在 4–6 秒动');
+    expect(body).toHaveTextContent('左右臂、机位身份串线：只有右臂在 4–6 秒动');
     expect(body).toHaveTextContent('robot0_sensor_camera0：画面与命名不符（画面是固定机位、单臂）：scene never moves with the arm');
     expect(body).toHaveTextContent('建议项，不影响判决');
     expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check|matches_name/);

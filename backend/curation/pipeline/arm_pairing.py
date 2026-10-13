@@ -242,16 +242,18 @@ def declared_arm(camera: str, said: dict, arms: list[str]) -> str | None:
 
 
 def pair(video: dict, action, claim: dict | None, *, fps: float = 20.0) -> dict:
-    """``{identity, crossed, note, basis, readings}`` for one episode; never raises.
+    """``{identity, crossed, note, basis, reason, readings}`` for one episode; never raises.
 
     ``video`` is ``{camera: {"path", "from_ts", "to_ts"}}`` as the stage holds it, ``action`` the
     episode's recorded action rows, ``claim`` what the dataset says about itself
     (:mod:`curation.pipeline.dataset_claim`). Everything that cannot be measured - one arm, one
-    camera, no declared owner, two hands that always move together - answers ``unknown`` with the
-    reason in ``note``, because MV-2 is a comparison and a missing half is not a verdict.
+    camera, no declared owner, two hands that always move together - answers ``unknown``, with the
+    words in ``note`` and the registry's reason code in ``reason`` (``not_applicable`` when the
+    dataset gives nothing to measure, ``measurement_inconclusive`` when it was measured and the
+    evidence did not settle it), because MV-2 is a comparison and a missing half is not a verdict.
     """
     out: dict = {"identity": "unknown", "crossed": [], "note": "", "basis": "motion_pairing",
-                 "readings": {}}
+                 "reason": "not_applicable", "readings": {}}
     claim = claim or {}
     arms = [a for a in (claim.get("arms") or []) if isinstance(a, str)]
     channels = {a: (claim.get("channels") or {}).get(a) or [] for a in arms}
@@ -283,15 +285,18 @@ def pair(video: dict, action, claim: dict | None, *, fps: float = 20.0) -> dict:
         paired, margin = match(table, arms) if table else ({}, 0.0)
     except Exception as exc:  # noqa: BLE001 - a reading that could not be taken, not the stage's error
         out["note"] = f"读不出画面运动或各臂速度：{type(exc).__name__}: {exc}"[:200]
+        out["reason"] = "measurement_inconclusive"
         return out
     out["readings"] = {"hz": HZ, "declared": {c: declared[c] for c in mine}, "moments": counts,
                        "moves_with": table, "margin": margin, "paired": paired}
+    out["reason"] = "measurement_inconclusive"
     if not table:
         out["note"] = "没有一刻是只有一条臂在动，两条臂的画面分不开"
         return out
     if not paired or margin < MIN_MARGIN:
         out["note"] = "几种对应关系的证据一样强，判不出哪路相机跟着哪条臂"
         return out
+    out["reason"] = ""
     crossed = sorted(c for c, arm in paired.items() if declared.get(c) and arm != declared[c])
     if crossed:
         # the note says which camera rides what; the headline is the report's and the console's

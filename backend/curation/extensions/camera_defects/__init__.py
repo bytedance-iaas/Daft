@@ -132,7 +132,7 @@ def _arms_of(raw: dict | None) -> dict:
     The measurement is the module's own (``basis``, with its numbers in ``readings``), not an
     answer from the model, and an episode where nothing could be measured reads ``unknown`` here.
     """
-    out = {"identity": UNKNOWN, "crossed": [], "note": "", "basis": "", "readings": {}}
+    out = {"identity": UNKNOWN, "crossed": [], "note": "", "basis": "", "reason": "", "readings": {}}
     if not isinstance(raw, dict):
         return out
     identity = str(raw.get("identity") or UNKNOWN)
@@ -140,6 +140,7 @@ def _arms_of(raw: dict | None) -> dict:
     out["crossed"] = [str(c) for c in (raw.get("crossed") or []) if isinstance(c, str)]
     out["note"] = str(raw.get("note") or "")[:300]
     out["basis"] = str(raw.get("basis") or "")
+    out["reason"] = str(raw.get("reason") or "")
     out["readings"] = raw.get("readings") if isinstance(raw.get("readings"), dict) else {}
     return out
 

@@ -241,6 +241,17 @@ CASES = [
     ("camera_defects", None, None, CAM_ARMS, {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
     ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(),
      {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
+    # the pairing is measured, so a crossing stands even when the request brought no picture answers
+    ("camera_defects", None, None, {"reason": "判定请求没有按相机作答", "identity": "inconsistent",
+      "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+               "basis": "motion_pairing", "note": "left_wrist 的画面跟着 right 动（余量 1.0）"}},
+     {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    # and an unknown says which half was missing: measured but inconclusive, never "the model did not answer"
+    ("camera_defects", None, None, {"items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+      "per_camera": {"observation.images.left_wrist": {"answered": True}},
+      "arms": {"identity": "unknown", "reason": "measurement_inconclusive",
+               "note": "几种对应关系的证据一样强"}},
+     set(), {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
     # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
     ("eef_video_consistency", True, None, EEF_RECORD, {"inconsistent", "record_mismatch"}, {"AV-1"}),

@@ -39,7 +39,7 @@ describe('unwrap and the one Error body (doc 03 §1)', () => {
   it('returns data for 2xx', async () => {
     const reg = await unwrap(api().GET('/modules'));
     expect(reg.modules.length).toBe(10);                                                        // + data_integrity (design doc 14), camera_defects (registry 1.14), - the skill profile
-    expect(reg.registry_version).toBe('7.2');                                                   // 7.1 decode_failed and skips (D92-D94); 7.2 occlusion with its share, place and length, and the arms across cameras
+    expect(reg.registry_version).toBe('7.3');                                                   // 7.1 decode_failed and skips (D92-D94); 7.2 occlusion with its share, place and length, and the camera identity; 7.3 a measured reading that did not settle it
     expect(reg.modules.filter((m) => m.codes.some((c) => c.level === 'blocking')).map((m) => m.id)).not.toContain('eef_video_consistency'); // D81: EEF gives opinions, rejects nothing
     expect(reg.modules.find((m) => m.id === 'camera_defects')?.rides_on).toBe('task_success');
   });
