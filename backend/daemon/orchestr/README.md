@@ -27,7 +27,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |
 | `start.py` | 启动前：三项检查（D30）、数据集指纹核对（D37）、固化输入并入队 |
 | `datasets.py` | 数据集登记、核对（`curation snapshot` 全量清单，按内容寻址存在 `<data>/datasets/listings/`）、重新预检 |
-| `browse.py` | `GET /datasets/browse`、`GET /datasets/episodes`（游标分页、相机的预签名地址） |
+| `browse.py` | `GET /datasets/browse`、`GET /datasets/episodes`（游标分页、相机的预签名地址）；HuggingFace 缓存桶列出平台能读的全部格式（`curation/public_formats.py`，按桶根清单的文件列表认 LeRobot、Lance、mcap、UMI 原始会话，子目录也算） |
 | `delivery.py` | 交付目录：TOS（输出密钥）或本地替身；批次名分配、增量同步、`latest`、每个交付目录一把发布锁 |
 | `workdir.py` | 任务工作目录 `CURATOR_WORK_DIR/<task_id>/` 与编排自己的 `.orchestr/`（启动标记、各次运行的日志本、同步记录、清理 / 取回 / 清理交付产物的标记） |
 | `janitor.py` / `backfill.py` | 终态 7 天后清理本地工作目录；子任务或读结果时从交付目录取回（大文件不取回） |
@@ -177,6 +177,10 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
    `details` 里 `meta_changed: true`、`modified: 1`；`c -X POST $B/tasks/$T2/repreflight` 返回 `compatible: true`，任务进入 `queued`。
 7. **浏览与 episode 列表**：`c "$B/datasets/browse?source=local&uri=$D/inputs"` 列出 `mini`；
    `c "$B/datasets/episodes?source=local&uri=$D/inputs/mini&limit=3"` 三条，`has_more: true`，带 `next_cursor` 接着翻。
+   HuggingFace 缓存桶：起 Daemon 前 `export CURATION_CONFIG=<站点文件>`，文件里写 `public_datasets: {bucket: ai-infra, region: cn-beijing}`，
+   `c "$B/datasets/browse?source=public&limit=50" | jq -r '.items[] | "\(.format_hint) \(.name)"'` 列出平台能读的全部格式（2026-10-12 实测 11 个）：
+   LeRobot 之外有 `umi_session Physical-AI-UMI-transfer-objects-from-cups`、`mcap Physical-AI-UMI-transfer-objects-from-cups/mcap`，
+   子目录里的 `configinc/HABIT/full`、`configinc/HABIT/sample`。
 8. **清理与取回**：停掉 Daemon，加上 `CURATOR_WORK_RETENTION_DAYS=0.0001`（约 9 秒）重启，一分钟后 `ls -a $D/data/runs/$T`
    只剩 `.orchestr`，Daemon 日志里有 `janitor: task … cleaned`；`c $B/tasks/$T/report` 照样 200，工作目录从交付目录取回了，
    但大文件不取回：`ls $D/data/runs/$T/checks/video_action_sync` 里没有 `curves/`，同步曲线还在交付目录

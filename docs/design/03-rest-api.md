@@ -58,7 +58,7 @@
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
 | POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
 | POST | `/api/v1/datasets/{id}/sign` | ReRun web viewer 读这个登记的数据集：用登记绑定的访问密钥逐项签 S3 预签名地址（读对象、列一页），只签数据集前缀之内的读操作（设计 15，D55，§7.1） |
-| GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名） |
+| GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名；7.3.0 起列出平台能读的全部格式——LeRobot、Lance、mcap、UMI 原始会话，按桶根清单的文件列表认，镜像仓库里能读的子目录也列，名字是 `<仓库>/<路径>`，`curation/public_formats.py`） |
 | GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选；给 `dataset_id`，或来源 + 地址，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
 | POST | `/api/v1/uploads` | 上传模块参数里的输入文件（注册表 1.5 的 `format: upload`，现为 EEF 的 trajectory.json 与观测种子），上传即校验、错误定位到样本 / 帧 / 字段，返回句柄 `upload:<id>` 与 sha256（12 篇 §11.1，F5.5）；`kind=viz_annotations` 是数据集的外部标注文件（JSON，或以 `application/zip` 发的每条 episode 一个 JSON 的 zip，设计 18 §4.5） |
