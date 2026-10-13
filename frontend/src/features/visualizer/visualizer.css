@@ -108,8 +108,12 @@
 .vz-side-head .spacer { flex: 1; }
 .vz-side-head .x { border: 0; background: none; color: var(--c-text-3); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
 .vz-side-body { flex: 1; overflow: auto; padding: 8px 14px 12px; font-size: 12px; line-height: 1.5; }
-.vz-side .kv { display: grid; grid-template-columns: 76px 1fr; gap: 0 var(--kv-gap); padding: 3px 0; border-bottom: 1px solid var(--color-fill-2); }
-.vz-side .kv .k { color: var(--c-text-3); }
+/* a section's rows share a grid: the key column is as wide as its longest key (up to 84px with the gap: six characters, longer ones wrap),
+   12px to the value - tighter than the site's 24px, the panel is dense (2026-10-12) */
+.vz-side .kvs { display: grid; grid-template-columns: fit-content(84px) minmax(0, 1fr); }
+.vz-side .kv { display: contents; }
+.vz-side .kv .k, .vz-side .kv .v { padding: 3px 0; border-bottom: 1px solid var(--color-fill-2); }
+.vz-side .kv .k { padding-right: 12px; color: var(--c-text-3); }
 .vz-side .kv .v { color: var(--c-text-1); overflow-wrap: anywhere; }
 .vz-side .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
 .vz-side .sec { font-size: 12px; font-weight: 600; color: var(--c-text-2); margin: 10px 0 4px; }
