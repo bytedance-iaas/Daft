@@ -93,11 +93,9 @@ export function ownerOf(...names: (string | null | undefined)[]): string | null 
 
 /**
  * The smart template (2026-10-12): the grid is sized as before - every camera and at most two smart curve
- * groups - and its empty cells then take more smart groups. The groups are picked by turns among the robots
- * they belong to (`ownerOf`), so each robot gets one before any gets a second. With two robots or more that
- * each have a camera and a group, and each robot's cells fitting a row, every robot gets a row of its own:
- * its cameras, then its groups; what belongs to no such robot comes first when it holds the first camera,
- * else last. Otherwise the cameras come first and the groups after, in the dataset's order.
+ * groups - and its empty cells then take more smart groups: the cameras first, the groups after, in the
+ * dataset's order (the requester: more natural than a row per robot). When not every group fits, they are
+ * picked by turns among the robots they belong to (`ownerOf`), so each robot gets one before any gets a second.
  */
 function smartLayout(model: Pick<VizDataset, 'cameras' | 'streams'>, gridWidth: number): { cells: CellContent[]; shape: GridShape; overflow: number } {
   const cams = model.cameras.filter((c) => !c.hidden);
@@ -105,35 +103,20 @@ function smartLayout(model: Pick<VizDataset, 'cameras' | 'streams'>, gridWidth: 
   const base = cams.length + Math.min(SMART_CURVES, groups.length);
   const shape = shapeFor(base, smartColumns(gridWidth, base), base > SMALL_CELLS ? MAX_ROWS : SMALL_MAX);
   const total = shape.cols * shape.rows;
-  const camOwner = new Map(cams.map((c) => [c.key, ownerOf(c.key, c.source, c.name)]));
-  const groupOwner = new Map(groups.map((s) => [s.key, ownerOf(s.key, s.name, ...(s.sources ?? []))]));
-  const owners = [...new Set([...camOwner.values(), ...groupOwner.values()])].filter((o): o is string => o !== null);
-  // the groups by turns: a robot's first, the next robot's first, …; the ones no robot names take the last turn
+  const owner = new Map(groups.map((s) => [s.key, ownerOf(s.key, s.name, ...(s.sources ?? []))]));
+  const owners = [...new Set(owner.values())].filter((o): o is string => o !== null);
+  // by turns: a robot's first group, the next robot's first, …; the ones no robot names take the last turn
   const want = Math.min(groups.length, Math.max(Math.min(SMART_CURVES, groups.length), total - cams.length));
-  const queues = [...owners, null].map((o) => groups.filter((s) => groupOwner.get(s.key) === o));
+  const queues = [...owners, null].map((o) => groups.filter((s) => owner.get(s.key) === o));
   const picked = new Set<string>();
   for (let turn = 0; picked.size < want; turn++) for (const q of queues) if (turn < q.length && picked.size < want) picked.add(q[turn].key);
   const shownGroups = groups.filter((s) => picked.has(s.key));
   const shownCams = cams.slice(0, Math.max(0, total - shownGroups.length));
-  const overflow = cams.length - shownCams.length;
-  const video = (key: string): CellContent => ({ kind: 'video', key });
-  const curve = (key: string): CellContent => ({ kind: 'curve', key });
-  const rows = owners
-    .map((o) => ({
-      cams: shownCams.filter((c) => camOwner.get(c.key) === o).map((c) => c.key),
-      groups: shownGroups.filter((s) => groupOwner.get(s.key) === o).map((s) => s.key),
-    }))
-    .filter((r) => r.cams.length && r.groups.length);
-  if (rows.length >= 2 && rows.every((r) => r.cams.length + r.groups.length <= shape.cols)) {
-    const inRow = new Set(rows.flatMap((r) => [...r.cams, ...r.groups]));
-    const rest = [...shownCams.filter((c) => !inRow.has(c.key)).map((c) => video(c.key)), ...shownGroups.filter((s) => !inRow.has(s.key)).map((s) => curve(s.key))];
-    const restFirst = shownCams.length > 0 && !inRow.has(shownCams[0].key);
-    const pad = (cells: CellContent[]) => fitCells(cells, { cols: shape.cols, rows: Math.max(1, Math.ceil(cells.length / shape.cols)) });
-    const robotRows = rows.flatMap((r) => pad([...r.cams.map(video), ...r.groups.map(curve)]));
-    const cells = restFirst ? [...(rest.length ? pad(rest) : []), ...robotRows] : [...robotRows, ...rest];
-    if (cells.length <= total) return { cells: fitCells(cells, shape), shape, overflow };
-  }
-  return { cells: fitCells([...shownCams.map((c) => video(c.key)), ...shownGroups.map((s) => curve(s.key))], shape), shape, overflow };
+  return {
+    cells: fitCells([...shownCams.map((c): CellContent => ({ kind: 'video', key: c.key })), ...shownGroups.map((s): CellContent => ({ kind: 'curve', key: s.key }))], shape),
+    shape,
+    overflow: cams.length - shownCams.length,
+  };
 }
 
 /**

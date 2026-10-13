@@ -37,36 +37,34 @@ describe('vizLayout', () => {
       { kind: 'curve', key: 'right_arm' },
       { kind: 'curve', key: 'grippers' },                       // the cell left over takes the third group
     ]);
-    // the info panel squeezes the grid below 1000 px: two columns, three rows, now a row per arm with the
-    // head camera (the first) and the shared group above them
+    // the info panel squeezes the grid below 1000 px: two columns, three rows, the cameras still first
     const narrow = templateLayout('smart', MODEL, 900)!;
     expect(narrow.shape).toEqual({ cols: 2, rows: 3 });
-    expect(narrow.cells.map(k)).toEqual(['head', 'grippers', 'left_wrist', 'left_arm', 'right_wrist', 'right_arm']);
+    expect(narrow.cells.map(k)).toEqual(['head', 'left_wrist', 'right_wrist', 'left_arm', 'right_arm', 'grippers']);
     expect(smartColumns(999)).toBe(2);
   });
 
-  it('fills its empty cells and gives every robot a row of its own (UMI with two hands, 2026-10-12)', () => {
+  it('fills its empty cells, cameras first, picking the groups by turns among the robots (UMI with two hands, 2026-10-12)', () => {
     const umiCam = (r: number) => ({ ...cam(`robot${r}_sensor_camera0_compressed`), name: `robot${r} camera0`, source: `/robot${r}/sensor/camera0/compressed` });
     const umiGroup = (r: number, what: string, topic: string) => ({ ...stream(`robot${r}_${what}`), name: `robot${r} ${what}`, sources: [`/robot${r}/${topic}`] });
     const umi = {
       cameras: [umiCam(0), umiCam(1)],
       streams: [umiGroup(0, 'vio_eef_pose', 'vio/eef_pose'), umiGroup(0, 'sensor_magnetic_encoder', 'sensor/magnetic_encoder'), umiGroup(1, 'vio_eef_pose', 'vio/eef_pose'), umiGroup(1, 'sensor_magnetic_encoder', 'sensor/magnetic_encoder')],
     };
+    // before: the two cameras, robot0's two groups and two empty cells
     const wide = templateLayout('smart', umi, 1200)!;
     expect(wide.shape).toEqual({ cols: 3, rows: 2 });
     expect(wide.cells.map(k)).toEqual([
-      'robot0_sensor_camera0_compressed', 'robot0_vio_eef_pose', 'robot0_sensor_magnetic_encoder',
-      'robot1_sensor_camera0_compressed', 'robot1_vio_eef_pose', 'robot1_sensor_magnetic_encoder',
+      'robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'robot0_vio_eef_pose',
+      'robot0_sensor_magnetic_encoder', 'robot1_vio_eef_pose', 'robot1_sensor_magnetic_encoder',
     ]);
-    // two columns: one group each, the first of every hand before a second of any
+    // two columns hold two groups: each hand's first, not robot0's two
     const narrow = templateLayout('smart', umi, 900)!;
     expect(narrow.shape).toEqual({ cols: 2, rows: 2 });
-    expect(narrow.cells.map(k)).toEqual(['robot0_sensor_camera0_compressed', 'robot0_vio_eef_pose', 'robot1_sensor_camera0_compressed', 'robot1_vio_eef_pose']);
-    // a third camera no hand owns: the rows no longer fit, so cameras first and the groups by turns after
+    expect(narrow.cells.map(k)).toEqual(['robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'robot0_vio_eef_pose', 'robot1_vio_eef_pose']);
+    // a third camera: room for three groups, the third is robot0's second
     const top = { ...umi, cameras: [...umi.cameras, { ...cam('top'), source: '/camera/top' }] };
-    const three = templateLayout('smart', top, 1200)!;
-    expect(three.shape).toEqual({ cols: 3, rows: 2 });
-    expect(three.cells.map(k)).toEqual([
+    expect(templateLayout('smart', top, 1200)!.cells.map(k)).toEqual([
       'robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'top',
       'robot0_vio_eef_pose', 'robot0_sensor_magnetic_encoder', 'robot1_vio_eef_pose',
     ]);

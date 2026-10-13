@@ -248,9 +248,10 @@ ep 4、9、13、16、22、29、33、36、40、47，其中 ep 4、9、13、16 已
 15. **相机多于 9 路（设计 19 §2，F14.1，要真 Daemon）**：在 `backend/` 下用 `../.venv/bin/python scripts/make_cams_dataset.py $L/inputs/cams_10 --cameras 10 --fps 10 --frames 200` 与
     `… $L/inputs/cams_16 --cameras 16 --fps 30 --frames 300` 造两份（`L` 是 `curator-daemon-local` 的本地数据根，每帧烧着相机名、帧号与时刻），登记成本地数据集。
     可视化页选 cams_10：左栏展开时网格是 3 × 4（格子数下拉写「3 × 4」），十路相机在前、两组曲线在最后一行；点左栏右上角的收起图标收起左栏，网格宽过 1240 px 后变 4 × 3，相机色点十种颜色各不相同。
-    智能布局补满空格、按机器人分行（2026-10-12）：模拟世界里 umi_640_notask 是 3 × 2，左右腕两路相机、left 与 right 两组之外第三组 gripper 补进了原来空着的格子（只空一格）；
-    接真 Daemon（`curator-daemon-eef`，数据根里的 umi_das 是双手 DAS mcap）看 umi_das：网格宽 ≥ 1000 px 时 3 × 2，第一行 robot0 camera0、robot0 vio eef_pose、robot0 magnetic_encoder，
-    第二行 robot1 的三格；打开「详细信息」把网格挤到 1000 px 以下变 2 × 2，每只手一行（相机、位姿）。逻辑见 `src/lib/vizLayout.test.ts`。
+    智能布局补满空格（2026-10-12）：模拟世界里 umi_640_notask 是 3 × 2，左右腕两路相机、left 与 right 两组之外第三组 gripper 补进了原来空着的格子（只空一格）；
+    接真 Daemon（`curator-daemon-eef`，数据根里的 umi_das 是双手 DAS mcap）看 umi_das：网格宽 ≥ 1000 px 时 3 × 2 没有空格，两路相机在前，后面是 robot0 vio eef_pose、
+    robot0 magnetic_encoder、robot1 vio eef_pose、robot1 magnetic_encoder；打开「详细信息」把网格挤到 1000 px 以下变 2 × 2：两路相机、robot0 与 robot1 各自的位姿（不是 robot0 的两组）。
+    逻辑见 `src/lib/vizLayout.test.ts`。
     选 cams_16：智能布局是 4 × 4，十四路相机加两组曲线，网格下面写「另有 2 路相机没放上来，在格子的「更换」里选」，「更换」的菜单里能选到 cam_14、cam_15；
     「布局模版」换「仅展示视频」后十六路全上屏、提示消失。格子数下拉有 4 × 3、4 × 4；把 cams_10 手动切到 4 × 4 再把窗口拉窄，格子窄于 280 px 时右上角的工具只剩图标（悬停有文字）。
     播放时各格烧着的帧号一致，控制台里 `__vizClock.drift()` 每路都远小于一帧。迷你版不受影响，仍是一行至多三格。
