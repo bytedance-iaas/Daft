@@ -52,7 +52,7 @@ anchor-arms-fastumi 上 14 条对调抓到 12 条、不发一次请求、48 个�
 | `contracts/modules.py` | 注册表条目与 `riders_of` / `with_riders`；`cli/check.py`、planner、`cli/preflight.py`、`daemon/`、`pipeline/reporting.py` 都经 `with_riders` 展开清单 |
 | `tools/parity/fakevlm.py` | 假模型的 `_fake_camera_check`：按相机名与窗口给出每一档、漏一项、整个不答、一路与命名不符 |
 
-记录的 `details`：`protocol`（`camera-check/8`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
+记录的 `details`：`protocol`（`camera-check/9`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
 （已答项里判为 `none` 的比例）、`reason`（为什么是 unknown：成败判定没产生结果 / 没有任务标注且画面缺陷请求没有结果 / 判定请求没有按相机作答 /
 模型没答 `camera_check`）、`items`（四项各一个跨机位最坏档，就是一个字符串）、`identity`（整条的机位身份）、
 `arms`（量出来的左右臂配对：`identity`、`crossed`、`basis="motion_pairing"`、`readings`——各臂单独在动的时刻数、

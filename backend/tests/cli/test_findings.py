@@ -124,7 +124,7 @@ CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsisten
                                                       "note": ""}}}}
 # registry 7.2: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
 # only the measured pairing shows that the one called left rides the right arm
-CAM_ARMS = {"protocol": "camera-check/8", "reason": "", "identity": "inconsistent",
+CAM_ARMS = {"protocol": "camera-check/9", "reason": "", "identity": "inconsistent",
             "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
             "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
                      "basis": "motion_pairing", "readings": {"margin": 1.4},

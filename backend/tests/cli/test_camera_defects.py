@@ -118,7 +118,7 @@ def test_resume_redoes_an_episode_whose_defect_report_is_from_an_older_protocol(
     path = os.path.join(part, name)
     with open(path, "rb") as fh:                       # same length in, same length out: the
         raw = fh.read()                               # part index addresses records by offset
-    old, new = b'"camera-check/8"', b'"camera-check/0"'
+    old, new = b'"camera-check/9"', b'"camera-check/0"'
     assert len(old) == len(new) and raw.count(old) == len(results(run_dir, MOD))
     with open(path, "wb") as fh:
         fh.write(raw.replace(old, new, 1))

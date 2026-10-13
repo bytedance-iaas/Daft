@@ -31,8 +31,12 @@ PROTOCOL = "video-task/2"
 #: gripper at the rim of a fisheye circle, and asking for it found 1 of 14 crossings while abstaining
 #: 20 times out of 24, so which arm a wrist camera rides is now MEASURED from the recording
 #: (:mod:`curation.pipeline.arm_pairing`: 12 of the 14) and the model is asked only what a picture
-#: can actually show.
-CAMERA_CHECK_PROTOCOL = "camera-check/8"
+#: can actually show; ``9`` makes shake and occlusion fit a HANDHELD rig, where the camera is in a
+#: human hand: its travel and reframing with that hand is the rig working, not shake, and the hand
+#: holding the gripper is the arm, not a person passing in front of the lens. On 24 FastUMI episodes
+#: with no defect in them, ``8`` reported shake on 6 and occlusion on 3, every note describing
+#: exactly those two things.
+CAMERA_CHECK_PROTOCOL = "camera-check/9"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
@@ -88,8 +92,16 @@ CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn,
 garbled frames, wrong colours in patches, or a frozen picture with artifacts. shake: the WHOLE
 picture moves as one while the scene itself stays intact - the view jolts, drifts or wobbles, the
 framing jumps, and the edges may show black bars or a changed field of view; the camera body is
-moving, not the robot or the objects. A wrist camera moving with the arm is normal, report only
-jitter beyond that. Decide between the two by asking whether the scene is still whole: a whole
+moving, not the robot or the objects. A camera that RIDES the arm or the hand - a wrist camera, and
+every camera of a handheld gripper - is meant to travel, swing, tilt and reframe as the hand works,
+however fast, however far, and for however much of the clip: that is the rig doing its job and stays
+at "none". Never report it because the view "tilts", "drifts", "reframes" or "swings with the arm"
+during the manipulation. On such a camera report shake only for motion the hand's own work does not
+explain: a knock or jolt no arm motion accounts for, a high-frequency judder or buzz, a picture that
+keeps wobbling while the gripper stands still, or a mount so loose the view slips and never returns.
+On a camera that should stand still - a fixed third-person view - any sustained movement of the whole
+picture is shake. Say in the note why the motion is not the hand's own; if you cannot say, it is
+"none". Decide between the two by asking whether the scene is still whole: a whole
 scene that jumps is shake, a broken-looking scene is glitch; report both only when both are really
 there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
 "minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
@@ -105,9 +117,12 @@ NOT occlusion and stay at "none", however much of the picture they take or howev
     change at the same moment, it is the light; a real occlusion shows on ONE camera.
 (b) the robot's own arm, gripper or the object it carries, even filling the frame - that is the
     task being done; a wrist camera filled by what the gripper holds is normal, and a held object
-    leaving the frame is not occlusion either.
+    leaving the frame is not occlusion either. On a handheld rig the HAND, forearm, glove or sleeve
+    of the person working the gripper IS that arm: it is never "a person" for this item, and what
+    they hold taking over the near field is the manipulation itself.
 (c) a person, a hand or an object simply BEING in the scene at working distance, an operator at the
-    bench included; a person counts only when they pass between the lens and the work.
+    bench included; a person counts only when someone who is not working the gripper passes between
+    the lens and the work.
 (d) a view that is dark, empty, far from the work or pointed elsewhere - nothing is covering it.
 Tell occlusion from glitch by the picture around it: a shape covering part of a picture that is
 otherwise whole and sharp is occlusion (something in front of the lens), however straight its
