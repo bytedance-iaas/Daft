@@ -116,9 +116,10 @@ def make_bundle(svc, src, plan: dict, index: int | None, out: Path, *, version: 
     name = os.path.basename(str(src.uri).rstrip("/")) or src.name
     with tempfile.TemporaryDirectory(prefix="eef-overlay-") as tmp, Access(svc.rt, src).storage() as st:
         listing = src.listing()
-        keys = list(listing) if listing is not None else list(st.list())
+        # by key: a raw UMI session on TOS sizes its videos' ranged reads from the listing
+        listing = dict(listing if listing is not None else st.list())
         if plan["whole"]:
-            _write(out, derive._bytes(st, keys))
+            _write(out, derive._bytes(st, listing))
             return
         decl, sources = plan["decl"], plan["sources"]
         if plan["format"] == "mcap":
@@ -133,8 +134,8 @@ def make_bundle(svc, src, plan: dict, index: int | None, out: Path, *, version: 
                                                  cameras=sources, sizes=_sizes(svc, src, decl), version=version)
                 sample, source = gen.sample(int(index))
         else:
-            gen = declared.Generated(decl, storage=st, listing=keys, out_dir=tmp, dataset_id=name, cameras=sources,
-                                     sizes=_sizes(svc, src, decl), version=version)
+            gen = declared.Generated(decl, storage=st, listing=list(listing), out_dir=tmp, dataset_id=name,
+                                     cameras=sources, sizes=_sizes(svc, src, decl), version=version)
             try:
                 sample, source = gen.sample(int(index))
             finally:
