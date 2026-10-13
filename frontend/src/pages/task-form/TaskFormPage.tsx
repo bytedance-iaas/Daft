@@ -69,7 +69,6 @@ export function TaskFormPage() {
     registry.isLoading ||
     credentials.isLoading ||
     backends.isLoading ||
-    publicCatalog.isLoading ||
     registered.isLoading ||
     (Boolean(editId ?? copyId) && task.isLoading) ||
     (Boolean(datasetId) && dataset.isLoading) ||
@@ -151,7 +150,7 @@ export function TaskFormPage() {
         credentials={credentials.data?.items ?? []}
         backends={backends.data?.items ?? []}
         registered={registered.data?.items ?? []}
-        publicCatalog={publicCatalog.data ?? null}
+        publicCatalog={publicCatalog.data}
         localEnabled={Boolean(window.__CURATOR_FEATURES__?.local_input)}
       />
     </>

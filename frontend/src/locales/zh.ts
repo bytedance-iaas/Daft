@@ -160,6 +160,8 @@ export const zh = {
   source: {
     tos: '私有 TOS',
     public: 'HuggingFace 缓存桶',
+    publicReading: '正在读取缓存桶的数据集清单',
+    publicFailed: '读不到缓存桶的数据集清单，稍后再试',
     local: '本地挂载路径',
     experimental: 'experimental',
   } as Record<string, string>,

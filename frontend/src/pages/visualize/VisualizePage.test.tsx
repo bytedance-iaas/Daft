@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { zh } from '../../locales/zh';
 import { db } from '../../mocks/db';
+import { vizDataset } from '../../mocks/vizWorld';
 import { server } from '../../mocks/server';
 import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
@@ -132,6 +133,18 @@ describe('可视化 page (design doc 18 §5.0, §5.7)', () => {
     // a metadata file previews its text
     await user.click(within(info).getByRole('button', { name: /info\.json/ }));
     expect(await within(info).findByTestId('vz-meta')).toBeInTheDocument();
+  });
+
+  it('leaves 数据集信息 out when the dataset has nothing to tell (a raw UMI session, 2026-10-12)', async () => {
+    server.use(
+      http.get('*/api/v1/datasets/:id/viz', ({ params }) => {
+        const d = db.datasets.find((x) => x.id === params.id)!;
+        return HttpResponse.json({ ...vizDataset('dataset', d.id, d, null, null), field_tree: [] });
+      }),
+    );
+    renderApp('/visualize?dataset=ds_droid100&ep=0');
+    await screen.findByTestId('vz-player', {}, { timeout: 5000 });
+    expect(screen.queryByTestId('vz-info')).toBeNull();
   });
 
   it('opens the dataset’s 展示配置 from the header; a camera hidden there leaves the smart layout (design doc 21 §6)', async () => {

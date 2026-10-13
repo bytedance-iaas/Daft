@@ -74,7 +74,8 @@ export interface TaskFormProps {
   credentials: Credential[];
   backends: VlmBackend[];
   registered: DatasetItem[];
-  publicCatalog: BrowsedDataset[] | null;
+  /** undefined while the cache bucket's list is read, null when it cannot be */
+  publicCatalog: BrowsedDataset[] | null | undefined;
   localEnabled: boolean;
 }
 

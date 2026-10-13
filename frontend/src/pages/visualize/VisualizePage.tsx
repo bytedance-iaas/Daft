@@ -201,7 +201,8 @@ export function VisualizePage() {
             // the model is on its way and no episode is known yet, or the dataset has none
             <div className="vz-lead-only">{unfold}</div>
           ) : null}
-          {datasetId && model.data && !pending ? <DatasetInfo key={datasetId} datasetId={datasetId} model={model.data} player={control} /> : null}
+          {/* no card when the reader has nothing to tell, a raw UMI session for one (2026-10-12) */}
+          {datasetId && model.data && !pending && model.data.field_tree.length ? <DatasetInfo key={datasetId} datasetId={datasetId} model={model.data} player={control} /> : null}
         </section>
       </div>
       <DisplayConfigDrawer dataset={display && datasetId ? { id: datasetId, name: item?.name ?? model.data?.name ?? datasetId } : null} onClose={() => setDisplay(false)} />
