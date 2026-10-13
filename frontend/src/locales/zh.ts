@@ -456,6 +456,9 @@ export const zh = {
     localPath: '本地路径',
     localPathHelp: '调试用，只允许站点配置的根目录之下',
     publicDataset: '数据集',
+    // the cache bucket lists every format the platform reads (2026-10-12): the format after the name
+    publicOption: (name: string, format: string, episodes: number | null) => `${name} · ${format}${episodes !== null ? ` · ${episodes} 条` : ''}`,
+    publicEefOnly: '只能跑 EEF–视频一致性',
     publicRegion: '由站点配置',
     publicKey: '不需要（匿名只读）',
     region: '地域',

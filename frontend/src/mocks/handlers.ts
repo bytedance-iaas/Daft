@@ -436,8 +436,11 @@ const datasets = [
     const url = new URL(request.url);
     const source = url.searchParams.get('source');
     if (source === 'public') {
-      const items = DATASET_PROFILES.filter((p) => p.source === 'public').map((p) => ({ name: p.name, uri: p.uri, format_hint: (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') as 'lerobot_v2' | 'lerobot_v3', episodes: p.episodes }));
+      // every format the platform reads (C4 7.3.0): a raw UMI session and the mcap directory inside it too
+      const items: { name: string; uri: string; format_hint: 'lerobot_v2' | 'lerobot_v3' | 'mcap' | 'umi_session'; episodes: number | null }[] = DATASET_PROFILES.filter((p) => p.source === 'public').map((p) => ({ name: p.name, uri: p.uri, format_hint: (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') as 'lerobot_v2' | 'lerobot_v3', episodes: p.episodes }));
       items.push({ name: 'aloha_sim_insertion_human', uri: `tos://${PUBLIC_BUCKET}/lerobot/aloha_sim_insertion_human`, format_hint: 'lerobot_v2', episodes: 50 });
+      items.push({ name: 'Physical-AI-UMI-transfer-objects-from-cups', uri: `tos://${PUBLIC_BUCKET}/lerobot/Physical-AI-UMI-transfer-objects-from-cups`, format_hint: 'umi_session', episodes: null });
+      items.push({ name: 'Physical-AI-UMI-transfer-objects-from-cups/mcap', uri: `tos://${PUBLIC_BUCKET}/lerobot/Physical-AI-UMI-transfer-objects-from-cups/mcap`, format_hint: 'mcap', episodes: 1 });
       return HttpResponse.json(cursorPage(items, url));
     }
     const prefix = (url.searchParams.get('uri') ?? '').replace(/\/+$/, '');

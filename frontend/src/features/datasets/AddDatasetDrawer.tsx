@@ -14,6 +14,7 @@ import { PreflightCard } from '../preflight/PreflightCard';
 import { usePreflight } from '../preflight/usePreflight';
 import { AnnotationsField } from './Annotations';
 import { McapConfig, type McapConfigStatus } from './McapConfig';
+import { publicOptionLabel } from '../../lib/publicDatasets';
 
 const { Row, Col } = Grid;
 const TOS_URI = /^tos:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\/.+/;
@@ -186,7 +187,7 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
               onChange={setPublicUri}
               placeholder={zh.taskForm.publicDataset}
               aria-label={zh.taskForm.publicDataset}
-              options={(catalog.data ?? []).map((d) => ({ label: d.name, value: d.uri }))}
+              options={(catalog.data ?? []).map((d) => ({ label: publicOptionLabel(d), value: d.uri }))}
             />
           </Field>
         )}

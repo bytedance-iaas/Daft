@@ -257,7 +257,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register */
+        /**
+         * List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register
+         * @description `source=public` lists the HuggingFace cache bucket's datasets in every format the platform reads, told from the
+         *     bucket's file list: LeRobot v2 / v3, Lance, mcap and raw UMI sessions (7.3.0; before, LeRobot only). A
+         *     readable directory inside a mirrored repository is listed too, named `<repository>/<path>`.
+         */
         get: operations["browseDatasets"];
         put?: never;
         post?: never;
@@ -2049,7 +2054,7 @@ export interface components {
             name: string;
             uri: string;
             /** @enum {unknown} */
-            format_hint?: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "rrd" | "unknown";
+            format_hint?: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "umi_session" | "rrd" | "unknown";
             episodes?: number | null;
         };
         /** @enum {unknown} */

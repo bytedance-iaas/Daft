@@ -170,6 +170,17 @@ describe('数据集列表 (07 §4.4)', () => {
     expect(key).toHaveTextContent('readonly-tos');
   });
 
+  it('the HuggingFace cache bucket lists every format the platform reads, each with its format (2026-10-12)', async () => {
+    const { user } = renderApp('/datasets');
+    await user.click(await screen.findByRole('button', { name: '添加数据集' }));
+    const drawer = await findDrawer('添加数据集');
+    await user.click(await within(drawer).findByRole('radio', { name: 'HuggingFace 缓存桶' }));
+    await user.click(await within(drawer).findByRole('combobox', { name: '数据集' }));
+    expect(await screen.findByText('Physical-AI-UMI-transfer-objects-from-cups · UMI 原始会话（只能跑 EEF–视频一致性）')).toBeInTheDocument();
+    expect(screen.getByText('Physical-AI-UMI-transfer-objects-from-cups/mcap · mcap · 1 条')).toBeInTheDocument();
+    expect(screen.getByText('aloha_sim_insertion_human · LeRobot v2 · 50 条')).toBeInTheDocument();
+  });
+
   it('adding the same source + address + region again opens the existing registration', async () => {
     const { user } = renderApp('/datasets');
     await user.click(await screen.findByRole('button', { name: '添加数据集' }));
