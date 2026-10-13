@@ -214,9 +214,7 @@ def test_an_episode_without_a_task_text_gets_the_picture_defect_request_alone(mo
         "shake": {"level": "none", "times": [], "note": ""},
         "contamination": {"level": "severe", "kind": "water", "times": [], "note": "persistent"}}}}})
     got = parse_cameras_only(answer, clips)
-    # the arm block rides along here too: an episode with no task text can still show crossed arms
-    assert set(got) == {"cameras", "arms"} and set(got["cameras"]) == {"cam", "wrist"}
-    assert got["arms"]["identity"] == "unknown"
+    assert set(got) == {"cameras"} and set(got["cameras"]) == {"cam", "wrist"}
     cam, wrist = got["cameras"]["cam"], got["cameras"]["wrist"]
     assert cam["verdict"] == "unavail" and cam["camera_check"]["glitch"]["level"] == "minor"
     assert cam["camera_check"]["contamination"]["kind"] == "water"
@@ -412,18 +410,39 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     assert len(sent) == 2
 
 
-def test_the_arm_block_is_lenient_and_refuses_a_vague_crossing():
-    """The arms block never raises and never becomes a finding on its own word: a crossing has to
-    name a camera that was actually supplied, else it reads unknown with the slip recorded."""
-    from curation.adapters.video_vlm import parse_arms
+def test_the_arm_question_is_not_asked_of_the_model(monkeypatch):
+    """camera-check/8: which arm a wrist camera rides is measured, not looked at, so neither
+    request asks for it any more - and no camera may be called crossed on the model's word."""
+    from curation.adapters.video_vlm import (CAMERAS_ONLY_PROMPT, CAMERAS_PROMPT,
+                                             make_video_assessor, parse_cameras_only)
 
+    for prompt in (CAMERAS_PROMPT, CAMERAS_ONLY_PROMPT):
+        assert '"arms"' not in prompt and "crossed" not in prompt
+    # the picture half of the identity is still asked for: the mount, against what the dataset says
+    assert '"matches_name"' in CAMERAS_PROMPT and "the MOUNT you saw" in CAMERAS_PROMPT
     clips = [clip(), clip(camera="wrist")]
-    ok = parse_arms({"identity": "crossed", "crossed": ["wrist"], "note": "only the right arm moved"}, clips)
-    assert ok == {"identity": "crossed", "crossed": ["wrist"], "note": "only the right arm moved", "problems": []}
-    vague = parse_arms({"identity": "crossed", "crossed": []}, clips)
-    assert vague["identity"] == "unknown" and "no supplied camera was named" in vague["problems"][0]
-    unknown = parse_arms({"identity": "crossed", "crossed": ["nowhere"]}, clips)
-    assert unknown["identity"] == "unknown" and "not supplied" in unknown["problems"][0]
-    assert parse_arms(None, clips)["identity"] == "unknown"
-    assert parse_arms("nope", clips)["problems"] == ["arms is not an object"]
-    assert parse_arms({"identity": "maybe"}, clips)["problems"][0].startswith("arms: identity")
+    answer = json.dumps({"cameras": {}, "arms": {"identity": "crossed", "crossed": ["wrist"]}})
+    assert "arms" not in parse_cameras_only(answer, clips)
+    sent = mock_transport(monkeypatch, [json.dumps(dict(judged(), arms={"identity": "crossed"}))] * 2)
+    with pytest.raises(ValueError):                       # an unasked-for field is an invalid answer
+        make_video_assessor("http://test/v1", "m")([clip()], "pick up")
+    assert len(sent) == 2                                 # it got one repair attempt, as ever
+
+
+def test_the_request_carries_what_the_dataset_says(monkeypatch):
+    """The dataset's own words go into both requests, so the camera identity is read against them;
+    a dataset that says nothing leaves the request as it was."""
+    from curation.adapters.video_vlm import DATASET_SAYS, make_video_assessor
+
+    claim = {"arms": ["left", "right"],
+             "cameras": {"cam": {"mount": "wrist", "owner": "left"}}}
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
+    make_video_assessor("http://test/v1", "m")([clip()], "pick up", claim=claim)
+    prompt = sent[0]["messages"][0]["content"][0]["text"]
+    assert "This robot has 2 arms" in prompt and "cam is declared a wrist camera on left" in prompt
+    assert DATASET_SAYS not in prompt
+
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
+    make_video_assessor("http://test/v1", "m")([clip()], "pick up")
+    plain = sent[0]["messages"][0]["content"][0]["text"]
+    assert "What the dataset says" not in plain and DATASET_SAYS not in plain

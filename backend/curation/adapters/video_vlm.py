@@ -21,8 +21,18 @@ PROTOCOL = "video-task/2"
 #: camera physically is, against its name); ``4`` tells occlusion from the manipulation itself and
 #: from glitch, and has the kind read from the picture before the name; ``5`` names what occlusion
 #: is NOT (lighting, the scene's own content, a view pointed elsewhere), gives it its own share,
-#: place and length, and asks the cameras whether they agree on which arm is which.
-CAMERA_CHECK_PROTOCOL = "camera-check/5"
+#: place and length, and asks the cameras whether they agree on which arm is which; ``6`` holds the
+#: picture against what the DATASET says (its declaration and its channel names) instead of against
+#: a camera's name, so the identity question is a comparison rather than a guess; ``7`` says where in
+#: a wrist camera's picture the OTHER hand's gripper shows and refuses an identity answered without
+#: having seen it (the first run on crossed FastUMI files answered "consistent" 12 times out of 14,
+#: from the camera's name and its own gripper being in view); ``8`` takes the arm question out of the
+#: request altogether. On a handheld rig the only picture evidence is some twenty pixels of the other
+#: gripper at the rim of a fisheye circle, and asking for it found 1 of 14 crossings while abstaining
+#: 20 times out of 24, so which arm a wrist camera rides is now MEASURED from the recording
+#: (:mod:`curation.pipeline.arm_pairing`: 12 of the 14) and the model is asked only what a picture
+#: can actually show.
+CAMERA_CHECK_PROTOCOL = "camera-check/8"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
@@ -35,10 +45,6 @@ VIEW_KINDS = ("wrist", "fixed")
 VIEW_ARMS = ("left", "right", "single")
 VIEW_MATCHES = ("yes", "no")
 VIEW_FIELDS = ("kind", "arm", "matches_name", "same_as", "note")
-#: whether the cameras agree on which physical arm is which (MV-2, episode level): one camera can
-#: only be held against its own name, so a crossed PAIR is only visible across cameras - which this
-#: one request can do, since every camera's video is in it and they share a clock.
-ARM_VERDICTS = ("consistent", "crossed")
 #: How long one video request may take grows with what it carries (2026-10-08): the model's
 #: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
 #: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
@@ -115,36 +121,29 @@ hidden in all. Say in the note what the thing is. times are episode-relative sec
 leave times empty for "none". Give up to four intervals; when the defect recurs in short bursts
 across the clip, give the span that encloses them rather than one burst, and say "intermittent" in
 the note. When the defect is there for the whole clip, leave times empty and write "persistent" in
-the note. view: what THIS camera physically is. Decide kind from the picture BEFORE you read the
-camera's name, and never from the name: when the whole room swings and turns as the arm moves
-while the gripper fingers stay in the same place in the frame, it is "wrist", whatever it is
-called; when the room stays still and the arm travels through it, it is "fixed", whatever it is
-called. Say in the note what you saw. arm is the arm the camera is mounted on or mainly looks at,
-"single" when the robot has one arm. matches_name compares that kind with the supplied name: "no"
-when a name saying wrist, hand or gripper sits on a picture whose room stays still, when a name
-saying exterior, front, side, top, overhead or external sits on a picture that swings with the
-arm, or when left/right in the name is on the other arm of a two-arm robot; "yes" when the name
-agrees; Left or right in the name of a single-arm robot or of a stereo pair says nothing about
-arms: that part is "unknown" rather than a guess, and the kind still counts. same_as names
-another supplied camera when the two pictures are the same recording, else leave it empty. Keep
-every note under twelve words. Use "unknown" when you cannot judge an item. These items never
-change verdict, completion or evidence."""
+the note. view: what THIS camera physically is, read from the picture and then held against what
+the dataset says it is. Decide kind from the picture FIRST and never from the camera's name: when
+the whole room swings and turns as the arm moves while the gripper fingers stay in the same place
+in the frame, it is "wrist", whatever it is called; when the room stays still and the arm travels
+through it, it is "fixed", whatever it is called. Say in the note what you saw. arm: for a FIXED
+camera, the arm it mainly looks at, named as the dataset names its arms, when the dataset names
+more than one and the picture plainly shows which; "single" when the dataset says the robot has one
+arm. For a WRIST camera answer "unknown": which arm a wrist camera rides is not readable from its
+own picture - its own gripper looks the same on either hand - and it is measured from the recorded
+motion instead, so do not guess it here. matches_name compares the MOUNT you saw with the dataset's
+own words above: "no" when they contradict - a camera the dataset declares a wrist camera whose room
+stays still, or one it declares fixed whose picture swings and turns with the arm; "yes" when what
+you saw is the mount the dataset declared; "unknown" when the dataset says nothing about this camera
+or you could not tell, and never "yes" from the camera's name. Do not answer "no" over which ARM you
+think the camera is on - that question is not yours here. same_as names another supplied camera
+when the two pictures are the same recording, else leave it empty. Keep every note under twelve
+words. Use "unknown" when you cannot judge an item. These items never change verdict, completion or
+evidence."""
 
-#: the one question that cannot be asked of a single camera: are the arms crossed BETWEEN cameras?
-ARMS_DEFS = """arms: whether the cameras agree on which physical arm is which. This is about the set
-of cameras, not one of them, so answer it once for the episode. Do it only for a robot with two
-arms and at least two cameras whose names name an arm (left / right, or one wrist camera per arm):
-find a stretch where ONE arm alone moves, follow that same physical arm in every camera, and hold it
-against each camera's name. A camera that rides or faces the other arm than its name says is
-crossed - give its exact supplied name in "crossed" and answer "crossed". Answer "consistent" only
-when you followed one moving arm across the cameras and every name agreed. Answer "unknown" for a
-one-arm robot, when no camera's name names an arm, when only one camera was supplied, or when no
-stretch shows one arm moving alone; never settle it from the names alone. Say in the note what
-moved, where you saw it and when. This never changes verdict, completion or evidence."""
-
-#: the episode-level block that rides next to ``cameras`` in both requests below
-ARMS_SHAPE = """"arms":{"identity":"consistent|crossed|unknown",
-          "crossed":["<exact supplied camera name>"],"note":"..."}"""
+#: where the dataset's own words are spliced into either request (empty when it says nothing). The
+#: request still carries them: whether a camera is the wrist camera the dataset declares is a
+#: comparison, and the mount half of it IS readable from the picture.
+DATASET_SAYS = "{dataset_says}"
 
 #: the members of one camera's ``camera_check``: the four picture-defect items and the view
 CAMERA_CHECK_SHAPE = """"glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
@@ -164,20 +163,17 @@ CAMERA_CHECK_SHAPE = """"glitch":{"level":"none|minor|severe|unknown","times":[[
 #: finding can still be attributed to one camera without a request per camera.
 CAMERAS_PROMPT = """
 Add ONE more field "cameras" to the same JSON object, next to the five fields above (keep those
-five exactly as specified). Give one entry for EVERY camera supplied above, under its exact name,
-and one more field "arms" answered once for the whole set:
+five exactly as specified). Give one entry for EVERY camera supplied above, under its exact name:
 {"cameras":{"<exact supplied camera name>":{
    "verdict":"success|failure|uncertain",
    "reason":"what THIS camera alone shows, under fifteen words",
    "camera_check":{
-     """ + CAMERA_CHECK_SHAPE + """}}},
- """ + ARMS_SHAPE + """}
+     """ + CAMERA_CHECK_SHAPE + """}}}}
 Judge each camera on what THAT camera shows and nothing else: a camera that cannot see the objects
 or the relevant action is "uncertain" for that camera, even when another camera settles the episode.
 Do not copy the episode verdict into every camera. The episode's own verdict stays in the five
 fields above and is yours to decide from all the cameras together.
-""" + CAMERA_CHECK_DEFS + """
-""" + ARMS_DEFS + """
+""" + DATASET_SAYS + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
 #: the request an episode WITHOUT a task text gets (D73): the same cameras and the same defect
@@ -185,14 +181,12 @@ The whole answer must be one valid JSON object."""
 CAMERAS_ONLY_PROMPT = """Inspect the supplied continuous videos for picture defects only. This episode
 has no task description, so there is no task to judge: do not assess success or failure, do not
 describe what the robot does. All cameras show the same episode.
-Return one JSON object with exactly two fields: "cameras", with one entry for EVERY camera supplied
-above under its exact name, and "arms", answered once for the whole set:
+Return one JSON object with exactly one field "cameras", with one entry for EVERY camera supplied
+above under its exact name:
 {"cameras":{"<exact supplied camera name>":{
    "camera_check":{
-     """ + CAMERA_CHECK_SHAPE + """}}},
- """ + ARMS_SHAPE + """}
-""" + CAMERA_CHECK_DEFS + """
-""" + ARMS_DEFS + """
+     """ + CAMERA_CHECK_SHAPE + """}}}}
+""" + DATASET_SAYS + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
 
@@ -232,7 +226,7 @@ def parse_assessment(text: str, clips: list[VideoClip]) -> dict:
             raise
         answer = json.loads(without)
         dropped = "camera_check was not valid JSON and was dropped; the verdict is unaffected"
-    if not isinstance(answer, dict) or set(answer) - {"cameras", "arms"} != {
+    if not isinstance(answer, dict) or set(answer) - {"cameras"} != {
             "verdict", "task_type", "completion", "reason", "evidence"}:
         raise ValueError("video assessment has invalid fields")
     if "cameras" not in answer:
@@ -270,7 +264,6 @@ def parse_assessment(text: str, clips: list[VideoClip]) -> dict:
         if not isinstance(item["observation"], str) or not item["observation"].strip():
             raise ValueError("video evidence needs an observation")
     answer["cameras"] = parse_cameras(answer.get("cameras"), clips)
-    answer["arms"] = parse_arms(answer.get("arms"), clips)
     if dropped:
         for entry in answer["cameras"].values():
             entry["camera_check"].setdefault("problems", []).append(dropped)
@@ -344,50 +337,7 @@ def parse_cameras_only(text: str, clips: list[VideoClip]) -> dict:
         if not isinstance(got, dict):
             entry["camera_check"].setdefault("problems", []).append("the model gave no entry for this camera")
         out[clip.camera] = entry
-    return {"cameras": out, "arms": parse_arms(answer.get("arms"), clips)}
-
-
-def empty_arms() -> dict:
-    """The episode's arm identity when the model said nothing about it."""
-    return {"identity": "unknown", "crossed": [], "note": "", "problems": []}
-
-
-def parse_arms(raw, clips: list[VideoClip]) -> dict:
-    """The episode-level ``arms`` block, normalised; never raises.
-
-    ``crossed`` must name cameras that were actually supplied (the same lenient resolution evidence
-    gets), and a ``crossed`` verdict that names none is not actionable - it reads ``unknown`` with
-    the slip in ``problems``, so a vague answer never becomes a finding.
-    """
-    out = empty_arms()
-    problems: list[str] = out["problems"]
-    if not isinstance(raw, dict):
-        if raw is not None:
-            problems.append("arms is not an object")
-        return out
-    identity = str(raw.get("identity", "")).strip().lower()
-    if identity in ARM_VERDICTS:
-        out["identity"] = identity
-    elif identity != "unknown":
-        problems.append(f"arms: identity {raw.get('identity')!r} is not {'/'.join(ARM_VERDICTS)}/unknown")
-    known = {c.camera: c for c in clips}
-    names = raw.get("crossed")
-    if isinstance(names, list):
-        for name in names[:8]:
-            clip = _resolve_camera(name, known) if isinstance(name, str) else None
-            if clip is None:
-                problems.append(f"arms: crossed names {name!r}, which was not supplied")
-            elif clip.camera not in out["crossed"]:
-                out["crossed"].append(clip.camera)
-    elif names is not None:
-        problems.append("arms: crossed is not a list")
-    note = raw.get("note")
-    if isinstance(note, str):
-        out["note"] = note.strip()[:200]
-    if out["identity"] == "crossed" and not out["crossed"]:
-        out["identity"] = "unknown"
-        problems.append("arms: crossed, but no supplied camera was named")
-    return out
+    return {"cameras": out}
 
 
 def _without_camera_check(raw: str) -> str | None:
@@ -583,13 +533,20 @@ def make_video_assessor(endpoint: str, model: str, *, timeout_s: float = 60, api
     url = endpoint.rstrip("/") + "/chat/completions"
     constrained = {"json": bool(json_mode)}      # flipped off if the backend refuses the field
 
-    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "") -> dict:
+    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "",
+               claim: dict | None = None) -> dict:
         from . import vlm_client
+        from ..pipeline.dataset_claim import text as claim_text
 
+        # what the DATASET says about its arms and these cameras: the camera identity is a
+        # comparison against it, not a guess from a camera's name (MV-2, camera-check/6)
+        said = claim_text(claim, [c.camera for c in clips])
+        said = f"\nWhat the dataset says about itself: {said}\n" if said else ""
         if cameras_only:
-            prompt = CAMERAS_ONLY_PROMPT
+            prompt = CAMERAS_ONLY_PROMPT.replace(DATASET_SAYS, said)
         else:                                   # one request answers the episode and every camera
-            prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none") + CAMERAS_PROMPT
+            prompt = (TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
+                      + CAMERAS_PROMPT.replace(DATASET_SAYS, said))
         content = [{"type": "text", "text": prompt}] + video_content(clips, fps=fps)
         messages = [{"role": "user", "content": content}]
         budget_s = request_timeout(clips, fps, timeout_s)   # grows with the video sent

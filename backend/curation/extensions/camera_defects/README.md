@@ -7,14 +7,17 @@
 ## 它是什么
 
 `task_success` 每条 episode 只发一次请求（D71），多机位连续视频一起看。答复里每路相机一项（`cameras`），每项带一个 `camera_check` 字段，
-报告这路相机自己的四项画面缺陷和它物理上是什么；答复里另有一个 `arms` 块，说各路相机对左右臂的身份是否一致。
+报告这路相机自己的四项画面缺陷和它物理上是什么。记录里另有一个 `arms` 块，说各路相机骑的是不是数据集给它的那条臂——
+那一块不问模型，是在 CPU 上量出来的（见下）。
 没有任务标注的条目不判成败，只发一次只问画面缺陷的请求（`CAMERAS_ONLY_PROMPT`，D73）。
 这个模块把各路答案汇成每条 episode 一条记录。
 
 四项是花屏、抖动、镜头污染、视觉遮挡。**遮挡单独给三个数**：`coverage`（最严重时遮住画面的比例）、`region`（遮挡物在画面里的
 位置）、`duration_s`（被挡住的总秒数）；提示词里逐条写明光照变化、机器人自己的手臂与搬运物、只是在场景里的人和物、
-对着别处的画面都不算遮挡。**左右臂串线**（`arms`）是一路相机看不出来的事，要把各路放在一起才能判：找一段只有一条臂在动的
-时间，跟住同一条物理臂，再和各路命名对照。
+对着别处的画面都不算遮挡。**左右臂、机位身份串线**（`arms`）一路相机看不出来，而且模型也看不准：手持夹爪的另一只夹爪在它收到的画面里只有二十来个
+像素。改成实测（`pipeline/arm_pairing.py`）：腕部相机拧在手上，那只手一动画面就晃，所以比一比每路相机的画面位移和
+数据集记的各臂速度——只取一条臂单独在动的时刻，整条 episode 做一次「两路相机配两条臂」的配对，赢出余量才下结论，否则 `unknown`。
+anchor-arms-fastumi 上 14 条对调抓到 12 条、不发一次请求、48 个视频 11 秒；模型版同一批只认出 1 条。
 
 - **不增加模型调用**：请求次数和发送的视频都不变，只是答复里每路相机多一个字段。
 - **每次都问**：没有开关，界面上也不勾选。它是 `task_success` 的随附模块，宿主在跑它就出结果。
@@ -41,21 +44,26 @@
 |---|---|
 | `adapters/video_vlm.py` | `CAMERAS_PROMPT`（判定请求里要求每路相机一项，含 `camera_check`）、`CAMERAS_ONLY_PROMPT`（无标注条目只问画面缺陷）、三项的定义 `CAMERA_CHECK_DEFS`；`parse_cameras` / `parse_camera_check` 永不抛错，畸形只记 `problems`；键集合校验是「去掉 `cameras` 后等于五个核心字段」 |
 | 本目录 `__init__.py` | `struct_from_task`（从 `task_success` 的 `detail["cameras"]` 读回，汇成一条记录）、`summary` / `table_rows`（报告小节与明细表） |
-| `pipeline/check_stage.py` | `_vlm_modules` 在 `task_success` 之后补这条记录（无标注、内部出错的条目也有一条，三项 unknown）；`--resume` 时 `details.protocol` 不是 `camera-check/2` 的记录算过期、重做；熔断器不看随附模块 |
+| `pipeline/check_stage.py` | `_vlm_modules` 在 `task_success` 之后补这条记录（无标注、内部出错的条目也有一条，各项 unknown），并调 `_arm_pairing` 量出 `arms`；`--resume` 时 `details.protocol` 不是当前协议号的记录算过期、重做；熔断器不看随附模块 |
+| `pipeline/arm_pairing.py` | 左右臂、机位身份（MV-2）的实测：画面位移（相位相关）对各臂速度，只取一条臂单独在动的时刻，整条 episode 做一次配对，差距不够答 `unknown` |
+| `pipeline/dataset_claim.py` | 数据集自己的说法：几条臂、每条臂占哪几列动作通道、每路相机声明的 `mount` / `owner` |
 | `pipeline/findings.py` | `_camera_defects`：把记录换成发现（minor → low、severe → medium） |
 | `contracts/modules.py` | 注册表条目与 `riders_of` / `with_riders`；`cli/check.py`、planner、`cli/preflight.py`、`daemon/`、`pipeline/reporting.py` 都经 `with_riders` 展开清单 |
 | `tools/parity/fakevlm.py` | 假模型的 `_fake_camera_check`：按相机名与窗口给出每一档、漏一项、整个不答、一路与命名不符 |
 
-记录的 `details`：`protocol`（`camera-check/2`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
+记录的 `details`：`protocol`（`camera-check/8`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
 （已答项里判为 `none` 的比例）、`reason`（为什么是 unknown：成败判定没产生结果 / 没有任务标注且画面缺陷请求没有结果 / 判定请求没有按相机作答 /
-模型没答 `camera_check`）、`items`（三项各一个跨机位最坏档，就是一个字符串）、`per_camera`（逐机位 `answered` / `error` / `problems`
-与三项原答案，含时间段与污染种类）。逐机位明细只存这一份，报告与控制台都从它读。
+模型没答 `camera_check`）、`items`（四项各一个跨机位最坏档，就是一个字符串）、`identity`（整条的机位身份）、
+`arms`（量出来的左右臂配对：`identity`、`crossed`、`basis="motion_pairing"`、`readings`——各臂单独在动的时刻数、
+每路相机对每条臂的读数、赢出的余量）、`per_camera`（逐机位 `answered` / `error` / `problems` 与四项原答案，
+含时间段、污染种类、遮挡的比例 / 位置 / 时长，以及 `view`）。逐机位明细只存这一份，报告与控制台都从它读。
 
 ## 手动验证步骤
 
 ```bash
-# 1. 单测：解析器、汇总、发现、报告
-cd backend && ../.venv/bin/python -m pytest -q curation/tests/test_video_vlm.py curation/tests/test_camera_defects.py tests/cli/test_findings.py
+# 1. 单测：解析器、汇总、左右臂配对、发现、报告
+cd backend && ../.venv/bin/python -m pytest -q curation/tests/test_video_vlm.py curation/tests/test_camera_defects.py \
+    curation/tests/test_arm_pairing.py tests/cli/test_findings.py
 
 # 2. 端到端（假模型）：不列出它也每条一条记录，请求次数不变，单独跑报参数错误，报告里有小节和表
 cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_camera_defects.py
@@ -64,4 +72,7 @@ cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_camera_defects.py
 #    runs/<task>/checks/camera_defects/results.jsonl 每条四项与 identity 都有值，
 #    报告页有「镜头画面缺陷」小节（四项计数加机位身份计数），episode 明细里机位不符的那一路另起一行；
 #    usage.jsonl 的请求数与不带它时相同
+# 4. 左右臂配对：对双臂数据集（tos://curation-clip-check/anchor-arms-fastumi，ep0–13 两路相机文件对调、ep14–23 正常）
+#    建任务，看 camera_defects 记录里的 arms：对调的条目 identity=crossed 并点名相机，正常的 consistent，
+#    量不出来的 unknown 带原因；单臂数据集（DROID）这一块恒为 unknown，不报错
 ```

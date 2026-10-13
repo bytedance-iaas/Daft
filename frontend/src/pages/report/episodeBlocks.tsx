@@ -485,11 +485,12 @@ export function GenericBlock({ record }: BlockProps) {
   );
 }
 
-// camera_defects (registry 1.14; 7.2 gives occlusion its own share, place and length and asks the
-// cameras whether the arms are crossed): the model's own reading of this episode's picture, per
-// camera. One line for the four items, then only the cameras that reported something, so a clean
-// episode is one line and a dirty one says which camera, how bad, and when; a camera whose picture
-// contradicts its name, or a crossed pair of arms, gets its own line.
+// camera_defects (registry 1.14; 7.2 gives occlusion its own share, place and length and adds the
+// camera identity): the model's reading of this episode's picture, per camera, next to the arm
+// pairing measured from the recording. One line for the four items, then only the cameras that
+// reported something, so a clean episode is one line and a dirty one says which camera, how bad,
+// and when; a camera whose picture contradicts its declared mount, or a pair of cameras measured
+// on the wrong arms, gets its own line.
 const CD_ITEMS = ['glitch', 'shake', 'contamination', 'occlusion'] as const;
 
 interface CdItem {

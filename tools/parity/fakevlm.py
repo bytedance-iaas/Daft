@@ -116,7 +116,7 @@ class FakeVlm:
             for i, name in enumerate(cams):
                 k = int(round(ends[i] * 10)) + sum(map(ord, name))
                 block[name] = {"camera_check": _fake_camera_check(k, starts[i], ends[i], name)}
-            return json.dumps({"cameras": block, "arms": _fake_arms(cams)})
+            return json.dumps({"cameras": block})
         if "Assess the robot manipulation task from the supplied continuous videos" in text:
             camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
             start = float(re.search(r"episode time ([\d.]+)s", text).group(1))
@@ -148,7 +148,6 @@ class FakeVlm:
                         "camera_check": _fake_camera_check(k, c_start, c_end, name),
                     }
                 out["cameras"] = block
-                out["arms"] = _fake_arms(cams)
             return json.dumps(out)
         if "You check a recorded robot trajectory against a camera video" in text:
             # the EEF opinion without a gripper reference (design doc 12 §10.5): every other clip gets one
@@ -209,15 +208,6 @@ class FakeVlm:
 
     def transport(self) -> dict:
         return {"post": self.post, "get": self.get}
-
-
-def _fake_arms(cams: list[str]) -> dict:
-    """The episode's arm identity: crossed whenever two cameras name different arms (the fixture's
-    one-arm sets read unknown), so both branches occur without touching any verdict."""
-    named = [c for c in cams if "left" in c.lower() or "right" in c.lower()]
-    if len(named) < 2 or len(cams) < 2:
-        return {"identity": "unknown", "crossed": [], "note": "synthetic: no arm named"}
-    return {"identity": "crossed", "crossed": [named[0]], "note": "synthetic crossed arms"}
 
 
 def _fake_camera_check(k: int, start: float, end: float, camera: str = "") -> dict:

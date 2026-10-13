@@ -520,18 +520,24 @@ def _camera_defects(passed, score, d, p) -> Derived:
                     severity=CAMERA_LEVELS[level], scope={"camera": short_camera(cam)},
                     time_s=(float(times[0][0]), float(times[0][1])) if times else None,
                     readings={"level": level, "times": times[:8], **extra})
-    # the camera identity: what the picture says the camera is, against its name, and whether the
-    # cameras agree on which arm is which - the one reading a single camera cannot give (MV-2)
-    if str(d.get("identity") or "unknown") == "unknown":
-        out.cannot("MV-2", "model_no_answer", "没有一路相机的画面被对照过它的命名，也没有判定左右臂是否串线")
+    # the camera identity: what the picture says the camera is, against what the dataset declares,
+    # and which arm each camera measurably rides - the reading no single camera can give (MV-2)
     arms = d.get("arms") if isinstance(d.get("arms"), dict) else {}
+    if str(d.get("identity") or "unknown") == "unknown":
+        why = str(arms.get("note") or "").strip()
+        out.cannot("MV-2", "model_no_answer",
+                   "没有一路相机的画面被对照过数据集的说明，也没有测出左右臂是否串线"
+                   + (f"（{why[:120]}）" if why else ""))
     if arms.get("identity") == "crossed":
         crossed = [short_camera(c) for c in (arms.get("crossed") or []) if isinstance(c, str)]
         note = str(arms.get("note") or "").strip()
-        out.add(m, "identity", f"左右臂在相机之间串线：{'、'.join(crossed) or '未指明相机'} 跟的不是命名里的那条臂"
-                               + (f"（{note[:120]}）" if note else ""),
+        # the note names each camera and the arm it rides, so the headline does not list them again
+        out.add(m, "identity", "左右臂、机位身份串线：" + (note[:160] if note else
+                               f"{'、'.join(crossed) or '未指明相机'} 骑的不是数据集给它的那条臂"),
                 severity="medium", scope={"cameras": crossed} if crossed else None,
-                readings={"arms": "crossed", "crossed": crossed})
+                readings={"arms": "crossed", "crossed": crossed,
+                          "basis": arms.get("basis") or None,
+                          "margin": (arms.get("readings") or {}).get("margin")})
     for cam, e in sorted(per.items()):
         view = (e or {}).get("view") or {}
         what = "、".join(x for x in (_VIEW_KIND.get(view.get("kind")), _VIEW_ARM.get(view.get("arm"))) if x)

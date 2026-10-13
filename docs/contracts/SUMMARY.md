@@ -535,9 +535,13 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **C1 7.2**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，严重度 medium，按机位），
   明细表加 `occlusion`、`occlusion_coverage`、`occlusion_region`、`occlusion_duration_s`、`view_matches_name`、`identity` 六列；
   `covers` 相应多 IMG-8、MV-2。其他模块不变。
-- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/5`，`items` 多 `occlusion`，
-  新增 `identity`（`consistent` / `inconsistent` / `unknown`）与 `arms`（左右臂是否在相机之间串线的原始回答），
+- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/8`（`5` 起有遮挡的三个数与 `arms`，
+  `6` 起机位身份对照数据集的说法而不是相机名字：臂的数量取自数据集的动作 / 状态通道名，每路相机取自冻结的数据集声明
+  `calibration.cameras[*].mount` / `owner`，由 `--declaration` 送进 `check`——参数与 Daemon 的传递早就有了；`8` 起左右臂配对不再问模型，
+  改由 CPU 实测画面运动与各臂速度，模型只比安装方式），`items` 多 `occlusion`，
+  新增 `identity`（`consistent` / `inconsistent` / `unknown`）与 `arms`（量出来的左右臂配对：`identity`、`crossed`、
+  `basis="motion_pairing"`、`readings`），
   `per_camera` 每路多 `occlusion`（`level`、`times`、`source`、`coverage`、`region`、`duration_s`、`share`）与 `view`
   （`kind`、`arm`、`matches_name`、`same_as`、`note`）；旧协议的记录视为过期，重试会重判，读出来 IMG-8 / MV-2 记 unassessable。
-  `task_success` 记录里 `cameras[*].camera_check` 同样多这两块，`arms` 在 detail 顶层。
+  `task_success` 记录里 `cameras[*].camera_check` 同样多这两块；`arms` 只在 `camera_defects` 的记录里（它是实测结果，不是模型的回答）。
 - **C4 不变**；报告小节 `summary` 多 `occlusion` 计数、`identity` 计数与遮挡的总秒数 / 最大比例（都是开放字段）。

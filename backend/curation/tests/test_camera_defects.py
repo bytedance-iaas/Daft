@@ -33,10 +33,8 @@ def _check(glitch="none", shake="none", contamination="none", kind="none", times
             "view": view or _view(), "problems": []}
 
 
-def _task(reviews, cams=None, arms=None):
+def _task(reviews, cams=None):
     detail = {"cams": cams or sorted(reviews), "cameras": reviews}
-    if arms is not None:
-        detail["arms"] = arms
     return {"passed": None, "score": None, "detail": json.dumps(detail)}
 
 
@@ -114,17 +112,45 @@ def test_summary_and_table_rows():
 
 
 def test_crossed_arms_are_the_episodes_identity():
-    """The one reading a single camera cannot give: camera A rides the arm camera B is named for.
-    It makes the episode inconsistent even when every camera agrees with its own name."""
+    """The reading no single camera can give: this camera's picture moves with the arm the other
+    one is named for. Measured on the CPU (``pipeline.arm_pairing``) and handed to the record, it
+    makes the episode inconsistent even when every camera agrees with its own name."""
     reviews = {"observation.images.left_wrist": _review(_check(view=_view(arm="left"))),
                "observation.images.right_wrist": _review(_check(view=_view(arm="right")))}
-    crossed = {"identity": "crossed", "crossed": ["observation.images.left_wrist"], "note": "only the right arm moved"}
-    d = json.loads(CD.struct_from_task(_task(reviews, arms=crossed))["detail"])
+    crossed = {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+               "note": "画面运动跟的是另一条臂", "basis": "motion_pairing",
+               "readings": {"margin": 1.2}}
+    d = json.loads(CD.struct_from_task(_task(reviews), arms=crossed)["detail"])
     assert d["identity"] == "inconsistent"
     assert d["arms"]["identity"] == "crossed" and d["arms"]["crossed"] == ["observation.images.left_wrist"]
-    # the cameras agreeing settles it the other way, and a record from before the question was asked
-    # leaves the arms unknown without disturbing what the cameras said about their own names
-    d = json.loads(CD.struct_from_task(_task(reviews, arms={"identity": "consistent"}))["detail"])
+    assert d["arms"]["basis"] == "motion_pairing" and d["arms"]["readings"]["margin"] == 1.2
+    # a measured match settles it the other way, and an episode with nothing to measure against
+    # leaves the arms unknown without disturbing what the cameras said about their own mounts
+    d = json.loads(CD.struct_from_task(_task(reviews), arms={"identity": "consistent"})["detail"])
     assert d["identity"] == "consistent" and d["arms"]["identity"] == "consistent"
     d = json.loads(CD.struct_from_task(_task({"a": _review(_check(view=_view(matches="unknown")))}))["detail"])
-    assert d["identity"] == "unknown" and d["arms"] == {"identity": "unknown", "crossed": [], "note": "", "problems": []}
+    assert d["identity"] == "unknown"
+    assert d["arms"] == {"identity": "unknown", "crossed": [], "note": "", "basis": "", "readings": {}}
+
+
+def test_the_dataset_says_how_many_arms_it_has():
+    """MV-2 is a comparison, so the claim comes from the dataset, never from a camera's name: the
+    channel names give the arms (FastUMI leaves robot_type null) and the declaration gives each
+    camera's mount and owner. A dataset that says nothing makes no claim, and the request then asks
+    nothing about the identity."""
+    from curation.pipeline import dataset_claim as DC
+
+    two = {"features": {"action": {"names": {"motors": ["left_x", "left_gripper", "right_x", "right_gripper"]}}}}
+    one = {"features": {"action": {"names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}}}
+    assert DC.arms_of(two) == ["left", "right"] and DC.arms_of(one) == [] and DC.arms_of(None) == []
+    assert DC.arms_of({"features": {"action": {"names": ["robot0_x", "robot1_x"]}}}) == ["robot0", "robot1"]
+    decl = {"calibration": {"cameras": {"observation.images.left_camera": {"mount": "wrist", "owner": "left"},
+                                        "observation.images.top": {"mount": "fixed_external"},
+                                        "observation.images.odd": {"mount": "moving"}}}}
+    said = DC.cameras_of(decl)
+    assert said["observation.images.left_camera"] == {"mount": "wrist", "owner": "left"}
+    assert said["observation.images.top"] == {"mount": "fixed_external"} and "observation.images.odd" not in said
+    text = DC.text(DC.build(decl, two), ["observation.images.left_camera", "observation.images.top"])
+    assert "2 arms" in text and "left and right" in text
+    assert "left_camera is declared a wrist camera on left" in text and "top is declared a fixed third-person camera" in text
+    assert DC.text(DC.build(None, one), ["cam"]) == ""           # nothing to compare against

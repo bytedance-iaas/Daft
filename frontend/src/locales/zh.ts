@@ -1724,7 +1724,7 @@ export const zh = {
         left: '画面左侧', right: '画面右侧', top: '画面上方', bottom: '画面下方',
         center: '画面中央', whole: '整幅画面',
       } as Record<string, string>,
-      armsCrossed: (cams: string) => (cams ? `左右臂在相机之间串线：${cams}` : '左右臂在相机之间串线'),
+      armsCrossed: (cams: string) => (cams ? `左右臂、机位身份串线：${cams}` : '左右臂、机位身份串线'),
       identity: { consistent: '机位身份与命名一致', inconsistent: '机位身份与命名不符', unknown: '机位身份未对照命名' } as Record<string, string>,
       viewKind: { wrist: '腕部相机', fixed: '固定机位', unknown: '' } as Record<string, string>,
       viewArm: { left: '左臂', right: '右臂', single: '单臂', unknown: '' } as Record<string, string>,

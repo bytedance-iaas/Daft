@@ -459,8 +459,8 @@ describe('质检报告 (07 §5)', () => {
     expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒 · 视觉遮挡 严重（人）20–30 秒 遮住 45% 画面 · 画面中央 · 共 10 秒');
     expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
     expect(body).toHaveTextContent('机位身份与命名不符');
-    // the crossing only the set of cameras can show (registry 7.2)
-    expect(body).toHaveTextContent('左右臂在相机之间串线：robot0_sensor_camera0：只有右臂在 4–6 秒动');
+    // the crossing no single camera can show, measured from the recorded motion (registry 7.2)
+    expect(body).toHaveTextContent('左右臂、机位身份串线：robot0_sensor_camera0：只有右臂在 4–6 秒动');
     expect(body).toHaveTextContent('robot0_sensor_camera0：画面与命名不符（画面是固定机位、单臂）：scene never moves with the arm');
     expect(body).toHaveTextContent('建议项，不影响判决');
     expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check|matches_name/);

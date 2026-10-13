@@ -122,12 +122,13 @@ CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsisten
                                              "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
                                              "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
                                                       "note": ""}}}}
-# registry 7.2: the arms are crossed BETWEEN cameras - every camera agrees with its own name, and
-# only the set of them shows that the one called left rides the right arm
-CAM_ARMS = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
+# registry 7.2: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
+# only the measured pairing shows that the one called left rides the right arm
+CAM_ARMS = {"protocol": "camera-check/8", "reason": "", "identity": "inconsistent",
             "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
             "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
-                     "note": "only the right arm moves at 4-6 s"},
+                     "basis": "motion_pairing", "readings": {"margin": 1.4},
+                     "note": "画面运动跟的是另一条臂"},
             "per_camera": {"observation.images.left_wrist": {"answered": True},
                            "observation.images.right_wrist": {"answered": True}}}
 

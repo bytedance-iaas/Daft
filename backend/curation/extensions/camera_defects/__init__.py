@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from ...adapters.video_vlm import (ARM_VERDICTS, CAMERA_CHECK_ITEMS, CAMERA_CHECK_LEVELS,
-                                   CAMERA_CHECK_PROTOCOL, VIEW_FIELDS, empty_arms, empty_view)
+from ...adapters.video_vlm import (CAMERA_CHECK_ITEMS, CAMERA_CHECK_LEVELS,
+                                   CAMERA_CHECK_PROTOCOL, VIEW_FIELDS, empty_view)
 from ...pipeline.records import legacy_verdict
 
 MODULE_ID = "camera_defects"
@@ -34,9 +34,15 @@ REGION_ZH = {"left": "画面左侧", "right": "画面右侧", "top": "画面上�
              "center": "画面中央", "whole": "整幅画面"}
 
 
-def struct_from_task(task_struct: dict | None, *, undecodable: bool = False) -> dict:
-    """v1-shaped ``{passed, score, detail}`` for one episode, from task_success's struct. ``undecodable``: the
-    episode's video is corrupt, so the request was never sent (D93) - every item is unassessable for that."""
+def struct_from_task(task_struct: dict | None, *, undecodable: bool = False,
+                     arms: dict | None = None) -> dict:
+    """v1-shaped ``{passed, score, detail}`` for one episode, from task_success's struct.
+
+    ``undecodable``: the episode's video is corrupt, so the request was never sent (D93) - every
+    item is unassessable for that. ``arms``: which arm each camera measurably rides
+    (:func:`curation.pipeline.arm_pairing.pair`), the half of MV-2 that is measured on the CPU
+    rather than asked of the model; None when the dataset gives nothing to measure against.
+    """
     detail = _parse_detail(task_struct)
     # the per-camera answers of the one judgement request (D71: ``cameras``, one entry per
     # supplied camera, each with its ``camera_check``)
@@ -97,7 +103,7 @@ def struct_from_task(task_struct: dict | None, *, undecodable: bool = False) -> 
         reason = "模型未回答 camera_check"
     else:
         reason = ""
-    arms = _arms_of(detail)
+    arms = _arms_of(arms)
     out = {"protocol": CAMERA_CHECK_PROTOCOL, "source": f"{HOST}.cameras", "cams": cams,
            "known": known, "clean_ratio": (clean / known) if known else None, "reason": reason,
            "items": items, "identity": identity_of(per_camera, arms), "arms": arms,
@@ -120,25 +126,29 @@ def _view_of(check, cam: str, cams: list[str]) -> dict:
     return view
 
 
-def _arms_of(detail: dict) -> dict:
-    """The episode-level ``arms`` answer (which camera rides which arm), normalised by the adapter."""
-    raw = detail.get("arms")
+def _arms_of(raw: dict | None) -> dict:
+    """The episode's measured arm pairing, kept to the fields the report and the console read.
+
+    The measurement is the module's own (``basis``, with its numbers in ``readings``), not an
+    answer from the model, and an episode where nothing could be measured reads ``unknown`` here.
+    """
+    out = {"identity": UNKNOWN, "crossed": [], "note": "", "basis": "", "readings": {}}
     if not isinstance(raw, dict):
-        return empty_arms()
-    out = empty_arms()
+        return out
     identity = str(raw.get("identity") or UNKNOWN)
-    out["identity"] = identity if identity in ARM_VERDICTS else UNKNOWN
+    out["identity"] = identity if identity in ("consistent", "crossed") else UNKNOWN
     out["crossed"] = [str(c) for c in (raw.get("crossed") or []) if isinstance(c, str)]
-    out["note"] = str(raw.get("note") or "")
-    out["problems"] = [str(p) for p in (raw.get("problems") or [])]
+    out["note"] = str(raw.get("note") or "")[:300]
+    out["basis"] = str(raw.get("basis") or "")
+    out["readings"] = raw.get("readings") if isinstance(raw.get("readings"), dict) else {}
     return out
 
 
 def identity_of(per_camera: dict[str, dict], arms: dict | None = None) -> str:
     """The episode's camera identity (MV-2): ``inconsistent`` as soon as one camera plainly
-    contradicts its own name, duplicates another, or the cameras disagree about which arm is which
-    (``arms``, the one reading a single camera cannot give); ``consistent`` when something was
-    checked and nothing objected, ``unknown`` when nothing was said."""
+    contradicts the mount the dataset declares for it, duplicates another, or measurably rides the
+    other arm (``arms``, which no single camera's picture can give); ``consistent`` when something
+    was checked and nothing objected, ``unknown`` when nothing was said."""
     arms = arms or {}
     views = [e.get("view") or {} for e in per_camera.values() if e.get("answered")]
     if arms.get("identity") == "crossed" or any(v.get("matches_name") == "no" or v.get("same_as") for v in views):

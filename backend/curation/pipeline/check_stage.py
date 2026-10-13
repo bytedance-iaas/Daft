@@ -111,6 +111,9 @@ class StageOptions:
     pipeline_state: str | None = None
     pipeline_next: str = "done"
     episode_stream: object | None = None
+    #: what the dataset says about its arms and cameras (``pipeline.dataset_claim``): the camera
+    #: identity is read against it, so the request carries it (MV-2)
+    dataset_claim: dict | None = None
     #: mcap / lance (D44): the task's selection (the semantics sample) and the hook that
     #: makes an episode's source objects local before it is read (a remote dataset)
     selection: list[int] | None = None
@@ -386,13 +389,30 @@ class StageRun:
 
                 task_log = logs["task_success"].items()
                 undecodable = bool(task_log) and all(corrupt_video(i) for i in task_log)     # D93
-                structs["camera_defects"] = camera_defects.struct_from_task(s.get("task_success"),
-                                                                            undecodable=undecodable)
+                arms = None if undecodable else self._arm_pairing(row)
+                structs["camera_defects"] = camera_defects.struct_from_task(
+                    s.get("task_success"), undecodable=undecodable, arms=arms)
         if self.o.eef is not None:
             s, e = self.o.eef.judge(ep, logs[self.o.eef.module])
             structs[self.o.eef.module] = s
             evidence[self.o.eef.module] = e
         return structs, evidence
+
+    def _arm_pairing(self, row: dict) -> dict | None:
+        """MV-2's own half: which arm each wrist camera measurably rides (CPU, no request).
+
+        Asked of every episode whose dataset says it has more than one arm, because the comparison
+        it answers - the picture against the dataset's claim - is what MV-2 is; the module's own
+        guards answer ``unknown`` for everything it cannot measure. The videos are the ones the
+        stage already opened, so a remote dataset reads them out of the episode's shared blocks.
+        """
+        claim = self.o.dataset_claim or {}
+        if len(claim.get("arms") or []) < 2 or not row.get("video"):
+            return None
+        from . import arm_pairing
+
+        return arm_pairing.pair(row["video"], row.get("action"), claim,
+                                fps=float(column(row, "fps", 20.0) or 20.0))
 
     def _task_success(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
         log = logs["task_success"]
@@ -409,7 +429,8 @@ class StageRun:
         try:
             protocol_src = "原始标注" if src == "人工改标" else src
             struct = episode_checks.task_check_episode(
-                self.o.cfg, deps, row["video"], text, protocol_src, column(row, "semantics_extras", "{}"))
+                self.o.cfg, deps, row["video"], text, protocol_src, column(row, "semantics_extras", "{}"),
+                claim=self.o.dataset_claim)
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = episode_checks.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
@@ -440,9 +461,8 @@ class StageRun:
                 detail["video_inputs"] = [c.metadata() for c in clips]
                 detail["cams"] = [c.camera for c in clips]
                 asked = wrap_call(clients.cameras, log, step="probe", call_kind="probe")
-                answer = asked(clips)
+                answer = asked(clips, claim=self.o.dataset_claim)
                 detail["cameras"] = answer["cameras"]
-                detail["arms"] = answer.get("arms") or {}
             except Exception as e:  # noqa: BLE001 - the episode's own error, held like any other
                 if not log:
                     log.add("internal", cause=f"{type(e).__name__}: {e}", camera=getattr(e, "camera", None))
