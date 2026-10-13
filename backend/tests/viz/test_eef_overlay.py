@@ -425,3 +425,12 @@ def test_a_raw_umi_session_on_tos_is_made_whole(tmp_path, monkeypatch):
     assert sample["episode_index"] == 0 and len(sample["frames"]) == 16
     assert sorted(v["camera_id"] for v in sample["sample"]["views"]) == ["camera0", "camera1"]
     assert {"demos/demo0/raw_video.mp4", "demos/demo1/raw_video.mp4"} <= set(store.ranged)   # headers, not downloads
+    # and the marks come out of it, on the videos the session reader plays (``demos/<video_path>``)
+    from daemon.viz.eef_overlay import overlay_cameras
+
+    cams, _ = overlay_cameras(out, 0, kept=True)
+    assert {(c["camera_id"], c["media_uri"], c["mount"]) for c in cams} == {
+        ("camera0", "demos/demo0/raw_video.mp4", "wrist"), ("camera1", "demos/demo1/raw_video.mp4", "wrist")}
+    for c in cams:
+        point = next(x for x in c["layers"] if x["id"] == "point")
+        assert all(f is not None for f in point["frames"])
