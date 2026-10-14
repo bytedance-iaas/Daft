@@ -193,6 +193,7 @@ def _cpu_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
         if "kinematic_limits" in modules:
             _check_embodiment(args, info)
         cfg = runctx.stage_config(ctx, modules)
+        runctx.apply_evidence_params(cfg, modparams.parse(getattr(args, "param", None)))   # the sync curves' 全画 / 不画
         registry = EmbodimentRegistry()
         if cache is not None:
             cache["cpu"] = (cfg, registry)
@@ -325,6 +326,7 @@ def _vlm_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
         _merge_strategy(ctx, plan_stage, cfg, modules)
     else:
         gates, cfg = prepared["gates"], prepared["cfg"]
+    runctx.apply_evidence_params(cfg, modparams.parse(getattr(args, "param", None)))   # 全画 / 不画 reach the stage
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
     instructions: dict[int, str] = {}

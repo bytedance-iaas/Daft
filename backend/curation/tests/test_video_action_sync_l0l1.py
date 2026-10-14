@@ -96,6 +96,56 @@ def test_l1_sign_and_accuracy_synthetic(shift):
     assert r.passed is (abs(shift) <= 2)          # lag_tol 0.25s = 2.5 步
 
 
+def test_l1_curve_recorded_with_reading():
+    """The scanned correlation curve travels with the reading (MV-3 borrowed-peak test reads it): same length
+    arrays, lags ascending within the scan window, the curve's maximum is the reported peak."""
+    r = global_lag(*_synthetic_pair(3))
+    curve = r.detail["xc_curve"]
+    lags, corr = curve["lags_s"], curve["corr"]
+    assert len(lags) == len(corr) and 20 <= len(lags) <= 241
+    assert lags == sorted(lags) and lags[0] >= -2.0 - 1e-6 and lags[-1] <= 2.0 + 1e-6
+    assert abs(max(corr) - r.detail["corr_peak"]) < 1e-3
+    assert abs(lags[corr.index(max(corr))] - r.detail["lag_s"]) < 0.1 + 1e-6
+    # the reading of a camera keeps it as an optional key
+    from curation.core.checks.video_action_sync import camera_reading
+    assert camera_reading(r)["xc_curve"] == curve
+
+
+def test_l1_windowed_median_agrees_with_the_global_lag_on_a_clean_shift():
+    """The second estimator (3 s windows, the trusted windows' median) reads the same shift as the whole
+    curve on a synthetic pair, with several trusted windows and a small spread; a window-level reading
+    never recurses into another windowed estimate."""
+    from curation.core.checks.video_action_sync import windowed_lag
+
+    flow, ft, speed, st = _synthetic_pair(3, n=600)
+    r = global_lag(flow, ft, speed, st)
+    lw = r.detail["lag_windows"]
+    assert lw["n_windows"] >= 5 and lw["n_trusted"] >= 3
+    assert abs(lw["lag_s"] - 0.3) <= 0.1 and lw["iqr_s"] <= 0.2
+    assert all("lag_windows" not in w for w in lw["windows"])
+    direct = windowed_lag(flow, ft, speed, st)
+    assert direct["lag_s"] == lw["lag_s"] and direct["n_trusted"] == lw["n_trusted"]
+    from curation.core.checks.video_action_sync import camera_reading
+    assert camera_reading(r)["lag_windows"]["lag_s"] == lw["lag_s"]
+
+
+def test_l1_window_length_follows_the_sample_rate_and_the_config():
+    """The window is ``max(window_s, window_min_frames)`` samples: 2 s at 30 fps, 64 frames (4.27 s) at 15 fps,
+    and the site's config can move both (``global_lag(window=...)``, routed from default.yaml)."""
+    from curation.core.checks.video_action_sync import windowed_lag
+
+    flow, ft, speed, st = _synthetic_pair(3, n=600, dt=1 / 30)   # 30 fps, 20 s
+    assert abs(windowed_lag(flow, ft, speed, st)["win_s"] - 64 / 30) < 1e-3        # 64 frames beat 2 s at 30 fps
+    assert abs(windowed_lag(flow, ft, speed, st, win_s=3.0)["win_s"] - 3.0) < 1e-3
+    assert abs(windowed_lag(flow, ft, speed, st, min_frames=90)["win_s"] - 3.0) < 1e-3
+    half = windowed_lag(flow[::2], ft[::2], speed[::2], st[::2])  # 15 fps: the frame floor stretches the window
+    assert abs(half["win_s"] - 64 / 15) < 1e-3 and abs(half["hop_s"] - 32 / 15) < 1e-3
+    slow = windowed_lag(*_synthetic_pair(3, n=600))               # 10 Hz: 6.4 s
+    assert abs(slow["win_s"] - 6.4) < 1e-3
+    r = global_lag(flow, ft, speed, st, window={"win_s": 4.0})
+    assert abs(r.detail["lag_windows"]["win_s"] - 4.0) < 1e-3
+
+
 def test_l1_undecidable_on_static():
     n = 200
     t = np.arange(n) * 0.1

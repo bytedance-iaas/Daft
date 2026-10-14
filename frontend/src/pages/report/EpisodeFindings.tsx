@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { moduleName, useModules } from '../../api/queries';
 import type { EpisodeFinding, EpisodeView } from '../../api/types';
 import { LevelTag } from '../../features/findings/FindingsView';
-import { LEVELS, codeName, groupByLevel, intervalOf, itemLabel, levelTitle, scopeText } from '../../lib/findings';
+import { LEVELS, codeName, codeSpec, groupByLevel, intervalOf, itemLabel, levelTitle, scopeText } from '../../lib/findings';
 import { zh } from '../../locales/zh';
 
 const F = () => zh.findings;
@@ -58,10 +58,16 @@ export function EpisodeFindings({
     const scope = scopeText(f.finding.scope);
     const ask = f.level === 'review' && targets.review.has(f.module);
     const appeal = f.level === 'blocking' && f.appealable && targets.appeals.has(f.module);
+    // the text's colour follows the code's own level in the registry (how serious the finding is), not the task's
+    // policy (how this task treats it): under 只报不拒 every finding is info, and a camera out of step still shows
+    const spec = codeSpec(reg.data, f.module, f.finding.code);
+    const suspect = f.finding.code === 'suspect' || f.finding.code.endsWith('_suspect');   // 疑似: worth a look too
+    const own = spec?.level === 'blocking' ? 'blocking' : spec?.level === 'review' || suspect ? 'review' : undefined;
+    const tone = own === 'blocking' ? 'var(--c-danger)' : own === 'review' ? 'var(--c-warning)' : undefined;
     return (
-      <li key={i} data-testid="episode-finding">
+      <li key={i} data-testid="episode-finding" data-tone={own}>
         <Space size={6} wrap>
-          <span>{f.finding.message_zh}</span>
+          <span style={tone ? { color: tone } : undefined}>{f.finding.message_zh}</span>
           {f.human ? (
             <Tag size="small" color="purple">
               {F().human}

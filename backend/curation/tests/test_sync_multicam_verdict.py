@@ -5,7 +5,7 @@
 - 判定层**只有一种判废情形**:所有可信相机一致指向同一个 Δ≠0;
 - 单相机数据集永不因同步判废;矛盾/测不准/无信号 → passed=True + 标注,
   **绝不返回 None**(None=弃权会把条目推进人工裁决队列,用户明确否掉);
-- 正负不对称:正滞后(相机链路延迟,有良性解释)门槛高,负滞后(数据装配错误)门槛严。
+- 门槛正负一样(2026-10-13 起,7.5):「全部一致」只进人工不判废,不再为相机链路延迟把正向门槛抬到 0.5。
 """
 from __future__ import annotations
 
@@ -69,22 +69,22 @@ def test_all_trusted_cameras_agree_on_delta_kills():
                               "wrist": _mis(0.60)}, 3).passed is False
 
 
-def test_consistent_but_small_positive_lag_is_annotated_not_killed():
-    """正滞后有良性解释(相机链路延迟普遍存在)→ 判废门槛抬到 0.5s,0.3s 只标注。"""
+def test_consistent_lag_beyond_tolerance_is_flagged_either_sign():
+    """7.5: the one threshold (0.25 s) either way - +0.30 and −0.30 both read misaligned_all (asked, not rejected);
+    a consistent lag under it is annotated with the calibration advice."""
     det = sync_verdict({"a": _mis(0.30), "b": _mis(0.32)}, 2)
-    assert det["verdict"] == "annotated"
-    assert det["consensus_lag_s"] == pytest.approx(0.31, abs=0.01)   # 一致性仍如实记录
-    assert "标定" in det["reason"]
-
-
-def test_negative_lag_threshold_is_stricter():
-    """负滞后无良性解释(只可能是数据装配错误)→ 容差量级(0.25s)即判废。
-
-    同样是 |Δ|=0.30s:正的只标注(上一条),负的判废。这就是"正负不对称"。
-    """
-    det = sync_verdict({"a": _mis(-0.30), "b": _mis(-0.31)}, 2)
     assert det["verdict"] == "misaligned_all"
-    assert "装配" in det["reason"]
+    assert det["consensus_lag_s"] == pytest.approx(0.31, abs=0.01)
+    neg = sync_verdict({"a": _mis(-0.30), "b": _mis(-0.31)}, 2)
+    assert neg["verdict"] == "misaligned_all" and "装配" in neg["reason"]
+    small = sync_verdict({"a": _mis(0.20), "b": _mis(0.22)}, 2)
+    assert small["verdict"] == "annotated" and "标定" in small["reason"]
+
+
+def test_spread_tolerance_is_a_fifth_of_a_second():
+    """7.5: two trusted cameras 0.25 s apart no longer count as one offset (spread_tol_s 0.3 -> 0.2)."""
+    det = sync_verdict({"a": _mis(0.30), "b": _mis(0.55)}, 2)
+    assert det["verdict"] == "annotated" and det["consensus_lag_s"] is None
 
 
 def test_single_bad_camera_only_annotates():
@@ -703,7 +703,7 @@ _CONTRACT_CAM = {"lag_s", "corr_peak", "corr_at_zero", "peak_ratio", "peak_width
                  "trusted", "code", "note", "diagnosis"}
 #: 2026-08-11 之后新增的键:新读数一定有,老交付一定没有 → 只能是可选,
 #: 契约检查两头都要放行(必需集一个不能少,多出来的只准是这些)
-_CONTRACT_CAM_OPT = {"at_scan_edge", "visibility"}
+_CONTRACT_CAM_OPT = {"at_scan_edge", "visibility", "xc_curve", "lag_windows"}  # xc_curve: 2026-10-13 随读数落盘的相关曲线(MV-3 借峰检验)
 _CONTRACT_VERDICTS = {"aligned", "misaligned_all", "annotated", "undecidable"}
 _CONTRACT_CODES = {"aligned", "misaligned", "ambiguous_peak", "flat_peak",
                    "low_corr", "no_motion"}
@@ -754,8 +754,9 @@ def test_sync_health_matches_report_contract():
     assert {"per_camera", "advice", "negative_lag_episodes"} <= set(h)
     for s in h["per_camera"].values():
         assert set(s) == {"n", "median_lag_s", "iqr_s", "n_flagged",
-                          "n_suspect", "n_noisy", "n_abstained"}
+                          "n_suspect", "n_noisy", "n_abstained", "n_window_stable"}   # 7.4: the windowed rule's coverage
     assert isinstance(h["advice"], str) and isinstance(h["negative_lag_episodes"], list)
+    assert h["window_comparable_episodes"] == 0 and "分窗规则可比对 0/1 条" in h["advice"]
 
 
 def test_noisy_episodes_are_accounted_at_dataset_level():

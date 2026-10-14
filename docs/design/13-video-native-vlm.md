@@ -66,7 +66,7 @@ video:
 
 判定请求里每路相机的回答各带一个字段 `camera_check`（D71 之前是追加在逐机位复核请求上），
 报告这路相机自己的四项画面缺陷：花屏（`glitch`）、相机抖动（`shake`）、镜头污染（`contamination`）、
-视觉遮挡（`occlusion`，注册表 8.1 起）。每项给 `none` / `minor` / `severe` / `unknown` 四档、若干时间段
+视觉遮挡（`occlusion`，注册表 8.2 起）。每项给 `none` / `minor` / `severe` / `unknown` 四档、若干时间段
 （口径同 `evidence`：episode 相对秒）和一句说明，污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`）。
 
 **每一项的措辞都卡在它那一个检测项里**（`camera-check/10`）：四项在分类表（C6 2.0）里是互斥的，各自写了与邻项的判别法，
@@ -141,7 +141,7 @@ video:
   不进 keep / drop / held，不提复核问题。注册表 2.0（设计 17，2026-10-01）去掉了这个字段：细码 `glitch`（IMG-5）、
   `shake`（IMG-6）、`contamination`（IMG-7）、`occlusion`（IMG-8）、`identity`（MV-2）默认级别都是 info，效果相同；它骑在任务成败判定的请求上（`rides_on`），从不单独待补跑，
   模型没回答（unknown）在记录 2.0 里是 unassessable `model_no_answer`；MV-2 的左右臂配对是实测，量不出结论记
-  `measurement_inconclusive`、数据集没有可比的两条臂记 `not_applicable`（注册表 8.1），不记成「模型没答」。
+  `measurement_inconclusive`、数据集没有可比的两条臂记 `not_applicable`（注册表 8.2），不记成「模型没答」。
 - **解析永不失败**：缺字段、档位写错、时间段越界都只记进 `problems`，三项按 `unknown` 落盘，绝不触发
   格式修复重试，也不影响 `verdict`、`completion` 和 `evidence` 的校验。
 - **写坏了也只赔自己**：整份回答解析不了时，先按花括号配对把 `camera_check` 这一个字段整块剪掉再解析

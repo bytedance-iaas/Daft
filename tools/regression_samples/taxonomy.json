@@ -523,8 +523,10 @@
    "origin": "具",
    "samples": "真实：Pantheon 第二批标注里 MolmoAct2 294 条 `sped_up_recording`（第二批）",
    "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.camera_rate_mismatch"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "录制的时间轴与真实时间不成比例：画面按时间戳播放比实际快或慢（跳帧、时间戳压缩）；不同流各自采样率不同不算",
@@ -1046,8 +1048,9 @@
    "origin": "需",
    "samples": "合成；标记",
    "platform": "部分：同步检查逐路测时间差，各路不一致时只标注",
-   "platform_status": "有读数",
+   "platform_status": "能判",
    "platform_codes": [
+    "data_integrity.camera_timing_mismatch",
     "video_action_sync.lag_inconsistent"
    ],
    "kind": "defect",
@@ -1377,6 +1380,7 @@
    "platform": "**部分（实测）**：单路相机提前 0.6 秒，同步模块量出 −0.53 s 并标为错位，但另两路对齐 → 「证据不一致不定罪」放行；0.2 秒在容差内。所有可信相机一致偏移才拒",
    "platform_status": "能判",
    "platform_codes": [
+    "data_integrity.camera_start_offset",
     "video_action_sync.misaligned_all",
     "video_action_sync.camera_misaligned",
     "video_action_sync.suspect"

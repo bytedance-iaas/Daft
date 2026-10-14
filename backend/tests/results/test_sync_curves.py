@@ -45,6 +45,24 @@ def test_curves_per_camera_downsampled_with_the_reading_on_them(world):
     assert world.get("/episodes/3/sync-curves", rev=1).status_code == 200
 
 
+def test_the_windowed_readings_are_served_per_window_at_its_middle():
+    """Registry 7.3: a record's ``lag_windows`` (``windowed_lag``) becomes ``windows`` - one point per window placed
+    at the window's middle, with the trusted windows' median and spread; a record without them gives None."""
+    from daemon.results.sync_curves import _windows
+
+    assert _windows(None) is None and _windows({}) is None and _windows({"lag_s": 0.1}) is None
+    lw = {"win_s": 2.0, "hop_s": 1.0, "dt_s": 0.0333, "n_windows": 3, "n_trusted": 2, "lag_s": 0.11, "iqr_s": 0.01,
+          "windows": [{"t0_s": 0.0, "lag_s": 0.1, "corr_peak": 0.8, "trusted": True},
+                      {"t0_s": 1.0, "lag_s": 0.12, "corr_peak": 0.7, "trusted": True},
+                      {"t0_s": 2.0, "lag_s": 0.9, "corr_peak": 0.3, "trusted": False},
+                      {"t0_s": "x", "lag_s": 0.1}]}                                   # a broken entry is skipped
+    out = _windows(lw)
+    assert out == {"win_s": 2.0, "hop_s": 1.0, "lag_s": 0.11, "iqr_s": 0.01, "n_trusted": 2, "n_windows": 3,
+                   "points": [{"t_s": 1.0, "lag_s": 0.1, "corr_peak": 0.8, "trusted": True},
+                              {"t_s": 2.0, "lag_s": 0.12, "corr_peak": 0.7, "trusted": True},
+                              {"t_s": 3.0, "lag_s": 0.9, "corr_peak": 0.3, "trusted": False}]}
+
+
 def test_why_there_are_no_curves(world, monkeypatch):
     from daemon.results import revision
 

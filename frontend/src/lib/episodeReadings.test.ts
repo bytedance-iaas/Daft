@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows } from './episodeReadings';
+import { judgementName, motionFacts, motionRows, syncCameraPhrases, taskTrail, timestampFacts, violationRows, visualRows } from './episodeReadings';
 
 describe("one episode's readings in Chinese (F6.2)", () => {
   it('timestamps: duration, frames, intervals, where it jumped', () => {
@@ -43,14 +43,14 @@ describe("one episode's readings in Chinese (F6.2)", () => {
     expect(rows[1].frozen).toBe('1%');
   });
 
-  it('sync: the badge (疑似错位 for suspects only) and the diagnosis per camera', () => {
-    expect(syncBadge({ verdict: 'annotated', suspect_cameras: ['a'], flagged_cameras: [] })).toMatchObject({ text: '疑似错位（证据不足）', color: 'orange' });
-    expect(syncBadge({ verdict: 'misaligned_all' }).text).toBe('整体错位（判废）');
-    const rows = syncRows({ flagged_cameras: ['b'], per_camera: { a: { lag_s: 0.02, corr_peak: 0.9, trusted: true, diagnosis: { label: '对齐', text: '对得上' } }, b: { lag_s: -0.38, corr_peak: 0.7, corr_at_zero: 0.2, trusted: true, diagnosis: { label: '错位', text: '晚了' } } } });
-    expect(rows.map((r) => [r.camera, r.lag, r.trusted, r.label, r.flagged])).toEqual([
-      ['a', '+0.02', '是', '对齐', false],
-      ['b', '−0.38', '是', '错位', true],
-    ]);
+  it('sync: one plain phrase per camera, as the adjudication card words it (2026-10-13)', () => {
+    expect(syncCameraPhrases({ per_camera: {
+      wrist: { lag_s: 0.0667, code: 'aligned', trusted: true },
+      front: { lag_s: -0.9333, code: 'misaligned', trusted: true },
+      side: { lag_s: -0.7333, code: 'ambiguous_peak', trusted: false },
+      top: { lag_s: 0.38, code: 'misaligned', trusted: true },
+    } })).toEqual(['front 比动作早 0.93 秒', 'side 测不准', 'top 比动作晚 0.38 秒', 'wrist 对齐（+0.07）']);
+    expect(syncCameraPhrases({})).toEqual([]);
   });
 
   it('task_success: the trail of the one request, unreached steps marked (video-task/2)', () => {

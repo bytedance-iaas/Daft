@@ -142,7 +142,8 @@ def test_v1_facts():
     assert "duplicate_content" not in {c.code for c in M.get("data_integrity").codes}
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success",
                                                                     "eef_video_consistency",
-                                                                    "data_integrity"}
+                                                                    "data_integrity",
+                                                                    "video_action_sync"}     # 7.3 sync_check
     assert not any(m.depends_on for m in M.MODULES), "3.2: no data dependency is left"
     assert "autolabel" not in M.ids() and "autolabel" not in M.STAGES and M.BLOCKS["vlm"] == ("vlm",)
     assert dict(M.UNASSESSABLE_REASONS)["no_task_text"]
@@ -162,7 +163,10 @@ def test_the_default_policy_reproduces_todays_gates():
         c = M.finding_code(m, "decode_failed")
         assert (c.item, c.level, c.appealable) == ("FILE-4", "blocking", False) and "FILE-4" in M.get(m).covers
     reviewed = {(m.id, c.review_line) for m in M.MODULES for c in m.codes if c.level == "review"}
-    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict"}
+    assert {line for _, line in reviewed} == {"integrity_check", "eef_check", "task_verdict", "sync_check"}
+    # 7.3: the sync check's cameras that disagree are asked, the whole-episode offset still rejects by machine
+    assert ("video_action_sync", "sync_check") in reviewed
+    assert M.finding_code("video_action_sync", "misaligned_all").level == "review"            # 7.5: every sync finding is asked
     assert {(m.id, c.code) for m in M.MODULES for c in m.codes if c.appealable} == {
         ("task_success", "failure")}
 
@@ -261,7 +265,7 @@ def test_review_lines():
     The label line went with the skill profile (registry 3.0): a label conflict the kill guard
     finds now asks the task verdict, so one card asks one question."""
     assert [line.id for line in M.REVIEW_LINES] == ["task_verdict", "reject_appeal", "eef_check",
-                                                    "integrity_check"]
+                                                    "integrity_check", "sync_check"]
     for line in M.REVIEW_LINES:
         assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
         assert M.review_line_of_kind(line.review_kind) is line

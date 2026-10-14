@@ -13,6 +13,8 @@ finding with a position concerns only the episodes whose window it overlaps.
 """
 from __future__ import annotations
 
+import bisect
+
 import hashlib
 import json
 import os
@@ -320,6 +322,7 @@ class IntegrityJudge:
         infra: list[str] = []
         files = []
         video_counts: dict[str, int] = {}
+        timing: dict[str, dict] = {}
         cut_off = False
         for ref in self.plan.get(ep, []):
             rep = self._file(ep, ref)
@@ -346,6 +349,8 @@ class IntegrityJudge:
                                             f"{ref.camera} 相机的视频有 {n} 帧，episode 表记 {length} 帧",
                                             "L1", file=ref.key, camera=ref.camera,
                                             args={"frames": n, "length": length}))
+                self._camera_timing(ep, ref, rep, timing)
+        findings += self._timing_findings(timing)
         if cut_off:
             findings.append(Finding("cut_off", "录制中断：文件尾没有 mcap 结束标识，读得到的部分完好",
                                     "L1", file=(self.plan.get(ep) or [FileRef("", "mcap")])[0].key))
@@ -378,8 +383,87 @@ class IntegrityJudge:
                    "tiers": {"L1": True, "L2": self.full_read, "L3": self.decode_test},
                    "findings": [f.to_json() for f in ordered(findings) if f.level != DATASET],
                    "files": files}
+        if timing:
+            details["camera_timing"] = timing
         return {"passed": passed, "score": None,
                 "detail": json.dumps(details, ensure_ascii=False)}
+
+    # ------------------------------------------------------------ camera timing (MV-3 record layer)
+    # 2026-10-13: each camera's container timing against the episode's own window, from the sample
+    # tables plus the edit list - no decoding. A camera that started late, a file remuxed with a
+    # shifted presentation, a track running at the wrong rate, and cameras that disagree with each
+    # other all show here; a shift baked into the pixels (frames dropped and the tail padded,
+    # timestamps regenerated) does not, and is the sync module's business. Tolerance one frame:
+    # millisecond stamping leaves ties and half-frame jitter in every recorder we have seen.
+    RATE_TOL = 0.005        # 0.5 %: one frame in 200 - finer drift the record layer does not claim
+
+    def _camera_timing(self, ep: int, ref: FileRef, rep: F.FileReport, out: dict) -> None:
+        fps = self.fps
+        if not fps or rep.samples is None:
+            return
+        dt = 1.0 / fps
+        eps = 0.5 * dt
+        pt = rep.samples.presentation()
+        if ref.window is not None:
+            a, b = float(ref.window[0]), float(ref.window[1])
+        else:
+            length = self.lengths.get(ep)
+            a, b = 0.0, (length if length is not None else len(pt)) * dt
+        lo = bisect.bisect_left(pt, a - eps)
+        hi = bisect.bisect_left(pt, b - eps)
+        inside = pt[lo:hi]
+        entry: dict = {"file": ref.key, "window_s": [round(a, 4), round(b, 4)], "frames": len(inside),
+                       "edit_offset_s": round(float(rep.samples.start_offset_s), 4),
+                       "start_offset_s": None, "duration_delta_s": None, "rate_ratio": None}
+        if inside:
+            entry["start_offset_s"] = round(inside[0] - a, 4)
+            entry["duration_delta_s"] = round((inside[-1] - inside[0] + dt) - (b - a), 4)
+            if len(inside) > 2:
+                deltas = sorted(inside[i + 1] - inside[i] for i in range(len(inside) - 1))
+                entry["rate_ratio"] = round(deltas[len(deltas) // 2] * fps, 4)
+        # frames after the last window of this file: a shifted track runs past the timeline
+        ends = [r.window[1] for refs in self.plan.values() for r in refs if r.key == ref.key and r.window]
+        if not ends or abs(b - max(ends)) < eps:
+            entry["tail_frames"] = sum(1 for t in pt if t >= b - eps)
+        out[ref.camera or ref.key] = entry
+
+    def _timing_findings(self, timing: dict) -> list:
+        fps = self.fps
+        if not fps or not timing:
+            return []
+        tol = 1.0 / fps + 1e-6
+        out = []
+        for cam, t in sorted(timing.items()):
+            so, rr = t.get("start_offset_s"), t.get("rate_ratio")
+            if so is not None and abs(so) > tol:
+                out.append(Finding("camera_start_offset",
+                                   f"{cam} 相机的视频起点比时间轴{'晚' if so > 0 else '早'} {abs(so):.3f} 秒（{abs(so) * fps:.1f} 帧）",
+                                   "L1", file=t["file"], camera=cam,
+                                   args={"start_offset_s": so, "edit_offset_s": t.get("edit_offset_s")}))
+            if rr is not None and abs(rr - 1.0) > self.RATE_TOL:
+                out.append(Finding("camera_rate_mismatch",
+                                   f"{cam} 相机的帧间隔中位数 {rr / fps * 1000:.2f} 毫秒，按 {fps:g} fps 应为 {1000 / fps:.2f} 毫秒（比例 {rr:.3f}）",
+                                   "L1", file=t["file"], camera=cam, args={"rate_ratio": rr}))
+        if len(timing) >= 2:
+            parts, args = [], {}
+
+            def spread(key, lim, label, fmt):
+                vals = {c: t[key] for c, t in timing.items() if t.get(key) is not None}
+                if len(vals) >= 2 and max(vals.values()) - min(vals.values()) > lim:
+                    parts.append(label + "、".join(f"{c} {fmt(v)}" for c, v in sorted(vals.items())))
+                    args[key] = vals
+
+            spread("start_offset_s", tol, "起点偏移 ", lambda v: f"{v:+.3f} 秒")
+            spread("duration_delta_s", tol, "时长差 ", lambda v: f"{v:+.3f} 秒")
+            spread("rate_ratio", self.RATE_TOL, "帧间隔比例 ", lambda v: f"{v:.3f}")
+            tails = {c: int(t["tail_frames"]) for c, t in timing.items() if t.get("tail_frames")}
+            if tails and max(tails.values()) > 1:
+                parts.append("时间轴之外还有画面 " + "、".join(f"{c} {n} 帧" for c, n in sorted(tails.items())))
+                args["tail_frames"] = tails
+            if parts:
+                out.append(Finding("camera_timing_mismatch", "各相机的视频时间轴彼此对不上：" + "；".join(parts),
+                                   "L1", args=args))
+        return out
 
     def _row_checks(self, ep: int, row: dict, findings: list, video_counts: dict) -> None:
         length = self.lengths.get(ep)

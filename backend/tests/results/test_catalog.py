@@ -18,10 +18,10 @@ def test_lines_and_decisions_come_from_the_registry():
 
 
 def test_what_the_page_and_the_rules_derive():
-    assert C.tab_lines("review") == ("task_verdict", "eef_check", "integrity_check")
+    assert C.tab_lines("review") == ("task_verdict", "eef_check", "integrity_check", "sync_check")
     assert C.tab_lines("appeals") == ("reject_appeal",)
     # appeals never count as pending; the data integrity module's suspects do (design doc 14 §4.4)
-    assert C.pending_lines() == ("task_verdict", "eef_check", "integrity_check")
+    assert C.pending_lines() == ("task_verdict", "eef_check", "integrity_check", "sync_check")
     # one card asks one question, and a rewritten task text rides on the task verdict
     assert C.relabel_lines() == ("task_verdict",)
     assert [d.id for ln in C.LINES for d in ln.decisions if d.discard] == ["discard"]
@@ -29,6 +29,7 @@ def test_what_the_page_and_the_rules_derive():
     assert not any(d.verdict or d.discard for d in C.line("eef_check").decisions)   # plain answers
     # intact / broken are the gate's result, not v1's whole-episode discard (design doc 14 §4.4)
     assert not any(d.verdict or d.discard for d in C.line("integrity_check").decisions)
+    assert not any(d.verdict or d.discard for d in C.line("sync_check").decisions)   # 7.3: plain answers too
     assert all(ln.decision("unsure").unsure for ln in C.LINES)
 
 

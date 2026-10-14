@@ -359,10 +359,14 @@ def sync_kind(d: dict) -> str | None:
     return None
 
 
-def sync_stats(records: list[dict], lag_tol_s: float) -> dict:
+def sync_stats(records: list[dict], lag_tol_s: float, params: dict | None = None) -> dict:
     """Episode verdicts, flagged camera readings and the per-camera health of the whole
-    dataset (``sync_health``, v1's dataset-level diagnosis) - its counts, never its lists."""
+    dataset (``sync_health``, v1's dataset-level diagnosis) - its counts, never its lists. ``params``: the
+    module's parameters with defaults filled in (the windowed estimator's stability lines, registry 8.1)."""
     from ..core.checks.video_action_sync import sync_health
+    from .findings import params_of
+
+    p = params_of("video_action_sync", params)
 
     kinds: Counter = Counter()
     readings: Counter = Counter()
@@ -386,11 +390,16 @@ def sync_stats(records: list[dict], lag_tol_s: float) -> dict:
     out: dict = {"verdicts": series(kinds, SYNC_VERDICTS, keep_zero=True),
                  "flagged_camera_readings": flagged, "lag_tol_s": lag_tol_s}
     if per_episode:
-        health = sync_health(per_episode, lag_tol_s=lag_tol_s)
+        health = sync_health(per_episode, lag_tol_s=lag_tol_s,
+                             window_min_trusted=int(p["window_min_trusted"]),
+                             window_max_iqr_s=float(p["window_max_iqr_s"]))
         out["cameras"] = [{"camera": cam, "readings": readings.get(cam, 0), **v}
                           for cam, v in (health.get("per_camera") or {}).items()]
         out["sync_advice"] = str(health.get("advice") or "").replace("**", "")
         out["negative_lag_episodes"] = len(health.get("negative_lag_episodes") or [])
+        # the windowed comparison's coverage (7.4): the episodes it could speak on, of those with readings
+        out["window_comparable_episodes"] = int(health.get("window_comparable_episodes") or 0)
+        out["episodes_with_readings"] = len(per_episode)
     return out
 
 

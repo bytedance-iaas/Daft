@@ -94,7 +94,16 @@ that could never help - and so cover FILE-4 as far as the frames they read; two 
 8.0 binds taxonomy 2.0 as frozen on 2026-10-14 (the sample set v2's 67 items): data integrity's ``table_inconsistent``
 and ``table_overlap`` name FILE-9 (the index and reference item, FILE-10 before), the control for rare but legal
 encodings is gone and privacy is IMG-15, judged per episode. From now on an item id keeps its meaning.
-8.1 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
+8.1 (2026-10-13, requester): the sync module (AV-1 / MV-3) asks a person instead of deciding alone. ``camera_misaligned``
+(AV-1), ``lag_inconsistent`` (MV-3) and ``misaligned_all`` (AV-1, a machine reject before - usually a whole-episode
+timestamp shift, the easiest kind to correct) are review on the new ``sync_check`` line (usable / misaligned / shifted /
+unsure; ``shifted`` keeps the episode, recorded for a correction to come). The windowed estimator's lines are parameters
+(``window_min_trusted``, ``window_max_iqr_s``, ``window_spread_tol_s``); every camera's ``lag_windows`` reading says
+whether it is ``stable`` by them; the dataset's sync health counts the episodes the windowed comparison could speak on
+(``window_comparable_episodes``, per camera ``n_window_stable``). ``camera_misaligned`` is raised from the camera's best
+reading (its trusted whole-episode lag, else its steady windowed median), ``spread_tol_s`` is 0.2 and the every-camera
+offset asks at 0.25 s either way - on the 17-dataset benchmark none of it moves a control episode.
+8.2 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
 hidden by something between the lens and the scene, with the share of the picture it takes, where it sits and how long
 it lasts) and ``identity`` (MV-2, a camera whose picture contradicts the mount the dataset declares for it, duplicates
 another camera, or measurably rides the other arm) - and its table carries their columns. Each finding code's name is
@@ -109,7 +118,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.1"
+REGISTRY_VERSION = "8.2"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -214,6 +223,12 @@ REVIEW_LINES: tuple[ReviewLine, ...] = (
     # and says whether the files are fine; like every line on passed episodes it counts as pending
     ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", True,
                (("intact", "数据无误，保留"), ("broken", "确有问题，判废"), ("unsure", "拿不准"))),
+    # 7.3 (2026-10-13): the sync module's cameras that disagree - one camera off against the action while the
+    # others are not (camera_misaligned), or cameras whose lags differ (lag_inconsistent, MV-3). The module
+    # cannot say which camera is right; a person compares the cameras side by side (the mini player, with
+    # the measured lags applied) and says whether the episode is usable. "misaligned" rejects it.
+    ReviewLine("sync_check", "sync_suspect", "同步存疑", "passed", True,
+               (("usable", "可用，保留"), ("misaligned", "确有错位，判废"), ("shifted", "整条平移，可校正"), ("unsure", "拿不准"))),
 )
 
 
@@ -426,7 +441,22 @@ def _sync_params() -> dict:
         "为哪些条目画画面运动与关节速度的对照曲线")
     out["properties"]["spread_tol_s"] = _line(
         "相机滞后允许极差（秒）", "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；"
-                                 "判废与否不受它影响", 0.3, 0.05, 2.0)
+                                 "2026-10-13 从 0.3 降到 0.2：17 个数据集的基准上 0.3 / 0.25 / 0.2 的对照命中相同，注入命中不变",
+        0.2, 0.05, 2.0)
+    # 7.4: the windowed estimator's judgement lines. The windows themselves (length, frame floor) are the site's
+    # measurement settings (default.yaml window_s / window_min_frames), not a task's.
+    out["properties"]["window_min_trusted"] = _line(
+        "分窗读数最少可信窗", "一路相机逐窗测得的滞后要有这么多个可信窗才算「稳」，稳的相机才参与分窗比对；"
+                             "2026-10-13 在 12 个数据集 82 条上扫定：3 与 5 命中相同，5 把能比的对照条目砍掉四成",
+        3, 1, 30)
+    out["properties"]["window_max_iqr_s"] = _line(
+        "分窗读数允许波动（秒）", "一路相机可信窗滞后的四分位距超过这个值就不算「稳」，不参与分窗比对；"
+                                 "同一次扫描：0.15 以内对照零误报，放到 0.3 出误报",
+        0.15, 0.02, 1.0)
+    out["properties"]["window_spread_tol_s"] = _line(
+        "分窗滞后允许极差（秒）", "稳的相机之间分窗中位滞后相差超过这个值（不低于 3 帧），报「各相机的滞后不一致」（MV-3）；"
+                                 "同一次扫描：对照条目之差的九成分位 0.07 秒",
+        0.1, 0.02, 1.0)
     return out
 
 
@@ -542,6 +572,11 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
+               # 8.1 (2026-10-13): the MV-3 record layer - each camera's container timing (sample
+               # tables + edit list) against the episode's window, and the cameras against each other
+               _review("camera_start_offset", "AV-1", "某路相机的视频起点与时间轴错开", "integrity_check"),
+               _review("camera_timing_mismatch", "MV-3", "各相机的视频时间轴彼此对不上", "integrity_check"),
+               _review("camera_rate_mismatch", "STRM-9", "某路相机的帧间隔与帧率不符", "integrity_check"),
                _blocking("timestamps_invalid", "STRM-4", "时间戳不合规"),
                _blocking("action_missing", "STRM-1", "缺少动作数据"),
                _review("stream_missing", "STRM-1", "缺一路其他条都有的流", "integrity_check"),
@@ -618,11 +653,11 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="video_action_sync", name_zh="视频-动作同步",
         summary_zh="逐机位比对画面运动与关节速度，找出画面与动作的时间错位",
         level="episode", needs=frozenset({"video", "action"}), block="cpu", stage="frame", depends_on=(),
-        codes=(_blocking("misaligned_all", "AV-1", "画面与动作错位（全部可信相机）"),
-               _info("camera_misaligned", "AV-1", "单路相机与动作错位", "medium", scope_kind="camera"),
+        codes=(_review("misaligned_all", "AV-1", "画面与动作错位（全部可信相机）", "sync_check"),
+               _review("camera_misaligned", "AV-1", "单路相机与动作错位", "sync_check", scope_kind="camera"),
                _info("suspect", "AV-1", "疑似错位"),
                _info("undecidable", "AV-3", "测不准：有动作但画面运动对不上"),
-               _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium"),
+               _review("lag_inconsistent", "MV-3", "各相机的滞后不一致", "sync_check"),
                _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
         param_schema=_sync_params(),
         tables=(TableSpec("video_action_sync", "逐机位同步读数",

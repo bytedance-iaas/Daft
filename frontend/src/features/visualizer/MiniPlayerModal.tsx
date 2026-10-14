@@ -4,7 +4,7 @@ import type { EpisodeView } from '../../api/types';
 import { getBase } from '../../base';
 import { parseChoice, type OverlayChoice } from '../../lib/eefOverlay';
 import { readPrefs, writePrefs } from '../../lib/prefs';
-import { cameraOfScope, EEF_MODULE, miniLayout, type FindingScope } from '../../lib/vizLayout';
+import { EEF_MODULE, cameraOfScope, miniLayout, playerChips, type FindingScope } from '../../lib/vizLayout';
 import { evidenceRange, frameCount } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
 import { noEefOverlay, useEefOverlay, useVizEpisode, useVizModel, type VizRef } from './data';
@@ -52,18 +52,21 @@ export function MiniPlayerModal({
   }, []);
   const overlay = useEefOverlay(taskId, view.episode_index, !!ep.data, choice.maxGapMs);
   const findings = useMemo(() => view.findings ?? [], [view.findings]);
+  // the chips: the sync check's findings merged into one (playerChips); `focus` indexes the findings, a chip the group
+  const groups = useMemo(() => playerChips(findings), [findings]);
+  const chipOf = focus !== null ? groups.findIndex((c) => c.indices.includes(focus)) : -1;
   const evidence: Evidence[] = useMemo(
     () =>
-      findings.map((f, i) => {
+      groups.map(({ finding: f }, i) => {
         const at = ep.data ? evidenceRange(f.finding, ep.data.timeline, frameCount(ep.data), ep.data.check_clock) : null;
         const whole = !f.finding.frames && !f.finding.time_s;
         return { id: String(i), level: f.level, item: f.finding.item ?? f.finding.code, label: f.finding.message_zh, start: at?.[0] ?? null, end: at?.[1] ?? null, whole };
       }),
-    [findings, ep.data],
+    [groups, ep.data],
   );
   // the bundle's cameras by their own ids -> the player's cameras (findings of the EEF module name the former)
   const alias = useMemo(() => Object.fromEntries((overlay.data?.cameras ?? []).flatMap((c) => (c.viz_camera ? [[c.camera_id, c.viz_camera]] : []))) as Record<string, string>, [overlay.data]);
-  const focused = focus !== null ? findings[focus] : undefined;
+  const focused = chipOf >= 0 ? groups[chipOf].finding : undefined;
   const scope = useMemo((): FindingScope | null => {
     if (seek) return { camera: alias[seek.camera] ?? seek.camera };
     const s = (focused?.finding.scope ?? null) as FindingScope | null;
@@ -84,7 +87,7 @@ export function MiniPlayerModal({
   const overlaid = useMemo(() => (overlaidKey ? overlaidKey.split('\n') : []), [overlaidKey]);
   const arrangement = useMemo(() => (model.data ? miniLayout(module, scope, model.data, overlaid) : null), [model.data, module, scope, overlaid]);
   const seekAt = seek ? (overlay.data?.cameras.find((c) => c.camera_id === seek.camera)?.times_s[seek.frame] ?? null) : null;
-  const startAt = seek ? seekAt : focus !== null ? (evidence[focus]?.start ?? null) : null;
+  const startAt = seek ? seekAt : chipOf >= 0 ? (evidence[chipOf]?.start ?? null) : null;
   const full = view.dataset_id ? `${getBase()}/visualize?dataset=${encodeURIComponent(view.dataset_id)}&ep=${view.episode_index}` : null;
   return (
     <Modal
@@ -117,8 +120,8 @@ export function MiniPlayerModal({
         index={view.episode_index}
         mode="mini"
         evidence={evidence}
-        focusEvidence={focus !== null ? String(focus) : null}
-        onFocusEvidence={(id) => onFocus(Number(id))}
+        focusEvidence={chipOf >= 0 ? String(chipOf) : null}
+        onFocusEvidence={(id) => onFocus(groups[Number(id)]?.indices[0] ?? Number(id))}
         arrangement={arrangement}
         startAt={startAt}
         overlays={overlays}

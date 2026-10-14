@@ -139,7 +139,7 @@
 | `no_video` / `no_action` | 缺这一路输入 | 只有动作没有视频的数据集 |
 | `format_unsupported_by_module` | 模块不支持这种格式 | mcap 上的 EEF |
 | `model_no_answer` | 模型没回答这一项 | 画面缺陷的 unknown |
-| `measurement_inconclusive` | 量过了，证据不够下结论（注册表 8.1） | 左右臂配对两种配法一样强（MV-2） |
+| `measurement_inconclusive` | 量过了，证据不够下结论（注册表 8.2） | 左右臂配对两种配法一样强（MV-2） |
 | `single_description` | 只有一份描述，无从比较 | LABEL-1 |
 | `not_applicable` | 别的原因，`message_zh` 写明 | 运动质量某子项对本数据集不适用 |
 
@@ -317,8 +317,8 @@ A 类算法不动，壳里读 `details` 生成。
 | `glitch` | IMG-5 | minor → low，severe → medium | info | 带时间段 |
 | `shake` | IMG-6 | 同上 | info | 带时间段 |
 | `contamination` | IMG-7 | 同上 | info | 带时间段与种类 |
-| `occlusion` | IMG-8 | 同上 | info | 带时间段、来源、遮住画面的比例、位置与总时长（注册表 8.1） |
-| `identity` | MV-2 | medium | info | 这路相机的画面与数据集声明的安装方式不符，或实测出它骑的是另一条臂（注册表 8.1）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
+| `occlusion` | IMG-8 | 同上 | info | 带时间段、来源、遮住画面的比例、位置与总时长（注册表 8.2） |
+| `identity` | MV-2 | medium | info | 这路相机的画面与数据集声明的安装方式不符，或实测出它骑的是另一条臂（注册表 8.2）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
 | unknown | — | — | unassessable `measurement_inconclusive` / `not_applicable` / `model_no_answer` | 量不出结论 / 数据集没有可比的两条臂 / 模型连安装方式都没答 |
 
 **重复检测**（`duplicate_check`，D87 起取代精确去重 `dedup`，设计 26）

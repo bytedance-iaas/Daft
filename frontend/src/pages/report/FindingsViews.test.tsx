@@ -87,6 +87,9 @@ describe('Episode 明细: the findings (design doc 17 §5.4)', () => {
     const findings = await screen.findByTestId('episode-findings');
     const blocking = within(findings).getByTestId('findings-blocking');
     await waitFor(() => expect(blocking).toHaveTextContent('任务成败判定'));   // module names are the registry's
+    // the text is coloured by the code's own level (the registry's), whatever the task's policy made of it
+    const rows = within(findings).getAllByTestId('episode-finding');
+    expect(rows.some((r) => r.getAttribute('data-tone') === 'blocking')).toBe(true);
     expect(blocking).toHaveTextContent('TASK-4');
     expect(within(blocking).getByText('可复议')).toBeInTheDocument();
     expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`);
