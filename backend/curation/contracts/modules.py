@@ -91,6 +91,9 @@ request (D71) and the end of the label guard (D73) left without a producer - the
 decoder finds corrupt as ``decode_failed`` (FILE-4, blocking, not appealable) - it was an execution error, held for a retry
 that could never help - and so cover FILE-4 as far as the frames they read; two reasons an item goes unassessed:
 ``integrity_rejected`` (the module skipped an episode data integrity rejected) and ``video_undecodable``.
+8.0 binds taxonomy 2.0 as frozen on 2026-10-14 (the sample set v2's 67 items): data integrity's ``table_inconsistent``
+and ``table_overlap`` name FILE-9 (the index and reference item, FILE-10 before), the control for rare but legal
+encodings is gone and privacy is IMG-15, judged per episode. From now on an item id keeps its meaning.
 """
 from __future__ import annotations
 
@@ -98,7 +101,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "7.1"
+REGISTRY_VERSION = "8.0"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -529,14 +532,14 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("length_mismatch", "FILE-5", "数据长度与帧数对不上"),
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
-               _review("table_inconsistent", "FILE-10", "episode 表前后不一致", "integrity_check"),
+               _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
                _blocking("timestamps_invalid", "STRM-4", "时间戳不合规"),
                _blocking("action_missing", "STRM-1", "缺少动作数据"),
                _review("stream_missing", "STRM-1", "缺一路其他条都有的流", "integrity_check"),
                _review("rate_outlier", "STRM-3", "某路流的频率明显偏低", "integrity_check"),
                _info("orphan_files", None, "不属于任何 episode 的文件", scope_kind="dataset"),
                _info("dark_camera", "STRM-1", "近乎全黑的相机", scope_kind="dataset"),
-               _info("table_overlap", "FILE-10", "episode 表的帧区间重叠或不连续", "medium",
+               _info("table_overlap", "FILE-9", "episode 表的帧区间重叠或不连续", "medium",
                      scope_kind="dataset")),
         param_schema=_integrity_params(),
         tables=(TableSpec("integrity_findings", "完整性发现",

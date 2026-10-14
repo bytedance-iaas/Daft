@@ -392,7 +392,7 @@ describe('质检报告 (07 §5)', () => {
     const record: ResultRecord = {
       episode_index: 12, module: 'data_integrity', status: 'ok', evidence: [], elapsed_s: 0.4, error: null, readings: {},
       findings: [{ code: 'file_truncated', item: 'FILE-2', severity: 'high', scope: { camera: 'wrist' }, message_zh: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失' }],
-      assessed: ['FILE-1', 'FILE-2', 'FILE-3', 'FILE-4', 'FILE-5', 'FILE-6', 'FILE-8', 'FILE-10', 'STRM-4', 'STRM-1', 'STRM-3'], unassessable: [],
+      assessed: ['FILE-1', 'FILE-2', 'FILE-3', 'FILE-4', 'FILE-5', 'FILE-6', 'FILE-8', 'FILE-9', 'STRM-4', 'STRM-1', 'STRM-3'], unassessable: [],
       details: {
         outcome: 'reject', reason: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失',
         tiers: { L1: true, L2: true, L3: false },

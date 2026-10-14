@@ -425,6 +425,6 @@ def test_p20_items_have_fixtures():
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
-    items |= {"SET-3", "ACT-6"}                       # dataset level, test_dataset_level_findings
-    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= items
+    items.add("ACT-6")                                # dataset level, test_dataset_level_findings
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "ACT-6"} <= items
     assert "LABEL-1" not in items

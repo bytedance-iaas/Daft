@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import jsonschema
 import pytest
@@ -103,6 +104,29 @@ def test_the_taxonomy_matches_the_sample_sets():
     ours = [(it["id"], it["name_zh"], it["kind"], it["level"], it.get("guards")) for it in M.taxonomy()["items"]]
     theirs = [(it["id"], it["name"], it["kind"], it["level"], it.get("guards")) for it in tools["items"]]
     assert ours == theirs
+
+
+def test_taxonomy_ids_keep_their_meaning():
+    """C6 is frozen since taxonomy 2.0 (2026-10-14, the sample set v2): an id keeps its dimension, name, kind, level
+    and guards. A new item is appended to taxonomy_frozen.json with the next number of its dimension; a dropped one
+    stays there under ``dropped``, so its number is never used again. Editing an entry there changes what results
+    already made mean: give a changed item a new number instead."""
+    frozen = json.loads(Path(__file__).with_name("taxonomy_frozen.json").read_text(encoding="utf-8"))
+    items = {it["id"]: it for it in M.taxonomy()["items"]}
+    dropped = set(frozen["dropped"])
+    assert dropped <= set(frozen["items"])
+    assert set(items) == set(frozen["items"]) - dropped, "an item is added to (or dropped in) taxonomy_frozen.json too"
+    numbers: dict[str, list[int]] = {}
+    for iid, (dim, name, kind, level, guards) in frozen["items"].items():
+        prefix, n = iid.rsplit("-", 1)
+        assert prefix == dim, iid
+        numbers.setdefault(dim, []).append(int(n))
+        if iid in items:
+            it = items[iid]
+            assert [it["dimension"], it["name_zh"], it["kind"], it["level"], it.get("guards") or []] == \
+                [dim, name, kind, level, guards], f"{iid} is frozen: give a changed item a new number"
+    for dim, ns in numbers.items():
+        assert ns == list(range(1, len(ns) + 1)), f"{dim}: numbers follow on, none skipped or used twice"
 
 
 def test_v1_facts():

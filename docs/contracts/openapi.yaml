@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.4.0
+  version: 7.5.0
   description: |
     ## Overview
 
@@ -262,6 +262,13 @@ info:
     registered before its preflight listed columns has them read from its metadata, so its declaration's draft names
     its pose, joint and camera columns as a newly registered one's does, instead of coming out empty.
 
+    **7.5.0** (2026-10-14): the check-item taxonomy 2.0 is final and its numbers are frozen: an item keeps its number,
+    name, kind, level and dimension, a new item takes the next free number of its dimension, and a removed number is
+    not used again. Three things change from 2.8.0: the index and reference item is FILE-9 (it was FILE-10), and data
+    integrity's table findings name it; the control for rare but legal encodings and layouts is gone; privacy and
+    safety is IMG-15, an episode item (it was SET-3, a dataset item). Results of tasks run before keep the numbers they
+    were run with.
+
   x-description-zh: |
     ## 概览
 
@@ -425,6 +432,10 @@ info:
 
     **7.4.0**（2026-10-13）：`GET /datasets/{id}/declaration` 多返回数据集的列（`features`）。登记时预检还不列出列信息的数据集，改为从它的
     元数据现读，声明草稿和新登记的一样写出位姿、关节角与相机列，不再是空的。
+
+    **7.5.0**（2026-10-14）：检测项分类表 2.0 定稿，编号从此冻结：已有的检测项不再改编号、名称、类型、级别与维度，新检测项接在本维度最后、
+    拿下一个编号，删掉的编号不再使用。与 2.8.0 相比改了三处：索引与引用对不上改为 FILE-9（原 FILE-10），数据完整性的表检查发现挂在它上面；
+    对照项「少见但合法的编码与布局」删掉；隐私与安全改为逐条判的 IMG-15（原数据集级的 SET-3）。这一版之前跑的任务，结果里仍是原来的编号。
 
 servers:
   - url: "{base}/api/v1"
@@ -2571,9 +2582,9 @@ paths:
                           taxonomy_version: '2.0'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
                             ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-2, SET-1]
-                          not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
-                            STRM-9, IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, IMG-12, IMG-13, IMG-14, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4,
-                            AV-5, TASK-2, TASK-3, TASK-5, TASK-6, TASK-8, TASK-9, TASK-10, LABEL-1, LABEL-3, LABEL-4, SET-2, SET-3]
+                          not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-9, STRM-2, STRM-6, STRM-7, STRM-9,
+                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, IMG-12, IMG-13, IMG-14, IMG-15, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4, AV-5,
+                            TASK-2, TASK-3, TASK-5, TASK-6, TASK-8, TASK-9, TASK-10, LABEL-1, LABEL-3, LABEL-4, SET-2]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:

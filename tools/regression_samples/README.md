@@ -7,10 +7,10 @@
 |---|---|
 | `inject.py` | 在干净条目上注入故障，生成新的 LeRobot v2.x 数据集和 `injection.json` |
 | `inject_mcap.py` | mcap 的结构故障（FILE-3）与合法写法：截断、数据块 CRC、摘要区 CRC；无摘要区、CRC 全 0 |
-| `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
+| `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-9）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；直接读记录里的发现（C2 2.0），更早的运行目录不收 |
 | `finding_map.json` | 记录里读不到的两样：对照项（controls，平台不应报出的合理情形）与预检项（ingestion，平台应当读得进的格式） |
-| `taxonomy.json` | 检测项分类 2.0（68 项；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），条目同平台契约 C6（`docs/contracts/taxonomy.json`）；样本集里的同名文件还是 1.3，打分时按 `renumbered` 改号；平台侧的注记由下一行生成 |
+| `taxonomy.json` | 检测项分类 2.0（67 项，2026-10-14 与样本集 v2 一起定稿，此后已有编号的定义不再改、新项接在本维度最后、删掉的编号不复用；TASK-10 的子类、LABEL-4 的关系在 `subtypes`、`attributes`），条目同平台契约 C6（`docs/contracts/taxonomy.json`）；样本集 v2 的同名文件就是这一版，v1 的还是 1.3，打分时按 `renumbered` 改号；平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 | `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
 | `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
@@ -146,7 +146,7 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
        --out $W/s.json --markdown $W/s.md
    ```
 
-   退出码 0。`s.md` 第一行是 `# Score: mini v1 (taxonomy 2.0, map 2.0)`，episode 级 TP 2、TN 1；STRM-3、STRM-5 各 TP 1，
+   退出码 0。`s.md` 第一行是 `# Score: mini v1 (taxonomy 2.0, map 2.1)`，episode 级 TP 2、TN 1；STRM-3、STRM-5 各 TP 1，
    SET-1 按子集计、TP 1 TN 1；FILE-4 的两条记「not assessed」（默认链没有数据完整性模块）。
 3. 再加 `--baseline $W/s.json --min-support 1` 跑一遍：退出码 0，末尾写「Against the baseline: no regression」。
 

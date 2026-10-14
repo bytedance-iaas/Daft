@@ -41,7 +41,7 @@
   {
    "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/svla_so101_index_injected/",
    "name": "anchor-v1/svla_so101_index_injected",
-   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜SO-101，合成注入（索引错位）｜10 条｜正例：FILE-10 5｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/svla_so101_index_injected）｜许可：Apache-2.0"
+   "note": "回归样本集 v1（设计 16）｜LeRobot v3.0｜SO-101，合成注入（索引错位）｜10 条｜正例：FILE-9 5｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/anchor/v1/expectation.json（dataset = lerobot_v30/svla_so101_index_injected）｜许可：Apache-2.0"
   },
   {
    "uri": "tos://curation-robo-anchor/anchor/v1/lerobot_v30/camera_swap_10r_as_published/",

@@ -12,7 +12,7 @@ C1 7.0 / C4 7.0.0 在第二十二节，完整性拦截与坏视频的 C1 7.1 / C
 | C3 | 进度协议（stderr 上的 JSON Lines） | `progress.schema.json` | Daemon → SSE |
 | C4 | REST API | `openapi.yaml`（报告、计划、预检等直接引用 C2 的 Schema） | 前端、Agent、`curation task …` |
 | C5 | Repository 接口与状态机 | `backend/daemon/repo/protocol.py` | Daemon 内部 |
-| C6 | 检测项分类表（设计 17 §1.3，D56）：注册表的细码与覆盖都指向它的编号 | `taxonomy.json`（Schema `taxonomy.schema.json`） | 注册表、报告、前端（经 `GET /api/v1/modules` 的 `taxonomy`）、评估工具 |
+| C6 | 检测项分类表（设计 17 §1.3，D56）：注册表的细码与覆盖都指向它的编号；2.0 起编号冻结（2026-10-14） | `taxonomy.json`（Schema `taxonomy.schema.json`） | 注册表、报告、前端（经 `GET /api/v1/modules` 的 `taxonomy`）、评估工具 |
 | C7 | 数据集声明（设计 25 §3，D83；第一层就是设计 18 §6 的 mcap 字段映射，D62）：哪些 topic / 列是相机、曲线、任务描述与分段，位姿、关节、夹爪记录的含义，每路相机的安装方式与内外参、工具、手持夹爪的标定；可视化与质检共用 | `dataset-declaration.schema.json`（`viz-mapping.schema.json` 留一版，`viz-mapping/1.x` 文件读成只有第一层的声明） | Daemon（数据集的声明与版本、模版库、可视化的 mcap 读取器、任务开始时冻结）、前端（「数据集声明」「mcap 配置」）、质检（派生 `ingest.mcap_mapping`；EEF 按声明生成机械臂的轨迹） |
 | EEF | EEF–视频一致性的输入格式（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器），规范正文 `eef/format.md`、迁移规则 `eef/migration.md` | `eef/*.schema.json` | `check` 的 EEF runner、预检、（F5.5 起）Daemon 上传校验 |
 
@@ -65,6 +65,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 3. `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）
    和 `../.venv/bin/python -m curation.contracts lock`。
 4. 提交时 `CONTRACTS.lock` 的差异让评审一眼看到哪些契约动了。没刷新锁，CI 就红。
+5. C6 从 2.0 起编号冻结（2026-10-14，需求方）：已有编号的维度、名称、kind、level、guards 不改（解释只做不改意思的补充），要改意思就给新编号；新检测项接在本维度最后，同时追加到 `backend/tests/contracts/taxonomy_frozen.json`；删掉的项也留在那里、记进 `dropped`，编号不复用。`test_taxonomy_ids_keep_their_meaning` 守着这三条。
 
 ## 手动验证步骤
 
@@ -83,10 +84,11 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
 - 注册表与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
   `curl -s localhost:8080/curation/api/v1/modules | jq '.registry_version, .taxonomy_version, [.blocks[].stages], (.modules[] | {id, block, stage, covers})'`
-  应得到 `"7.1"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
+  应得到 `"8.0"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
   不起 Daemon 时对 `docs/contracts/modules.json` 跑同样的 `jq`。`jq '.modules[] | select(.id=="task_success") | .codes'` 列出它的三个细码
   （`failure` 是 blocking 且可复议，`uncertain` 是 review、裁决线 `task_verdict`，`task_text_missing` 是 info）。改了细码或覆盖要重新生成回归样本分类表的平台注记
   （`PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry`）。
+- 分类表冻结：把 `taxonomy.json` 里随便一项的 `name_zh` 改掉（或删掉一项）再跑 `pytest -q tests/contracts/test_registry.py -k keep_their_meaning`，应失败并指出那个编号；改回来恢复。
 - 只有 2.0（D90）：`examples/result-record.json`、`report.json`、`plan.json` 等改过的几份里，`valid` 只有 2.0 的实例，
   `invalid` 里各有一份 1.0 写法（记录带 `verdict` / `passed` / `gate`，计划、报告、清单等写 `schema_version: "1.0"`），应被拒。
 - 数据可视化（C4 2.4.0、C7，设计 18）：`examples/viz-mapping.json` 的五个合法映射（UMI、ABC-130k、ROS 2、只有附件分段，

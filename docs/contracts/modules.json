@@ -1,5 +1,5 @@
 {
- "registry_version": "7.1",
+ "registry_version": "8.0",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -292,14 +292,6 @@
    {
     "id": "FILE-9",
     "dimension": "FILE",
-    "name_zh": "对照：少见但合法的编码与布局",
-    "explain_zh": "对照项：不常见但合法的视频编码（MPEG-4、AV1）或数据布局。它们不是问题，用来检查平台会不会误报。",
-    "kind": "control",
-    "level": "episode"
-   },
-   {
-    "id": "FILE-10",
-    "dimension": "FILE",
     "name_zh": "索引与引用对不上",
     "explain_zh": "表里的索引或引用指错了：帧号重复或跳号、episode 编号和它所在的位置对不上、任务编号指向不存在的任务；LeRobot v3 里一条 episode 在共享文件里的起止偏移写错，读出来会混进别的 episode 的数据。",
     "kind": "defect",
@@ -486,6 +478,14 @@
     "dimension": "IMG",
     "name_zh": "脱敏模糊遮住任务物体",
     "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-15",
+    "dimension": "IMG",
+    "name_zh": "隐私与安全",
+    "explain_zh": "画面里出现人脸、无关人员或其他敏感信息。逐条判：哪几条、哪路相机的画面里有，就报哪几条，范围写到相机。",
     "kind": "defect",
     "level": "episode"
    },
@@ -760,14 +760,6 @@
     "explain_zh": "数据集用了不常见的格式或写法（比如动作列拆成多列、mcap 的 topic 命名不标准），平台要能读进来。这是测接入能力的样本。",
     "kind": "phenomenon",
     "level": "dataset"
-   },
-   {
-    "id": "SET-3",
-    "dimension": "SET",
-    "name_zh": "隐私与安全",
-    "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
-    "kind": "defect",
-    "level": "dataset"
    }
   ]
  },
@@ -915,7 +907,7 @@
     },
     {
      "code": "table_inconsistent",
-     "item": "FILE-10",
+     "item": "FILE-9",
      "name_zh": "episode 表前后不一致",
      "severity": "medium",
      "level": "review",
@@ -981,7 +973,7 @@
     },
     {
      "code": "table_overlap",
-     "item": "FILE-10",
+     "item": "FILE-9",
      "name_zh": "episode 表的帧区间重叠或不连续",
      "severity": "medium",
      "level": "info",
@@ -997,7 +989,7 @@
     "FILE-5",
     "FILE-6",
     "FILE-8",
-    "FILE-10",
+    "FILE-9",
     "STRM-4",
     "STRM-1",
     "STRM-3"
