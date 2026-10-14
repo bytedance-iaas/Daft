@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { bundle, createConfig } from '@redocly/openapi-core';
@@ -12,6 +13,24 @@ const MSW_WORKER = fileURLToPath(new URL('./node_modules/msw/lib/mockServiceWork
 
 // The C4 contract behind the API reference page (api-docs.html) and {base}/openapi.json.
 const CONTRACT = fileURLToPath(new URL('../docs/contracts/openapi.yaml', import.meta.url));
+
+/**
+ * What 「关于」 shows (2026-10-13): the version - the C4 contract's `info.version`, which every change a
+ * customer sees bumps -, the commit when it is known - CURATOR_REVISION (the image build's
+ * `--build-arg`: the image has no .git) or this checkout's git - and when the console was built.
+ */
+function buildInfo(env: Record<string, string>): { version: string; revision: string; builtAt: string } {
+  const version = /^info:\n(?:[ \t].*\n)*?[ \t]+version:[ \t]*['"]?([^'"\s]+)/m.exec(readFileSync(CONTRACT, 'utf8'))?.[1] ?? '';
+  let revision = (env.CURATOR_REVISION ?? '').trim();
+  if (!revision) {
+    try {
+      revision = execFileSync('git', ['rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch {
+      revision = '';
+    }
+  }
+  return { version, revision: /^[0-9a-f]{7,40}$/.test(revision) ? revision : '', builtAt: new Date().toISOString() };
+}
 
 /** The mount prefix used by `npm run dev` (the Daemon injects the real one in production). */
 function devBase(env: Record<string, string>): string {
@@ -102,6 +121,7 @@ export default defineConfig(({ command, mode }) => {
     plugins: [react(), curatorDevPlugin(base, mode === 'demo', isDev), contractPlugin(base)],
     define: {
       __CURATOR_MOCKS__: JSON.stringify(mocks),
+      __CURATOR_BUILD__: JSON.stringify(buildInfo(env)),
     },
     server: {
       port: 5173,

@@ -18,7 +18,7 @@ describe('app shell', () => {
     renderApp('/');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const items = within(nav).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集列表', '可视化', '系统和资源配置', '使用文档', 'API 文档']);
+    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集列表', '可视化', '系统和资源配置', '使用文档', 'API 文档', '关于']);
     expect(within(nav).getByText('帮助')).toBeInTheDocument();
     // 质检 holds the two, open from the start (third round; 质检报告 dropped in the fourth)
     expect(within(nav).getByText('质检')).toBeInTheDocument();
@@ -54,6 +54,19 @@ describe('app shell', () => {
     HELP_LINKS.docs = 'https://docs.example.com/curator';
     await user.click(within(nav).getByRole('menuitem', { name: '使用文档' }));
     expect(open).toHaveBeenCalledWith('https://docs.example.com/curator', '_blank', 'noopener,noreferrer');
+    expect(currentLocation()).toBe('/tasks');
+  });
+
+  it('关于 opens a dialog with the version, the commit and when the console was built, staying on the page (2026-10-13)', async () => {
+    const { user } = renderApp('/tasks');
+    const nav = await screen.findByRole('navigation', { name: '数据质检' });
+    await user.click(within(nav).getByRole('menuitem', { name: '关于' }));
+    const dialog = await screen.findByRole('dialog', { name: '关于' });
+    expect(dialog).toHaveTextContent('Physical AI Kit · 数据质检平台');
+    // the C4 contract's info.version; the commit from git here (CURATOR_REVISION in the image build)
+    expect(within(dialog).getByTestId('about-version').textContent).toMatch(/^v\d+\.\d+\.\d+$/);
+    expect(within(dialog).getByTestId('about-revision').textContent).toMatch(/^[0-9a-f]{9}$|^构建时没有记录$/);
+    expect(dialog).toHaveTextContent(/构建时间\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
     expect(currentLocation()).toBe('/tasks');
   });
 

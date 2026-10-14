@@ -35,6 +35,15 @@ export const zh = {
     docsMissing: '使用文档还没配置',
     apiDocs: 'API 文档',
     apiDocsMissing: 'API 文档还没配置',
+    about: '关于',
+  },
+
+  about: {
+    title: '关于',
+    version: '版本',
+    revision: '提交',
+    revisionUnknown: '构建时没有记录',
+    builtAt: '构建时间',
   },
 
   common: {
