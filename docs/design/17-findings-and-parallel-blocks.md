@@ -118,9 +118,11 @@
   摘要区 CRC），一个细码分不清两个项时拆成两个细码。
 - **一项可以被多个模块报**。发现按模块留出处；episode 级的「有没有这个问题」取并集；评估既算并集的指标，也算每个模块单独的指标（§6.1）。
 - **分类表是契约 C6**：`docs/contracts/taxonomy.json`，内容就是 `tools/regression_samples/taxonomy.json` 的 `items`（编号、名称、`explain_zh`、
-  kind、level、dimension、guards）加 `taxonomy_version`。编号与样本集一致；v1 定稿前可以调整（分类表 2.0 各维度重新编号过一次，新旧对照在 `renumbered`），平台现在绑定 2.0（注册表 3.0）。注册表测试：每个细码的 `item`
-  在分类表里；每个模块的 `covers` 是分类表编号；对照项（kind=control）不能是任何细码的 `item`。
-- **分类表升版**：平台改绑新版本时只加编号；样本集 v1 冻结的分类表不动（它在 TOS 上）。仓库里 `tools/regression_samples/taxonomy.json`
+  kind、level、dimension、guards）加 `taxonomy_version`。编号与样本集一致；分类表 2.0 各维度重新编号过一次（新旧对照在 `renumbered`），2026-10-14 与样本集 v2 一起定稿（67 项），
+  **此后编号冻结**：已有编号的维度、名称、kind、level 与 guards 不再改，新检测项接在本维度最后拿新编号，删掉的编号不复用；平台绑定定稿的 2.0（注册表 8.0）。
+  注册表测试：每个细码的 `item` 在分类表里；每个模块的 `covers` 是分类表编号；对照项（kind=control）不能是任何细码的 `item`；
+  冻结由契约测试守着（`backend/tests/contracts/taxonomy_frozen.json` 逐项记五个字段，加项、删项都要在那里登记）。
+- **分类表升版**：2.0 定稿以后只加编号，不改、不复用已有编号；样本集各版的分类表不动（在 TOS 上，v1 是 1.3，v2 是定稿的 2.0）。仓库里 `tools/regression_samples/taxonomy.json`
   的 `platform_status` 一列是平台侧的注记，由注册表的覆盖声明生成（§6.2），不算改分类表。
 - **阈值回到平台**：「平滑度低于 0.5 算 ACT-1」这类判定线写在模块参数里（`param_schema`，有缺省值），模块壳按它出发现；
   评估工具不再带阈值。
@@ -137,7 +139,7 @@
 | `no_video` / `no_action` | 缺这一路输入 | 只有动作没有视频的数据集 |
 | `format_unsupported_by_module` | 模块不支持这种格式 | mcap 上的 EEF |
 | `model_no_answer` | 模型没回答这一项 | 画面缺陷的 unknown |
-| `measurement_inconclusive` | 量过了，证据不够下结论（注册表 7.3） | 左右臂配对两种配法一样强（MV-2） |
+| `measurement_inconclusive` | 量过了，证据不够下结论（注册表 8.1） | 左右臂配对两种配法一样强（MV-2） |
 | `single_description` | 只有一份描述，无从比较 | LABEL-1 |
 | `not_applicable` | 别的原因，`message_zh` 写明 | 运动质量某子项对本数据集不适用 |
 
@@ -223,7 +225,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `length_mismatch` | FILE-5 | high | blocking | 原 `row_invalid`「长度 / 帧数」 |
 | `values_invalid` | FILE-6 | high | blocking | 原 `row_invalid`「NaN / Inf / 二维 / dtype」 |
 | `metadata_invalid` | FILE-8 | high | blocking | 原 `row_invalid`「fps 非法 / 时间边界非法」 |
-| `table_inconsistent` | FILE-10 | medium | review（integrity_check） | 不变 |
+| `table_inconsistent` | FILE-9 | medium | review（integrity_check） | 不变 |
 | `timestamps_invalid` | STRM-4 | high | blocking | 原 `row_invalid`「时间戳」 |
 | `action_missing` | STRM-1 | high | blocking | 原 `row_invalid`「action 缺失」 |
 | `stream_missing` | STRM-1 | medium | review（integrity_check） | 多数比较 |
@@ -232,7 +234,7 @@ A 类算法不动，壳里读 `details` 生成。
 | ~~`duplicate_content`~~ | ~~SET-1~~ | ~~medium~~ | ~~review（integrity_check）~~ | D87 起删掉，SET-1 只由重复检测报（设计 26） |
 | `orphan_files`（数据集级） | — | low | info | 平台自有项 |
 | `dark_camera`（数据集级） | STRM-1 | low | info | v1 的先验 |
-| `table_overlap`（数据集级） | FILE-10 | medium | info | 条目表重叠或空缺 |
+| `table_overlap`（数据集级） | FILE-9 | medium | info | 条目表重叠或空缺 |
 
 **时间戳检查**（今天失败种类由评估工具从字段名反推，改为模块自己出码）
 
@@ -315,8 +317,8 @@ A 类算法不动，壳里读 `details` 生成。
 | `glitch` | IMG-5 | minor → low，severe → medium | info | 带时间段 |
 | `shake` | IMG-6 | 同上 | info | 带时间段 |
 | `contamination` | IMG-7 | 同上 | info | 带时间段与种类 |
-| `occlusion` | IMG-8 | 同上 | info | 带时间段、来源、遮住画面的比例、位置与总时长（注册表 7.2） |
-| `identity` | MV-2 | medium | info | 这路相机的画面与声明的安装方式不符、与另一路是同一份录像，或实测出它骑的是另一条臂（注册表 7.2）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
+| `occlusion` | IMG-8 | 同上 | info | 带时间段、来源、遮住画面的比例、位置与总时长（注册表 8.1） |
+| `identity` | MV-2 | medium | info | 这路相机的画面与声明的安装方式不符、与另一路是同一份录像，或实测出它骑的是另一条臂（注册表 8.1）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
 | unknown | — | — | unassessable `measurement_inconclusive` / `not_applicable` / `model_no_answer` | 量不出结论 / 数据集没有可比的两条臂 / 模型连安装方式都没答 |
 
 **重复检测**（`duplicate_check`，D87 起取代精确去重 `dedup`，设计 26）
@@ -326,9 +328,10 @@ A 类算法不动，壳里读 `details` 生成。
 | `duplicate` | SET-1 | low | info | 一组重复的每一条都有；`readings.same_as` 是同组的其他条、`group_id` 是组里最小的编号（§3.2）。D87 前是 `dedup.duplicate`：high、blocking、可复议，哪条留下由 aggregate 定 |
 
 **技能画像**（整节随技能画像下线，D68。LABEL-4 由任务成败判定的判废护栏报，细码 `label_conflict_suspect`，问在
-`task_verdict` 那一条线上；LABEL-1 暂时没有模块覆盖；SET-3 随分类表 1.3 删除）
+`task_verdict` 那一条线上；LABEL-1 暂时没有模块覆盖；任务与技能分布一项随分类表 1.3 删除）
 
-对照项 FILE-9、STRM-8、IMG-10、IMG-11、ACT-9 不是任何细码的 `item`，评估按它们守的项看误报（长时任务、跨数据集同源版本两个对照项在分类表 1.3 删了）。
+对照项 STRM-8、IMG-10、IMG-11、ACT-9 不是任何细码的 `item`，评估按它们守的项看误报（长时任务、跨数据集同源版本两个对照项在分类表 1.3 删了，
+「少见但合法的编码与布局」在 2.0 定稿时删了）。
 分类表其余没有细码的项是检测缺口，清单在设计 16 §3.10，归 F11.7。
 
 ### 2.3 覆盖声明
@@ -518,7 +521,7 @@ info_count, error_modules, reason}`。`passed / reject / held / review` 四份�
 
 ### 5.2 报告页
 
-- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 68 项（分类表 1.3），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
+- 「本次质检范围」多一块**覆盖矩阵**：本次覆盖分类表 N / 63 项（分类表 2.0 的 67 项里 4 项是对照项，不算检测项），按维度列出覆盖、未覆盖、评估不了（带原因）；点一项跳到报的模块小节。
 - 模块小节与勾选模块一一对应（需求硬要求，不变）。每个小节：关键数字（评估条数、检出条数、按级别计数）+ 通用图「检出项 → 条数与占比」
   （按级别分色，相机范围的项再按相机分组）+ 有读数的子项分数分布 + 数据集级发现。已有专用视图的模块保留专用图，通用图放在前面。
 - 质检总览的「判废原因分布」改按检测项。
@@ -727,7 +730,7 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 - **score 2.0**（`tools/regression_samples/score.py`，输出 `schema_version` 2.0）照 §6.1 实现。全量实跑时又定了三处口径：
   - **数据集级发现**（报告小节的 `dataset_findings`）只用于按子集计的项，即分类表 level 为 dataset、或期望写了 `unit: subset` 的；
     逐条的项只看逐条记录。完整性模块的表检查会在报告里另给一条汇总（`table_overlap`，unit dataset），铺到子集每一条会凭空多出误报：
-    FILE-10 在一个子集上多出 41 条。
+    FILE-9 在一个子集上多出 41 条。
   - **预检拒收的运行目录**里什么都没有，按同一次打分里其他运行目录的格式读。和 2.0 的一起打分时，它的项按注册表的覆盖记「未评估
     （不支持）」，不是「没有检查」。
   - **没有模块覆盖的项**是 gap，逐模块统计跳过它们。

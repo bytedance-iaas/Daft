@@ -23,7 +23,7 @@ anchor-arms-fastumi 上 14 条对调抓到 12 条、不发一次请求、48 个�
 - **每次都问**：没有开关，界面上也不勾选。它是 `task_success` 的随附模块，宿主在跑它就出结果。
 - **只出结果**：答成 `minor` / `severe` 的项各是一条 info 级发现（严重度 low / medium，范围是那路相机，带模型给的时间段），
   不影响 keep / drop / held，不提复核问题；没有一路相机答出某一项时，这一项记为评估不了（`model_no_answer`）；
-  左右臂配对量不出结论时 MV-2 记 `measurement_inconclusive`，数据集本来就没有可比的两条臂时记 `not_applicable`（注册表 7.3）。
+  左右臂配对量不出结论时 MV-2 记 `measurement_inconclusive`，数据集本来就没有可比的两条臂时记 `not_applicable`（注册表 8.1）。
 - **不拖累宿主**：请求带 `response_format: {"type": "json_object"}` 让服务端约束出合法 JSON；万一 `camera_check` 还是写坏，
   解析时把它整块剪掉、保住五个核心字段，三项记 unknown 并在 `problems` 里写明。
 

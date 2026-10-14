@@ -57,6 +57,7 @@ docker push <镜像仓库>/curator:<版本>
 | `BASE_IMAGE` | `python:3.10-slim-bookworm` | 拉 Docker Hub 慢时换火山的缓存地址；**必须保持 bookworm**（trixie 上没有 oniond 的源） |
 | `NODE_IMAGE` | `node:20-bookworm-slim` | 同上；只用于构建控制台，不进最终镜像 |
 | `NPM_REGISTRY` | 空 = lock 文件里的 registry.npmjs.org | 官方源慢时，例如 `https://registry.npmmirror.com`（火山镜像站没有 npm 源） |
+| `CURATOR_REVISION` | 空 | 控制台「关于」里的提交号（镜像里没有 .git）：火山 CP 流水线传 `${SCM_COMMIT_ID}`，与镜像版本同一个；不传就只写版本与构建时间 |
 | `PIP_INDEX_URL` | `https://mirrors.ivolces.com/pypi/simple`（火山内网） | 火山网络之外必须改：`https://pypi.org/simple` 或 `https://mirrors.volces.com/pypi/simple` |
 | `SUPPLEMENT_PYPI_URL` | `https://mirrors.aliyun.com/pypi/simple/`（阿里云） | 火山源缺的版本从这里补：只装 `deploy/pip-extra-index.txt` 里列的几个及其依赖（现在是 uvicorn 0.53.0、cryptography 50.0.1，火山内网源只到 0.44.0、49.0.0；F6.5 又加了 mcap / Lance 读取要的 pylance 8.0.0、mcap 1.4.0，是按发布日期推测火山源还没有，下一次构建确认后删掉已有的那行），其余全走 `PIP_INDEX_URL`；火山源补齐后删掉对应那一行。传空则只用 `PIP_INDEX_URL` |
 | `APT_MIRROR` | `https://mirrors.volces.com`（公网可达） | 火山内网可改 `http://mirrors.ivolces.com`，更快；缺省值不要改成内网域名，公开 CI 会直接失败 |

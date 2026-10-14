@@ -1,6 +1,7 @@
 import { AutoComplete, Button, Card, Grid, Input, Radio, Select, Space, Tag, Typography } from '@arco-design/web-react';
 import { Link } from 'react-router-dom';
 import type { BrowsedDataset, Credential, DatasetItem } from '../../api/types';
+import { PublicSourceRadio } from '../../components/PublicSourceRadio';
 import { RegionSelect } from '../../components/RegionSelect';
 import { shortTime } from '../../lib/format';
 import { zh } from '../../locales/zh';
@@ -18,7 +19,8 @@ export interface BasicSectionProps {
   batchList?: React.ReactNode;
   credentials: Credential[];
   registered: DatasetItem[];
-  publicCatalog: BrowsedDataset[] | null;
+  /** undefined while the cache bucket's list is read, null when it cannot be */
+  publicCatalog: BrowsedDataset[] | null | undefined;
   localEnabled: boolean;
   probe: ProbeState;
   onOutputBlur: () => void;
@@ -96,7 +98,7 @@ export function BasicSection(p: BasicSectionProps) {
           aria-label={zh.taskForm.source}
         >
           <Radio value="tos">{zh.source.tos}</Radio>
-          {p.publicCatalog ? <Radio value="public">{zh.source.public}</Radio> : null}
+          <PublicSourceRadio catalog={p.publicCatalog} />
           {p.localEnabled ? (
             <Radio value="local">
               {zh.source.local} <Tag size="small" color="orange">{zh.source.experimental}</Tag>

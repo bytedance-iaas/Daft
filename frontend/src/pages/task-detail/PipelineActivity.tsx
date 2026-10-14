@@ -6,8 +6,8 @@ import { zh } from '../../locales/zh';
 import './pipelineActivity.css';
 
 const copy = zh.taskDetail.pipelineActivity;
-const INTEGRITY_GREEN = '#00B42A';
-const COLORS: Record<string, string> = { cpu: '#6366f1', model: '#e87925' };
+/** A group's colour: its card's top edge, its bar, its timeline lane; 数据完整性 green (sixth round). */
+const COLORS: Record<string, string> = { integrity: '#00B42A', cpu: '#6366f1', model: '#e87925' };
 
 type Activity = NonNullable<StageProgress['pipeline']>;
 
@@ -41,11 +41,11 @@ function groupsOf(stages: readonly StageProgress[]): Group[] {
 }
 
 /**
- * 详细进度 of the streaming pipeline (07 §4.2, design doc 26 §2): 数据完整性 as a low strip on top (progress and
- * time per episode, sixth round), CPU 检查 and 模型检查 as cards (in flight, or waiting for the other group when
- * its queue is full; queued, done, the latest batch to enter), and their timeline: solid while episodes were out,
- * hatched while the group waited (C4 1.18 `busy`). A group adds up its stages: what is in flight and queued in any
- * of them, the time an episode spends in all of them.
+ * 详细进度 of the streaming pipeline (07 §4.2, design doc 26 §2): a card per group the task has - 数据完整性,
+ * CPU 检查, 模型检查, side by side, three at most (2026-10-13: 数据完整性 a card too, not the low strip of the sixth
+ * round) - in flight, or waiting for the next group when its queue is full; queued, done, the latest batch to
+ * enter; and their timeline: solid while episodes were out, hatched while the group waited (C4 1.18 `busy`). A
+ * group adds up its stages: what is in flight and queued in any of them, the time an episode spends in all of them.
  */
 export function PipelineActivity({ task, stages }: { task: Task; stages: StageProgress[] }) {
   const [now, setNow] = useState(Date.now);
@@ -55,9 +55,7 @@ export function PipelineActivity({ task, stages }: { task: Task; stages: StagePr
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [live]);
-  const all = groupsOf(stages);
-  const integrity = all.find((g) => g.key === 'integrity');
-  const layers = all.filter((g) => g.key !== 'integrity');
+  const layers = groupsOf(stages);
   const activity = layers.flatMap((g) => g.activity);
   const starts = activity.flatMap((p) => (p.started_at === null ? [] : [p.started_at]));
   const origin = Math.min(...starts);
@@ -67,8 +65,7 @@ export function PipelineActivity({ task, stages }: { task: Task; stages: StagePr
   const withBusy = activity.some((p) => p.busy);
   return (
     <div className="pipeline-activity" data-testid="pipeline-activity">
-      {integrity ? <IntegrityStrip group={integrity} /> : null}
-      <div className="pipeline-layers">
+      <div className="pipeline-layers" style={{ '--cards': layers.length } as CSSProperties}>
         {layers.map((g, i) => {
           const running = live && g.state === 'running';
           const inflight = running ? g.activity.reduce((a, p) => a + p.inflight, 0) : 0;
@@ -104,8 +101,8 @@ export function PipelineActivity({ task, stages }: { task: Task; stages: StagePr
               <Progress percent={stagePercent(g)} showText={false} size="small" color={COLORS[g.key]} status={g.state === 'failed' ? 'error' : 'normal'} />
               {means.length ? (
                 <div className="muted pipeline-processing">
-                  {copy.mean(means.reduce((a, x) => a + x, 0).toFixed(2))}
-                  {slowest != null ? <span> · {copy.slowest(slowest.toFixed(2))}</span> : null}
+                  <span>{copy.mean(means.reduce((a, x) => a + x, 0).toFixed(2))}</span>
+                  {slowest != null ? <span>· {copy.slowest(slowest.toFixed(2))}</span> : null}
                 </div>
               ) : null}
               {last ? (
@@ -162,22 +159,6 @@ export function PipelineActivity({ task, stages }: { task: Task; stages: StagePr
           <div className="muted pipeline-timeline-note">{withBusy ? copy.note : copy.noteOld}</div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-/** 数据完整性, low and on one line: its progress and the time per episode. */
-function IntegrityStrip({ group }: { group: Group }) {
-  const mean = group.activity[0]?.processing?.mean_s;
-  return (
-    <div className="pipeline-strip" data-testid="stage-integrity">
-      <b>{group.label}</b>
-      {/* green (sixth round); a failed stage keeps the red error bar */}
-      <Progress percent={stagePercent(group)} showText={false} size="small" status={group.state === 'failed' ? 'error' : 'normal'} color={group.state === 'failed' ? undefined : INTEGRITY_GREEN} />
-      <span className="muted">
-        {group.done} / {group.total}
-      </span>
-      {mean != null ? <span className="muted">{copy.mean(mean.toFixed(2))}</span> : null}
     </div>
   );
 }

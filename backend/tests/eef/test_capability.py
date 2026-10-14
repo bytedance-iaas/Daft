@@ -4,6 +4,8 @@ from __future__ import annotations
 import copy
 import json
 
+import pytest
+
 from curation.extensions.eef_consistency import capability as CAP
 from curation.extensions.eef_consistency import contracts as C
 from curation.extensions.eef_consistency import load
@@ -124,3 +126,22 @@ def test_overall_rule():
     assert C.overall_availability({"a": C.subitem(C.UNSUPPORTED, "x")}) == C.UNSUPPORTED
     assert C.overall_availability({**cells, "c": C.subitem(C.AVAILABLE)}) == C.AVAILABLE
     assert copy.deepcopy(cells) == cells
+
+
+@pytest.mark.parametrize("mounts, offered", [
+    ([], True),                                     # the cameras are not known
+    ([None], True),                                 # a camera nobody declared may be a third-person one
+    (["wrist", None], True),
+    (["fixed_external", "wrist"], True),
+    (["wrist", "wrist"], False),                    # a handheld gripper's cameras: nothing to measure in them
+    (["moving"], False),
+    (["wrist", "moving"], False),
+])
+def test_the_gripper_reference_is_offered_unless_no_camera_can_be_a_third_person_one(mounts, offered):
+    """Design doc 25 §4.2 (2026-10-13, §9.7): only cameras known not to be fixed third-person ones take it away."""
+    from curation.extensions.eef_consistency import preflight as P
+
+    got = P.applicable_params([{"camera_id": f"c{i}", "mount": m} for i, m in enumerate(mounts)])
+    assert ({"observation_seeds", "gripper_template"} <= set(got)) is offered
+    assert "use_vlm" in got
+

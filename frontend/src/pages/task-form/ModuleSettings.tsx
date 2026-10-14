@@ -6,7 +6,7 @@ import type { ModuleAvailability, ModuleRegistry, ModuleSpec, PreflightResult, U
 import { uploadFile, type UploadPhase } from '../../api/uploads';
 import { shortName } from '../../lib/declaration';
 import { groupFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
-import { asksModel, availabilityOf, embodimentHint, moduleParamFields, reasonText } from '../../lib/preflight';
+import { asksModel, availabilityOf, embodimentHint, moduleParamFields, reasonText, thirdPersonOnly } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormPatch, FormValues } from './formModel';
@@ -329,6 +329,18 @@ function TrajectoryField({
   );
 }
 
+/** Why a parameter is not on the card: it applies to third-person cameras and the dataset has none (design doc 25 §4.2). */
+function ThirdPersonOnlyNote({ m, preflight }: { m: ModuleSpec; preflight: PreflightResult | null }) {
+  const only = thirdPersonOnly(m, preflight);
+  if (!only) return null;
+  const cameras = only.cameras.map((c) => `${c.id}（${zh.taskForm.mountName[c.mount ?? ''] ?? c.mount ?? '—'}）`).join('、');
+  return (
+    <div className="muted" style={{ fontSize: 12, marginBottom: 8 }} data-testid={`third-person-only-${m.id}`}>
+      {zh.taskForm.thirdPersonOnly(only.what, cameras)}
+    </div>
+  );
+}
+
 /** Reminders under a module with a model switch (design doc 25 §4.3): no model chosen - its model part will be
  * missing; switched off without a gripper reference - the third-person cameras are not assessed. */
 function ModelReminder({ m, params, fields, vlmChosen }: { m: ModuleSpec; params: Record<string, unknown> | undefined; fields: ParamField[]; vlmChosen: boolean }) {
@@ -472,6 +484,7 @@ export function ModuleSettings({
           }
         >
           {groupFields(moduleParamFields(m, preflight).filter((f) => !f.advanced)).map((entry) => renderEntry(m.id, entry))}
+          <ThirdPersonOnlyNote m={m} preflight={preflight} />
           <ModelReminder m={m} params={v.params[m.id]} fields={moduleParamFields(m, preflight)} vlmChosen={Boolean(v.vlmBackend && v.vlmModel)} />
           {/* the judgement lines its findings are drawn with (registry 2.1 x-advanced, design doc 17 §1.3): folded away */}
           {moduleParamFields(m, preflight).some((f) => f.advanced) ? (

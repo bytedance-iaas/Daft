@@ -1,4 +1,4 @@
-"""The injectors added after the 2026-10-01 audit: mcap structure faults (FILE-3), LeRobot v3 index faults (FILE-10), the
+"""The injectors added after the 2026-10-01 audit: mcap structure faults (FILE-3), LeRobot v3 index faults (FILE-9), the
 time-offset mappings (AV-5) and the dataset-level metadata faults (FILE-8)."""
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def test_the_broken_variants_are_caught_where_the_spec_says(mcap_set):
     assert "| episode_0.mcap |" in (out / "README.md").read_text()
 
 
-# ---------------------------------------------------------------- LeRobot v3 (FILE-10)
+# ---------------------------------------------------------------- LeRobot v3 (FILE-9)
 
 def small_v3(root, lengths=(5, 6, 7)):
     os.makedirs(os.path.join(root, "meta/episodes/chunk-000"))
@@ -128,7 +128,7 @@ def test_each_v3_fault_breaks_one_reference_of_one_episode(tmp_path):
     fi = list(d[d["episode_index"] == 2]["frame_index"])
     assert len(fi) == 7 and len(set(fi)) == 6                                                # one repeat, one skip
     inj = json.load(open(os.path.join(out, "injection.json")))
-    assert [r["item"] for r in inj["episodes"]] == ["FILE-10", "FILE-10", "FILE-10"]
+    assert [r["item"] for r in inj["episodes"]] == ["FILE-9", "FILE-9", "FILE-9"]
     assert next(r for r in inj["episodes"] if r["fault"] == "offset")["neighbours"] == [0, 2]
     base_d = pd.read_parquet(os.path.join(base, "data/chunk-000/file-000.parquet"))
     assert set(base_d["task_index"]) == {0}                                                    # the base is not modified

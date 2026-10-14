@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.1.0
+  version: 7.5.0
   description: |
     ## Overview
 
@@ -248,6 +248,27 @@ info:
     module counts of `GET /tasks/{id}/pipeline/episodes` add `skipped`; `judged` no longer counts skipped episodes, nor an
     episode without a task text.
 
+    **7.2.0** (2026-10-12): `GET /datasets/{id}/episodes/{index}/eef-overlay` takes `generate=false` to only look: an
+    episode's trajectory neither made nor being made answers 404 `not_made` instead of being made. The console looks
+    when it switches episodes and makes the trajectory when the viewer asks for it. An episode without a trajectory
+    says why in fewer words, cameras with the same reason named together; a registration no longer has its first
+    episodes' trajectories made ahead.
+
+    **7.3.0** (2026-10-12): `GET /datasets/browse?source=public` lists the HuggingFace cache bucket's datasets in every
+    format the platform reads - LeRobot, Lance, mcap and raw UMI sessions - not only LeRobot, including readable
+    directories inside a mirrored repository (`<repository>/<path>`); `format_hint` adds `umi_session`.
+
+    **7.4.0** (2026-10-13): `GET /datasets/{id}/declaration` returns the dataset's columns (`features`). A dataset
+    registered before its preflight listed columns has them read from its metadata, so its declaration's draft names
+    its pose, joint and camera columns as a newly registered one's does, instead of coming out empty.
+
+    **7.5.0** (2026-10-14): the check-item taxonomy 2.0 is final and its numbers are frozen: an item keeps its number,
+    name, kind, level and dimension, a new item takes the next free number of its dimension, and a removed number is
+    not used again. Three things change from 2.8.0: the index and reference item is FILE-9 (it was FILE-10), and data
+    integrity's table findings name it; the control for rare but legal encodings and layouts is gone; privacy and
+    safety is IMG-15, an episode item (it was SET-3, a dataset item). Results of tasks run before keep the numbers they
+    were run with.
+
   x-description-zh: |
     ## 概览
 
@@ -401,6 +422,20 @@ info:
     各报一条判废发现 `decode_failed`（检测项 FILE-4）；以前算执行出错，这条一直待补跑。镜头画面缺陷随之把几项记为无法评估（`video_undecodable`）。
     「只报不拒」（`report_only`）下损坏的视频照样判废，和数据完整性的发现一样。
     `GET /tasks/{id}/pipeline/episodes` 的模块计数多 `skipped`，`judged` 不再算跳过的条目，也不算没有任务标注的条目。
+
+    **7.2.0**（2026-10-12）：`GET /datasets/{id}/episodes/{index}/eef-overlay` 多一个参数 `generate=false`，只查不生成：这一条的轨迹
+    既没生成过、也不在生成中时回 404 `not_made`，不会因此开始生成。控制台换条时只查，用户要看时才生成。生成不了轨迹的条目，原因写得更短，
+    原因相同的相机合在一起说；登记数据集后不再预先生成前几条的轨迹。
+
+    **7.3.0**（2026-10-12）：`GET /datasets/browse?source=public` 列出 HuggingFace 缓存桶里平台能读的全部格式——LeRobot、Lance、mcap
+    与 UMI 原始会话，不再只有 LeRobot；镜像仓库里能读的子目录也列出来（名字是 `<仓库>/<路径>`）；`format_hint` 多 `umi_session`。
+
+    **7.4.0**（2026-10-13）：`GET /datasets/{id}/declaration` 多返回数据集的列（`features`）。登记时预检还不列出列信息的数据集，改为从它的
+    元数据现读，声明草稿和新登记的一样写出位姿、关节角与相机列，不再是空的。
+
+    **7.5.0**（2026-10-14）：检测项分类表 2.0 定稿，编号从此冻结：已有的检测项不再改编号、名称、类型、级别与维度，新检测项接在本维度最后、
+    拿下一个编号，删掉的编号不再使用。与 2.8.0 相比改了三处：索引与引用对不上改为 FILE-9（原 FILE-10），数据完整性的表检查发现挂在它上面；
+    对照项「少见但合法的编码与布局」删掉；隐私与安全改为逐条判的 IMG-15（原数据集级的 SET-3）。这一版之前跑的任务，结果里仍是原来的编号。
 
 servers:
   - url: "{base}/api/v1"
@@ -933,6 +968,10 @@ paths:
       tags: [datasets]
       operationId: browseDatasets
       summary: List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register
+      description: |
+        `source=public` lists the HuggingFace cache bucket's datasets in every format the platform reads, told from the
+        bucket's file list: LeRobot v2 / v3, Lance, mcap and raw UMI sessions (7.3.0; before, LeRobot only). A
+        readable directory inside a mirrored repository is listed too, named `<repository>/<path>`.
       parameters:
         - $ref: "#/components/parameters/Source"
         - name: uri
@@ -2543,9 +2582,9 @@ paths:
                           taxonomy_version: '2.0'
                           covered: [STRM-1, STRM-3, STRM-4, STRM-5, IMG-1, IMG-2, IMG-3, IMG-4, MV-3, ACT-1, ACT-2, ACT-4, ACT-5, ACT-6,
                             ACT-8, AV-1, AV-3, TASK-1, TASK-4, TASK-7, LABEL-2, SET-1]
-                          not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-10, STRM-2, STRM-6, STRM-7,
-                            STRM-9, IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, IMG-12, IMG-13, IMG-14, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4,
-                            AV-5, TASK-2, TASK-3, TASK-5, TASK-6, TASK-8, TASK-9, TASK-10, LABEL-1, LABEL-3, LABEL-4, SET-2, SET-3]
+                          not_covered: [FILE-1, FILE-2, FILE-3, FILE-4, FILE-5, FILE-6, FILE-7, FILE-8, FILE-9, STRM-2, STRM-6, STRM-7, STRM-9,
+                            IMG-5, IMG-6, IMG-7, IMG-8, IMG-9, IMG-12, IMG-13, IMG-14, IMG-15, MV-1, MV-2, MV-4, ACT-3, ACT-7, AV-2, AV-4, AV-5,
+                            TASK-2, TASK-3, TASK-5, TASK-6, TASK-8, TASK-9, TASK-10, LABEL-1, LABEL-3, LABEL-4, SET-2]
                           unassessable:
                             - {item: ACT-4, reason: not_applicable, count: 50}
                         findings_by_item:
@@ -2995,8 +3034,14 @@ paths:
         version and kept: 202 (`VizMediaPending`) while it is made, then 200. The cameras the declaration cannot
         draw on are listed with their reason in `unavailable_cameras`. 404 `no_trajectory` when the platform cannot
         have the dataset's trajectory (`details.missing` names what the declaration lacks), `not_generated` when
-        this episode has none, `format_not_generated` for a format it does not draw.
+        this episode has none (the message says why), `format_not_generated` for a format it does not draw.
+        With `generate=false` the request only looks (7.2.0): 200 when the trajectory is made, 202 while it is being
+        made, 404 `not_made` when nobody asked for it yet - nothing is started.
       parameters:
+        - name: generate
+          in: query
+          description: "false: only look, never start making the episode's trajectory (404 `not_made` when it is neither made nor being made); default true"
+          schema: {type: boolean, default: true}
         - name: max_gap_ms
           in: query
           description: "bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals"
@@ -4095,7 +4140,7 @@ components:
       properties:
         name: {type: string}
         uri: {type: string}
-        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, rrd, unknown]}
+        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, umi_session, rrd, unknown]}
         episodes: {type: [integer, "null"]}
     DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, umi_session, unsupported]}
     DatasetItemFields:
@@ -6073,8 +6118,8 @@ components:
     DatasetDeclaration:
       type: object
       additionalProperties: false
-      required: [dataset_id, format, state, declaration, version, updated_at, draft, unresolved, cameras, trajectory,
-                 assumed, suspects, warnings]
+      required: [dataset_id, format, state, declaration, version, updated_at, draft, unresolved, cameras, features,
+                 trajectory, assumed, suspects, warnings]
       properties:
         dataset_id: {type: string}
         format: {enum: [lerobot, mcap, lance, umi_session]}
@@ -6092,10 +6137,26 @@ components:
             - $ref: "#/components/schemas/Declaration"
         unresolved: {type: array, items: {$ref: "#/components/schemas/DeclarationNote"}}
         cameras: {type: array, items: {$ref: "#/components/schemas/DeclarationCamera"}}
+        features:
+          description: >-
+            the dataset's columns as its metadata declares them (LeRobot / Lance; empty for mcap): what the
+            declaration's records can name, read from the dataset's meta/info.json when the registration's
+            preflight does not list them
+          type: array
+          items: {$ref: "#/components/schemas/DatasetFeature"}
         trajectory: {$ref: "#/components/schemas/DeclarationTrajectory"}
         assumed: {type: array, items: {$ref: "#/components/schemas/DeclarationAssumed"}}
         suspects: {type: array, items: {$ref: "#/components/schemas/DeclarationSuspect"}}
         warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    DatasetFeature:
+      type: object
+      additionalProperties: false
+      required: [key, dtype, shape, names]
+      properties:
+        key: {type: string}
+        dtype: {type: string}
+        shape: {type: [array, "null"], items: {type: integer}}
+        names: {type: [array, "null"], items: {type: string}, description: "component names, flattened"}
     DatasetDeclarationPut:
       type: object
       additionalProperties: false

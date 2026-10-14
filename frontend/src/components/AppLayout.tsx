@@ -1,11 +1,12 @@
 import { Menu, Message } from '@arco-design/web-react';
-import { IconCode, IconDashboard, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
+import { IconCode, IconDashboard, IconInfoCircle, IconLaunch, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
 import { Suspense, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Spin } from '@arco-design/web-react';
 import { appPath } from '../base';
 import { readPrefs, writePrefs } from '../lib/prefs';
 import { zh } from '../locales/zh';
+import { AboutDialog } from './AboutDialog';
 
 interface NavItem {
   key: string;
@@ -66,6 +67,9 @@ const HELP: readonly { key: string; link: keyof typeof HELP_LINKS; label: string
   { key: 'help:api', link: 'api', label: zh.nav.apiDocs, missing: zh.nav.apiDocsMissing, icon: <IconCode /> },
 ];
 
+/** 「关于」: a first-level entry after the help ones; it opens a dialog, not a page (2026-10-13). */
+const ABOUT_KEY = 'about';
+
 /** Opens a help entry in a new tab; false when `key` is not one. */
 function openHelp(key: string): boolean {
   const item = HELP.find((h) => h.key === key);
@@ -78,7 +82,7 @@ function openHelp(key: string): boolean {
 
 /**
  * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集 with 数据集列表 / 可视化、
- * 系统和资源配置, then 帮助 with 使用文档 / API 文档; doc 07 §2, design doc 18 §5.0) around the
+ * 系统和资源配置, then 帮助 with 使用文档 / API 文档 and 关于; doc 07 §2, design doc 18 §5.0) around the
  * routed page. The sidebar collapses to its icons (the button at its bottom; remembered in this browser),
  * where a group's entries open as a popup.
  */
@@ -87,6 +91,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const selected = navKey(pathname);
   const [collapsed, setCollapsed] = useState(() => readPrefs().siderCollapsed === true);
+  const [about, setAbout] = useState(false);
   return (
     <>
       <header className="app-header">
@@ -110,7 +115,8 @@ export function AppLayout() {
             selectedKeys={[selected]}
             defaultOpenKeys={[QC_KEY, DS_KEY]}
             onClickMenuItem={(key) => {
-              if (!openHelp(key)) navigate(key);
+              if (key === ABOUT_KEY) setAbout(true);
+              else if (!openHelp(key)) navigate(key);
             }}
           >
             <Menu.ItemGroup title={zh.nav.groupMain}>
@@ -142,8 +148,14 @@ export function AppLayout() {
                 <Menu.Item key={h.key}>
                   {h.icon}
                   {h.label}
+                  {/* it opens a new tab: said by the icon after it (2026-10-14); one without an address only says so */}
+                  {HELP_LINKS[h.link] ? <IconLaunch className="app-nav-external" aria-hidden data-testid={`${h.key}-external`} /> : null}
                 </Menu.Item>
               ))}
+              <Menu.Item key={ABOUT_KEY}>
+                <IconInfoCircle />
+                {zh.nav.about}
+              </Menu.Item>
             </Menu.ItemGroup>
           </Menu>
         </nav>
@@ -153,6 +165,7 @@ export function AppLayout() {
           </Suspense>
         </main>
       </div>
+      <AboutDialog visible={about} onClose={() => setAbout(false)} />
     </>
   );
 }

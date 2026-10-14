@@ -1,6 +1,6 @@
 {
  "files": {
-  "backend/curation/contracts/modules.py": "sha256:067d3cefa0df712589c249277ee3fbaaf9719dd971258b2d82be7a9ed70e1562",
+  "backend/curation/contracts/modules.py": "sha256:40276741e31efebca6945f7e7f043394bb7c375298eb7c7256722f48e3f23f18",
   "backend/daemon/repo/protocol.py": "sha256:b1a5706297e9362b172cf2380a7b30a62c7dd2aff9c1d9d5979cd390fda08f62",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:10ad0bbb4e1421d7a89a89c7b79e3c18ef31a8dcea9941ce8818bd3d2fe6a870",
   "docs/contracts/cli/aggregate.schema.json": "sha256:b31245925f721d2dcef3455d9389986ae5993034831c84341033adf873d430cf",
@@ -29,12 +29,12 @@
   "docs/contracts/eef/sample.schema.json": "sha256:2b1764a2cbf8a5278d256517ba66f33eb85307095ebbb937c0eaba04f16036e2",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:25bb51c38e94acbfa7277d33be9ad4239cf2cff4d0e97e3abd5c191262761279",
   "docs/contracts/eef/umi_calibration.schema.json": "sha256:875fbe6ea53fdd5b40513e86e153c464108ae885b6cb3ea40769e67720095c44",
-  "docs/contracts/modules.json": "sha256:3eb15439b5c43d0258eea41cfabbe2f82cf55abcc662dea80a81d71cc282811c",
-  "docs/contracts/openapi.yaml": "sha256:0bd704d43806ed3b6da3734d5c53cc131f4e0a152b2514a978e65147eea72366",
+  "docs/contracts/modules.json": "sha256:54201f4d44ca46a47c7e8a546c5842f240d93ad00db9c5614f5660a8fa925743",
+  "docs/contracts/openapi.yaml": "sha256:324d9ed948a39a3bef54f6dedbb687fbeb9b577e41db7b25561de87bf33e9ca0",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:a24d8ee4b08af94b68d167f7886b2acd6331c1791840ed880bdf8f3707618a65",
   "docs/contracts/progress.schema.json": "sha256:dbab7f4f139612c484ab37c1a042131ed3f3515c66dbfe1b29775755362ecbdd",
-  "docs/contracts/taxonomy.json": "sha256:62046d3db5ef48cd6101369ee474893dae48265e8085df81a2f4ad0faeaaa058",
-  "docs/contracts/taxonomy.schema.json": "sha256:4c2420773bf685b9b15dec29c1f522d8ccbadca5adb17c05321ea2e04826d813",
+  "docs/contracts/taxonomy.json": "sha256:fd823f60b18ffb2386a92e2f48f6e75b19f658a08af1bc2b2a5cd88ed60b6bcc",
+  "docs/contracts/taxonomy.schema.json": "sha256:a0df8a0e5af96537be11e436af1a113012309bb5921e01f68a55c0b750ec37cd",
   "docs/contracts/viz-mapping.schema.json": "sha256:ec07b0fc51dcb50da38fdd0b5a56567cb16e64341efed436b35d424a81709da4"
  },
  "note": "sha256 of every frozen contract; refresh with `python -m curation.contracts lock` after a reviewed change"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VizCamera, VizStream } from '../api/types';
-import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
+import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, ownerOf, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
 
 function cam(key: string, hidden = false): VizCamera {
   return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null, hidden };
@@ -9,6 +9,8 @@ function cam(key: string, hidden = false): VizCamera {
 function stream(key: string, smart = true, kind: VizStream['kind'] = 'series', available = true): VizStream {
   return { key, kind, name: key, unit: null, lines: [], smart, available, reason: null, sources: [key] };
 }
+
+const k = (c: { kind: string; key?: string }) => c.key ?? c.kind;
 
 const MODEL = {
   cameras: [cam('head'), cam('left_wrist'), cam('right_wrist')],
@@ -33,13 +35,48 @@ describe('vizLayout', () => {
       { kind: 'video', key: 'right_wrist' },
       { kind: 'curve', key: 'left_arm' },
       { kind: 'curve', key: 'right_arm' },
-      { kind: 'empty' },
+      { kind: 'curve', key: 'grippers' },                       // the cell left over takes the third group
     ]);
-    // the info panel squeezes the grid below 1000 px: two columns, three rows
+    // the info panel squeezes the grid below 1000 px: two columns, three rows, the cameras still first
     const narrow = templateLayout('smart', MODEL, 900)!;
     expect(narrow.shape).toEqual({ cols: 2, rows: 3 });
-    expect(narrow.cells.filter((c) => c.kind !== 'empty')).toHaveLength(5);
+    expect(narrow.cells.map(k)).toEqual(['head', 'left_wrist', 'right_wrist', 'left_arm', 'right_arm', 'grippers']);
     expect(smartColumns(999)).toBe(2);
+  });
+
+  it('fills its empty cells, cameras first, picking the groups by turns among the robots (UMI with two hands, 2026-10-12)', () => {
+    const umiCam = (r: number) => ({ ...cam(`robot${r}_sensor_camera0_compressed`), name: `robot${r} camera0`, source: `/robot${r}/sensor/camera0/compressed` });
+    const umiGroup = (r: number, what: string, topic: string) => ({ ...stream(`robot${r}_${what}`), name: `robot${r} ${what}`, sources: [`/robot${r}/${topic}`] });
+    const umi = {
+      cameras: [umiCam(0), umiCam(1)],
+      streams: [umiGroup(0, 'vio_eef_pose', 'vio/eef_pose'), umiGroup(0, 'sensor_magnetic_encoder', 'sensor/magnetic_encoder'), umiGroup(1, 'vio_eef_pose', 'vio/eef_pose'), umiGroup(1, 'sensor_magnetic_encoder', 'sensor/magnetic_encoder')],
+    };
+    // before: the two cameras, robot0's two groups and two empty cells
+    const wide = templateLayout('smart', umi, 1200)!;
+    expect(wide.shape).toEqual({ cols: 3, rows: 2 });
+    expect(wide.cells.map(k)).toEqual([
+      'robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'robot0_vio_eef_pose',
+      'robot0_sensor_magnetic_encoder', 'robot1_vio_eef_pose', 'robot1_sensor_magnetic_encoder',
+    ]);
+    // two columns hold two groups: each hand's first, not robot0's two
+    const narrow = templateLayout('smart', umi, 900)!;
+    expect(narrow.shape).toEqual({ cols: 2, rows: 2 });
+    expect(narrow.cells.map(k)).toEqual(['robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'robot0_vio_eef_pose', 'robot1_vio_eef_pose']);
+    // a third camera: room for three groups, the third is robot0's second
+    const top = { ...umi, cameras: [...umi.cameras, { ...cam('top'), source: '/camera/top' }] };
+    expect(templateLayout('smart', top, 1200)!.cells.map(k)).toEqual([
+      'robot0_sensor_camera0_compressed', 'robot1_sensor_camera0_compressed', 'top',
+      'robot0_vio_eef_pose', 'robot0_sensor_magnetic_encoder', 'robot1_vio_eef_pose',
+    ]);
+  });
+
+  it('tells the robot, arm or hand a name belongs to', () => {
+    expect(ownerOf('/robot0/vio/eef_pose')).toBe('robot0');
+    expect(ownerOf('robot1.observation.state')).toBe('robot1');
+    expect(ownerOf('observation.images.cam_left_wrist')).toBe('left');
+    expect(ownerOf('observation.state / action · kRightArm')).toBe('right');
+    expect(ownerOf('left_cam', '/robot1/sensor/camera0')).toBe('robot1');   // a numbered robot before a side
+    expect(ownerOf('observation.state / action · gripper', 'camera0')).toBeNull();
   });
 
   it('lays out more than nine cells in four columns on a wider grid, three otherwise (design doc 19 §2.2)', () => {

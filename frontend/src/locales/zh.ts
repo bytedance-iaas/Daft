@@ -35,6 +35,15 @@ export const zh = {
     docsMissing: '使用文档还没配置',
     apiDocs: 'API 文档',
     apiDocsMissing: 'API 文档还没配置',
+    about: '关于',
+  },
+
+  about: {
+    title: '关于',
+    version: '版本',
+    revision: '提交',
+    revisionUnknown: '构建时没有记录',
+    builtAt: '构建时间',
   },
 
   common: {
@@ -125,6 +134,8 @@ export const zh = {
     duplicate: '重复检测',
     // registry 5.3 (design doc 23 §1): the CPU halves of model modules, the CPU block's second root
     vlm_prep: '模型准备档',
+    // the 执行裁决 subtask's first step (2026-10-13: was shown as its id)
+    adjudicate: '应用裁决',
     final: '终判',
     report: '报告',
     verify: '交付核验',
@@ -160,6 +171,8 @@ export const zh = {
   source: {
     tos: '私有 TOS',
     public: 'HuggingFace 缓存桶',
+    publicReading: '正在读取缓存桶的数据集清单',
+    publicFailed: '读不到缓存桶的数据集清单，稍后再试',
     local: '本地挂载路径',
     experimental: 'experimental',
   } as Record<string, string>,
@@ -456,6 +469,9 @@ export const zh = {
     localPath: '本地路径',
     localPathHelp: '调试用，只允许站点配置的根目录之下',
     publicDataset: '数据集',
+    // the cache bucket lists every format the platform reads (2026-10-12): the format after the name
+    publicOption: (name: string, format: string, episodes: number | null) => `${name} · ${format}${episodes !== null ? ` · ${episodes} 条` : ''}`,
+    publicEefOnly: '只能跑 EEF–视频一致性',
     publicRegion: '由站点配置',
     publicKey: '不需要（匿名只读）',
     region: '地域',
@@ -603,6 +619,9 @@ export const zh = {
     },
     eefNoModel: '没选模型服务：只用 CPU 的测量，模型那一路记为「没有模型后端」。要模型的意见就回第一屏选一个。',
     eefOffNoReference: '关掉「使用 VLM 辅助」又没给夹爪参考：第三视角相机不测，那几项判断不了',
+    // a parameter left out because no camera can be a third-person one (design doc 25 §4.2)
+    thirdPersonOnly: (what: string, cameras: string) => `没有「${what}」：它只用于第三视角相机，这个数据集的相机${cameras ? ` ${cameras} ` : ''}都不是。相机角色在数据集页的「数据集声明」里改。`,
+    mountName: { wrist: '腕部', moving: '移动', fixed_external: '第三视角' } as Record<string, string>,
     skippedTitle: '已跳过',
     skipModule: '跳过该模块',
     advancedLines: '判定线（高级）',
@@ -1711,7 +1730,7 @@ export const zh = {
   /** The report's Episode tab (F6.2): one episode, module by module. */
   episodeTab: {
     cameraDefects: {
-      items: { glitch: '花屏', shake: '抖动', contamination: '镜头污染', occlusion: '视觉遮挡' } as Record<string, string>,
+      items: { glitch: '花屏', shake: '相机抖动', contamination: '镜头污染', occlusion: '视觉遮挡' } as Record<string, string>,
       level: { none: '无', minor: '轻微', severe: '严重', unknown: '未知' } as Record<string, string>,
       kind: {
         dirt: '脏污', smudge: '油污', water: '水渍', obstruction: '遮挡物', other: '其它',
@@ -2130,7 +2149,6 @@ export const zh = {
       tip: '实线是状态，虚线是动作',
       legendTitle: '点击隐藏 / 显示这条序列',
       jumpTitle: '点图跳到那一刻',
-      downsampled: (shown: number, total: number) => `已下采样（${shown} / ${total} 点），放大查看细节`,
       empty: '这一组没有数据',
       failed: '曲线读不出来',
     },
@@ -2252,6 +2270,12 @@ export const zh = {
       } as Record<string, string>,
       wristNote: '腕部相机的标记检验不了本手的位姿（本手在画面里不动），看自运动一致性',
       making: (pct: number | null) => (pct === null ? '轨迹生成中…' : `轨迹生成中 ${Math.round(pct * 100)}%`),
+      // the visualize page makes a trajectory when asked (2026-10-12)
+      checking: '正在查这一条能不能画轨迹',
+      notMade: '这一条的轨迹还没生成，生成要一会儿，视频可以照常看',
+      generate: '生成轨迹',
+      noCameras: '这一条没有能画轨迹的相机',
+      generateFailed: (m: string) => `上次没生成出来：${m}`,
       declare: '数据集里有位姿记录：补全数据集声明后，这里能在画面上叠加末端轨迹',
       declareGo: '去补全声明',
       labels: '标签（点名、开口）',

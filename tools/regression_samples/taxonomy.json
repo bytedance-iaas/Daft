@@ -1,6 +1,6 @@
 {
  "schema_version": "1.0",
- "source": "docs/design/16-regression-samples.md §3 (2026-09-30); while sample set v1 is a draft its ids may change (2.0 renumbered every dimension, see renumbered); ids of different versions are not comparable",
+ "source": "docs/design/16-regression-samples.md §3 (2026-09-30); taxonomy 2.0 is frozen since 2026-10-14: an id keeps its meaning, new items get new ids, a dropped id is never reused; 1.x ids map through renumbered",
  "dimensions": [
   {
    "id": "FILE",
@@ -265,32 +265,6 @@
   },
   {
    "id": "FILE-9",
-   "dimension": "FILE",
-   "dimension_name": "文件与结构",
-   "name": "对照：少见但合法的编码与布局",
-   "origin": "—",
-   "samples": "真实",
-   "platform": "实测通过：MPEG-4 Part 2、H.264、AV1 都正常解码；带触觉「图像」列的数据集（C6）正常读取",
-   "platform_status": "能处理",
-   "platform_codes": [],
-   "kind": "control",
-   "level": "episode",
-   "description": "对照：少见但合法的编码与布局",
-   "aliases": {
-    "astra6_v1": [],
-    "pantheon": []
-   },
-   "explain_zh": "对照项：不常见但合法的视频编码（MPEG-4、AV1）或数据布局。它们不是问题，用来检查平台会不会误报。",
-   "origin_codes": [
-    "control"
-   ],
-   "guards": [
-    "FILE-2",
-    "FILE-4"
-   ]
-  },
-  {
-   "id": "FILE-10",
    "dimension": "FILE",
    "dimension_name": "文件与结构",
    "origin": "审",
@@ -973,6 +947,33 @@
     ]
    },
    "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "IMG-15",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "隐私与安全",
+   "origin": "具",
+   "samples": "合成：crafted 样本集 4 条（生成的人脸贴进画面）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "隐私与安全（人脸、无关人员入镜）",
+   "aliases": {
+    "astra6_v1": [
+     "—"
+    ],
+    "pantheon": [
+     "person-in-scene",
+     "human_in_frame"
+    ]
+   },
+   "explain_zh": "画面里出现人脸、无关人员或其他敏感信息。逐条判：哪几条、哪路相机的画面里有，就报哪几条，范围写到相机。",
    "origin_codes": [
     "tools"
    ]
@@ -2026,33 +2027,6 @@
    "origin_codes": [
     "tools"
    ]
-  },
-  {
-   "id": "SET-3",
-   "dimension": "SET",
-   "dimension_name": "数据集级",
-   "name": "隐私与安全",
-   "origin": "具",
-   "samples": "缺",
-   "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
-   "kind": "defect",
-   "level": "dataset",
-   "description": "隐私与安全（人脸、无关人员入镜）",
-   "aliases": {
-    "astra6_v1": [
-     "—"
-    ],
-    "pantheon": [
-     "person-in-scene",
-     "human_in_frame"
-    ]
-   },
-   "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
-   "origin_codes": [
-    "tools"
-   ]
   }
  ],
  "legend": {
@@ -2080,7 +2054,7 @@
  },
  "taxonomy_version": "2.0",
  "rules": [
-  "v1 定稿前编号可以调整（1.3 删项，2.0 各维度重新编号、去掉空号）：不同版本的编号按 renumbered 换算，不能直接比；改名不改号；每版在 changelog 里写明改了什么",
+  "2.0 起编号冻结（2026-10-14，需求方）：已有编号的名称、类型、级别、维度与所守的项不再改，解释只做不改意思的补充；新检测项接在本维度最后、拿新编号；删掉的编号不复用。1.x 的编号按 renumbered 换算，不能直接比",
   "同一现象用最具体的一项；有独立证据的不同问题可以多标",
   "「出现」不等于「拒收」：严重度与是否放行分开定义，失败演示可以是有价值的样本",
   "没有依据的正例不进期望值；量出来的规则只写结论明确的那一侧",
@@ -2100,6 +2074,7 @@
  "renumbered": {
   "from_version": "1.3",
   "ids": {
+   "FILE-10": "FILE-9",
    "MV-5": "MV-4",
    "TASK-5": "TASK-4",
    "TASK-6": "TASK-5",
@@ -2113,7 +2088,7 @@
    "LABEL-4": "LABEL-3",
    "LABEL-5": "LABEL-4",
    "SET-4": "SET-2",
-   "SET-5": "SET-3"
+   "SET-5": "IMG-15"
   },
   "note": "2.0 numbers the items of every dimension again without gaps; ids not listed are unchanged. Ids of different versions are not comparable: map 1.x ids through this table."
  },
@@ -2123,9 +2098,10 @@
    "date": "2026-10-07",
    "why": "需求方：编号可以删掉然后重新排，这是第一版，可以迭代",
    "changes": [
-    "各维度重新编号、去掉空号（68 项不变）：MV-5 → MV-4、TASK-5 → TASK-4、TASK-6 → TASK-5、TASK-7 → TASK-6、TASK-8 → TASK-7、TASK-10 → TASK-8、TASK-11 → TASK-9、TASK-12 → TASK-10、LABEL-2 → LABEL-1、LABEL-3 → LABEL-2、LABEL-4 → LABEL-3、LABEL-5 → LABEL-4、SET-4 → SET-2、SET-5 → SET-3",
+    "各维度重新编号、去掉空号，共 67 项（去掉对照项「少见但合法的编码与布局」）：FILE-10 → FILE-9、MV-5 → MV-4、TASK-5 → TASK-4、TASK-6 → TASK-5、TASK-7 → TASK-6、TASK-8 → TASK-7、TASK-10 → TASK-8、TASK-11 → TASK-9、TASK-12 → TASK-10、LABEL-2 → LABEL-1、LABEL-3 → LABEL-2、LABEL-4 → LABEL-3、LABEL-5 → LABEL-4、SET-4 → SET-2、SET-5 → IMG-15",
     "没列出的编号不变；新旧对照写在 renumbered，不同版本的编号要按它换算",
-    "TOS 上 v1 的样本集文件仍是 1.3 编号，下次更新样本集时换成 2.0；打分工具读到 1.3 的期望会按对照表换算"
+    "TOS 上 v1 的样本集文件仍是 1.3 编号，下次更新样本集时换成 2.0；打分工具读到 1.3 的期望会按对照表换算",
+    "2026-10-14 定稿并冻结（需求方：做一次迁移，之后不改变已有编号的定义）：就是这 67 项，与样本集 v2 一致；此后只能在各维度末尾加新编号"
    ]
   },
   {

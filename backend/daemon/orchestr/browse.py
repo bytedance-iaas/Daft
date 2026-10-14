@@ -400,17 +400,22 @@ class Browser:
         return {"items": items, "next_cursor": page.next_cursor, "has_more": page.has_more}
 
     def _public(self) -> list[dict]:
+        """The HuggingFace cache bucket's datasets in every format the platform reads (2026-10-12): LeRobot,
+        Lance, mcap and raw UMI sessions, subdirectories of a mirrored repository included."""
+        from curation import public_formats
         from curation.ingest import public_catalog
 
         try:
-            catalog = public_catalog.catalog()
+            catalog = public_formats.catalog()
         except public_catalog.PublicCatalogError as err:
             raise ApiError("validation_failed", str(err)) from None
         out = []
         for e in catalog:
             version = str(e.get("version") or "")
-            hint = "lerobot_v3" if version.startswith("v3") else (
-                "lerobot_v2" if version.startswith("v2") else "unknown")
+            if e.get("kind") == public_formats.LEROBOT:
+                hint = "lerobot_v3" if version.startswith("v3") else ("lerobot_v2" if version.startswith("v2") else "unknown")
+            else:
+                hint = str(e.get("kind") or "unknown")
             out.append({"name": str(e.get("id") or e["name"]), "uri": str(e["url"]),
                         "format_hint": hint, "episodes": e.get("episodes")})
         return sorted(out, key=lambda e: e["name"])

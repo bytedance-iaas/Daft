@@ -404,6 +404,47 @@ ALTER TABLE task DROP COLUMN export_fingerprint;
 ALTER TABLE task DROP COLUMN delivery_stale;
 """
 
+_DATASET_COLUMNS_V9 = (_DATASET_COLUMNS + ", viz_mapping, viz_mapping_version, viz_mapping_updated_at, display_config, "
+                       "annotations_upload")
+
+# Step 9 (2026-10-12): a raw UMI session (design doc 24 §6, C4 DatasetFormat ``umi_session``) could not be registered:
+# the format CHECK of step 4 did not know the word, so saving one failed with an IntegrityError. The table is rebuilt
+# as in step 4 with the word added; every column and row stays, the ids too.
+_V9 = f"""
+CREATE TABLE dataset_v9 (
+  id                     TEXT PRIMARY KEY,
+  owner_id               TEXT NOT NULL DEFAULT 'default',
+  name                   TEXT NOT NULL,
+  note                   TEXT,
+  source                 TEXT NOT NULL CHECK (source IN ('tos','public','local')),
+  uri                    TEXT NOT NULL,
+  region                 TEXT,
+  credential_id          TEXT REFERENCES credential(id) ON DELETE SET NULL,
+  preflight              TEXT NOT NULL,
+  format                 TEXT NOT NULL
+                         CHECK (format IN ('lerobot_v2','lerobot_v3','mcap','lance','umi_session','unsupported')),
+  meta_fingerprint       TEXT NOT NULL,
+  source_fingerprint     TEXT NOT NULL,
+  manifest_path          TEXT,
+  check_state            TEXT NOT NULL DEFAULT 'ok' CHECK (check_state IN ('ok','changed')),
+  checked_at             INTEGER,
+  preflighted_at         INTEGER NOT NULL,
+  created_at             INTEGER NOT NULL,
+  updated_at             INTEGER NOT NULL,
+  viz_mapping            TEXT,
+  viz_mapping_version    INTEGER NOT NULL DEFAULT 0,
+  viz_mapping_updated_at INTEGER,
+  display_config         TEXT,
+  annotations_upload     TEXT
+);
+INSERT INTO dataset_v9 ({_DATASET_COLUMNS_V9}) SELECT {_DATASET_COLUMNS_V9} FROM dataset;
+DROP TABLE dataset;
+ALTER TABLE dataset_v9 RENAME TO dataset;
+CREATE UNIQUE INDEX idx_dataset_address ON dataset(owner_id, source, uri, COALESCE(region, ''));
+CREATE INDEX idx_dataset_list ON dataset(owner_id, created_at DESC, id DESC);
+CREATE INDEX idx_dataset_credential ON dataset(credential_id);
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
@@ -414,11 +455,12 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (6, _V6),
     (7, _V7),
     (8, _V8),
+    (9, _V9),
 )
 
 #: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for
 #: schema changes ALTER TABLE cannot make; with them on, DROP TABLE would cascade)
-REBUILDS = frozenset({4, 5})
+REBUILDS = frozenset({4, 5, 9})
 
 LATEST_VERSION = MIGRATIONS[-1][0]
 

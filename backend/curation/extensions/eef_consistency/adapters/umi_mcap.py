@@ -362,7 +362,7 @@ def export_episode(path: str, ep: int, cfg: dict, *, uri: str, dataset_id: str, 
                 "status": "ok", "reason": None}
         report["cameras"][h] = info
         if intr is None:
-            info.update(status="unsupported", reason="这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback")
+            info.update(status="unsupported", reason="缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback")
         elif cam.codec not in ("h264", "jpeg", "png") or not cam.size or cam.first_key is None:
             info.update(status="unsupported", reason=f"画面读不出来（编码 {cam.codec}、尺寸 {cam.size}）")
         else:

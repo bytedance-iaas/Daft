@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import registry from '../../../docs/contracts/modules.json';
 import type { ModuleRegistry, PreflightResult } from '../api/types';
-import { asksModel, moduleParamFields, reasonText } from './preflight';
+import { asksModel, moduleParamFields, reasonText, thirdPersonOnly } from './preflight';
 
 describe('reasonText', () => {
   it('says a Git LFS pointer upload in Chinese, with the files and the fix', () => {
@@ -66,3 +66,29 @@ describe('the EEF module on screen 2 (design doc 25 §4.2-§4.3, registry 5.2)',
     expect(asksModel(reg.modules.find((m) => m.id === 'timestamp_check'))).toBe(false);
   });
 });
+
+describe('thirdPersonOnly (design doc 25 §4.2, 2026-10-13)', () => {
+  const eef = (registry as unknown as ModuleRegistry).modules.find((m) => m.id === 'eef_video_consistency')!;
+  const all = moduleParamFields(eef, null).map((f) => f.key);
+  const entry = (mounts: (string | null)[], applicable: string[]) =>
+    ({ modules: [{ id: eef.id, availability: 'available', applicable_params: applicable, cameras: mounts.map((m, i) => ({ camera_id: `c${i}`, mount: m, drawable: true })) }] }) as unknown as PreflightResult;
+
+  it('names what was left out because no camera can be a third-person one, and the cameras', () => {
+    const left = all.filter((k) => k !== 'observation_seeds' && k !== 'gripper_template');
+    expect(thirdPersonOnly(eef, entry(['wrist', 'wrist'], left))).toEqual({
+      what: '夹爪参考',
+      cameras: [
+        { id: 'c0', mount: 'wrist' },
+        { id: 'c1', mount: 'wrist' },
+      ],
+    });
+  });
+
+  it('says nothing when the reference is offered, or without the preflight', () => {
+    expect(thirdPersonOnly(eef, entry([null, 'wrist'], all))).toBeNull();
+    expect(thirdPersonOnly(eef, null)).toBeNull();
+    const ts = (registry as unknown as ModuleRegistry).modules.find((m) => m.id === 'timestamp_check')!;
+    expect(thirdPersonOnly(ts, { modules: [{ id: ts.id, availability: 'available' }] } as unknown as PreflightResult)).toBeNull();
+  });
+});
+

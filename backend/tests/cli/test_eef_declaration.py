@@ -152,13 +152,31 @@ def test_an_incomplete_declaration_fails_the_module_with_what_is_missing(declare
     assert {m["code"] for m in res.doc["error"]["details"]["missing"]} >= {"intrinsics_missing"}
 
 
+def test_cameras_whose_mount_nobody_declared_are_still_offered_a_gripper_reference(declared, tmp_path):
+    """A declaration that says nothing of the cameras (galbot's eef_ds2_lr3 on 2026-10-13: saved from an empty draft,
+    no pose, no camera calibration): their mounts are unknown, not "wrist", so the gripper reference stays on screen 2
+    (design doc 25 §4.2, §9.7) - it used to vanish without a word."""
+    doc = json.loads(open(_declaration(tmp_path)).read())
+    doc["semantics"]["pose"] = None
+    doc["calibration"]["cameras"] = {}
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps(doc))
+    entry = _entry(run("preflight", "--input", declared, "--modules", EEF, "--declaration", str(empty)).doc)
+    assert entry["trajectory_source"]["kind"] == "missing_pose"
+    assert entry["cameras"] and all(c["mount"] is None for c in entry["cameras"])
+    assert {"observation_seeds", "gripper_template"} <= set(entry["applicable_params"])
+
+
 def test_a_moving_camera_declared_fixed_takes_part_and_is_noted(declared, tmp_path):
     """F5.24a acceptance ⑤ (design doc 25 §3.3): a moving camera is not drawn, nor offered a gripper reference; a
     person declaring it fixed (assumption ``mount_declared_fixed``) makes it a third-person camera - the reference
-    applies, the trajectory is generated with it - and the records and the report say it was declared fixed."""
+    applies, the trajectory is generated with it - and the records and the report say it was declared fixed. The
+    other camera is declared a wrist one: one left undeclared could be a third-person camera, and would be offered
+    the reference itself (§4.2, §9.7)."""
     from curation.extensions.eef_consistency import report as eef_report
 
     doc = json.loads(open(_declaration(tmp_path)).read())
+    doc["calibration"]["cameras"]["observation.images.wrist"] = {"camera_id": "wrist", "mount": "wrist", "owner": "arm"}
     cam = doc["calibration"]["cameras"][f"observation.images.{CAM}"]
     cam["mount"] = "moving"
     moving = tmp_path / "moving.json"

@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { http } from 'msw';
+import { http, HttpResponse } from 'msw';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PREFLIGHT_DEBOUNCE } from '../../features/preflight/usePreflight';
 import { db } from '../../mocks/db';
@@ -170,6 +170,54 @@ describe('数据集列表 (07 §4.4)', () => {
     expect(key).toHaveTextContent('readonly-tos');
   });
 
+  it('the HuggingFace cache bucket lists every format the platform reads, each with its format (2026-10-12)', async () => {
+    const { user } = renderApp('/datasets');
+    await user.click(await screen.findByRole('button', { name: '添加数据集' }));
+    const drawer = await findDrawer('添加数据集');
+    await user.click(await within(drawer).findByRole('radio', { name: 'HuggingFace 缓存桶' }));
+    await user.click(await within(drawer).findByRole('combobox', { name: '数据集' }));
+    expect(await screen.findByText('Physical-AI-UMI-transfer-objects-from-cups · UMI 原始会话（只能跑 EEF–视频一致性）')).toBeInTheDocument();
+    expect(screen.getByText('Physical-AI-UMI-transfer-objects-from-cups/mcap · mcap · 1 条')).toBeInTheDocument();
+    expect(screen.getByText('aloha_sim_insertion_human · LeRobot v2 · 50 条')).toBeInTheDocument();
+  });
+
+  it('the HuggingFace cache bucket is there from the start: grey with a spinner while its list is read (2026-10-12)', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get('*/api/v1/datasets/browse', async () => {
+        await held;                                                    // then on to the mock's own handler
+      }),
+    );
+    const { user } = renderApp('/datasets');
+    await user.click(await screen.findByRole('button', { name: '添加数据集' }));
+    const drawer = await findDrawer('添加数据集');
+    const off = within(drawer).getByTestId('public-source-off');
+    expect(within(drawer).getByRole('radio', { name: 'HuggingFace 缓存桶' })).toBeDisabled();
+    expect(off.querySelector('.arco-icon-loading')).not.toBeNull();
+    expect(within(off).getByTitle('正在读取缓存桶的数据集清单')).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(within(drawer).getByRole('radio', { name: 'HuggingFace 缓存桶' })).toBeEnabled());
+    expect(within(drawer).queryByTestId('public-source-off')).toBeNull();
+    await user.click(within(drawer).getByRole('radio', { name: 'HuggingFace 缓存桶' }));
+    expect(await within(drawer).findByRole('combobox', { name: '数据集' })).toBeInTheDocument();
+  });
+
+  it('a cache bucket whose list cannot be read stays grey and says so on hover', async () => {
+    server.use(
+      http.get('*/api/v1/datasets/browse', () =>
+        HttpResponse.json({ error: { code: 'validation_failed', message: '读不到公共数据集清单' } }, { status: 400 }),
+      ),
+    );
+    const { user } = renderApp('/datasets');
+    await user.click(await screen.findByRole('button', { name: '添加数据集' }));
+    const drawer = await findDrawer('添加数据集');
+    const off = within(drawer).getByTestId('public-source-off');
+    await waitFor(() => expect(within(off).getByTitle('读不到缓存桶的数据集清单，稍后再试')).toBeInTheDocument());
+    expect(off.querySelector('.arco-icon-loading')).toBeNull();
+    expect(within(drawer).getByRole('radio', { name: 'HuggingFace 缓存桶' })).toBeDisabled();
+  });
+
   it('adding the same source + address + region again opens the existing registration', async () => {
     const { user } = renderApp('/datasets');
     await user.click(await screen.findByRole('button', { name: '添加数据集' }));
@@ -184,6 +232,32 @@ describe('数据集列表 (07 §4.4)', () => {
 });
 
 describe('数据集详情', () => {
+  it('a deleted task leaves 在这个数据集上跑过的任务 at once, before the page is read again (2026-10-13)', async () => {
+    const { user } = renderApp('/datasets/ds_droid100');
+    const card = async () => (await screen.findByText('在这个数据集上跑过的任务')).closest('.arco-card') as HTMLElement;
+    await user.click(await within(await card()).findByRole('link', { name: 'droid 前 50 条质检' }));
+    await user.click(await screen.findByRole('button', { name: '更多' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+    await screen.findByText(/^已删除/);
+    // back on the dataset page, its new read held: what is drawn from the cache has no deleted task
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get('*/api/v1/datasets/:id', async ({ params }) => {
+        if (params.id === 'ds_droid100') await held;
+      }),
+    );
+    await user.click(screen.getByRole('menuitem', { name: '数据集列表' }));
+    await user.click(await screen.findByRole('link', { name: 'droid_100' }));
+    const shown = await card();
+    expect(within(shown).queryByRole('link', { name: 'droid 前 50 条质检' })).toBeNull();
+    release();
+    await waitFor(() => expect(currentLocation()).toBe('/datasets/ds_droid100'));
+    expect(within(await card()).queryByRole('link', { name: 'droid 前 50 条质检' })).toBeNull();
+  });
+
   it('a failed preflight shows its error as it is: no 格式 label and no 模块可用性 (2026-10-05)', async () => {
     const rrd = DATASET_PROFILES.find((p) => p.name === 'warehouse_rrd')!;
     db.datasets.push(datasetDetail('ds_rrd', rrd, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));

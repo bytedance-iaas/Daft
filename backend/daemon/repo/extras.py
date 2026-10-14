@@ -35,8 +35,8 @@ from .protocol import DEFAULT_OWNER, Dataset, FinishedResults, Repository, Subta
 #: Width of one token-timeline slot.
 TOKEN_SLOT_MS = 15 * 60 * 1000
 
-#: Values of C4 ``DatasetFormat`` (mcap and lance since C4 1.11, D44).
-DATASET_FORMATS = ("lerobot_v2", "lerobot_v3", "mcap", "lance", "unsupported")
+#: Values of C4 ``DatasetFormat`` (mcap and lance since C4 1.11, D44; a raw UMI session since design doc 24 §6).
+DATASET_FORMATS = ("lerobot_v2", "lerobot_v3", "mcap", "lance", "umi_session", "unsupported")
 
 
 def dataset_format(preflight: dict | None) -> str:

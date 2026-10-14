@@ -36,7 +36,7 @@ import { SamplesCell } from './cells/SamplesCell';
 import { canDecode, VideoCell } from './cells/VideoCell';
 import { PlayerClock } from './clock';
 import { fetchVizDisplay, prefetchVizEpisode, saveVizDisplay, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
-import { OverlayMenu, type UnavailableCamera } from './OverlayMenu';
+import { OverlayGateButton, OverlayMenu, type OverlayGate, type UnavailableCamera } from './OverlayMenu';
 import { SidePanel, type OverlaySide } from './SidePanel';
 import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
@@ -92,6 +92,10 @@ export interface PlayerProps {
   prefetch?: number | null;
   /** the EEF marks over the cameras, with the 「轨迹」 menu (design doc 22 §3, design doc 25 §5.1) */
   overlays?: PlayerOverlays | null;
+  /** the 「轨迹」 button while there are no marks to draw (the visualize page: made when asked, 2026-10-12) */
+  overlayGate?: OverlayGate | null;
+  /** more lines for the notice strip under the head (yellow), after the dataset's and the episode's own */
+  notices?: readonly string[];
 }
 
 /** A camera's own file the browser can open as it is (the mini player's 「在新标签打开源文件」). */
@@ -174,6 +178,8 @@ function PlayerView({
   lead,
   prefetch = null,
   overlays = null,
+  overlayGate = null,
+  notices = [],
 }: PlayerProps & { model: VizDataset; ep: VizEpisode; loadingNext: boolean }) {
   const full = mode === 'full';
   // filling the browser window (requester 2026-10-10: 浏览器内全屏, not the screen's); Esc leaves it, caught
@@ -523,6 +529,8 @@ function PlayerView({
         ) : null}
         {overlays && overlayCams.length ? (
           <OverlayMenu cameras={overlayCams} choice={choice} onChange={overlays.onChoice} dataset={overlays.dataset} unavailable={overlays.unavailable} />
+        ) : overlayGate ? (
+          <OverlayGateButton gate={overlayGate} />
         ) : null}
         <Button size="small" className={sideOpen ? 'on' : ''} title={zh.viz.infoTitle} icon={<IconInfoCircle />} onClick={() => setSideOpen((v) => !v)}>
           {zh.viz.info}
@@ -561,6 +569,11 @@ function PlayerView({
       {[...model.warnings, ...ep.warnings, ...ep.annotations.warnings].map((w, i) => (
         <div key={`${w.code}-${i}`} className="vz-warn">
           {w.message}
+        </div>
+      ))}
+      {notices.map((n, i) => (
+        <div key={`notice-${i}`} className="vz-warn" data-testid="vz-notice">
+          {n}
         </div>
       ))}
       <div className="vz-body">

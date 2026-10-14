@@ -25,8 +25,9 @@ def test_the_format_of_a_preflight():
     assert dataset_format(_pf("mcap", supported=False)) == "unsupported"   # switched off
     assert dataset_format(_pf("lancedb", supported=False)) == "unsupported"
     assert dataset_format(_pf("rrd", supported=False)) == "unsupported"
+    assert dataset_format(_pf("umi_session")) == "umi_session"
     assert dataset_format(None) == "unsupported"
-    assert set(DATASET_FORMATS) == {"lerobot_v2", "lerobot_v3", "mcap", "lance", "unsupported"}
+    assert set(DATASET_FORMATS) == {"lerobot_v2", "lerobot_v3", "mcap", "lance", "umi_session", "unsupported"}
 
 
 def _v3_database(path) -> None:
@@ -118,6 +119,47 @@ def test_step_5_opens_the_review_line_and_keeps_every_answer(tmp_path):
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         assert {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'"
                                            " AND tbl_name='adjudication'")} >= {"idx_adj_lookup"}
+        conn.close()
+    finally:
+        repo.close()
+
+
+def test_step_9_lets_a_raw_umi_session_be_registered_and_keeps_every_row(tmp_path):
+    """2026-10-12 (galbot): saving a raw UMI session failed - the format CHECK of step 4 did not know
+    ``umi_session``. Step 9 rebuilds the table with it; the rows and their references stay."""
+    path = tmp_path / "curator.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    for version, script in migrations.MIGRATIONS[:8]:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;")
+    conn.execute(
+        "INSERT INTO dataset (id, owner_id, name, source, uri, region, preflight, format,"
+        " meta_fingerprint, source_fingerprint, preflighted_at, created_at, updated_at, viz_mapping,"
+        " viz_mapping_version, display_config) VALUES ('ds_1', 'default', 'old', 'tos', 'tos://b/old',"
+        " 'cn-beijing', ?, 'mcap', 'sha256:m', '{}', 1, 1, 1, '{\"m\": 1}', 3, '{\"d\": 1}')",
+        (json.dumps(sample_preflight()),))
+    conn.execute("INSERT INTO dataset_check (dataset_id, at, \"trigger\", result) VALUES ('ds_1', 2, 'add', 'same')")
+    conn.execute("INSERT INTO task (id, name, state, input_source, input_uri, output_uri, delivery_key,"
+                 " episode_selector, params, created_at, updated_at, dataset_id) VALUES ('task_1', 't',"
+                 " 'succeeded', 'tos', 'tos://b/old', 'tos://b/o', 'tos://b/o', '{\"mode\":\"all\"}', '{}', 1, 1, 'ds_1')")
+    conn.close()
+    repo = SqliteRepository(path, clock=lambda: T0)
+    try:
+        assert repo.schema_version() == migrations.LATEST_VERSION >= 9
+        assert repo.get_dataset("ds_1").viz_mapping_version == 3
+        assert repo.get_task("task_1").dataset_id == "ds_1"
+        assert [c.trigger for c in repo.list_dataset_checks("ds_1", limit=5)] == ["add"]
+        ds, created = repo.register_dataset(P.Dataset(
+            id="", name="cups", source="public", uri="tos://ai-infra/dataset/cups", region="cn-beijing",
+            preflight={**sample_preflight(), **_pf("umi_session")},
+            meta_fingerprint="sha256:m", source_fingerprint={}, preflighted_at=T0))
+        assert created
+        assert [d.name for d in repo.list_datasets(page=1, page_size=10, fmt="umi_session").items] == ["cups"]
+        conn = sqlite3.connect(path)
+        assert dict(conn.execute("SELECT name, format FROM dataset")) == {"old": "mcap", "cups": "umi_session"}
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='dataset'")}
+        assert {"idx_dataset_address", "idx_dataset_list", "idx_dataset_credential"} <= indexes
         conn.close()
     finally:
         repo.close()

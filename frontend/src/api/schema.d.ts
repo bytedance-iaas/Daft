@@ -257,7 +257,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register */
+        /**
+         * List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register
+         * @description `source=public` lists the HuggingFace cache bucket's datasets in every format the platform reads, told from the
+         *     bucket's file list: LeRobot v2 / v3, Lance, mcap and raw UMI sessions (7.3.0; before, LeRobot only). A
+         *     readable directory inside a mirrored repository is listed too, named `<repository>/<path>`.
+         */
         get: operations["browseDatasets"];
         put?: never;
         post?: never;
@@ -1425,7 +1430,9 @@ export interface paths {
          *     version and kept: 202 (`VizMediaPending`) while it is made, then 200. The cameras the declaration cannot
          *     draw on are listed with their reason in `unavailable_cameras`. 404 `no_trajectory` when the platform cannot
          *     have the dataset's trajectory (`details.missing` names what the declaration lacks), `not_generated` when
-         *     this episode has none, `format_not_generated` for a format it does not draw.
+         *     this episode has none (the message says why), `format_not_generated` for a format it does not draw.
+         *     With `generate=false` the request only looks (7.2.0): 200 when the trajectory is made, 202 while it is being
+         *     made, 404 `not_made` when nobody asked for it yet - nothing is started.
          */
         get: operations["getDatasetEpisodeEefOverlay"];
         put?: never;
@@ -2047,7 +2054,7 @@ export interface components {
             name: string;
             uri: string;
             /** @enum {unknown} */
-            format_hint?: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "rrd" | "unknown";
+            format_hint?: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "umi_session" | "rrd" | "unknown";
             episodes?: number | null;
         };
         /** @enum {unknown} */
@@ -3598,10 +3605,19 @@ export interface components {
             draft: null | components["schemas"]["dataset-declaration.schema"];
             unresolved: components["schemas"]["DeclarationNote"][];
             cameras: components["schemas"]["DeclarationCamera"][];
+            /** @description the dataset's columns as its metadata declares them (LeRobot / Lance; empty for mcap): what the declaration's records can name, read from the dataset's meta/info.json when the registration's preflight does not list them */
+            features: components["schemas"]["DatasetFeature"][];
             trajectory: components["schemas"]["DeclarationTrajectory"];
             assumed: components["schemas"]["DeclarationAssumed"][];
             suspects: components["schemas"]["DeclarationSuspect"][];
             warnings: components["schemas"]["VizWarning"][];
+        };
+        DatasetFeature: {
+            key: string;
+            dtype: string;
+            shape: number[] | null;
+            /** @description component names, flattened */
+            names: string[] | null;
         };
         DatasetDeclarationPut: {
             /** @description a dataset-declaration/1.0 document (a viz-mapping/1.x one is taken as its first layer) */
@@ -7004,6 +7020,8 @@ export interface operations {
     getDatasetEpisodeEefOverlay: {
         parameters: {
             query?: {
+                /** @description false: only look, never start making the episode's trajectory (404 `not_made` when it is neither made nor being made); default true */
+                generate?: boolean;
                 /** @description bridge a hand's missing poses between known ones at most this far apart (ms); default three sample intervals */
                 max_gap_ms?: number;
             };

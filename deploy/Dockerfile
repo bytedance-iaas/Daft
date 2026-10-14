@@ -43,6 +43,9 @@ COPY frontend/ ./
 # 模拟数据 src/mocks/world.ts 直接 import ../../../docs/contracts/modules.json。生产构建不含
 # 模拟代码，但打包器解析依赖图时可能仍要找到这个文件（没有实测不带它能否构建），带上最稳。
 COPY docs/contracts/ /src/docs/contracts/
+# 「关于」里的提交号：镜像里没有 .git，构建时传 --build-arg CURATOR_REVISION=<完整提交号>；
+# 不传就只写版本（C4 的 info.version）与构建时间。放在 npm run build 前面，换提交号不废掉依赖那一层缓存
+ARG CURATOR_REVISION=
 RUN npm run build
 
 # ── 阶段 2：运行时 ───────────────────────────────────────────────────────────

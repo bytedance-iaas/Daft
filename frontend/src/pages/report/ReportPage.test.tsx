@@ -343,7 +343,7 @@ describe('质检报告 (07 §5)', () => {
     expect(op).not.toHaveTextContent('模型看整段视频');
     const src = screen.getByTestId('eef-source');
     expect(src).toHaveTextContent('这一条推不出轨迹');
-    expect(src).toHaveTextContent('robot0：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(src).toHaveTextContent('robot0：不支持（缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback）');
     expect(screen.queryByTestId('eef-ego')).toBeNull();
   });
 
@@ -368,7 +368,7 @@ describe('质检报告 (07 §5)', () => {
     const src = screen.getByTestId('eef-source');
     expect(src).toHaveTextContent('轨迹由平台从录制推出内置的 DEMO 标定（das_gripper）按假设值：T_camera_tcp、body_to_optical、pose_frame');
     expect(src).toHaveTextContent('robot0：配对 99.9%，内参来自录制里的 camera_info');
-    expect(src).toHaveTextContent('robot1：不支持（这一路没有 camera_info，标定文件里也没有它的 intrinsics_fallback）');
+    expect(src).toHaveTextContent('robot1：不支持（缺相机内参，录制里没有 camera_info、标定文件也没有 intrinsics_fallback）');
     expect(src).toHaveTextContent('导出检查的可疑项：有画面的帧里只有 88% 配上了位姿（容差 20 ms）');
     expect(within(ego).getByTestId('eef-ego-verdict')).toHaveTextContent('不好');
     expect(ego).toHaveTextContent('ext：位姿约晚 0.47 s（第 51–251 帧，中）');
@@ -392,7 +392,7 @@ describe('质检报告 (07 §5)', () => {
     const record: ResultRecord = {
       episode_index: 12, module: 'data_integrity', status: 'ok', evidence: [], elapsed_s: 0.4, error: null, readings: {},
       findings: [{ code: 'file_truncated', item: 'FILE-2', severity: 'high', scope: { camera: 'wrist' }, message_zh: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失' }],
-      assessed: ['FILE-1', 'FILE-2', 'FILE-3', 'FILE-4', 'FILE-5', 'FILE-6', 'FILE-8', 'FILE-10', 'STRM-4', 'STRM-1', 'STRM-3'], unassessable: [],
+      assessed: ['FILE-1', 'FILE-2', 'FILE-3', 'FILE-4', 'FILE-5', 'FILE-6', 'FILE-8', 'FILE-9', 'STRM-4', 'STRM-1', 'STRM-3'], unassessable: [],
       details: {
         outcome: 'reject', reason: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失',
         tiers: { L1: true, L2: true, L3: false },
@@ -435,7 +435,7 @@ describe('质检报告 (07 §5)', () => {
             answered: true, error: null, problems: [],
             glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }),
             occlusion: cam('none', [], { source: 'none', share: 0, coverage: 0, region: 'none', duration_s: 0 }),
-            // registry 7.2: the picture contradicts the camera's name
+            // registry 8.1: the picture contradicts what the dataset declares for the camera
             view: { kind: 'fixed', arm: 'single', matches_name: 'no', same_as: '', note: 'scene never moves with the arm' },
           },
           robot1_sensor_camera0: {
@@ -454,12 +454,12 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=12#episodes`);
     const block = await screen.findByTestId('episode-module-camera_defects');
     const body = within(block).getByTestId('episode-camera-defects');
-    expect(body).toHaveTextContent('花屏 无 · 抖动 轻微 · 镜头污染 轻微 · 视觉遮挡 严重');
+    expect(body).toHaveTextContent('花屏 无 · 相机抖动 轻微 · 镜头污染 轻微 · 视觉遮挡 严重');
     // occlusion answers three things of its own: how much of the picture, where, how long
-    expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒 · 视觉遮挡 严重（人）20–30 秒 遮住 45% 画面 · 画面中央 · 共 10 秒');
-    expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
+    expect(body).toHaveTextContent('robot1_sensor_camera0：相机抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒 · 视觉遮挡 严重（人）20–30 秒 遮住 45% 画面 · 画面中央 · 共 10 秒');
+    expect(body).toHaveTextContent('robot0_sensor_camera0：相机抖动 轻微 全程');
     expect(body).toHaveTextContent('机位身份与命名不符');
-    // the crossing no single camera can show, measured from the recorded motion (registry 7.2)
+    // the crossing no single camera can show, measured from the recorded motion (registry 8.1)
     expect(body).toHaveTextContent('左右臂、机位身份串线：只有右臂在 4–6 秒动');
     expect(body).toHaveTextContent('robot0_sensor_camera0：画面与命名不符（画面是固定机位、单臂）：scene never moves with the arm');
     expect(body).toHaveTextContent('建议项，不影响判决');

@@ -39,7 +39,7 @@ export const WIDE_GRID_PX = 1000;
 export const WIDER_GRID_PX = 1240;
 /** The mini player's cells in its one row (design doc 18 §4.6). */
 export const MINI_MAX_CELLS = 3;
-/** Curve groups the smart layout adds after the cameras. */
+/** Curve groups the smart layout sizes its grid for; empty cells then take more (2026-10-12). */
 export const SMART_CURVES = 2;
 export const CELL_GAP_PX = 10;
 
@@ -71,18 +71,61 @@ function cameraCells(model: Pick<VizDataset, 'cameras'>): CellContent[] {
   return model.cameras.filter((c) => !c.hidden).map((c) => ({ kind: 'video', key: c.key }));
 }
 
-function curveCells(model: Pick<VizDataset, 'streams'>, smartOnly: boolean): CellContent[] {
-  return model.streams
-    .filter((s) => s.kind === 'series' && s.available && (!smartOnly || s.smart))
-    .map((s) => ({ kind: 'curve', key: s.key }));
+function curveCells(model: Pick<VizDataset, 'streams'>): CellContent[] {
+  return model.streams.filter((s) => s.kind === 'series' && s.available).map((s) => ({ kind: 'curve', key: s.key }));
 }
 
 /**
- * The cells of a template at a given grid width. Smart: every camera, then the first two smart curve
- * groups; up to nine cells three columns on a wide grid and two otherwise (it follows the width as side
- * panels open and close), more than nine four columns on a wider grid and three otherwise, up to four
- * rows. Video / curve: only those. What does not fit drops cameras from the end, never the curves;
- * `overflow` counts them (they stay a pick in 「+」/「更换」). Custom keeps the user's arrangement (null).
+ * The robot, arm or hand a camera or curve group belongs to, from its names: `robotN` / `armN` / `handN`
+ * (`/robot0/vio/eef_pose`, HABIT's `robot0.*`), else `left` / `right` (`cam_left_wrist`, `… · left_joint`);
+ * null when none is named.
+ */
+export function ownerOf(...names: (string | null | undefined)[]): string | null {
+  let side: string | null = null;
+  for (const n of names) {
+    for (const w of (n ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/)) {
+      if (/^(robot|arm|hand)\d+$/.test(w)) return w;
+      if (!side && (w === 'left' || w === 'right')) side = w;
+    }
+  }
+  return side;
+}
+
+/**
+ * The smart template (2026-10-12): the grid is sized as before - every camera and at most two smart curve
+ * groups - and its empty cells then take more smart groups: the cameras first, the groups after, in the
+ * dataset's order (the requester: more natural than a row per robot). When not every group fits, they are
+ * picked by turns among the robots they belong to (`ownerOf`), so each robot gets one before any gets a second.
+ */
+function smartLayout(model: Pick<VizDataset, 'cameras' | 'streams'>, gridWidth: number): { cells: CellContent[]; shape: GridShape; overflow: number } {
+  const cams = model.cameras.filter((c) => !c.hidden);
+  const groups = model.streams.filter((s) => s.kind === 'series' && s.available && s.smart);
+  const base = cams.length + Math.min(SMART_CURVES, groups.length);
+  const shape = shapeFor(base, smartColumns(gridWidth, base), base > SMALL_CELLS ? MAX_ROWS : SMALL_MAX);
+  const total = shape.cols * shape.rows;
+  const owner = new Map(groups.map((s) => [s.key, ownerOf(s.key, s.name, ...(s.sources ?? []))]));
+  const owners = [...new Set(owner.values())].filter((o): o is string => o !== null);
+  // by turns: a robot's first group, the next robot's first, …; the ones no robot names take the last turn
+  const want = Math.min(groups.length, Math.max(Math.min(SMART_CURVES, groups.length), total - cams.length));
+  const queues = [...owners, null].map((o) => groups.filter((s) => owner.get(s.key) === o));
+  const picked = new Set<string>();
+  for (let turn = 0; picked.size < want; turn++) for (const q of queues) if (turn < q.length && picked.size < want) picked.add(q[turn].key);
+  const shownGroups = groups.filter((s) => picked.has(s.key));
+  const shownCams = cams.slice(0, Math.max(0, total - shownGroups.length));
+  return {
+    cells: fitCells([...shownCams.map((c): CellContent => ({ kind: 'video', key: c.key })), ...shownGroups.map((s): CellContent => ({ kind: 'curve', key: s.key }))], shape),
+    shape,
+    overflow: cams.length - shownCams.length,
+  };
+}
+
+/**
+ * The cells of a template at a given grid width. Smart (`smartLayout`): every camera and at least two smart
+ * curve groups, more where cells are left; up to nine cells three columns on a wide grid and two otherwise
+ * (it follows the width as side panels open and close), more than nine four columns on a wider grid and
+ * three otherwise, up to four rows. Video / curve: only those. What does not fit drops cameras from the end,
+ * never the curves; `overflow` counts them (they stay a pick in 「+」/「更换」). Custom keeps the user's
+ * arrangement (null).
  */
 export function templateLayout(
   template: LayoutTemplate,
@@ -96,12 +139,10 @@ export function templateLayout(
     cameras = cameraCells(model);
     cols = cameras.length > SMALL_CELLS ? manyColumns(gridWidth) : Math.min(SMALL_MAX, Math.max(1, cameras.length));
   } else if (template === 'curve') {
-    curves = curveCells(model, false);
+    curves = curveCells(model);
     cols = curves.length > 1 ? 2 : 1;
   } else if (template === 'smart') {
-    cameras = cameraCells(model);
-    curves = curveCells(model, true).slice(0, SMART_CURVES);
-    cols = smartColumns(gridWidth, cameras.length + curves.length);
+    return smartLayout(model, gridWidth);
   } else {
     return null;
   }

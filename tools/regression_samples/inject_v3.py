@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Index and reference faults (FILE-10) injected into a copy of a LeRobot v3.0 dataset.
+"""Index and reference faults (FILE-9) injected into a copy of a LeRobot v3.0 dataset.
 
 A v3.0 dataset keeps many episodes in shared files: ``meta/episodes`` says where each one starts and ends in the data
 file (``dataset_from_index`` / ``dataset_to_index``) and in each camera's video (``from_timestamp`` / ``to_timestamp``);
@@ -24,7 +24,7 @@ import time
 
 import pandas as pd
 
-ITEM = "FILE-10"
+ITEM = "FILE-9"
 
 
 def copy_tree(src: str, dst: str) -> None:
@@ -89,7 +89,7 @@ def fault_offset(ds: V3, ep: int, rows: str = "6") -> dict:
     ds.eps.at[i, "dataset_to_index"] = before[1] + n
     order = sorted(int(x) for x in ds.eps["episode_index"])
     k = order.index(ep)
-    # an overlap / gap check sees the wrong range from both sides: the neighbours are not clean on FILE-10, they are not judged
+    # an overlap / gap check sees the wrong range from both sides: the neighbours are not clean on FILE-9, they are not judged
     neighbours = [order[j] for j in (k - 1, k + 1) if 0 <= j < len(order)]
     return {"scope": {"field": "meta/episodes dataset_from_index, dataset_to_index"}, "severity": "obvious" if n > 1 else "borderline",
             "params": {"shift_rows": n, "was": list(before), "now": [before[0] + n, before[1] + n]}, "neighbours": neighbours}
@@ -155,7 +155,7 @@ def main(argv=None) -> None:
     for ep in sorted(int(x) for x in ds.eps["episode_index"]):
         records.setdefault(ep, {"episode_index": ep, "base_episode": ep, "lineage": f"{base}:{ep}", "fault": None, "severity": None, "item": None,
                                 "note": "untouched episode of the copy: a control"})
-    json.dump({"schema_version": "0.1", "base": base, "note": f"index and reference faults (FILE-10) in a copy of {base}; plan {a.plan}",
+    json.dump({"schema_version": "0.1", "base": base, "note": f"index and reference faults (FILE-9) in a copy of {base}; plan {a.plan}",
                "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "episodes": [records[k] for k in sorted(records)]},
               open(os.path.join(a.out, "injection.json"), "w"), ensure_ascii=False, indent=1)
     print("INJECT_V3_DONE", len(records), "episodes ->", a.out)

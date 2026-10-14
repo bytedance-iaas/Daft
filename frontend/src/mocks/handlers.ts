@@ -58,7 +58,7 @@ import {
   tableRows,
 } from './world';
 import { producesAdjudication } from '../lib/registry';
-import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, datasetTasks, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
 import { vizHandlers } from './viz';
@@ -436,8 +436,11 @@ const datasets = [
     const url = new URL(request.url);
     const source = url.searchParams.get('source');
     if (source === 'public') {
-      const items = DATASET_PROFILES.filter((p) => p.source === 'public').map((p) => ({ name: p.name, uri: p.uri, format_hint: (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') as 'lerobot_v2' | 'lerobot_v3', episodes: p.episodes }));
+      // every format the platform reads (C4 7.3.0): a raw UMI session and the mcap directory inside it too
+      const items: { name: string; uri: string; format_hint: 'lerobot_v2' | 'lerobot_v3' | 'mcap' | 'umi_session'; episodes: number | null }[] = DATASET_PROFILES.filter((p) => p.source === 'public').map((p) => ({ name: p.name, uri: p.uri, format_hint: (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') as 'lerobot_v2' | 'lerobot_v3', episodes: p.episodes }));
       items.push({ name: 'aloha_sim_insertion_human', uri: `tos://${PUBLIC_BUCKET}/lerobot/aloha_sim_insertion_human`, format_hint: 'lerobot_v2', episodes: 50 });
+      items.push({ name: 'Physical-AI-UMI-transfer-objects-from-cups', uri: `tos://${PUBLIC_BUCKET}/lerobot/Physical-AI-UMI-transfer-objects-from-cups`, format_hint: 'umi_session', episodes: null });
+      items.push({ name: 'Physical-AI-UMI-transfer-objects-from-cups/mcap', uri: `tos://${PUBLIC_BUCKET}/lerobot/Physical-AI-UMI-transfer-objects-from-cups/mcap`, format_hint: 'mcap', episodes: 1 });
       return HttpResponse.json(cursorPage(items, url));
     }
     const prefix = (url.searchParams.get('uri') ?? '').replace(/\/+$/, '');
@@ -466,7 +469,7 @@ const datasets = [
   }),
   http.get(`${API}/datasets/:id`, ({ params }) => {
     const d = db.datasets.find((x) => x.id === params.id);
-    return d ? HttpResponse.json(d) : err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    return d ? HttpResponse.json({ ...d, ...datasetTasks(d.id) }) : err(404, 'not_found', '数据集登记不存在，可能已被删除');
   }),
   http.patch(`${API}/datasets/:id`, async ({ request, params }) => {
     const d = db.datasets.find((x) => x.id === params.id);
@@ -552,7 +555,7 @@ function toDatasetItem(d: DatasetDetail) {
     checked_at: d.checked_at,
     preflighted_at: d.preflighted_at,
     created_at: d.created_at,
-    last_task: d.last_task,
+    last_task: datasetTasks(d.id).last_task,
     viz: d.viz,
     viz_mapping: d.viz_mapping,
     declaration: declarationInfoOf(d.id),

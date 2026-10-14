@@ -6,6 +6,7 @@ import { api, idempotencyKey, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { qk, useCredentials, useModules, usePublicCatalog } from '../../api/queries';
 import type { InputRef, Upload, VizMapping } from '../../api/types';
+import { PublicSourceRadio } from '../../components/PublicSourceRadio';
 import { RegionSelect } from '../../components/RegionSelect';
 import { REGION_RE } from '../../lib/deeplink';
 import { zh } from '../../locales/zh';
@@ -14,6 +15,7 @@ import { PreflightCard } from '../preflight/PreflightCard';
 import { usePreflight } from '../preflight/usePreflight';
 import { AnnotationsField } from './Annotations';
 import { McapConfig, type McapConfigStatus } from './McapConfig';
+import { publicOptionLabel } from '../../lib/publicDatasets';
 
 const { Row, Col } = Grid;
 const TOS_URI = /^tos:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\/.+/;
@@ -143,7 +145,7 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
         <Field label={zh.taskForm.source} required>
           <Radio.Group type="button" value={source} onChange={setSource} aria-label={zh.taskForm.source}>
             <Radio value="tos">{zh.source.tos}</Radio>
-            {catalog.data ? <Radio value="public">{zh.source.public}</Radio> : null}
+            <PublicSourceRadio catalog={catalog.data} />
             {localEnabled ? (
               <Radio value="local">
                 {zh.source.local} <Tag size="small" color="orange">{zh.source.experimental}</Tag>
@@ -186,7 +188,7 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
               onChange={setPublicUri}
               placeholder={zh.taskForm.publicDataset}
               aria-label={zh.taskForm.publicDataset}
-              options={(catalog.data ?? []).map((d) => ({ label: d.name, value: d.uri }))}
+              options={(catalog.data ?? []).map((d) => ({ label: publicOptionLabel(d), value: d.uri }))}
             />
           </Field>
         )}

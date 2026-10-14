@@ -329,3 +329,108 @@ def test_the_full_visualizer_derives_a_handheld_grippers_recording(client_for, t
     monkeypatch.setattr(load, "load_bundle", lambda *a, **k: reads.append(a) or real(*a, **k))
     assert dataset_overlay(c, ds, 0)["cameras"] == body["cameras"]
     assert reads == []
+
+
+def _raw_session(root):
+    """A raw UMI session (design doc 24 §6) small enough for a test: two hands, a 160 x 120 fisheye video each, the
+    SLAM camera poses, the tag alignment and an intrinsics file; the plan's TCP is the camera through one mount."""
+    import pickle
+    from fractions import Fraction
+
+    import av
+    import numpy as np
+    import pandas as pd
+    from scipy.spatial.transform import Rotation
+
+    from curation.extensions.eef_consistency import geometry as G
+
+    n, rate = 16, Fraction(60000, 1001)
+    Tct = np.eye(4)
+    Tct[:3, 3] = [0, .086, .21965]
+    cameras, grippers = [], []
+    for j in range(2):
+        first = j + 2
+        d = root / "demos" / f"demo{j}"
+        d.mkdir(parents=True)
+        pos = np.array([[.01 * i + j * .15, 0., 0.] for i in range(n + 5)])
+        rot = Rotation.from_euler("y", np.arange(n + 5) * .015)
+        E = G.se3(rot.as_matrix(), pos)[first:first + n] @ Tct
+        grippers.append({"tcp_pose": np.c_[E[:, :3, 3], Rotation.from_matrix(E[:, :3, :3]).as_rotvec()],
+                         "gripper_width": np.linspace(.08, .02, n)})
+        pd.DataFrame({"timestamp": np.arange(n + 5) / float(rate), "is_lost": False,
+                      **{a: pos[:, k] for k, a in enumerate("xyz")},
+                      **{a: rot.as_quat()[:, k] for k, a in enumerate(["q_x", "q_y", "q_z", "q_w"])}}
+                     ).to_csv(d / "camera_trajectory.csv", index=False)
+        with av.open(str(d / "raw_video.mp4"), "w") as out:
+            stream = out.add_stream("libx264", rate=rate)
+            stream.width, stream.height, stream.pix_fmt = 160, 120, "yuv420p"
+            for i in range(n + 5):
+                img = np.full((120, 160, 3), i * 8, np.uint8)
+                for packet in stream.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+                    out.mux(packet)
+            for packet in stream.encode():
+                out.mux(packet)
+        cameras.append({"video_path": f"demo{j}/raw_video.mp4", "video_start_end": (first, first + n)})
+    with open(root / "dataset_plan.pkl", "wb") as fh:
+        pickle.dump([{"episode_timestamps": np.arange(n) / float(rate), "cameras": cameras, "grippers": grippers}], fh)
+    (root / "demos" / "mapping_0").mkdir()
+    (root / "demos" / "mapping_0" / "tx_slam_tag.json").write_text(json.dumps({"tx_slam_tag": np.eye(4).tolist()}))
+    (root / "camera_intrinsics.json").write_text(json.dumps({
+        "image_width": 160, "image_height": 120, "intrinsic_type": "FISHEYE",
+        "intrinsics": {"focal_length": 70.0, "principal_pt_x": 80.0, "principal_pt_y": 60.0, "radial_distortion_1": .05,
+                       "radial_distortion_2": -.01, "radial_distortion_3": .002, "radial_distortion_4": -.0005}}))
+    return root
+
+
+class _Remote:
+    """A local directory answered the way TOS answers: every object read whole or by ranged GETs."""
+
+    remote = True
+
+    def __init__(self, root, uri: str):
+        self.root, self.uri, self.ranged = root, uri, []
+
+    def list(self, prefix: str = "") -> dict:
+        from curation.cli.storage import ObjectInfo
+
+        keys = (p.relative_to(self.root).as_posix() for p in sorted(self.root.rglob("*")) if p.is_file())
+        return {k: ObjectInfo(k, (self.root / k).stat().st_size) for k in keys if k.startswith(prefix)}
+
+    def read_bytes(self, key: str) -> bytes:
+        return (self.root / key).read_bytes()
+
+    def read_range(self, key: str, start: int, n: int) -> bytes:
+        self.ranged.append(key)
+        with open(self.root / key, "rb") as fh:
+            fh.seek(start)
+            return fh.read(n)
+
+
+def test_a_raw_umi_session_on_tos_is_made_whole(tmp_path, monkeypatch):
+    """2026-10-12 (galbot, Physical-AI-UMI-transfer-objects-from-cups): a raw UMI session on TOS reads its videos'
+    headers by ranged GETs sized from the listing, so the whole-dataset bundle is made with the listing by key -
+    it was handed the keys alone ("list indices must be integers or slices, not str")."""
+    import contextlib
+    from types import SimpleNamespace
+
+    from daemon.viz import eef_dataset as E
+
+    store = _Remote(_raw_session(tmp_path / "cups"), "tos://bucket/cups")
+    src = SimpleNamespace(uri=store.uri, name="cups", is_local=False, listing=store.list)
+    monkeypatch.setattr(E, "Access", lambda rt, s: SimpleNamespace(storage=lambda: contextlib.nullcontext(store)))
+    out = tmp_path / "bundle.json"
+    E.make_bundle(SimpleNamespace(rt=None), src, {"whole": True}, None, out)
+    bundle = json.loads(out.read_text())
+    (sample,) = bundle["samples"]
+    assert sample["episode_index"] == 0 and len(sample["frames"]) == 16
+    assert sorted(v["camera_id"] for v in sample["sample"]["views"]) == ["camera0", "camera1"]
+    assert {"demos/demo0/raw_video.mp4", "demos/demo1/raw_video.mp4"} <= set(store.ranged)   # headers, not downloads
+    # and the marks come out of it, on the videos the session reader plays (``demos/<video_path>``)
+    from daemon.viz.eef_overlay import overlay_cameras
+
+    cams, _ = overlay_cameras(out, 0, kept=True)
+    assert {(c["camera_id"], c["media_uri"], c["mount"]) for c in cams} == {
+        ("camera0", "demos/demo0/raw_video.mp4", "wrist"), ("camera1", "demos/demo1/raw_video.mp4", "wrist")}
+    for c in cams:
+        point = next(x for x in c["layers"] if x["id"] == "point")
+        assert all(f is not None for f in point["frames"])

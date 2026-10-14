@@ -396,6 +396,30 @@ def test_browse_local_tos_and_public(api):
     assert_error(c.get(f"{API}/datasets/browse", params={"source": "ftp"}), "validation_failed")
 
 
+def test_the_cache_bucket_lists_every_format_the_platform_reads(api, monkeypatch):
+    """2026-10-12: LeRobot, Lance, mcap and raw UMI sessions, subdirectories of a mirrored repository included,
+    each with its format hint (``curation.public_formats``)."""
+    from curation import public_formats
+
+    c, _, _ = api()
+    url = "tos://ai-infra/dataset/"
+    monkeypatch.setattr(public_formats, "catalog", lambda: [
+        {"name": "droid_100", "id": "lerobot/droid_100", "kind": "lerobot", "version": "v2.1", "episodes": 100,
+         "url": url + "droid_100"},
+        {"name": "HABIT/full", "id": "HABIT/full", "kind": "lerobot", "version": "v3.0", "episodes": 3,
+         "url": url + "HABIT/full"},
+        {"name": "cups", "id": "cups", "kind": "umi_session", "version": "", "episodes": None, "url": url + "cups"},
+        {"name": "cups/mcap", "id": "cups/mcap", "kind": "mcap", "version": "", "episodes": 1, "url": url + "cups/mcap"},
+        {"name": "pusht", "id": "pusht", "kind": "lance", "version": "v3.0", "episodes": 206, "url": url + "pusht"},
+    ])
+    r = c.get(f"{API}/datasets/browse", params={"source": "public"})
+    assert r.status_code == 200, r.text
+    _page_schema("BrowsedDataset", r.json())
+    assert {i["name"]: i["format_hint"] for i in r.json()["items"]} == {
+        "lerobot/droid_100": "lerobot_v2", "HABIT/full": "lerobot_v3", "cups": "umi_session",
+        "cups/mcap": "mcap", "pusht": "lance"}
+
+
 def test_episode_preview_pages_with_a_cursor(api):
     c, _, dataset = api()
     seen, cursor = [], None

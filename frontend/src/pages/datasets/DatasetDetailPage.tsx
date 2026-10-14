@@ -45,7 +45,8 @@ export function DatasetDetailPage() {
   const reg = useModules();
   const backends = useBackends();
   const actions = useDatasetActions();
-  const q = useQuery({ queryKey: qk.dataset(id ?? ''), queryFn: () => unwrap(api().GET('/datasets/{id}', { params: { path: { id: id! } } })), enabled: Boolean(id) });
+  // read again when the tab comes back: a task deleted in another tab leaves 「在这个数据集上跑过的任务」 (2026-10-13)
+  const q = useQuery({ queryKey: qk.dataset(id ?? ''), queryFn: () => unwrap(api().GET('/datasets/{id}', { params: { path: { id: id! } } })), enabled: Boolean(id), refetchOnWindowFocus: true });
   const crumbs = [{ label: zh.datasets.title, to: '/datasets' }, { label: q.data?.name ?? id ?? '' }];
   if (q.isError && !q.data) {
     return (

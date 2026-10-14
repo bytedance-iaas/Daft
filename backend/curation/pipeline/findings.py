@@ -454,9 +454,10 @@ def _task_success(passed, score, d, p) -> Derived:
 
 #: camera_defects' answer levels -> a finding's severity (design doc 17 §2.2: minor -> low, severe -> medium)
 CAMERA_LEVELS = {"minor": "low", "severe": "medium"}
-_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "画面抖动"), ("contamination", "IMG-7", "镜头污染或遮挡"),
+_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "相机抖动"), ("contamination", "IMG-7", "镜头污染"),
                  ("occlusion", "IMG-8", "视觉遮挡"))
-_CONTAMINATION = {"dirt": "脏污", "smudge": "污渍", "water": "水滴", "obstruction": "遮挡", "other": "其他"}
+# the kinds of IMG-7: what is ON the lens. "obstruction" is something stuck to it, not IMG-8's occlusion
+_CONTAMINATION = {"dirt": "脏污", "smudge": "污渍", "water": "水滴", "obstruction": "糊住镜头", "other": "其他"}
 _OCCLUSION = {"arm": "机械臂", "body": "机身", "person": "人", "object": "物件", "cable": "线缆", "other": "其他"}
 _VIEW_KIND = {"wrist": "腕部相机", "fixed": "固定机位"}
 _VIEW_ARM = {"left": "左臂", "right": "右臂", "single": "单臂"}

@@ -19,13 +19,18 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
+/** A section's rows: its keys line up on the longest of them (2026-10-12). */
+function Kvs({ children }: { children: React.ReactNode }) {
+  return <div className="kvs">{children}</div>;
+}
+
 function Now({ clock, ep }: { clock: PlayerClock; ep: VizEpisode }) {
   const t = useClockValue(clock, (s) => Math.round(s.t * 1000) / 1000);
   return (
-    <>
+    <Kvs>
       <Kv k={zh.viz.side.frame} v={frameAt(ep.timeline, ep.frames, t) + 1} />
       <Kv k={zh.viz.side.time} v={fmtClock(t)} />
-    </>
+    </Kvs>
   );
 }
 
@@ -46,13 +51,15 @@ function DepthInfo({ stream, ep, model, clock }: { stream: VizStream; ep: VizEpi
   return (
     <>
       <div className="sec">{zh.viz.side.depthStream}</div>
-      <Kv k={zh.viz.side.key} v={<span className="mono">{stream.sources[0] ?? stream.key}</span>} />
-      <Kv k={zh.viz.side.resolution} v={stream.depth?.width && stream.depth?.height ? `${stream.depth.width} × ${stream.depth.height}` : '—'} />
-      <Kv k={zh.viz.side.unit} v={zh.viz.side.depthUnit(stream.depth?.unit ?? stream.unit ?? 'mm')} />
-      <Kv k={zh.viz.side.depthRange} v={ready?.depth?.lo !== null && ready?.depth?.lo !== undefined ? zh.viz.depth.range(ready.depth.lo, ready.depth.hi ?? ready.depth.lo) : '—'} />
-      <Kv k={zh.viz.side.depthPair} v={pair ? pair.name : zh.viz.side.depthPairNone} />
-      <Kv k={zh.viz.side.frames} v={ready ? ready.count : '—'} />
-      <Kv k={zh.viz.side.access} v={zh.viz.side.depthAccess} />
+      <Kvs>
+        <Kv k={zh.viz.side.key} v={<span className="mono">{stream.sources[0] ?? stream.key}</span>} />
+        <Kv k={zh.viz.side.resolution} v={stream.depth?.width && stream.depth?.height ? `${stream.depth.width} × ${stream.depth.height}` : '—'} />
+        <Kv k={zh.viz.side.unit} v={zh.viz.side.depthUnit(stream.depth?.unit ?? stream.unit ?? 'mm')} />
+        <Kv k={zh.viz.side.depthRange} v={ready?.depth?.lo !== null && ready?.depth?.lo !== undefined ? zh.viz.depth.range(ready.depth.lo, ready.depth.hi ?? ready.depth.lo) : '—'} />
+        <Kv k={zh.viz.side.depthPair} v={pair ? pair.name : zh.viz.side.depthPairNone} />
+        <Kv k={zh.viz.side.frames} v={ready ? ready.count : '—'} />
+        <Kv k={zh.viz.side.access} v={zh.viz.side.depthAccess} />
+      </Kvs>
       <div className="sec">{zh.viz.side.current}</div>
       <Now clock={clock} ep={ep} />
       <div className="sec">{zh.viz.side.note}</div>
@@ -85,12 +92,12 @@ function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock })
   return (
     <>
       <div className="sec">{S.title}</div>
-      <Kv k={S.camera} v={<span className="mono">{cam.camera_id}</span>} />
-      <Kv k={S.hands} v={cam.hands.map((h) => h.title).join('、') || '—'} />
-      <Kv k={S.sample} v={f !== null ? f + 1 : S.none} />
-      <Kv k={S.media} v={media !== null && media !== undefined ? media + 1 : '—'} />
-      {hint ? (
-        <>
+      <Kvs>
+        <Kv k={S.camera} v={<span className="mono">{cam.camera_id}</span>} />
+        <Kv k={S.hands} v={cam.hands.map((h) => h.title).join('、') || '—'} />
+        <Kv k={S.sample} v={f !== null ? f + 1 : S.none} />
+        <Kv k={S.media} v={media !== null && media !== undefined ? media + 1 : '—'} />
+        {hint ? (
           <Kv
             k={S.gap}
             v={
@@ -109,16 +116,18 @@ function OverlayInfo({ side, clock }: { side: OverlaySide; clock: PlayerClock })
               />
             }
           />
-          <div className="note">
-            {S.gapHint(hint.defaultMs, hint.lo, hint.hi)}
-            {S.gapFilled(filled)}
-            {choice.maxGapMs !== null ? (
-              <Button size="mini" type="text" onClick={() => onChoice({ ...choice, maxGapMs: null })}>
-                {S.gapReset}
-              </Button>
-            ) : null}
-          </div>
-        </>
+        ) : null}
+      </Kvs>
+      {hint ? (
+        <div className="note">
+          {S.gapHint(hint.defaultMs, hint.lo, hint.hi)}
+          {S.gapFilled(filled)}
+          {choice.maxGapMs !== null ? (
+            <Button size="mini" type="text" onClick={() => onChoice({ ...choice, maxGapMs: null })}>
+              {S.gapReset}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {side.dataset ? null : (
         <>
@@ -183,16 +192,20 @@ export function SidePanel({
       body = (
         <>
           <div className="sec">{zh.viz.side.stream}</div>
-          <Kv k={zh.viz.side.key} v={<span className="mono">{cam.source}</span>} />
-          <Kv k={zh.viz.side.resolution} v={cam.width && cam.height ? `${cam.width} × ${cam.height}` : '—'} />
-          <Kv k={zh.viz.side.codec} v={cam.transcoded ? zh.viz.side.codecTranscoded(cam.codec) : [cam.codec, cam.pix_fmt].filter(Boolean).join(' · ') || '—'} />
-          <Kv k={zh.viz.side.fps} v={cam.fps ? zh.viz.fps(cam.fps) : '—'} />
-          <Kv k={zh.viz.side.frames} v={ep.frames} />
-          <Kv k={zh.viz.side.duration} v={fmtClock(ep.duration_s)} />
+          <Kvs>
+            <Kv k={zh.viz.side.key} v={<span className="mono">{cam.source}</span>} />
+            <Kv k={zh.viz.side.resolution} v={cam.width && cam.height ? `${cam.width} × ${cam.height}` : '—'} />
+            <Kv k={zh.viz.side.codec} v={cam.transcoded ? zh.viz.side.codecTranscoded(cam.codec) : [cam.codec, cam.pix_fmt].filter(Boolean).join(' · ') || '—'} />
+            <Kv k={zh.viz.side.fps} v={cam.fps ? zh.viz.fps(cam.fps) : '—'} />
+            <Kv k={zh.viz.side.frames} v={ep.frames} />
+            <Kv k={zh.viz.side.duration} v={fmtClock(ep.duration_s)} />
+          </Kvs>
           <div className="sec">{zh.viz.side.source}</div>
-          <Kv k={zh.viz.side.range} v={e && e.from_ts !== null && e.from_ts !== undefined ? zh.viz.side.rangeOf(e.from_ts, e.to_ts ?? null) : zh.viz.side.wholeFile} />
-          {e && e.offset_s ? <Kv k={zh.viz.side.offset} v={zh.viz.side.offsetOf(e.offset_s)} /> : null}
-          <Kv k={zh.viz.side.access} v={clientDecoded?.has(cam.key) ? zh.viz.access.client : (zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access)} />
+          <Kvs>
+            <Kv k={zh.viz.side.range} v={e && e.from_ts !== null && e.from_ts !== undefined ? zh.viz.side.rangeOf(e.from_ts, e.to_ts ?? null) : zh.viz.side.wholeFile} />
+            {e && e.offset_s ? <Kv k={zh.viz.side.offset} v={zh.viz.side.offsetOf(e.offset_s)} /> : null}
+            <Kv k={zh.viz.side.access} v={clientDecoded?.has(cam.key) ? zh.viz.access.client : (zh.viz.access[e?.access ?? cam.access] ?? e?.access ?? cam.access)} />
+          </Kvs>
           <div className="sec">{zh.viz.side.current}</div>
           <Now clock={clock} ep={ep} />
           {overlay ? <OverlayInfo side={overlay} clock={clock} /> : null}
@@ -208,11 +221,13 @@ export function SidePanel({
       body = (
         <>
           <div className="sec">{zh.viz.side.fields}</div>
-          {roles('state').length ? <Kv k={zh.viz.side.state} v={<span className="mono">{roles('state').join('、')}</span>} /> : null}
-          {roles('action').length ? <Kv k={zh.viz.side.action} v={<span className="mono">{roles('action').join('、')}</span>} /> : null}
-          {roles('other').length ? <Kv k={zh.viz.side.other} v={<span className="mono">{roles('other').join('、')}</span>} /> : null}
-          <Kv k={zh.viz.side.unit} v={stream.unit || '—'} />
-          <Kv k={zh.viz.side.sampling} v={zh.viz.side.samplingOf(series?.total_points ?? 0, stream.rate_hz)} />
+          <Kvs>
+            {roles('state').length ? <Kv k={zh.viz.side.state} v={<span className="mono">{roles('state').join('、')}</span>} /> : null}
+            {roles('action').length ? <Kv k={zh.viz.side.action} v={<span className="mono">{roles('action').join('、')}</span>} /> : null}
+            {roles('other').length ? <Kv k={zh.viz.side.other} v={<span className="mono">{roles('other').join('、')}</span>} /> : null}
+            <Kv k={zh.viz.side.unit} v={stream.unit || '—'} />
+            <Kv k={zh.viz.side.sampling} v={zh.viz.side.samplingOf(series?.total_points ?? 0, stream.rate_hz)} />
+          </Kvs>
           <div className="sec">{zh.viz.side.series}</div>
           {legend.map((l) => (
             <label key={l.name} className="sl">
@@ -243,23 +258,25 @@ export function SidePanel({
       <div className="vz-side-body">
         {body}
         {tracks.length > 1 || ep.annotations.labels.length ? <div className="sec">{zh.viz.side.annotations}</div> : null}
-        {tracks.length > 1 ? (
-          <Kv
-            k={zh.viz.side.track}
-            v={
-              <Select size="mini" value={trackKey ?? undefined} onChange={(v: string) => onTrack(v)} style={{ width: '100%' }}>
-                {tracks.map((t) => (
-                  <Select.Option key={t.key} value={t.key}>
-                    {t.name}
-                  </Select.Option>
-                ))}
-              </Select>
-            }
-          />
-        ) : null}
-        {ep.annotations.labels.map((l) => (
-          <Kv key={l.key} k={l.name} v={l.value} />
-        ))}
+        <Kvs>
+          {tracks.length > 1 ? (
+            <Kv
+              k={zh.viz.side.track}
+              v={
+                <Select size="mini" value={trackKey ?? undefined} onChange={(v: string) => onTrack(v)} style={{ width: '100%' }}>
+                  {tracks.map((t) => (
+                    <Select.Option key={t.key} value={t.key}>
+                      {t.name}
+                    </Select.Option>
+                  ))}
+                </Select>
+              }
+            />
+          ) : null}
+          {ep.annotations.labels.map((l) => (
+            <Kv key={l.key} k={l.name} v={l.value} />
+          ))}
+        </Kvs>
       </div>
     </aside>
   );

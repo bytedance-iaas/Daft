@@ -417,15 +417,18 @@ async def get_task_episode_series(request: Request, task_id: str, index: int, st
 
 @router.get("/datasets/{dataset_id:ds_id}/episodes/{index}/eef-overlay")
 async def get_dataset_episode_eef_overlay(request: Request, dataset_id: str, index: int,
-                                          max_gap_ms: float | None = Query(None, gt=0, le=2000)):
+                                          max_gap_ms: float | None = Query(None, gt=0, le=2000),
+                                          generate: bool = Query(True)):
     """The EEF marks of a registration's episode, from its declaration (design doc 25 §5.1, D85): 202 while the
-    episode's trajectory is made, kept in the viz cache by the declaration's version."""
+    episode's trajectory is made, kept in the viz cache by the declaration's version; ``generate=false`` only looks
+    (404 ``not_made`` when nobody asked for it yet)."""
     from ..viz.eef_dataset import dataset_overlay
 
     rt, owner = runtime(request), principal(request).owner_id
     svc = viz_of(rt)
     _index(index)
-    return await in_thread(lambda: dataset_overlay(rt, svc, dataset_id, owner, index, max_gap_ms=max_gap_ms))
+    return await in_thread(lambda: dataset_overlay(rt, svc, dataset_id, owner, index, max_gap_ms=max_gap_ms,
+                                                   generate=generate))
 
 
 @router.get("/tasks/{task_id}/episodes/{index}/eef-overlay")

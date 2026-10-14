@@ -185,12 +185,12 @@ def test_a_dataset_level_finding_of_the_report_counts_once_per_subset(tmp_path):
 
 def test_a_dataset_level_finding_on_an_episode_level_item_is_not_spread_over_the_subset(tmp_path):
     """data_integrity's table check also sums its findings up for the set; the episodes' own records say which ones."""
-    exp = expectation(episode(0, problems=["FILE-10"]), episode(1, clean=["FILE-10"]), episode(2, clean=["FILE-10"]))
-    recs = [record2(0, "data_integrity", [finding("table_inconsistent", "FILE-10")]), record2(1, "data_integrity"),
+    exp = expectation(episode(0, problems=["FILE-9"]), episode(1, clean=["FILE-9"]), episode(2, clean=["FILE-9"]))
+    recs = [record2(0, "data_integrity", [finding("table_inconsistent", "FILE-9")]), record2(1, "data_integrity"),
             record2(2, "data_integrity")]
     row = score2(tmp_path, exp, recs, dataset_findings={"data_integrity": [
-        {"code": "table_overlap", "item": "FILE-10", "severity": "medium", "message_zh": "帧区间有重叠", "unit": "dataset",
-         "readings": {"episodes": [0]}}]})["items"]["FILE-10"]
+        {"code": "table_overlap", "item": "FILE-9", "severity": "medium", "message_zh": "帧区间有重叠", "unit": "dataset",
+         "readings": {"episodes": [0]}}]})["items"]["FILE-9"]
     assert (row["tp"], row["fp"], row["tn"]) == (1, 0, 2) and row["unit"] == "episode"
 
 

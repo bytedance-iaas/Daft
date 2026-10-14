@@ -118,7 +118,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | C3 | 进度协议（stderr 上的 JSON Lines） | `progress.schema.json` |
 | C4 | REST API | `openapi.yaml` |
 | C5 | 仓储接口与状态机 | `backend/daemon/repo/protocol.py` |
-| C6 | 检测项分类表（细码与覆盖都指向它的编号） | `taxonomy.json`（Schema `taxonomy.schema.json`） |
+| C6 | 检测项分类表（细码与覆盖都指向它的编号；2.0 起编号冻结：已有编号不改定义，新项接在本维度最后，删掉的不复用，守卫是 `backend/tests/contracts/taxonomy_frozen.json`） | `taxonomy.json`（Schema `taxonomy.schema.json`） |
 | C7 | 数据集声明（第一层是 mcap 字段映射；可视化与质检共用，设计 18 §6、设计 25 §3） | `dataset-declaration.schema.json`（`viz-mapping.schema.json` 留一版） |
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 

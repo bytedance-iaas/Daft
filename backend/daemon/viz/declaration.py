@@ -2,8 +2,9 @@
 
 Kept where the mcap field mapping was (``Dataset.viz_mapping``, one document and one version counter): a mapping
 confirmed before is a declaration of its first layer. ``GET`` gives the confirmed one, a fresh draft (from the
-registration's preflight - ``dataset.features``, ``camera_info``, ``robot_type`` - and, for an mcap dataset, a probe
-of its first file) and what the EEF module would make of it; ``PUT`` checks a new version against the dataset
+registration's preflight - ``dataset.features``, ``camera_info``, ``robot_type``; a preflight from before those were
+written has them read from the dataset's ``meta/info.json`` - and, for an mcap dataset, a probe of its first file),
+the dataset's columns and what the EEF module would make of it; ``PUT`` checks a new version against the dataset
 (errors stop it; suspects are kept on it) and takes the registration's preflight again, whose EEF entry follows
 the declaration.
 """
@@ -30,9 +31,44 @@ def format_of(ds: P.Dataset) -> str:
     return kind if kind in ("lerobot", "mcap", "lance", "umi_session") else "unknown"
 
 
-def _info(ds: P.Dataset) -> dict:
-    """An ``info.json``-like view of the registration's preflight: features with their component names, the robot."""
-    d = _preflight(ds).get("dataset") or {}
+#: columns read from a dataset's ``meta/info.json`` because its registration's preflight predates them, by
+#: (registration id, preflight time): a new preflight is a new key
+_COLUMNS: dict[tuple, dict] = {}
+_COLUMNS_MAX = 64
+
+
+def _view(svc, ds: P.Dataset) -> dict:
+    """The registration preflight's ``dataset`` with its columns (``features``, ``camera_info``). A preflight written
+    before they were (a LeRobot / Lance dataset registered before 2026-10-04) has neither: they are read from the
+    dataset's ``meta/info.json`` now, with the CLI preflight's own functions, and kept (design doc 25 §3.3, §9.7) -
+    else the draft finds no column and a saved draft says the dataset records nothing. Not readable: the
+    preflight's view as it is."""
+    d = dict(_preflight(ds).get("dataset") or {})
+    if d.get("features") or format_of(ds) not in ("lerobot", "lance"):
+        return d
+    key = (ds.id, ds.preflighted_at)
+    got = _COLUMNS.get(key)
+    if got is None:
+        from curation.viz import lerobot_info as L
+
+        try:
+            raw = _reader(svc, dataset_source(svc.rt, ds, ds.owner_id))("meta/info.json")
+            info = json.loads(raw.decode("utf-8"))
+        except Exception:  # noqa: BLE001 - no meta/info.json, unreadable: nothing better than the preflight
+            return d
+        got = {"features": L.features_of(info), "camera_info": L.camera_info_of(info),
+               "robot_type": info.get("robot_type"), "fps": info.get("fps")}
+        while len(_COLUMNS) >= _COLUMNS_MAX:
+            _COLUMNS.pop(next(iter(_COLUMNS)))
+        _COLUMNS[key] = got
+    return {**d, "features": got["features"], "camera_info": got["camera_info"],
+            "robot_type": d.get("robot_type") or got["robot_type"],
+            "fps": d.get("fps") if d.get("fps") is not None else got["fps"]}
+
+
+def _info(svc, ds: P.Dataset) -> dict:
+    """An ``info.json``-like view of the registration: features with their component names, the robot."""
+    d = _view(svc, ds)
     feats = {f["key"]: {"dtype": f.get("dtype"), "shape": f.get("shape"), "names": f.get("names")}
              for f in d.get("features") or [] if isinstance(f, dict) and f.get("key")}
     return {"features": feats, "robot_type": d.get("robot_type"), "fps": d.get("fps")}
@@ -70,10 +106,10 @@ def cameras_of(svc, ds: P.Dataset, decl: dict | None) -> list[dict]:
             w, h = sizes.get(c["topic"], (None, None))
             out.append({"source": c["topic"], "name": c.get("name") or DCL.short_name(c["topic"]), "width": w, "height": h})
         return out
-    info = _preflight(ds).get("dataset") or {}
+    info = _view(svc, ds)
     shown = {c.get("key"): c for c in info.get("camera_info") or [] if isinstance(c, dict)}
     out = []
-    for key, f in _info(ds)["features"].items():
+    for key, f in _info(svc, ds)["features"].items():
         if f.get("dtype") not in ("video", "image") or "depth" in key.lower():
             continue
         c = shown.get(key) or {}
@@ -92,7 +128,7 @@ def facts_of(svc, ds: P.Dataset, decl: dict | None) -> K.Facts:
         except ApiError:
             topics = {}
         return K.Facts.mcap(topics, sizes, cameras=list(sizes))
-    facts = K.Facts.lerobot(_info(ds), kind=format_of(ds))
+    facts = K.Facts.lerobot(_info(svc, ds), kind=format_of(ds))
     facts.cameras = sizes
     return facts
 
@@ -102,7 +138,7 @@ def draft_of(svc, ds: P.Dataset) -> dict:
     fmt = format_of(ds)
     src = dataset_source(svc.rt, ds, ds.owner_id)
     if fmt in ("lerobot", "lance"):
-        return DD.draft_lerobot(_info(ds), listing=_listing(svc, src), read=_reader(svc, src),
+        return DD.draft_lerobot(_info(svc, ds), listing=_listing(svc, src), read=_reader(svc, src),
                                 base="builtin:lerobot" if fmt == "lerobot" else None)
     if fmt == "mcap":
         from curation.viz import mcap_mapping as MMAP
@@ -189,7 +225,8 @@ def declaration_doc(svc, ds: P.Dataset) -> dict:
     unresolved = DD.unresolved_of(decl, cameras=sources) if confirmed else (drafted.get("unresolved") or [])
     return {"dataset_id": ds.id, "format": fmt, "state": "confirmed" if decl else "none", "declaration": decl,
             "version": int(ds.viz_mapping_version or 0), "updated_at": ds.viz_mapping_updated_at,
-            "draft": start, "unresolved": unresolved, "cameras": cams, "trajectory": trajectory,
+            "draft": start, "unresolved": unresolved, "cameras": cams, "features": list(_view(svc, ds).get("features") or []),
+            "trajectory": trajectory,
             "assumed": DCL.assumed(decl) if decl else [], "suspects": list((decl or {}).get("suspects") or []),
             "warnings": []}
 

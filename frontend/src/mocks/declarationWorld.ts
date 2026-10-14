@@ -120,6 +120,29 @@ function trajectoryOf(d: DatasetDetail, doc: Declaration, drafted: boolean): Dat
   return { kind: 'missing_declaration', missing };
 }
 
+/**
+ * The dataset's columns as the Daemon gives them with the declaration (C4 7.4.0): the registration preflight's, else -
+ * as for a registration whose preflight predates them - read from the dataset's metadata; here DROID's columns for
+ * the DROID-like datasets (the mock world's registrations keep none).
+ */
+function featuresOf(d: DatasetDetail): DatasetDeclaration['features'] {
+  if (vizFormatOf(d) === 'mcap') return [];
+  const kept = d.preflight?.dataset?.features;
+  if (kept?.length) return kept;
+  if (!(d.name.startsWith('eef_ds2') || d.name.startsWith('droid'))) return [];
+  const six = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'];
+  const joints = Array.from({ length: 7 }, (_, i) => `joint_${i}`);
+  const f = (key: string, names: string[]) => ({ key, dtype: 'float32', shape: [names.length], names });
+  return [
+    f('observation.state.cartesian_position', six),
+    f('observation.state.joint_position', joints),
+    f('observation.state.gripper_position', ['gripper']),
+    f('action.cartesian_position', six),
+    f('action.joint_position', joints),
+    ...camerasOf(d).map((c) => ({ key: c.source, dtype: 'video', shape: [c.height ?? 480, c.width ?? 640, 3], names: ['height', 'width', 'channel'] })),
+  ];
+}
+
 export function declarationDoc(d: DatasetDetail): DatasetDeclaration {
   const stored = db.declarations.get(d.id);
   const draft = draftOf(d);
@@ -134,6 +157,7 @@ export function declarationDoc(d: DatasetDetail): DatasetDeclaration {
     draft: stored?.doc ?? draft.declaration,
     unresolved: stored ? [] : draft.unresolved,
     cameras: camerasOf(d),
+    features: featuresOf(d),
     trajectory: trajectoryOf(d, stored?.doc ?? draft.declaration, !stored),
     assumed: [],
     suspects: stored?.doc.suspects ?? [],

@@ -107,7 +107,7 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
              "per_camera": {"observation.images.a": {"answered": True, "glitch": {"level": "none"},
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
-# registry 7.2: occlusion per camera with its share, place and length, and the camera's own identity
+# registry 8.1: occlusion per camera with its share, place and length, and the camera's own identity
 CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
             "items": {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "severe"},
             "per_camera": {
@@ -122,7 +122,7 @@ CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsisten
                                              "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
                                              "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
                                                       "note": ""}}}}
-# registry 7.2: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
+# registry 8.1: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
 # only the measured pairing shows that the one called left rides the right arm
 CAM_ARMS = {"protocol": "camera-check/9", "reason": "", "identity": "inconsistent",
             "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
@@ -463,6 +463,6 @@ def test_p20_items_have_fixtures():
     for m, passed, score, d, *_ in CASES:
         rec = _record(m, passed, score, d)
         items |= {f["item"] for f in rec["findings"]}
-    items |= {"SET-3", "ACT-6"}                       # dataset level, test_dataset_level_findings
-    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "SET-3", "ACT-6"} <= items
+    items.add("ACT-6")                                # dataset level, test_dataset_level_findings
+    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "ACT-6"} <= items
     assert "LABEL-1" not in items

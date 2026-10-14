@@ -204,8 +204,10 @@ export async function probeMedia(url: string, signal?: AbortSignal): Promise<Med
   return { state: 'failed', message: ApiError.fromResponse(res.status, body).message };
 }
 
-/** A registration's EEF marks (design doc 25 §5.1): made by the Daemon the first time (202 with its progress until
- * then); `none` when the platform cannot have the dataset's (or this episode's) trajectory. */
+/** A registration's EEF marks (design doc 25 §5.1): the page only looks (C4 7.2.0 `generate=false`) - `ready` when
+ * the episode's trajectory is made, `pending` while it is being made, `none` with reason `not_made` when nobody asked
+ * for it yet ({@link generateDatasetEefOverlay}), `none` with another reason when the platform cannot have the
+ * dataset's (or this episode's) trajectory. */
 export type DatasetOverlay =
   | { state: 'ready'; overlay: EefOverlay }
   | { state: 'pending'; progress: number | null; message: string }
@@ -217,7 +219,7 @@ export function useDatasetEefOverlay(datasetId: string | null, episode: number |
     queryKey: ['eef-overlay', 'dataset', datasetId, episode, maxGapMs],
     queryFn: async () => {
       const { data, error, response } = await api().GET('/datasets/{id}/episodes/{index}/eef-overlay', {
-        params: { path: { id: datasetId as string, index: episode as number }, query: maxGapMs !== null ? { max_gap_ms: maxGapMs } : {} },
+        params: { path: { id: datasetId as string, index: episode as number }, query: { generate: false, ...(maxGapMs !== null ? { max_gap_ms: maxGapMs } : {}) } },
       });
       if (response.status === 202) {
         const p = (data ?? {}) as Partial<VizMediaPending>;
@@ -237,6 +239,16 @@ export function useDatasetEefOverlay(datasetId: string | null, episode: number |
     // another gap: the marks on screen stay until the new ones come
     placeholderData: (prev) => (prev?.state === 'ready' && prev.overlay.dataset_id === datasetId && prev.overlay.episode_index === episode ? prev : undefined),
   });
+}
+
+/** Start making a registration episode's trajectory (C4 7.2.0, the 「生成轨迹」 link): the Daemon answers 202 and
+ * makes it on its build pool; the look ({@link useDatasetEefOverlay}) then follows its progress. */
+export async function generateDatasetEefOverlay(datasetId: string, episode: number): Promise<void> {
+  const { error, response } = await api().GET('/datasets/{id}/episodes/{index}/eef-overlay', {
+    params: { path: { id: datasetId, index: episode }, query: { generate: true } },
+  });
+  if (response.status === 202 || response.ok || response.status === 404) return;          // the look says how it went
+  throw ApiError.fromResponse(response.status, error);
 }
 
 /** A task's EEF marks are not there to draw: it did not run the module, or its bundle has no such episode. */
