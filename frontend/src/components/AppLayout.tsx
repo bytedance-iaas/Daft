@@ -1,5 +1,5 @@
 import { Menu, Message } from '@arco-design/web-react';
-import { IconCode, IconDashboard, IconInfoCircle, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
+import { IconCode, IconDashboard, IconInfoCircle, IconLaunch, IconList, IconLock, IconQuestionCircle, IconStorage } from '@arco-design/web-react/icon';
 import { Suspense, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Spin } from '@arco-design/web-react';
@@ -148,6 +148,8 @@ export function AppLayout() {
                 <Menu.Item key={h.key}>
                   {h.icon}
                   {h.label}
+                  {/* it opens a new tab: said by the icon after it (2026-10-14); one without an address only says so */}
+                  {HELP_LINKS[h.link] ? <IconLaunch className="app-nav-external" aria-hidden data-testid={`${h.key}-external`} /> : null}
                 </Menu.Item>
               ))}
               <Menu.Item key={ABOUT_KEY}>

@@ -77,6 +77,9 @@ describe('app shell', () => {
     await user.click(within(nav).getByRole('menuitem', { name: 'API 文档' }));
     expect(open).toHaveBeenCalledWith('/api-docs.html', '_blank', 'noopener,noreferrer');
     expect(currentLocation()).toBe('/tasks');
+    // the icon after it says it opens a new tab (2026-10-14); 使用文档 without an address has none
+    expect(within(nav).getByTestId('help:api-external')).toBeInTheDocument();
+    expect(within(nav).queryByTestId('help:docs-external')).toBeNull();
     HELP_LINKS.api = '';
     await user.click(within(nav).getByRole('menuitem', { name: 'API 文档' }));
     expect(await screen.findByText('API 文档还没配置')).toBeInTheDocument();
