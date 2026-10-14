@@ -2129,7 +2129,6 @@ export const zh = {
       tip: '实线是状态，虚线是动作',
       legendTitle: '点击隐藏 / 显示这条序列',
       jumpTitle: '点图跳到那一刻',
-      downsampled: (shown: number, total: number) => `已下采样（${shown} / ${total} 点），放大查看细节`,
       empty: '这一组没有数据',
       failed: '曲线读不出来',
     },

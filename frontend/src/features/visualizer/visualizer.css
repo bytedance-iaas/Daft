@@ -99,8 +99,6 @@
 .vz-cell.kind-curve .band.review.focus { fill: rgba(255, 125, 0, 0.22); }
 .vz-cell.kind-curve .band.info { fill: rgba(134, 144, 156, 0.1); }
 .vz-cell.kind-curve .band.info.focus { fill: rgba(134, 144, 156, 0.22); }
-.vz-cell.kind-curve .vz-note { position: absolute; right: 10px; top: 10px; font-size: 11px; color: var(--c-text-3); z-index: 2; }
-.vz-cell.kind-curve:hover .vz-note, .vz-cell.kind-curve.is-focus .vz-note { display: none; }
 
 /* 信息侧栏 */
 .vz-side { width: 300px; flex: none; border-left: 1px solid var(--c-border); display: flex; flex-direction: column; background: var(--color-bg-2); }

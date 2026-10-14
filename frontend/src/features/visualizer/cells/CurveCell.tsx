@@ -84,7 +84,6 @@ export function CurveCell({
         {stream.name}
         {stream.unit ? ` · ${stream.unit}` : ''}
       </span>
-      {series.data?.downsampled ? <span className="vz-note">{zh.viz.curve.downsampled(series.data.t.length, series.data.total_points)}</span> : null}
       <div
         className="plot"
         style={{ height: plotH }}
