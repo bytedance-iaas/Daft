@@ -141,6 +141,8 @@ describe('质检报告 (07 §5)', () => {
     expect(figures('video_action_sync')).toContain('已标注异常2不判废');
     expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 44'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
     expect(within(screen.getByTestId('sync-cameras')).getByText('wrist_image_left')).toBeInTheDocument();
+    expect(figures('video_action_sync')).toContain('分窗可比对26/50');                      // registry 8.1: the windowed rule's coverage
+    expect(within(screen.getByTestId('sync-cameras')).getByText('分窗稳')).toBeInTheDocument();
     expect(screen.getByTestId('sync-advice')).toHaveTextContent('数据集结论：全库逐相机中位滞后均在容差内');
     expect(figures('task_success')).toContain('任务文本来源原始标注 48');
     expect(charts('task_success')).toEqual([
@@ -231,7 +233,7 @@ describe('质检报告 (07 §5)', () => {
     expect(task).toHaveTextContent('判定用的任务文本来自原始标注 · 持久任务');
     expect(within(screen.getByTestId('episode-module-motion_quality')).getByTestId('episode-motion')).toHaveTextContent('执行器饱和不适用—速度型指令和位置读数含义不同');
     expect(within(screen.getByTestId('episode-module-visual_quality')).getByTestId('episode-visual')).toHaveTextContent('wrist_image_left');
-    expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('sync-badge')).toHaveTextContent('同步正常');
+    expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('episode-sync')).toHaveTextContent('对齐（');
     expect(within(screen.getByTestId('episode-module-duplicate_check')).getByText('无发现')).toBeInTheDocument();
     const frame = await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/);
     expect(frame).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
@@ -499,12 +501,14 @@ describe('质检报告 (07 §5)', () => {
     await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '12');
     await user.click(await screen.findByRole('option', { name: /^ep 12/ }, { timeout: 4000 }));
     const sync = await screen.findByTestId('episode-module-video_action_sync', {}, { timeout: 4000 });
-    expect(within(sync).getByTestId('sync-badge')).toHaveTextContent('已标注异常（不判废）');
-    expect(within(sync).getByTestId('episode-sync')).toHaveTextContent('错位：这一路可靠地测出画面与动作错开了 +0.38s');
+    expect(within(sync).getByTestId('episode-sync')).toHaveTextContent('比动作晚 0.38 秒');
     const curves = await within(sync).findByTestId('sync-curves', {}, { timeout: 4000 });
     const labels = within(curves).getAllByTestId('chart').map((c) => c.getAttribute('aria-label'));
-    expect(labels).toHaveLength(4);
+    expect(labels).toHaveLength(5);
     expect(labels[3]).toContain('互相关：exterior_image_1_left 峰');
+    // registry 8.1: the lag window by window, one line per camera
+    expect(within(curves).getByTestId('sync-windows')).toHaveTextContent('分窗滞后');
+    expect(labels[4]).toMatch(/^分窗滞后：exterior_image_1_left 中位 [+-]\d/);
   }, 40_000); // many steps, each rendering the whole report: room for a busy CI machine
 
   it('Episode 明细: an episode that kept no sync curves says why', async () => {

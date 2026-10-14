@@ -48,7 +48,35 @@ def sync_plot_worthy(mode: str, det: dict) -> bool:
         return False
     return bool(det.get("verdict") != "aligned"
                 or det.get("flagged_cameras")
-                or det.get("abstained_cameras"))
+                or det.get("abstained_cameras")
+                or _cameras_disagree(det))
+
+
+#: 存图用的「两路读数不一致」门槛:与发现层分窗判据的最小门槛同值(findings.WINDOW_SPREAD_MIN_S),
+#: 只决定曲线存不存,宁可多存——MV-3 进了人工复核线,人要看图(2026-10-13)
+_DISAGREE_S = 0.1
+
+
+def _cameras_disagree(det: dict) -> bool:
+    """两路以上可信相机的整条读数或分窗中位数彼此相差超过 _DISAGREE_S(MV-3 会报的那类条目)。"""
+    per = det.get("per_camera")
+    if not isinstance(per, dict):
+        return False
+    for key in ("lag_s", "windowed"):
+        vals = []
+        for c in per.values():
+            if not isinstance(c, dict):
+                continue
+            if key == "lag_s":
+                v = c.get("lag_s") if c.get("trusted") else None
+            else:
+                lw = c.get("lag_windows")
+                v = lw.get("lag_s") if isinstance(lw, dict) else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                vals.append(float(v))
+        if len(vals) >= 2 and max(vals) - min(vals) > _DISAGREE_S:
+            return True
+    return False
 
 
 
@@ -217,7 +245,12 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
     # global_lag 的签名上,反之亦然。lag_tol_s 两层都要(容差是同一个概念)。
     _VERDICT_KEYS = {"spread_tol_s", "kill_lag_min_s", "neg_kill_lag_min_s",
                      "min_kill_cameras"}
-    ps = {k: v for k, v in _ps_all.items() if k not in _VERDICT_KEYS}
+    # 分窗估计的两个测量层参数(default.yaml 的 window_s / window_min_frames)打包给 global_lag(window=...)
+    _WINDOW_KEYS = {"window_s": "win_s", "window_min_frames": "min_frames"}
+    ps = {k: v for k, v in _ps_all.items() if k not in _VERDICT_KEYS and k not in _WINDOW_KEYS}
+    _win = {_WINDOW_KEYS[k]: v for k, v in _ps_all.items() if k in _WINDOW_KEYS}
+    if _win:
+        ps["window"] = _win
     pver = {k: v for k, v in _ps_all.items() if k in _VERDICT_KEYS}
     if "lag_tol_s" in _ps_all:
         pver["lag_tol_s"] = _ps_all["lag_tol_s"]

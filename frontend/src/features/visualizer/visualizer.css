@@ -177,14 +177,14 @@
 /* 发现芯片（迷你版） */
 .vz-evlist { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--c-border); font-size: 12px; }
 .vz-evlist .k { color: var(--c-text-3); }
-.vz-evlist .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--c-border); background: var(--color-bg-2); cursor: pointer; color: var(--c-text-2); font: inherit; }
+.vz-evlist .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 10px; border-radius: 12px; border: 1px solid var(--c-border); background: var(--color-bg-2); cursor: pointer; color: var(--c-text-2); font: inherit; text-align: left; }
 .vz-evlist .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
 .vz-evlist .chip.blocking .dot { background: var(--c-danger); }
 .vz-evlist .chip.review .dot { background: var(--c-warning); }
 .vz-evlist .chip.info .dot { background: var(--c-text-3); }
 .vz-evlist .chip.on { border-color: var(--c-primary); color: var(--c-primary); background: rgb(var(--primary-1)); }
 .vz-evlist .chip code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
-.vz-evlist .chip .lab { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-evlist .chip .lab { white-space: normal; line-height: 18px; }   /* the whole text, wrapping (2026-10-13: a merged sync chip is long) */
 .vz-evlist .chip .muted { color: var(--c-text-4); }
 
 .vz-keys { font-size: 11px; color: var(--c-text-4); white-space: nowrap; }

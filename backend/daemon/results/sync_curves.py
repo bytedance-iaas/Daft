@@ -58,6 +58,23 @@ def _rounded(values, nd: int) -> list:
     return out
 
 
+def _windows(lw) -> dict | None:
+    """The camera's windowed lag readings (``video_action_sync.windowed_lag``, 2026-10-13) as drawn: one point per
+    window at its middle, the median of the trusted windows and their spread; None when the record has none."""
+    if not isinstance(lw, dict) or not isinstance(lw.get("windows"), list):
+        return None
+    win = lw.get("win_s")
+    half = float(win) / 2 if isinstance(win, (int, float)) and not isinstance(win, bool) else 0.0
+    points = []
+    for w in lw["windows"]:
+        if not isinstance(w, dict) or not isinstance(w.get("t0_s"), (int, float)) or not isinstance(w.get("lag_s"), (int, float)):
+            continue
+        points.append({"t_s": round(float(w["t0_s"]) + half, 3), "lag_s": round(float(w["lag_s"]), 4),
+                       "corr_peak": w.get("corr_peak"), "trusted": bool(w.get("trusted"))})
+    return {"win_s": win, "hop_s": lw.get("hop_s"), "lag_s": lw.get("lag_s"), "iqr_s": lw.get("iqr_s"),
+            "n_trusted": lw.get("n_trusted"), "n_windows": lw.get("n_windows"), "points": points}
+
+
 def _camera(name: str, cv: dict, reading: dict) -> dict | None:
     import numpy as np
 
@@ -77,7 +94,7 @@ def _camera(name: str, cv: dict, reading: dict) -> dict | None:
     out = {"camera": name, "lag_s": lag_s,
            "corr_peak": reading.get("corr_peak", cv.get("corr_peak")),
            "code": reading.get("code", cv.get("code")), "trusted": reading.get("trusted"),
-           "lags": [], "xcorr": [], "peak": None}
+           "lags": [], "xcorr": [], "peak": None, "windows": _windows(reading.get("lag_windows"))}
     step = _every(n)
     out.update(t=_rounded(t[::step], 3), flow=_rounded(flow[::step], 5),
                speed=_rounded(speed[::step], 6))

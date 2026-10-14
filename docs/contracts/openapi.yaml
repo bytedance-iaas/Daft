@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.5.0
+  version: 7.6.0
   description: |
     ## Overview
 
@@ -269,6 +269,18 @@ info:
     safety is IMG-15, an episode item (it was SET-3, a dataset item). Results of tasks run before keep the numbers they
     were run with.
 
+    **7.6.0** (2026-10-13): the video-action sync check (AV-1 / MV-3) asks a person instead of passing or rejecting on
+    its own. Cameras out of step with each other - one camera off against the arm's motion while the others are not
+    (AV-1 `camera_misaligned`), cameras whose lags differ (MV-3 `lag_inconsistent`), or every trusted camera agreeing on
+    one offset (AV-1 `misaligned_all`, a machine reject before) - go to the new review line `sync_check` (usable /
+    misaligned / shifted / unsure; "misaligned" rejects the episode, "shifted" keeps it and records the offset for a
+    correction to come). Each camera's lag is also read window by window: `GET /tasks/{id}/episodes/{index}/sync-curves`
+    adds `windows` per camera, the windowed comparison's lines are module parameters (`window_min_trusted`,
+    `window_max_iqr_s`, `window_spread_tol_s`), each camera's `lag_windows` reading says whether it is
+    `stable` by them, and the report's sync summary counts the episodes the windowed comparison could speak on
+    (`window_comparable_episodes` of `episodes_with_readings`, per camera `n_window_stable`). A single camera's offset
+    is read from the camera's best reading: its trusted whole-episode lag, else its steady windowed median.
+
   x-description-zh: |
     ## 概览
 
@@ -436,6 +448,14 @@ info:
     **7.5.0**（2026-10-14）：检测项分类表 2.0 定稿，编号从此冻结：已有的检测项不再改编号、名称、类型、级别与维度，新检测项接在本维度最后、
     拿下一个编号，删掉的编号不再使用。与 2.8.0 相比改了三处：索引与引用对不上改为 FILE-9（原 FILE-10），数据完整性的表检查发现挂在它上面；
     对照项「少见但合法的编码与布局」删掉；隐私与安全改为逐条判的 IMG-15（原数据集级的 SET-3）。这一版之前跑的任务，结果里仍是原来的编号。
+
+    **7.6.0**（2026-10-13）：视频-动作同步检查（AV-1 / MV-3）不再自己放行或判废，改为交人工。相机之间步调不一致——一路相机与机械臂运动错开
+    而其它路没有（AV-1 `camera_misaligned`）、各路相机的滞后彼此不同（MV-3 `lag_inconsistent`）、全部可信相机一致错开（AV-1 `misaligned_all`，
+    以前机器判废）——都进新复核线 `sync_check`（可用 / 确有错位 / 整条平移 / 拿不准；「确有错位」判废，「整条平移」保留并记下错开量等以后校正）。
+    每路相机的滞后另按分窗测：`GET /tasks/{id}/episodes/{index}/sync-curves` 每路多返回 `windows`，分窗比对的门槛是模块参数
+    （`window_min_trusted`、`window_max_iqr_s`、`window_spread_tol_s`），条目发现里每路的 `lag_windows` 多一个 `stable`，
+    报告同步概览数出分窗比对能发言的条目数（`window_comparable_episodes` / `episodes_with_readings`，逐相机 `n_window_stable`）。
+    单路错位按每路最好的读数判：整条可信用整条，否则用稳的分窗中位。
 
 servers:
   - url: "{base}/api/v1"
@@ -4112,7 +4132,7 @@ components:
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
-      description: a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check
+      description: a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check, sync_check
     ReviewLine:
       type: object
       additionalProperties: false
@@ -5099,6 +5119,33 @@ components:
               properties:
                 lag_s: {type: number}
                 corr: {type: number}
+        windows:
+          description: >-
+            the camera's windowed lag readings (registry 8.1, MV-3): one point per window at its middle, the median
+            of the trusted windows and their interquartile range; null when the record has none (older records)
+          oneOf:
+            - {type: "null"}
+            - type: object
+              additionalProperties: false
+              required: [points]
+              properties:
+                win_s: {type: [number, "null"], description: "window length, seconds"}
+                hop_s: {type: [number, "null"]}
+                lag_s: {type: [number, "null"], description: "median lag of the trusted windows"}
+                iqr_s: {type: [number, "null"], description: "interquartile range of the trusted windows' lags"}
+                n_trusted: {type: [integer, "null"]}
+                n_windows: {type: [integer, "null"]}
+                points:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [t_s, lag_s, trusted]
+                    properties:
+                      t_s: {type: number, description: "seconds from the episode start, the window's middle"}
+                      lag_s: {type: number}
+                      corr_peak: {type: [number, "null"]}
+                      trusted: {type: boolean}
     EpisodeNote:
       type: object
       additionalProperties: false
@@ -5213,7 +5260,8 @@ components:
             one of the line's decisions in the registry, on a question the episode's card has;
             anything else is 400 validation_failed. One card asks one question. Today:
             task_verdict - success, failure, unsure, discard;
-            reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure
+            reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure;
+            sync_check - usable, misaligned, shifted, unsure
         new_label: {type: [string, "null"], description: "task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it"}
         note: {type: [string, "null"]}
     AdjudicationApply:

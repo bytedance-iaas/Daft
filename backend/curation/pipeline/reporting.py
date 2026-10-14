@@ -303,7 +303,7 @@ def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> di
     elif m == "visual_quality":
         out.update(S.visual_stats(records))
     elif m == "video_action_sync":
-        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir)))
+        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir), rev.module_params(m)))
     elif m == "task_success":
         out.update(S.task_stats(records))
     elif m == "duplicate_check":

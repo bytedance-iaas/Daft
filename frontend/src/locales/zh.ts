@@ -1376,10 +1376,12 @@ export const zh = {
       flaggedUnit: '路次',
       verdictChart: '判定分布',
       cameraTable: '全库逐相机同步概览',
-      cols: { camera: '相机', readings: '读数', trusted: '可信读数', median: '典型滞后（秒）', iqr: '逐条波动（秒）', suspect: '疑似错位', abstained: '测不准', flagged: '已标注' },
+      cols: { camera: '相机', readings: '读数', trusted: '可信读数', median: '典型滞后（秒）', iqr: '逐条波动（秒）', suspect: '疑似错位', abstained: '测不准', windowStable: '分窗稳', flagged: '已标注' },
+      windowCoverage: '分窗可比对',
+      windowCoverageFoot: '两路以上相机逐窗读数都稳的条目；没比上的条目只靠整条读数',
       lagChart: '逐相机典型滞后',
       lagChartDesc: (tol: number) => `正 = 画面比动作晚；绿带是容差 ±${tol} 秒`,
-      note: '典型滞后：这一路画面比动作晚多少（正 = 画面晚），越接近 0 越好。逐条波动：各条之间这个数跳得厉不厉害。判废只发生在「所有可信相机一致指向同一个偏移」这一种情况。',
+      note: '典型滞后：这一路画面比动作晚多少（正 = 画面晚），越接近 0 越好。逐条波动：各条之间这个数跳得厉不厉害。分窗稳：这一路逐窗读数稳得能参与分窗比对的条数。判废只发生在「所有可信相机一致指向同一个偏移」这一种情况。',
       advice: '数据集结论',
       negative: (n: number) => `${n} 条出现负滞后（画面早于动作），多半是数据装配出错`,
       lagSummary: (cam: string, lag: string) => `${cam} ${lag} 秒`,
@@ -1724,6 +1726,11 @@ export const zh = {
   },
 
   /** The report's Episode tab (F6.2): one episode, module by module. */
+  // the sync review (registry 8.1, 2026-10-13): cameras the sync check found out of step with each other
+  syncDetail: {
+    why: '为什么转人工',
+    ask: '点「可视化」并排播放各路相机，看同一个动作是不是同时发生。',
+  },
   episodeTab: {
     cameraDefects: {
       items: { glitch: '花屏', shake: '抖动', contamination: '镜头污染' } as Record<string, string>,
@@ -1779,17 +1786,23 @@ export const zh = {
     },
     visual: { cols: { camera: '相机', score: '视觉总分', sharpness: '清晰度', exposure: '曝光', integrity: '完整性', frozen: '冻结帧占比', status: '状态' }, ok: '正常', padded: '占位（无画面）', dead: '无画面', worst: (cam: string) => `最低的一路：${cam}` },
     sync: {
-      badge: { aligned: '同步正常', annotated: '已标注异常（不判废）', suspect: '疑似错位（证据不足）', undecidable: '测不准（弃权）', misaligned_all: '整体错位（判废）' } as Record<string, string>,
-      cols: { camera: '相机', lag: '滞后（秒）', peak: '相关峰值', zero: '零偏相关', trusted: '可信', diagnosis: '诊断' },
-      consensus: (lag: string) => `各路可信相机一致滞后 ${lag} 秒`,
+      // the episode block (2026-10-13): one phrase per camera, as the adjudication card words it
+      phrase: { aligned: (cam: string, lag: string) => `${cam} 对齐（${lag}）`, misaligned: (cam: string, when: string, lag: string) => `${cam} 比动作${when} ${lag} 秒`, unsure: (cam: string) => `${cam} 测不准`, early: '早', late: '晚' },
       curves: '同步曲线',
-      curvesDesc: '左：画面运动与机械臂运动（各自归一化），同起同落才对；右：互相关曲线，峰落在绿带（0 ± 容差）内就是对齐',
+      curvesDesc: '左：画面运动与机械臂运动，同起同落才对；右：相似度随错开量的变化，峰在绿带内就是对齐',
       flow: '画面运动',
       speed: '机械臂运动',
       xcorr: '互相关',
       lagAxis: '滞后（秒，> 0 表示画面晚）',
       timeAxis: '时间（秒）',
       peak: (cam: string, lag: string, corr: string) => `${cam} 峰 ${corr} @ ${lag} 秒`,
+      // registry 8.1 (2026-10-13): the lag read window by window
+      windows: '分窗滞后',
+      windowsDesc: '每路相机逐窗的滞后：同步时各路重合，错开的那路整条偏离。实线可信，虚线不可信',
+      windowAxis: '滞后（秒）',
+      windowTrusted: (cam: string) => `${cam} 可信窗`,
+      windowUntrusted: (cam: string) => `${cam} 不可信窗`,
+      windowSummary: (cam: string, lag: string, iqr: string, trusted: number, windows: number) => `${cam} 中位 ${lag} 秒（四分位距 ${iqr}，可信窗 ${trusted}/${windows}）`,
     },
     task: {
       trail: '判定链',
@@ -1847,13 +1860,13 @@ export const zh = {
     filterType: '问题类型',
     filterStatus: '状态',
     all: '全部',
-    lineName: { task_verdict: '任务成败', reject_appeal: '被拒复议', eef_check: 'EEF 与画面核对', integrity_check: '完整性存疑' } as Record<string, string>,
+    lineName: { task_verdict: '任务成败', reject_appeal: '被拒复议', eef_check: 'EEF 与画面核对', integrity_check: '完整性存疑', sync_check: '同步存疑' } as Record<string, string>,
     typeOption: (line: string, module: string) => `${line}（${module}）`,
     statusOption: { all: '全部', pending: '待裁（含拿不准）', unsure: '拿不准', decided: '已裁', unapplied: '已裁、未执行' } as Record<string, string>,
     // cards
     sources: (names: string) => `来源：${names}`,
     status: { pending: '待裁', optional: '可复议', decided: '已裁', unsure: '拿不准', applied: '已应用' } as Record<string, string>,
-    questionHead: (n: number, module: string, line: string) => `${'①②③④⑤⑥⑦⑧⑨'[n] ?? n + 1} 来源：${module} · ${line}`,
+    questionHead: (n: number, module: string | null, line: string) => `${'①②③④⑤⑥⑦⑧⑨'[n] ?? n + 1} ${module ? `${module} · ` : ''}${line}`,
     custom: '改写任务描述',
     customLabel: '改写后的任务描述（选填）',
     customHelp: '改了描述再判：判了成功或失败就以人的结论为准；选「拿不准」就按新描述重判一次。',

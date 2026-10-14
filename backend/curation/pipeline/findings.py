@@ -207,33 +207,61 @@ def _video_action_sync(passed, score, d, p) -> Derived:
         return out
     out.readings["per_camera"] = {cam: {k: _r(v) for k, v in c.items() if k in ("lag_s", "corr_peak", "code", "trusted")}
                                   for cam, c in sorted(per.items()) if isinstance(c, dict)}
+    # the windowed median (second estimator, 2026-10-13): its summary beside each camera's reading
+    for cam, c in sorted(per.items()):
+        lw = c.get("lag_windows") if isinstance(c, dict) else None
+        if isinstance(lw, dict) and cam in out.readings["per_camera"]:
+            out.readings["per_camera"][cam]["lag_windows"] = {k: _r(lw.get(k)) for k in ("lag_s", "n_trusted", "n_windows", "iqr_s")}
     if d.get("consensus_lag_s") is not None:
         out.readings["consensus_lag_s"] = _r(d.get("consensus_lag_s"))
     if verdict == "misaligned_all":
         lag = _num(d.get("consensus_lag_s"))
         cams = sorted(c for c, v in per.items() if isinstance(v, dict) and v.get("code") == "misaligned")
         where = "提前" if lag is not None and lag < 0 else "滞后"
+        # the same words as the other sync texts (2026-10-13): what happened, then every camera's reading
+        per_cam = "，".join(f"{c} {_num(per[c].get('lag_s')):+.2f}" for c in cams if _num(per[c].get("lag_s")) is not None)
         out.add(m, "misaligned_all",
-                f"全部可信相机一致{where} {abs(lag):.2f} 秒（{'、'.join(cams)}）" if lag is not None
-                else "全部可信相机一致指向同一错位",
+                (f"全部相机一致比动作{'早' if lag < 0 else '晚'} {abs(lag):.2f} 秒" if lag is not None else "全部相机一致错开")
+                + (f"：{per_cam}" if per_cam else ""),
                 scope={"cameras": cams} if cams else None,
                 readings={"lag_s": _r(lag), "cameras": cams})
     else:
+        # AV-1 from each camera's best reading (7.5): its trusted whole-episode lag, else its steady windowed median
+        # beyond the same tolerance the whole-episode rule uses (global_lag's lag_tol_s, 0.25 s) - as MV-3 already does;
+        # on the 17-dataset benchmark the windowed route adds one control alarm (rh20t ep1, 10 Hz) in 139
+        best = _best_readings(per, p)
         for cam, c in sorted(per.items()):
-            if isinstance(c, dict) and c.get("trusted") and c.get("code") == "misaligned":
+            if not isinstance(c, dict):
+                continue
+            lag, kind, code = best.get(cam, (None, None, None))
+            whole = c.get("trusted") and c.get("code") == "misaligned"
+            if whole:
                 lag = _num(c.get("lag_s"))
-                out.add(m, "camera_misaligned",
-                        f"{cam} 与动作错位 {lag:+.2f} 秒，其余相机不同意，只标注不判废" if lag is not None
-                        else f"{cam} 与动作错位，只标注不判废",
-                        scope={"camera": cam}, readings={"lag_s": _r(lag), "corr_peak": _r(c.get("corr_peak"))})
+            elif not (kind == "windowed" and lag is not None and abs(lag) > SINGLE_CAMERA_TOL_S):
+                continue
+            text = f"{cam} 比动作{'早' if lag < 0 else '晚'} {abs(lag):.2f} 秒" if lag is not None else f"{cam} 与动作错位"
+            out.add(m, "camera_misaligned", text,
+                    scope={"camera": cam}, readings={"lag_s": _r(lag), "corr_peak": _r(c.get("corr_peak")),
+                                                     "basis": "whole" if whole else "windowed_median"})
         suspects = sorted(str(c) for c in d.get("suspect_cameras") or [])
         if suspects:
-            out.add(m, "suspect", f"疑似错位但证据不足：{'、'.join(suspects)}",
+            # the same words as the other AV-1 texts (2026-10-13): the camera, its whole-episode reading (not trusted),
+            # its windowed median when it has one
+            def _suspect(cam: str) -> str:
+                c = per.get(cam) if isinstance(per.get(cam), dict) else {}
+                lag = _num(c.get("lag_s")); lw = c.get("lag_windows") if isinstance(c.get("lag_windows"), dict) else {}
+                wl = _num(lw.get("lag_s"))
+                t = f"{cam} 疑似错位：整条读数 {lag:+.2f} 不可信" if lag is not None else f"{cam} 疑似错位：整条读数不可信"
+                return t + (f"，分窗 {wl:+.2f}" if wl is not None else "")
+            out.add(m, "suspect", "；".join(_suspect(c) for c in suspects),
                     scope={"cameras": suspects},
                     readings={"lag_s": {c: _r((per.get(c) or {}).get("lag_s")) for c in suspects}})
     weak = sorted(cam for cam, c in per.items() if isinstance(c, dict) and c.get("code") == "low_corr")
     if weak:
-        out.add(m, "undecidable", f"测不准：{'、'.join(weak)} 有动作，但画面运动与动作的相关太弱",
+        # 相似度 is the word the diagnoses use for the correlation peak (no 相关 in a customer's text)
+        out.add(m, "undecidable", "；".join(
+            f"{c} 测不准：画面运动和动作对不上号" + (f"（相似度 {_num((per.get(c) or {}).get('corr_peak')):.2f}）"
+                                             if _num((per.get(c) or {}).get("corr_peak")) is not None else "") for c in weak),
                 scope={"cameras": weak},
                 readings={"corr_peak": {c: _r((per.get(c) or {}).get("corr_peak")) for c in weak}})
     trusted = {cam: _num(c.get("lag_s")) for cam, c in per.items()
@@ -242,11 +270,138 @@ def _video_action_sync(passed, score, d, p) -> Derived:
         lo, hi = min(trusted.values()), max(trusted.values())
         if hi - lo > p["spread_tol_s"]:
             cams = sorted(trusted)
-            out.add(m, "lag_inconsistent",
-                    f"可信相机之间的滞后相差 {hi - lo:.2f} 秒（超过 {p['spread_tol_s']} 秒）："
-                    + "，".join(f"{c} {trusted[c]:+.2f}" for c in cams),
+            out.add(m, "lag_inconsistent", _unsync_text({c: trusted[c] for c in cams}),
                     scope={"cameras": cams}, readings={f"lag_{c}_s": _r(trusted[c]) for c in cams})
+    # 借峰检验(MV-3，2026-10-13)：一路可信地错位给出 Δ 后，测不准的路不必自己定峰——它的相关曲线
+    # 在 Δ 处若明显低于曲线最高值，Δ 就不是这一路的解释，两路不一致。比值门槛沿用单路峰可信度的
+    # 1.25（global_lag 的 min_peak_ratio：并列双峰的比值落在 1.0～1.1，0.25 的余量挡伪冠军）。
+    # 没信号的路（low_corr / no_motion）曲线是噪声，不参与；Δ 落在曲线高处答不了，记为无法核实。
+    # 来历：Qian 的 MV-3 合成样本 ep15（wrist 可信 −0.97 s，front 峰不尖却在 0 处明显更高）漏报。
+    if verdict != "misaligned_all":
+        refs = {cam: lag for cam, lag in trusted.items() if (per.get(cam) or {}).get("code") == "misaligned"}
+        unverified = []
+        for cam, c in sorted(per.items()):
+            if not isinstance(c, dict) or c.get("trusted") or c.get("code") in ("low_corr", "no_motion") or not refs:
+                continue
+            curve = c.get("xc_curve")
+            hit = False
+            for ref, delta in sorted(refs.items()):
+                at = _curve_at(curve, delta)
+                if at is None:
+                    continue
+                mx = max(float(x) for x in curve["corr"])
+                ratio = mx / max(at, 1e-6)
+                if ratio >= BORROW_PEAK_RATIO:
+                    best = _best_readings(per, p)
+                    out.add(m, "lag_inconsistent", _unsync_text({c: best.get(c, (None,))[0] for c in (cam, ref)}),
+                            scope={"cameras": sorted([ref, cam])},
+                            readings={"ref_camera": ref, "lag_ref_s": _r(delta), "camera": cam,
+                                      "corr_at_ref_lag": _r(at), "corr_max": _r(mx), "ratio": _r(ratio)})
+                    hit = True
+                    break
+            if not hit and refs:
+                unverified.append(cam)
+        if unverified and refs:
+            out.readings["mv3_unverified_cameras"] = unverified
+    # 分窗中位数之差(MV-3，2026-10-13)：整条读数在远机位上峰宽 0.5～1.4 s，0.2 s 的错开读不出；每路
+    # 分窗取可信窗的中位数后比两路之差，门槛取 3 帧（max(0.1 s, 3·dt)），只在两路都「稳」时比。
+    # 「稳」= 可信窗 ≥ 3 且四分位距 ≤ 0.15 s：12 个数据集 82 条的扫描里（2 s 窗），这组条件下没错开的条目
+    # 31 对两路都稳、零误报，两路之差 p90 0.07 s；IQR 放到 0.3 就出 2 条误报。错开 0.2 s 的注入条目报出 3/5，
+    # 漏的两条是腕部相机本身不稳（IQR ≥ 0.4）。比整条读数的 0.3 s 规则细，两条规则各出各的发现，同一条最多报一次。
+    # 「稳」的两个门槛与差的门槛是任务的模块参数(registry 8.1);稳不稳的判断本身在 windows_stable,报告层与界面同用。
+    # 每路读数的 lag_windows.stable 随读数落盘:界面取校正量、报告算覆盖率都读它,不在别处重算这条规则。
+    from ..core.checks.video_action_sync import windows_stable
+
+    min_trusted, max_iqr = int(p["window_min_trusted"]), float(p["window_max_iqr_s"])
+    solid = {}
+    for cam, c in per.items():
+        lw = c.get("lag_windows") if isinstance(c, dict) else None
+        if not isinstance(lw, dict) or cam not in out.readings["per_camera"]:
+            continue
+        stable = windows_stable(lw, min_trusted=min_trusted, max_iqr_s=max_iqr)
+        out.readings["per_camera"][cam]["lag_windows"]["stable"] = stable
+        if stable:
+            solid[cam] = (_num(lw.get("lag_s")), _num(lw.get("dt_s")) or 0.0)
+    if verdict != "misaligned_all" and not any(f["code"] == "lag_inconsistent" for f in out.findings):
+        if len(solid) >= 2:
+            lags_w = {cam: v[0] for cam, v in solid.items()}
+            tol = max(float(p["window_spread_tol_s"]), WINDOW_SPREAD_FRAMES * max(v[1] for v in solid.values()))
+            lo_c, hi_c = min(lags_w, key=lags_w.get), max(lags_w, key=lags_w.get)
+            spread = lags_w[hi_c] - lags_w[lo_c]
+            if spread > tol:
+                cams = sorted(lags_w)
+                out.add(m, "lag_inconsistent", _unsync_text(lags_w),
+                        scope={"cameras": cams},
+                        readings={"basis": "windowed_median", "spread_s": _r(spread), "tol_s": _r(tol),
+                                  **{f"lag_{c}_s": _r(lags_w[c]) for c in cams}})
     return out
+
+
+#: 借峰检验的比值门槛，与 global_lag 的 min_peak_ratio 同源（见 _video_action_sync 末尾的说明）
+BORROW_PEAK_RATIO = 1.25
+def _best_readings(per: dict, p: dict) -> dict:
+    """每路相机最好的读数（整条可信 → 整条；否则分窗稳 → 分窗；都没有 → None），给发现文案用：
+    人要看的是每路错开多少、两路相差多少，不是哪条规则报的（2026-10-13 用户点名 ep15 读不出来）。"""
+    from ..core.checks.video_action_sync import windows_stable
+
+    out = {}
+    for cam, c in sorted(per.items()):
+        if not isinstance(c, dict):
+            continue
+        lag = _num(c.get("lag_s"))
+        if c.get("trusted") and lag is not None and c.get("code") in ("aligned", "misaligned"):
+            out[cam] = (lag, "whole", c.get("code"))
+            continue
+        lw = c.get("lag_windows")
+        if windows_stable(lw, min_trusted=int(p["window_min_trusted"]), max_iqr_s=float(p["window_max_iqr_s"])) \
+                and _num(lw.get("lag_s")) is not None:
+            out[cam] = (_num(lw.get("lag_s")), "windowed", None)
+        else:
+            out[cam] = (None, None, None)
+    return out
+
+
+def _unsync_text(lags: dict) -> str:
+    """The one wording of every MV-3 finding (2026-10-13, the user's): 「两路相机不同步：wrist −0.97，front +0.03，相差
+    1.00 秒」 - each camera's reading (None: 测不准) and the spread; which rule read it stays in the readings."""
+    cams = sorted(lags)
+    nums = [v for v in lags.values() if v is not None]
+    text = ("两路相机不同步：" if len(cams) == 2 else f"{len(cams)} 路相机不同步：") + "，".join(
+        f"{c} {lags[c]:+.2f}" if lags[c] is not None else f"{c} 测不准" for c in cams)
+    if len(nums) >= 2:
+        text += f"，相差 {max(nums) - min(nums):.2f} 秒"
+    return text
+
+
+#: 单路错位的容差（秒），与整条规则 global_lag 的 lag_tol_s 默认值相同（≈ 2～3 帧，P5.1 校准）；分窗读数超过它就报 AV-1
+SINGLE_CAMERA_TOL_S = 0.25
+
+#: 分窗中位数之差的门槛下限（帧）：互相关的滞后分辨率是一个采样周期，3 帧与整条规则的容差下限（2 帧）同源、
+#: 再留一帧给两路各自的量化误差；秒数门槛与「稳」的两个条件是模块参数（registry 8.1），来历见 _video_action_sync
+WINDOW_SPREAD_FRAMES = 3
+
+
+def _curve_at(curve, lag_s: float):
+    """The correlation curve's value at ``lag_s`` (linear interpolation); None when there is no usable curve
+    or the lag lies outside the scanned window."""
+    if not isinstance(curve, dict):
+        return None
+    lags, corr = curve.get("lags_s"), curve.get("corr")
+    if not lags or not corr or len(lags) != len(corr) or len(lags) < 2:
+        return None
+    try:
+        xs = [float(x) for x in lags]
+        ys = [float(y) for y in corr]
+        x = float(lag_s)
+    except (TypeError, ValueError):
+        return None
+    if x < xs[0] or x > xs[-1]:
+        return None
+    for i in range(1, len(xs)):
+        if xs[i] >= x:
+            x0, x1, y0, y1 = xs[i - 1], xs[i], ys[i - 1], ys[i]
+            return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    return ys[-1]
 
 
 # ---------------------------------------------------------------- numeric stage

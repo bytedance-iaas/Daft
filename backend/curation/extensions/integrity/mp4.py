@@ -68,9 +68,28 @@ class Samples:
     offsets: list[int]            # byte offset of each sample
     sizes: list[int]
     duration_s: float
+    # The edit list's shift of the presentation (2026-10-13, MV-3 record layer): an empty edit
+    # before the media delays every frame by its duration, a non-empty edit starting inside the
+    # media advances them. ffmpeg writes a remuxed +0.2 s PTS offset exactly so (an empty edit of
+    # 200 ms), and plays it back shifted; a reader of the sample tables alone would miss it.
+    start_offset_s: float = 0.0
+    # Composition offsets (``ctts``, seconds) when the track has B-frames: presentation time =
+    # decode time + offset. An encoder that reorders also writes an edit list skipping the decode
+    # delay, which start_offset_s carries - the two cancel on a clean file.
+    composition: list[float] | None = None
 
     def __len__(self) -> int:
         return len(self.times)
+
+    def presentation(self) -> list[float]:
+        """Each sample's presentation time in presentation order: decode time, plus the
+        composition offset where the track has one, plus the edit list's shift."""
+        comp = self.composition
+        if comp is not None and len(comp) == len(self.times):
+            out = [t + c + self.start_offset_s for t, c in zip(self.times, comp)]
+            out.sort()
+            return out
+        return [t + self.start_offset_s for t in self.times]
 
     def at_offset(self, offset: int) -> int | None:
         """Index of the sample whose bytes contain ``offset`` (else the one just before it)."""
@@ -235,7 +254,53 @@ def samples(moov: bytes) -> Samples:
     if not (len(times) == len(sizes) == len(offsets)):
         raise Mp4Error(f"the sample tables disagree: {len(times)} times, {len(sizes)} sizes, "
                        f"{len(offsets)} offsets")
-    return Samples(timescale, times, offsets, sizes, duration / timescale)
+    # ctts: composition offsets (B-frames); absent on what LeRobot and the mcap muxer write
+    composition: list[float] | None = None
+    if b"ctts" in boxes:
+        version, q = _full(moov, boxes[b"ctts"][0])
+        (n,) = struct.unpack_from(">I", moov, q)
+        composition = []
+        for i in range(n):
+            count, offset = struct.unpack_from(">Ii" if version == 1 else ">II", moov, q + 4 + 8 * i)
+            composition.extend([offset / timescale] * count)
+        if len(composition) != len(times):
+            composition = None                  # a table that does not fit the samples: ignored, not guessed
+    return Samples(timescale, times, offsets, sizes, duration / timescale,
+                   start_offset_s=_edit_list_offset(moov, s, e, timescale), composition=composition)
+
+
+def _edit_list_offset(moov: bytes, trak_s: int, trak_e: int, media_timescale: int) -> float:
+    """The presentation shift the track's edit list (``edts/elst``) applies, in seconds: the empty
+    edits (media_time −1) before the first real edit delay the media by their durations (movie
+    timescale, ``mvhd``), and the first real edit's media_time skips into the media. Rate is taken
+    as 1 (nothing we read writes another); no edit list means no shift."""
+    elst = next(_find(moov, trak_s, trak_e, [b"edts", b"elst"]), None)
+    if elst is None:
+        return 0.0
+    mvhd = next(_find(moov, 0, len(moov), [b"mvhd"]), None)
+    if mvhd is None:
+        return 0.0
+    version, p = _full(moov, mvhd[0])
+    movie_timescale = struct.unpack_from(">I", moov, p + (16 if version == 1 else 8))[0]
+    if not movie_timescale or not media_timescale:
+        return 0.0
+    version, p = _full(moov, elst[0])
+    (count,) = struct.unpack_from(">I", moov, p)
+    p += 4
+    delay = 0.0
+    for _ in range(count):
+        if version == 1:
+            duration, media_time = struct.unpack_from(">Qq", moov, p)
+            p += 16
+        else:
+            duration, media_time = struct.unpack_from(">Ii", moov, p)
+            p += 8
+        p += 4                                  # media_rate (16.16), taken as 1
+        if media_time == -1:
+            delay += duration / movie_timescale
+            continue
+        return delay - media_time / media_timescale
+    return delay
 
 
 def read_moov(read_range: ReadRange, layout: Mp4Layout) -> bytes | None:
