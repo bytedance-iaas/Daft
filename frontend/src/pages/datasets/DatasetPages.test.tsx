@@ -232,6 +232,32 @@ describe('数据集列表 (07 §4.4)', () => {
 });
 
 describe('数据集详情', () => {
+  it('a deleted task leaves 在这个数据集上跑过的任务 at once, before the page is read again (2026-10-13)', async () => {
+    const { user } = renderApp('/datasets/ds_droid100');
+    const card = async () => (await screen.findByText('在这个数据集上跑过的任务')).closest('.arco-card') as HTMLElement;
+    await user.click(await within(await card()).findByRole('link', { name: 'droid 前 50 条质检' }));
+    await user.click(await screen.findByRole('button', { name: '更多' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+    await screen.findByText(/^已删除/);
+    // back on the dataset page, its new read held: what is drawn from the cache has no deleted task
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get('*/api/v1/datasets/:id', async ({ params }) => {
+        if (params.id === 'ds_droid100') await held;
+      }),
+    );
+    await user.click(screen.getByRole('menuitem', { name: '数据集列表' }));
+    await user.click(await screen.findByRole('link', { name: 'droid_100' }));
+    const shown = await card();
+    expect(within(shown).queryByRole('link', { name: 'droid 前 50 条质检' })).toBeNull();
+    release();
+    await waitFor(() => expect(currentLocation()).toBe('/datasets/ds_droid100'));
+    expect(within(await card()).queryByRole('link', { name: 'droid 前 50 条质检' })).toBeNull();
+  });
+
   it('a failed preflight shows its error as it is: no 格式 label and no 模块可用性 (2026-10-05)', async () => {
     const rrd = DATASET_PROFILES.find((p) => p.name === 'warehouse_rrd')!;
     db.datasets.push(datasetDetail('ds_rrd', rrd, Date.now(), { region: 'cn-beijing', credential: 'readonly-tos' }));

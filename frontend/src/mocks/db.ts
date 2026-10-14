@@ -118,16 +118,17 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.vizDisplays = new Map();
   db.uploads = new Map();
   db.seq = 100;
-  // Datasets know their tasks (newest first) and their last task.
-  for (const d of db.datasets) {
-    const refs = db.tasks
-      .filter((t) => t.dataset_id === d.id && !t.deleted_at)
-      .sort((a, b) => b.created_at - a.created_at)
-      .map((t) => ({ id: t.id, name: t.name, state: t.state, created_at: t.created_at }));
-    d.tasks = refs.slice(0, 20);
-    d.last_task = refs[0] ?? null;
-  }
+  for (const d of db.datasets) Object.assign(d, datasetTasks(d.id));
   return db;
+}
+
+/** A registration's tasks as the Daemon lists them when asked: the newest 20 not deleted, and the last one. */
+export function datasetTasks(id: string): Pick<DatasetDetail, 'tasks' | 'last_task'> {
+  const refs = db.tasks
+    .filter((t) => t.dataset_id === id && !t.deleted_at)
+    .sort((a, b) => b.created_at - a.created_at)
+    .map((t) => ({ id: t.id, name: t.name, state: t.state, created_at: t.created_at }));
+  return { tasks: refs.slice(0, 20), last_task: refs[0] ?? null };
 }
 
 /**

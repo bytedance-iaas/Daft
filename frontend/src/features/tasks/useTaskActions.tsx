@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { ApiError, errorMessage } from '../../api/errors';
 import { qk, showSubtask, showTaskState } from '../../api/queries';
-import type { SourceChange } from '../../api/types';
+import type { DatasetDetail, SourceChange } from '../../api/types';
 import type { TaskActionKey } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { DeleteDialog } from './DeleteDialog';
@@ -77,6 +77,15 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
     void qc.invalidateQueries({ queryKey: qk.tasksAll });
     void qc.invalidateQueries({ queryKey: ['task', id] });
     void qc.invalidateQueries({ queryKey: qk.overview });
+    // a dataset's page lists the tasks run on it, the dataset list its last one (2026-10-13)
+    void qc.invalidateQueries({ queryKey: ['dataset'] });
+    void qc.invalidateQueries({ queryKey: qk.datasetsAll });
+  };
+
+  /** A deleted task leaves the dataset pages at once: they are not drawn from the cache with it first (2026-10-13). */
+  const deleted = (id: string, ok: boolean) => {
+    if (ok) qc.setQueriesData<DatasetDetail>({ queryKey: ['dataset'] }, (d) => (d?.tasks?.some((t) => t.id === id) ? { ...d, tasks: d.tasks.filter((t) => t.id !== id) } : d));
+    refresh(id);
   };
 
   const fail = (e: unknown) => {
@@ -214,7 +223,7 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
   const dialogs = (
     <>
       <PurgeDialog taskId={purgeId} onClose={() => setPurgeId(null)} />
-      <DeleteDialog target={deleting} onClose={() => setDeleting(null)} onDone={refresh} />
+      <DeleteDialog target={deleting} onClose={() => setDeleting(null)} onDone={deleted} />
       <FingerprintDialog visible={Boolean(fp)} change={fp?.change ?? null} loading={repreflighting} onCancel={() => setFp(null)} onConfirm={() => void confirmRepreflight()} />
     </>
   );

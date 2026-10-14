@@ -58,7 +58,7 @@ import {
   tableRows,
 } from './world';
 import { producesAdjudication } from '../lib/registry';
-import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, datasetTasks, db, decisionsOf, executable, findTask, nextId, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 import { API, body, cursorPage, decodeCursor, encodeCursor, err, idempotent, page } from './plumbing';
 import { vizHandlers } from './viz';
@@ -469,7 +469,7 @@ const datasets = [
   }),
   http.get(`${API}/datasets/:id`, ({ params }) => {
     const d = db.datasets.find((x) => x.id === params.id);
-    return d ? HttpResponse.json(d) : err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    return d ? HttpResponse.json({ ...d, ...datasetTasks(d.id) }) : err(404, 'not_found', '数据集登记不存在，可能已被删除');
   }),
   http.patch(`${API}/datasets/:id`, async ({ request, params }) => {
     const d = db.datasets.find((x) => x.id === params.id);
@@ -555,7 +555,7 @@ function toDatasetItem(d: DatasetDetail) {
     checked_at: d.checked_at,
     preflighted_at: d.preflighted_at,
     created_at: d.created_at,
-    last_task: d.last_task,
+    last_task: datasetTasks(d.id).last_task,
     viz: d.viz,
     viz_mapping: d.viz_mapping,
     declaration: declarationInfoOf(d.id),

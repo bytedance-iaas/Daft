@@ -15,7 +15,7 @@ import { runDirectory } from './PurgeDialog';
  * if the purge was accepted; a failed purge deletes nothing. The list row has no run_id, so the
  * task itself is fetched (the detail page has it cached).
  */
-export function DeleteDialog({ target, onClose, onDone }: { target: { id: string; name: string } | null; onClose: () => void; onDone: (id: string) => void }) {
+export function DeleteDialog({ target, onClose, onDone }: { target: { id: string; name: string } | null; onClose: () => void; onDone: (id: string, deleted: boolean) => void }) {
   const task = useTask(target?.id);
   const [purge, setPurge] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,6 +29,7 @@ export function DeleteDialog({ target, onClose, onDone }: { target: { id: string
     const id = target.id;
     setBusy(true);
     let purged: PurgeResult | null = null;
+    let deleted = false;
     try {
       if (purge && path) {
         try {
@@ -41,11 +42,12 @@ export function DeleteDialog({ target, onClose, onDone }: { target: { id: string
       }
       try {
         await unwrap(api().DELETE('/tasks/{id}', { params: { path: { id } } }));
+        deleted = true;
         Message.success(purged ? zh.actions.done.deletePurged(purged.path, bytes(purged.bytes)) : zh.actions.done.delete);
       } catch (e) {
         Message.error(purged ? zh.actions.deleteDialog.deleteFailedAfterPurge(purged.path, errorMessage(e)) : errorMessage(e));
       }
-      onDone(id);
+      onDone(id, deleted);
       onClose();
     } finally {
       setBusy(false);
