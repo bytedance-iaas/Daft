@@ -1,5 +1,5 @@
 {
- "registry_version": "8.2",
+ "registry_version": "8.3",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -945,6 +945,16 @@
      "review_line": "integrity_check"
     },
     {
+     "code": "resolution_mismatch",
+     "item": "FILE-7",
+     "name_zh": "分辨率与声明不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
      "code": "camera_start_offset",
      "item": "AV-1",
      "name_zh": "某路相机的视频起点与时间轴错开",
@@ -1049,6 +1059,7 @@
     "FILE-6",
     "FILE-8",
     "FILE-9",
+    "FILE-7",
     "AV-1",
     "MV-3",
     "STRM-9",

@@ -26,6 +26,7 @@ CODES: dict[str, tuple[str, str]] = {
     "row_invalid": (REJECT, "数据不合规"),
     "decode_failed": (REJECT, "视频解码失败"),
     "count_mismatch": (SUSPECT, "帧数与记录的长度对不上"),
+    "resolution_mismatch": (SUSPECT, "分辨率与声明不符"),
     "cut_off": (SUSPECT, "录制中断"),
     "stream_missing": (SUSPECT, "缺一路其他条都有的流"),
     "rate_outlier": (SUSPECT, "某路流的频率明显偏低"),

@@ -103,6 +103,12 @@ whether it is ``stable`` by them; the dataset's sync health counts the episodes 
 (``window_comparable_episodes``, per camera ``n_window_stable``). ``camera_misaligned`` is raised from the camera's best
 reading (its trusted whole-episode lag, else its steady windowed median), ``spread_tol_s`` is 0.2 and the every-camera
 offset asks at 0.25 s either way - on the 17-dataset benchmark none of it moves a control episode.
+8.3 (design doc 14 §4.6): data integrity reports FILE-7 - the picture size the decoded frames
+actually have, against the size ``meta/info.json`` declares for that camera and the size the
+container header claims (``resolution_mismatch``, review on the integrity line). It is measured on
+the decode the module already does for FILE-4, so it costs no second pass; a dataset whose episodes
+are not all one size shows up as the episodes that differ from the declared one. Nobody covered
+FILE-7 before.
 8.2 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
 hidden by something between the lens and the scene, with the share of the picture it takes, where it sits and how long
 it lasts) and ``identity`` (MV-2, a camera whose picture contradicts the mount the dataset declares for it, duplicates
@@ -118,7 +124,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.2"
+REGISTRY_VERSION = "8.3"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -572,6 +578,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
+               # 8.3: the picture size the frames actually have, against what the dataset and the
+               # container header say it is (the decode for FILE-4 measures it on the way past)
+               _review("resolution_mismatch", "FILE-7", "分辨率与声明不符", "integrity_check"),
                # 8.1 (2026-10-13): the MV-3 record layer - each camera's container timing (sample
                # tables + edit list) against the episode's window, and the cameras against each other
                _review("camera_start_offset", "AV-1", "某路相机的视频起点与时间轴错开", "integrity_check"),

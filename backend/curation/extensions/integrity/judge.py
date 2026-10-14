@@ -71,6 +71,8 @@ class IntegrityJudge:
         self.lengths: dict[int, int] = {}
         self.fps: float | None = None
         self.dataset_findings: list[Finding] = []
+        #: FILE-7: the picture size the dataset declares, per camera key
+        self.declared_sizes: dict[str, tuple[int, int]] = {}
         self.episode_findings: dict[int, list[Finding]] = {}
         self._reports: dict[str, F.FileReport] = {}
         self._locks: dict[str, threading.Lock] = {}
@@ -124,6 +126,7 @@ class IntegrityJudge:
 
     def _lerobot(self, scope: list[int]) -> None:
         from ...cli import lerobot_meta as lm
+        from . import resolution
 
         storage, listing = self.src.storage, self.src.listing
         info = lm.load_info(storage)
@@ -132,6 +135,7 @@ class IntegrityJudge:
         meta = lm.read_dataset(storage, listing, info, fmt)
         fps = info.get("fps")
         self.fps = float(fps) if isinstance(fps, (int, float)) and fps > 0 else None
+        self.declared_sizes = resolution.declared(info)
         wanted = set(scope)
         v3 = fmt.version == "v3"
         windows: dict[int, dict[str, tuple[float, float]]] = {}
@@ -500,6 +504,24 @@ class IntegrityJudge:
                     and abs(got.frames - length) > self.tolerance:
                 findings.append(Finding("count_mismatch", f"{short} 相机解码出 {got.frames} 帧，episode 表记 {length} 帧",
                                         "L3", camera=short, args={"frames": got.frames, "length": length}))
+            self._resolution(cam, short, got, findings)
+
+    def _resolution(self, cam: str, short: str | None, got, findings: list) -> None:
+        """FILE-7 for one camera of one episode: the frames' own size against what the dataset says
+        it is and what the container header claims.
+
+        A dataset whose episodes are not all one size shows up here too, episode by episode: they
+        are the ones that differ from the single size ``meta/info.json`` declares."""
+        from . import resolution
+
+        if not got.height or not got.width:
+            return                                   # nothing measured (no frames): no verdict
+        found = resolution.mismatches((got.height, got.width), (got.header_height, got.header_width),
+                                      self.declared_sizes.get(str(cam)))
+        if found:
+            findings.append(Finding("resolution_mismatch", resolution.text(short or str(cam), found),
+                                    "L3", camera=short,
+                                    args={"mismatches": found, "frame_size_wh": [int(got.width), int(got.height)]}))
 
     # ------------------------------------------------------------ bookkeeping
 

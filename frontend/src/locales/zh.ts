@@ -1297,6 +1297,7 @@ export const zh = {
     row_invalid: '数据不合规',
     decode_failed: '视频解码失败',
     count_mismatch: '帧数对不上',
+    resolution_mismatch: '分辨率与声明不符',
     cut_off: '录制中断',
     stream_missing: '缺一路流',
     rate_outlier: '频率明显偏低',

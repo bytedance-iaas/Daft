@@ -331,8 +331,19 @@ CASES = [
     ("duplicate_check", False, None, {"same_as": [43, 50], "group_id": 12}, {"duplicate"}, set()),
     ("duplicate_check", True, None, {"action_hash": "abc"}, set(), set()),
 
-] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
-     for f, code in INTEG_CASES]
+] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code},
+      {"FILE-7"})                      # the fixture has no decode tier: nothing measured the frames
+     for f, code in INTEG_CASES] + [
+    # with the decode tier the frames' own size is measured, and FILE-7 is assessed (registry 8.3)
+    ("data_integrity", None, None,
+     {"outcome": "suspect", "reason": "x", "tiers": {"L1": True, "L2": True, "L3": True},
+      "files": [], "findings": [
+          {"level": "suspect", "code": "resolution_mismatch", "tier": "L3", "camera": "wrist",
+           "message": "wrist 相机实际是 128×96，元数据声明 64×48，对不上",
+           "args": {"mismatches": [{"kind": "declared", "expected": [64, 48], "actual": [128, 96]}],
+                    "frame_size_wh": [128, 96]}}]},
+     {"resolution_mismatch"}, set()),
+]
 
 
 def _record(module, passed, score, details, **kw):

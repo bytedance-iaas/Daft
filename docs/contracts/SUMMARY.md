@@ -564,6 +564,8 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 需求方 16 项清单里的视觉遮挡（IMG-8）与左右手 / 机位身份一致（MV-2）此前没有模块覆盖。两项都只看画面就能判，
 所以并进任务成败判定那一次请求里每路相机的 `camera_check`，不增加模型调用。
 
+- **C1 8.3**：数据完整性多一个细码 `resolution_mismatch`（FILE-7，review，按相机）：逐帧解码时顺带量出画面的实际分辨率，
+  与 `meta/info.json` 声明的、以及容器头写的对照。FILE-7 此前没有任何模块覆盖；没开逐帧解码时这一项记 unassessable。
 - **C1 8.2**：评估不了的原因多一个 `measurement_inconclusive`（量过了，证据不够下结论）——MV-2 的左右臂配对是实测，
   判不出来时不该记成「模型没答」（模型根本没被问）。只是新增一项，旧记录照旧。
 - **C1 8.2**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，严重度 medium，按机位），

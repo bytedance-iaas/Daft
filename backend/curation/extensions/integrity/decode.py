@@ -38,6 +38,12 @@ class Decoded:
     frames: int = 0
     error: str | None = None                     # an exception: the decode stopped
     concealed: list[str] = field(default_factory=list)   # decoder error lines
+    #: the first decoded frame's own size, and what the stream header claims it is (h, w; FILE-7).
+    #: Free of charge: this pass already decodes every frame for FILE-4.
+    height: int | None = None
+    width: int | None = None
+    header_height: int | None = None
+    header_width: int | None = None
 
 
 def decode(path: str, start_s: float, end_s: float) -> Decoded:
@@ -86,10 +92,14 @@ def _decode_once(path: str, start_s: float, end_s: float) -> Decoded:
         try:
             with av.open(src, options=REMOTE_OPEN_OPTIONS if remote else None) as container:
                 stream = container.streams.video[0]
+                out.header_height = int(stream.codec_context.height or 0) or None
+                out.header_width = int(stream.codec_context.width or 0) or None
                 if start_s > 0:
                     container.seek(int(start_s / stream.time_base), stream=stream,
                                    any_frame=False)
                 for frame in container.decode(stream):
+                    if out.height is None and frame.height:
+                        out.height, out.width = int(frame.height), int(frame.width)
                     if frame.pts is None:
                         out.frames += 1
                         continue

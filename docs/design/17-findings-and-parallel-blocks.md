@@ -226,6 +226,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `values_invalid` | FILE-6 | high | blocking | 原 `row_invalid`「NaN / Inf / 二维 / dtype」 |
 | `metadata_invalid` | FILE-8 | high | blocking | 原 `row_invalid`「fps 非法 / 时间边界非法」 |
 | `table_inconsistent` | FILE-9 | medium | review（integrity_check） | 不变 |
+| `resolution_mismatch` | FILE-7 | medium | review（integrity_check） | L3（注册表 8.3）；没开逐帧解码时 FILE-7 记 unassessable `not_applicable` |
 | `timestamps_invalid` | STRM-4 | high | blocking | 原 `row_invalid`「时间戳」 |
 | `action_missing` | STRM-1 | high | blocking | 原 `row_invalid`「action 缺失」 |
 | `stream_missing` | STRM-1 | medium | review（integrity_check） | 多数比较 |
