@@ -159,46 +159,23 @@ export function visualRows(d: Details): CameraScoreRow[] {
 
 // ---------------------------------------------------------------------------- sync
 
-/** The episode's sync badge: its four readings, 疑似错位 for an annotation with only suspects. */
-export function syncBadge(d: Details): { key: string; text: string; color: string } {
-  const v = str(d.verdict) ?? '';
-  const suspectOnly = v === 'annotated' && Array.isArray(d.suspect_cameras) && d.suspect_cameras.length > 0 && !(Array.isArray(d.flagged_cameras) && d.flagged_cameras.length);
-  const key = suspectOnly ? 'suspect' : v;
-  const color: Record<string, string> = { aligned: 'green', annotated: 'orange', suspect: 'orange', undecidable: 'arcoblue', misaligned_all: 'red' };
-  return { key, text: E().sync.badge[key] ?? (v || '—'), color: color[key] ?? 'gray' };
-}
-
-export interface SyncCameraRow {
-  key: string;
-  camera: string;
-  lag: string;
-  peak: string;
-  zero: string;
-  trusted: string;
-  label: string;
-  text: string;
-  flagged: boolean;
-}
-
-export function syncRows(d: Details): SyncCameraRow[] {
+/**
+ * One plain phrase per camera, the same words the adjudication card uses (2026-10-13): a trusted aligned reading
+ * (`front 对齐（+0.07）`), a trusted misaligned one (`front 比动作早 0.93 秒`), anything else 测不准.
+ */
+export function syncCameraPhrases(d: Details): string[] {
   const per = d.per_camera as Record<string, unknown> | undefined;
   if (!per || typeof per !== 'object') return [];
-  const flagged = new Set([...(Array.isArray(d.flagged_cameras) ? d.flagged_cameras : []), ...(Array.isArray(d.suspect_cameras) ? d.suspect_cameras : [])].map(String));
-  return Object.entries(per).map(([cam, v]) => {
-    const r: Details = v && typeof v === 'object' ? (v as Details) : {};
-    const diag = (r.diagnosis ?? {}) as Details;
-    return {
-      key: cam,
-      camera: cam,
-      lag: signed(num(r.lag_s)),
-      peak: fmt(num(r.corr_peak)),
-      zero: fmt(num(r.corr_at_zero)),
-      trusted: r.trusted === true ? zh.common.yes : r.trusted === false ? zh.common.no : '—',
-      label: str(diag.label) ?? '',
-      text: str(diag.text) ?? str(r.note) ?? '',
-      flagged: flagged.has(cam),
-    };
-  });
+  const S = E().sync;
+  return Object.entries(per)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([cam, v]) => {
+      const r: Details = v && typeof v === 'object' ? (v as Details) : {};
+      const lag = num(r.lag_s);
+      if (r.trusted === true && r.code === 'aligned' && lag !== null) return S.phrase.aligned(cam, signed(lag));
+      if (r.trusted === true && r.code === 'misaligned' && lag !== null) return S.phrase.misaligned(cam, lag < 0 ? S.phrase.early : S.phrase.late, fmt(Math.abs(lag)));
+      return S.phrase.unsure(cam);
+    });
 }
 
 // ---------------------------------------------------------------------------- task_success

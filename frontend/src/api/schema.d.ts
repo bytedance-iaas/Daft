@@ -2031,7 +2031,7 @@ export interface components {
             appealable: boolean;
             review_line?: components["schemas"]["ReviewLineId"];
         };
-        /** @description a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check */
+        /** @description a line of the registry's review_lines; today task_verdict, reject_appeal, eef_check, integrity_check, sync_check */
         ReviewLineId: string;
         ReviewLine: {
             id: components["schemas"]["ReviewLineId"];
@@ -2771,6 +2771,25 @@ export interface components {
                 lag_s: number;
                 corr: number;
             };
+            /** @description the camera's windowed lag readings (registry 7.2, MV-3): one point per window at its middle, the median of the trusted windows and their interquartile range; null when the record has none (older records) */
+            windows?: null | {
+                /** @description window length, seconds */
+                win_s?: number | null;
+                hop_s?: number | null;
+                /** @description median lag of the trusted windows */
+                lag_s?: number | null;
+                /** @description interquartile range of the trusted windows' lags */
+                iqr_s?: number | null;
+                n_trusted?: number | null;
+                n_windows?: number | null;
+                points: {
+                    /** @description seconds from the episode start, the window's middle */
+                    t_s: number;
+                    lag_s: number;
+                    corr_peak?: number | null;
+                    trusted: boolean;
+                }[];
+            };
         };
         /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (finding, human, execution_error) or a review kind; a finding reason names its finding code, the code's taxonomy item and whether it may be appealed */
         EpisodeNote: {
@@ -2848,7 +2867,7 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. One card asks one question. Today: task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. One card asks one question. Today: task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure; sync_check - usable, misaligned, shifted, unsure */
             decision: string;
             /** @description task_verdict only, optional: a task text the person rewrote while judging the episode; the episode is judged again under it */
             new_label?: string | null;

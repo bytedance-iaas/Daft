@@ -1659,7 +1659,16 @@ export function mainSyncCurves(ep: number, revision: number): SyncCurves | null 
     }
     const hasLag = typeof rd.lag_s === 'number';
     const at = hasLag ? xcorr[Math.round(((lag + 2) / 4) * 60)] : null;
-    return { camera: cam, t, flow, speed, lags, xcorr, lag_s: hasLag ? lag : null, corr_peak: peak, code: String(rd.code), trusted: Boolean(rd.trusted), peak: hasLag && at !== null ? { lag_s: lag, corr: at } : null };
+    // the windowed readings (registry 7.2): 2 s windows every second, around the camera's lag, trusted when the peak is
+    const points = [];
+    for (let t0 = 0; t0 + 2 <= T; t0 += 1) {
+      const trusted = peak >= 0.5 && r() > 0.2;
+      points.push({ t_s: round(t0 + 1, 3), lag_s: round(lag + (r() - 0.5) * (trusted ? 0.06 : 0.6), 4), corr_peak: round(trusted ? peak : peak * 0.5, 4), trusted });
+    }
+    const tl = points.filter((p) => p.trusted).map((p) => p.lag_s).sort((a, b) => a - b);
+    const q = (f: number) => (tl.length ? tl[Math.min(tl.length - 1, Math.floor(f * tl.length))] : null);
+    const windows = { win_s: 2, hop_s: 1, lag_s: tl.length ? round(tl[tl.length >> 1], 4) : null, iqr_s: tl.length >= 2 ? round((q(0.75) as number) - (q(0.25) as number), 4) : null, n_trusted: tl.length, n_windows: points.length, points };
+    return { camera: cam, t, flow, speed, lags, xcorr, lag_s: hasLag ? lag : null, corr_peak: peak, code: String(rd.code), trusted: Boolean(rd.trusted), peak: hasLag && at !== null ? { lag_s: lag, corr: at } : null, windows };
   });
   return { episode_index: ep, revision, verdict: det.verdict, consensus_lag_s: null, lag_tol_s: 0.25, window_s: 2, cameras };
 }
@@ -1692,7 +1701,7 @@ export function sampleSummary(id: string, total: number): Record<string, unknown
     case 'visual_quality':
       return { counts: counts(n, { scored: n }), mean_score: 0.88, score_hist: { score: hist([0, 0, 0, 0, 0, part(0.02), part(0.05), part(0.18), part(0.4), n - part(0.02) - part(0.05) - part(0.18) - part(0.4)]) }, cameras: [{ camera: 'front', n, mean: 0.9, low: part(0.01), placeholder: 0, hist: [0, 0, 0, 0, 0, part(0.01), part(0.04), part(0.15), part(0.4), n - part(0.01) - part(0.04) - part(0.15) - part(0.4)], weight: 1 }, { camera: 'wrist', n, mean: 0.86, low: part(0.02), placeholder: 0, hist: [0, 0, 0, 0, 0, part(0.02), part(0.06), part(0.2), part(0.4), n - part(0.02) - part(0.06) - part(0.2) - part(0.4)], weight: 1 }], low_camera_readings: part(0.03), placeholder_readings: 0, blur_ref_var: 100, frame_max_side: 448 };
     case 'video_action_sync':
-      return { counts: counts(n, { pass: n - part(0.01), fail: part(0.01) }), verdicts: series([['aligned', n - part(0.01) - part(0.04) - part(0.02) - part(0.03)], ['annotated', part(0.04)], ['suspect', part(0.02)], ['undecidable', part(0.03)], ['misaligned', part(0.01)]]), flagged_camera_readings: part(0.05), lag_tol_s: 0.25, cameras: [{ camera: 'front', readings: n, n: part(0.95), median_lag_s: 0.04, iqr_s: 0.06, n_flagged: part(0.03), n_suspect: part(0.01), n_noisy: 0, n_abstained: part(0.02) }, { camera: 'wrist', readings: n, n: part(0.93), median_lag_s: 0.02, iqr_s: 0.05, n_flagged: part(0.02), n_suspect: part(0.01), n_noisy: part(0.01), n_abstained: part(0.03) }], sync_advice: '全库逐相机中位滞后均在容差内(|median| ≤ 0.25s),未见系统性错位', negative_lag_episodes: 0 };
+      return { counts: counts(n, { pass: n - part(0.01), fail: part(0.01) }), verdicts: series([['aligned', n - part(0.01) - part(0.04) - part(0.02) - part(0.03)], ['annotated', part(0.04)], ['suspect', part(0.02)], ['undecidable', part(0.03)], ['misaligned', part(0.01)]]), flagged_camera_readings: part(0.05), lag_tol_s: 0.25, cameras: [{ camera: 'front', readings: n, n: part(0.95), median_lag_s: 0.04, iqr_s: 0.06, n_flagged: part(0.03), n_suspect: part(0.01), n_noisy: 0, n_abstained: part(0.02), n_window_stable: part(0.7) }, { camera: 'wrist', readings: n, n: part(0.93), median_lag_s: 0.02, iqr_s: 0.05, n_flagged: part(0.02), n_suspect: part(0.01), n_noisy: part(0.01), n_abstained: part(0.03), n_window_stable: part(0.85) }], sync_advice: '全库逐相机中位滞后均在容差内(|median| ≤ 0.25s),未见系统性错位;分窗规则可比对 ' + part(0.65) + '/' + n + ' 条(两路以上相机逐窗读数都稳)', negative_lag_episodes: 0, window_comparable_episodes: part(0.65), episodes_with_readings: n };
     case 'task_success':
       return { counts: counts(n, { pass: n - part(0.04) - part(0.03), fail: part(0.04), abstain: part(0.03) }), abstain_reasons: { '视频判定=uncertain，结论不够确定，转人工': part(0.03) }, abstain_reason_counts: series([['视频判定 … 结论不够确定，转人工', part(0.03)]]), judgements: series([['success', n - part(0.04) - part(0.03)], ['failure', part(0.04)], ['uncertain', part(0.03)]]), abstain_by_judgement: series([['uncertain', part(0.03)]]), text_sources: series([['原始标注', n]]), layers: series([['probe', n], ['endstate', n]]) };
     case 'duplicate_check':
@@ -1799,10 +1808,12 @@ function mainOwnSummary(id: string, quotaRun: boolean): Record<string, unknown> 
         flagged_camera_readings: 2,
         lag_tol_s: 0.25,
         cameras: [
-          { camera: CAMERAS[0], readings: 50, n: 47, median_lag_s: 0.03, iqr_s: 0.05, n_flagged: 0, n_suspect: 1, n_noisy: 0, n_abstained: 4 },
-          { camera: CAMERAS[1], readings: 50, n: 45, median_lag_s: 0.07, iqr_s: 0.09, n_flagged: 2, n_suspect: 0, n_noisy: 0, n_abstained: 3 },
-          { camera: CAMERAS[2], readings: 50, n: 47, median_lag_s: -0.01, iqr_s: 0.04, n_flagged: 0, n_suspect: 0, n_noisy: 0, n_abstained: 3 },
+          { camera: CAMERAS[0], readings: 50, n: 47, median_lag_s: 0.03, iqr_s: 0.05, n_flagged: 0, n_suspect: 1, n_noisy: 0, n_abstained: 4, n_window_stable: 31 },
+          { camera: CAMERAS[1], readings: 50, n: 45, median_lag_s: 0.07, iqr_s: 0.09, n_flagged: 2, n_suspect: 0, n_noisy: 0, n_abstained: 3, n_window_stable: 22 },
+          { camera: CAMERAS[2], readings: 50, n: 47, median_lag_s: -0.01, iqr_s: 0.04, n_flagged: 0, n_suspect: 0, n_noisy: 0, n_abstained: 3, n_window_stable: 44 },
         ],
+        window_comparable_episodes: 26,
+        episodes_with_readings: 50,
         sync_advice: '全库逐相机中位滞后均在容差内(|median| ≤ 0.25s),未见系统性错位;另有 1 条存在疑似错位但证据不足的相机(最多的是 exterior_image_1_left,1 条)——不判废也不进人工队列,但做逐帧对齐敏感的训练时建议对该路降权',
         negative_lag_episodes: 0,
       };

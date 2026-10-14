@@ -37,7 +37,7 @@ EPISODE_STAGES = ("integrity", "numeric", "frame", "duplicate", "vlm")
 NAMES_CN = {m.id: m.name_zh for m in registry.MODULES}
 TASK = "task_success"
 #: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
-LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "reject_appeal")
+LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "sync_check", "reject_appeal")
 
 
 @dataclass
@@ -103,7 +103,8 @@ class Decided:
 def answers_of(decisions: Decisions, ep: int) -> dict[str, str | None]:
     return {"task_verdict": decisions.human_task_verdict(ep),
             "integrity_check": decisions.human_gate(ep, "integrity_check", ("intact", "broken")),
-            "eef_check": decisions.human_gate(ep, "eef_check", ("consistent", "inconsistent"))}
+            "eef_check": decisions.human_gate(ep, "eef_check", ("consistent", "inconsistent")),
+            "sync_check": decisions.human_gate(ep, "sync_check", ("usable", "misaligned", "shifted"))}
 
 
 def decide(state: RunState, ep: int, decisions: Decisions) -> Decided:

@@ -30,7 +30,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(card(29)).toHaveTextContent('来源：任务成败判定');
     // One card, one question: the task verdict, with why it was asked.
     const q29 = within(card(29)).getByTestId('q-29-task_verdict');
-    expect(q29).toHaveTextContent('① 来源：任务成败判定 · 任务成败');
+    expect(q29).toHaveTextContent('① 任务成败');
     expect(q29).toHaveTextContent('机位之间分歧，转人工');
     expect(q29).toHaveTextContent('按任务文本「Close the microwave door」，这条做成了吗？');
     expect(within(card(29)).queryByTestId('q-29-label')).toBeNull();
@@ -243,7 +243,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     // Two more pending cards: grip_check counts as pending, and the undeclared line too.
     expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 10 条');
     const q = within(c).getByTestId('q-12-grip_check');
-    expect(q).toHaveTextContent('① 来源：运动质量 · 夹爪状态核对');
+    expect(q).toHaveTextContent('① 夹爪状态核对');
     expect(q).toHaveTextContent('夹爪开度读数 3 秒不变，画面里夹爪在动');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['夹爪正常', '夹爪异常', '拿不准']);
     // Not a line that offers 整条弃用.
@@ -275,6 +275,24 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(within(ev).getByTestId('eef-cpu')).toHaveTextContent('可疑');   // the evidence below, as before
   });
 
+  it('a sync question shows why, each camera\'s readings and the side-by-side button; 确有错位 answers sync_check (registry 7.2)', async () => {
+    const why = '可信相机之间的滞后相差 0.38 秒（超过 0.3 秒）：exterior_image_1_left +0.38，wrist_image_left +0.00';
+    db.extraQuestions = new Map([[MAIN_TASK, new Map([[12, [{ line: 'sync_check', source_module: 'video_action_sync', reason: why, latest_decision: null }]]])]]);
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    const c = await screen.findByTestId('card-12');
+    const q = within(c).getByTestId('q-12-sync_check');
+    expect(q).toHaveTextContent('① 同步存疑');
+    expect(q).toHaveTextContent(`为什么转人工：${why}`);
+    const ev = await within(q).findByTestId('sync-evidence-12');
+    expect(within(ev).queryByRole('button')).toBeNull();                         // the card's 可视化 button plays the cameras
+    expect(await within(ev).findByTestId('sync-windows', {}, { timeout: 4000 })).toHaveTextContent('分窗滞后');
+    expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['可用，保留', '确有错位，判废', '整条平移，可校正', '拿不准']);
+    await user.click(within(q).getByText('确有错位，判废'));
+    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 12, line: 'sync_check', decision: 'misaligned' }]));
+    expect(within(c).getByTestId('status-12')).toHaveTextContent('已裁');
+  });
+
   it('an EEF question shows why, the CPU readings and every window with its marked crops; 一致 answers eef_check (C1 1.9, F5.11)', async () => {
     // Test fixture only: the mock world's tasks do not select the EEF module.
     const why = '「位置」（相机 ext）CPU 判为可疑，模型多数认为一致（支持 2、反对 0）';
@@ -285,7 +303,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const c = await screen.findByTestId('card-12');
     expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 9 条');
     const q = within(c).getByTestId('q-12-eef_check');
-    expect(q).toHaveTextContent('① 来源：EEF–视频一致性 · EEF 与画面核对');
+    expect(q).toHaveTextContent('① EEF 与画面核对');
     expect(q).toHaveTextContent(`为什么转人工：${why}`);
     const ev = await within(q).findByTestId('eef-evidence-12');
     const cpu = within(ev).getByTestId('eef-cpu');

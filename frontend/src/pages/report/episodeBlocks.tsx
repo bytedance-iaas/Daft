@@ -12,10 +12,11 @@ import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
 import { EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
-import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
+import { judgementName, motionFacts, motionRows, syncCameraPhrases, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact } from '../../lib/episodeReadings';
 import { eefCalibrationSuspects } from '../../lib/eefReadings';
 import type { LegacyRecord } from '../../lib/records';
 import { fieldLabel, readable } from '../../lib/reportView';
+import { SyncWindowsChart } from './SyncWindows';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
 import { zh } from '../../locales/zh';
 
@@ -240,12 +241,14 @@ function SyncCurvesView({ curves }: { curves: SyncCurves }) {
       <div>
         <div className="section-sub">{S.xcorr}</div>
         <Chart height={260} summary={`${S.xcorr}：${curves.cameras.map((c) => (c.peak ? S.peak(c.camera, signed(c.peak.lag_s), fmt(c.peak.corr)) : c.camera)).join('；')}`} option={xcorr} />
+        <SyncWindowsChart curves={curves} />
       </div>
     </div>
   );
 }
 
-function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep: number }) {
+/** The sync curves of one episode, fetched when shown (the Episode tab's block and the sync review's card). */
+export function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep: number }) {
   const q = useQuery({
     queryKey: qk.syncCurves(taskId, ep, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}/sync-curves', { params: { path: { id: taskId, index: ep }, query: { rev } } })),
@@ -264,46 +267,12 @@ function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep:
 }
 
 function SyncBlock({ taskId, rev, ep, record }: BlockProps) {
-  const d = details(record);
-  const badge = syncBadge(d);
-  const rows = syncRows(d);
-  const C = E().sync.cols;
+  // the same four things as the adjudication card (2026-10-13), without the decision: the findings are listed at
+  // the top of the episode; here one phrase per camera, then the curves and the lag window by window
+  const phrases = syncCameraPhrases(details(record));
   return (
     <>
-      <Space wrap>
-        <Tag color={badge.color} data-testid="sync-badge">
-          {badge.text}
-        </Tag>
-        {num(d.consensus_lag_s) !== null ? <span>{E().sync.consensus(signed(num(d.consensus_lag_s)))}</span> : null}
-      </Space>
-      <Reason text={str(d.reason)} />
-      {rows.length ? (
-        <Table
-          rowKey="key"
-          size="small"
-          pagination={false}
-          data={rows}
-          data-testid="episode-sync"
-          rowClassName={(r: SyncCameraRow) => (r.flagged ? 'row-warn' : '')}
-          columns={[
-            { title: C.camera, dataIndex: 'camera', width: 210, render: (v: string) => <span className="mono nowrap">{v}</span> },
-            { title: C.lag, dataIndex: 'lag', width: 90, align: 'right' },
-            { title: C.peak, dataIndex: 'peak', width: 90, align: 'right' },
-            { title: C.zero, dataIndex: 'zero', width: 90, align: 'right' },
-            { title: C.trusted, dataIndex: 'trusted', width: 64 },
-            {
-              title: C.diagnosis,
-              dataIndex: 'label',
-              render: (_: unknown, r: SyncCameraRow) => (
-                <span>
-                  {r.label ? <b>{r.label}：</b> : null}
-                  {r.text}
-                </span>
-              ),
-            },
-          ]}
-        />
-      ) : null}
+      {phrases.length ? <div data-testid="episode-sync">{phrases.join(' · ')}</div> : null}
       <LazyVisible placeholder={<div style={{ height: 160 }} />}>
         <SyncCurvesPanel taskId={taskId} rev={rev} ep={ep} />
       </LazyVisible>

@@ -1,6 +1,6 @@
 import { Button, Card, Form, Input, Radio, Space, Spin, Tag, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, Decision, DecisionValue, EpisodeView } from '../../api/types';
@@ -9,6 +9,7 @@ import { RelTime } from '../../components/RelTime';
 import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefOutput, EefWindows } from '../../features/eef/EefRecord';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { MiniPlayerModal } from '../../features/visualizer/MiniPlayerModal';
+import { SyncEvidence } from './SyncQuestion';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
 import { codeName, codeSpec, itemLabel } from '../../lib/findings';
 import { zh } from '../../locales/zh';
@@ -45,8 +46,11 @@ function CardMedia({ taskId, ep, rev, skip = [], modules = [] }: { taskId: strin
   const v = q.data;
   const evidence = (v.evidence ?? []).filter((e) => !skip.includes(e.module));
   const origin = v.videos[0]?.origin;
+  // the player's chips: what the card is about - no info notes (AV-1 疑似错位, a weak camera); the sync check's
+  // findings become one chip in the player itself (playerChips, 2026-10-13)
+  const shown = { ...v, findings: (v.findings ?? []).filter((f) => f.level !== 'info') };
   const focusOf = () => {
-    const i = (v.findings ?? []).findIndex((f) => modules.includes(f.module));
+    const i = shown.findings.findIndex((f) => modules.includes(f.module));
     return i >= 0 ? i : null;
   };
   return (
@@ -57,7 +61,7 @@ function CardMedia({ taskId, ep, rev, skip = [], modules = [] }: { taskId: strin
         </Button>
         {origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
       </Space>
-      {mini ? <MiniPlayerModal taskId={taskId} view={v} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
+      {mini ? <MiniPlayerModal taskId={taskId} view={shown} focus={mini.focus} onFocus={(i) => setMini({ focus: i })} onClose={() => setMini(null)} /> : null}
       {evidence.length ? (
         <div className="evidence-grid" style={{ marginTop: 8 }}>
           {evidence.map((e) => (
@@ -87,12 +91,16 @@ function DecidedNote({ latest, effective }: { latest: Decision | null | undefine
  * A question's head: its source module and line, and the findings it asks about (C4 2.3.0, design doc 17 §4.4) -
  * each code by the registry's name, with its taxonomy item.
  */
+/** How many modules asked on this card: a question names its module only when there is more than one. */
+const CardSources = createContext(1);
+
 function QuestionHead({ index, q, catalog }: { index: number; q: Question; catalog: ReviewCatalog | undefined }) {
   const reg = useModules();
   const codes = q.codes ?? [];
+  const several = useContext(CardSources) > 1;
   return (
     <>
-      <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), lineTitle(catalog, q.line))}</b>
+      <b>{zh.adjudication.questionHead(index, several ? moduleName(reg.data, q.source_module) : null, lineTitle(catalog, q.line))}</b>
       {codes.length ? (
         <div className="finding-meta" data-testid="question-codes">
           {codes.map((c) => `${codeName(reg.data, q.source_module, c)}（${itemLabel(reg.data, codeSpec(reg.data, q.source_module, c)?.item ?? null)}）`).join('、')}
@@ -226,6 +234,30 @@ function EefQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index
   );
 }
 
+/**
+ * 同步存疑 (registry 7.2): why the sync check could not settle it, each camera's readings, the curves and the
+ * cameras side by side; 可用 keeps the episode, 确有错位 rejects it, 整条平移 keeps it for a correction to come (7.5).
+ */
+function SyncQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {
+  return (
+    <div className={`question${view.discarded ? ' overridden' : ''}`} data-testid={`q-${view.ep}-sync_check`}>
+      <QuestionHead index={index} q={q} catalog={catalog} />
+      <div className="episode-line warn" style={{ margin: '4px 0' }}>
+        <b>{zh.syncDetail.why}：</b>
+        {q.reason}
+      </div>
+      <div style={{ margin: '4px 0 8px' }}>{zh.syncDetail.ask}</div>
+      <LazyVisible placeholder={<div style={{ height: 80 }} />}>
+        <SyncEvidence taskId={taskId} ep={view.ep} rev={rev} />
+      </LazyVisible>
+      <Space wrap style={{ marginTop: 8 }}>
+        <Choice view={view} q={q} catalog={catalog} fallback={['usable', 'misaligned', 'shifted', 'unsure']} onDecide={onDecide} />
+        <DecidedNote latest={q.latest_decision} effective={q.effective} />
+      </Space>
+    </div>
+  );
+}
+
 /** 被拒复议 (D42): why it was rejected — for the EEF module, its windows. */
 function AppealQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {
   return (
@@ -315,13 +347,16 @@ export function EpisodeCard({
       <LazyVisible placeholder={<div style={{ height: 120 }} />}>
         <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} modules={view.sources} />
       </LazyVisible>
+      <CardSources.Provider value={new Set(view.questions.map((q) => q.source_module)).size}>
       {view.questions.map((q, i) => {
         const props = { index: i, view, q, catalog, onDecide: decide };
         if (q.line === 'task_verdict') return <VerdictQuestion key={q.line} {...props} />;
         if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} taskId={taskId} rev={rev} />;
         if (q.line === 'eef_check') return <EefQuestion key={q.line} {...props} taskId={taskId} rev={rev} />;
+        if (q.line === 'sync_check') return <SyncQuestion key={q.line} {...props} taskId={taskId} rev={rev} />;
         return <GenericQuestion key={q.line} {...props} />;
       })}
+      </CardSources.Provider>
       {view.status === 'unsure' ? (
         <Typography.Paragraph style={{ color: 'var(--c-warning)', fontSize: 12, margin: '8px 0 0' }}>{view.optional ? zh.adjudication.unsureNoteOptional : zh.adjudication.unsureNote}</Typography.Paragraph>
       ) : null}

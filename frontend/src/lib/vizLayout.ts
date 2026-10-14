@@ -202,6 +202,8 @@ export function cellValid(cell: CellContent, model: Pick<VizDataset, 'cameras' |
 
 /** Modules whose findings are about a picture: the camera in scope and another one. */
 const PICTURE_MODULES = new Set(['visual_quality', 'camera_defects', 'data_integrity']);
+/** the sync check: its cameras that disagree are laid out side by side (2026-10-13) */
+export const SYNC_MODULE = 'video_action_sync';
 /** Modules whose findings are about motion: the camera in scope and the arm's curves. */
 const MOTION_MODULES = new Set(['video_action_sync', 'eef_video_consistency', 'motion_quality', 'kinematic_limits', 'timestamp_check']);
 
@@ -258,6 +260,13 @@ export function miniLayout(
   if (module === EEF_MODULE && marked.length) {
     const first = scoped && marked.includes(scoped) ? scoped : marked[0];
     cells = [first, ...marked.filter((k) => k !== first)].slice(0, MINI_MAX_CELLS).map((key) => ({ kind: 'video', key }));
+  } else if (module === SYNC_MODULE) {
+    // the sync check (2026-10-13): an offset is only visible against the other cameras, so every camera side by
+    // side whatever the finding names - the named ones first - and the arm's curve after
+    const named = (scope?.cameras ?? [scope?.camera]).map((n) => (n ? cameraOfScope({ camera: n }, model.cameras) : null)).filter((k): k is string => !!k);
+    const curve = armStream(scope, model.streams);
+    cells = [...new Set([...named, ...keys])].slice(0, MINI_MAX_CELLS).map((key) => ({ kind: 'video' as const, key }));
+    if (curve && cells.length < MINI_MAX_CELLS) cells.push({ kind: 'curve', key: curve });
   } else if (module && PICTURE_MODULES.has(module) && scoped) {
     const other = keys.find((k) => k !== scoped);
     cells = [scoped, other].filter((k): k is string => !!k).map((key) => ({ kind: 'video', key }));
@@ -273,4 +282,51 @@ export function miniLayout(
   }
   const shape = { cols: Math.max(1, Math.min(MINI_MAX_CELLS, cells.length)), rows: 1 };
   return { cells: fitCells(cells, shape), shape };
+}
+
+
+// ---------------------------------------------------------------- the mini player's chips
+
+/** The shape of an episode finding the chips need (EpisodeFinding of the API, by its fields). */
+export interface ChipFinding {
+  module: string;
+  level: string;
+  finding: { code: string; item?: string | null; message_zh: string; scope?: FindingScope | null; frames?: unknown; time_s?: unknown };
+}
+
+const LEVEL_RANK: Record<string, number> = { blocking: 3, review: 2, info: 1 };
+
+/**
+ * The player's chips (2026-10-13): one per finding, except the sync check's findings, which say the same thing from
+ * two sides (a camera off against the action, cameras disagreeing) and lay the player out alike - they become one
+ * chip whose text joins theirs and whose scope names every camera they name. Each group keeps the indices of the
+ * findings it stands for, so a focus given as an index into the findings maps to a chip and back.
+ */
+export function playerChips<F extends ChipFinding>(findings: readonly F[]): { indices: number[]; finding: F }[] {
+  const out: { indices: number[]; finding: F }[] = [];
+  let sync: { indices: number[]; finding: F } | null = null;
+  findings.forEach((f, i) => {
+    if (f.module !== SYNC_MODULE) {
+      out.push({ indices: [i], finding: f });
+      return;
+    }
+    if (!sync) {
+      sync = { indices: [i], finding: { ...f, finding: { ...f.finding, scope: f.finding.scope ? { ...f.finding.scope } : null } } };
+      out.push(sync);
+      return;
+    }
+    sync.indices.push(i);
+    const a = sync.finding.finding; const b = f.finding;
+    const items = [...new Set([a.item, b.item].filter((x): x is string => !!x))];
+    const cams = [...new Set([...(a.scope?.cameras ?? (a.scope?.camera ? [a.scope.camera] : [])), ...(b.scope?.cameras ?? (b.scope?.camera ? [b.scope.camera] : []))])];
+    sync.finding = {
+      ...sync.finding,
+      level: (LEVEL_RANK[f.level] ?? 0) > (LEVEL_RANK[sync.finding.level] ?? 0) ? f.level : sync.finding.level,
+      // the cameras-out-of-step text (lag_inconsistent) already carries every camera's reading: it stands alone
+      finding: { ...a, item: items.join(' / ') || a.item, code: b.code === 'lag_inconsistent' ? b.code : a.code,
+        message_zh: b.code === 'lag_inconsistent' ? b.message_zh : a.code === 'lag_inconsistent' ? a.message_zh : `${a.message_zh}；${b.message_zh}`,
+        scope: cams.length ? { ...(a.scope ?? {}), camera: undefined, cameras: cams } : a.scope },
+    };
+  });
+  return out;
 }

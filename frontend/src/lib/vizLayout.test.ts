@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VizCamera, VizStream } from '../api/types';
-import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, ownerOf, parseGridKey, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
+import { armStream, cameraOfScope, cellHeight, cellValid, fitCells, GRID_SIZES, gridKey, miniLayout, ownerOf, parseGridKey, playerChips, resizeCells, shapeFor, smartColumns, templateLayout, widthClass } from './vizLayout';
 
 function cam(key: string, hidden = false): VizCamera {
   return { key, name: key, source: `observation.images.${key}`, kind: 'video', access: 'direct', codec: 'h264', codec_string: 'avc1.640028', width: 640, height: 480, fps: 30, transcoded: false, reason: null, hidden };
@@ -174,6 +174,21 @@ describe('vizLayout', () => {
     expect(miniLayout(null, null, { cameras: [], streams: [stream('arm')] }).cells).toEqual([{ kind: 'curve', key: 'arm' }]);
   });
 
+  it('lays out a sync finding over every camera, the named ones first, the arm after when there is room (2026-10-13)', () => {
+    const two = { cameras: [cam('front'), cam('wrist')], streams: [stream('arm')] };
+    // one camera named (a suspect, a single misaligned camera): still both cameras - an offset shows only against the other
+    expect(miniLayout('video_action_sync', { camera: 'wrist' }, two).cells).toEqual([
+      { kind: 'video', key: 'wrist' }, { kind: 'video', key: 'front' }, { kind: 'curve', key: 'arm' }]);
+    expect(miniLayout('video_action_sync', { cameras: ['front', 'wrist'] }, two).cells).toEqual([
+      { kind: 'video', key: 'front' }, { kind: 'video', key: 'wrist' }, { kind: 'curve', key: 'arm' }]);
+    expect(miniLayout('video_action_sync', null, two).cells).toEqual([
+      { kind: 'video', key: 'front' }, { kind: 'video', key: 'wrist' }, { kind: 'curve', key: 'arm' }]);
+    // three cameras fill the row; the named one leads and the curve has no room
+    const arms = { cameras: MODEL.cameras, streams: [stream('left_arm')] };
+    expect(miniLayout('video_action_sync', { camera: 'right_wrist' }, arms).cells).toEqual([
+      { kind: 'video', key: 'right_wrist' }, { kind: 'video', key: 'head' }, { kind: 'video', key: 'left_wrist' }]);
+  });
+
   it('lays out an EEF finding over every camera with marks, the one in scope first (design doc 22 §3.3)', () => {
     const arms = { cameras: MODEL.cameras, streams: [stream('left_arm')] };
     expect(miniLayout('eef_video_consistency', { camera: 'right_wrist' }, arms, ['head', 'right_wrist']).cells).toEqual([
@@ -206,5 +221,23 @@ describe('vizLayout', () => {
     // the mini player still shows the hidden camera a finding is about; its other pick is not hidden
     expect(keys(miniLayout('visual_quality', { camera: 'wrist' }, model).cells)).toEqual(['wrist', 'front']);
     expect(keys(miniLayout(null, null, model).cells)).toEqual(['front', 'top']);
+  });
+});
+
+describe('the player chips (2026-10-13)', () => {
+  const f = (module: string, code: string, item: string, message_zh: string, scope: { camera?: string; cameras?: string[] } | null, level = 'info') => ({ module, level, finding: { code, item, message_zh, scope } });
+  it('merges the sync check\'s findings into one chip naming every camera, other modules keep theirs', () => {
+    const findings = [
+      f('visual_quality', 'blur', 'IMG-2', '画面模糊', { camera: 'front' }),
+      f('video_action_sync', 'camera_misaligned', 'AV-1', 'wrist 比动作早 0.97 秒', { camera: 'wrist' }, 'review'),
+      f('video_action_sync', 'lag_inconsistent', 'MV-3', 'front 整条测不准，两路错开量不同', { cameras: ['front', 'wrist'] }, 'info'),
+    ];
+    const chips = playerChips(findings);
+    expect(chips.map((c) => c.indices)).toEqual([[0], [1, 2]]);
+    expect(chips[1].finding.level).toBe('review');
+    expect(chips[1].finding.finding.item).toBe('AV-1 / MV-3');
+    expect(chips[1].finding.finding.message_zh).toBe('front 整条测不准，两路错开量不同');   // the out-of-step text alone
+    expect(chips[1].finding.finding.scope).toEqual({ camera: undefined, cameras: ['wrist', 'front'] });
+    expect(playerChips([])).toEqual([]);
   });
 });

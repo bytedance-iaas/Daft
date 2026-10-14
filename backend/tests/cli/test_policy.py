@@ -23,6 +23,11 @@ def test_the_default_policy_is_the_registry_default_levels():
     assert pol.level("timestamp_check", _f("gap", "STRM-3")) == "blocking"
     assert pol.level("data_integrity", _f("count_mismatch", "FILE-5")) == "review"
     assert pol.review_line("data_integrity", _f("count_mismatch")) == "integrity_check"
+    # registry 7.3: the sync check's cameras that disagree are asked on sync_check; the whole-episode offset still rejects
+    assert pol.level("video_action_sync", _f("lag_inconsistent", "MV-3")) == "review"
+    assert pol.level("video_action_sync", _f("camera_misaligned", "AV-1")) == "review"
+    assert pol.review_line("video_action_sync", _f("lag_inconsistent")) == "sync_check"
+    assert pol.level("video_action_sync", _f("misaligned_all", "AV-1")) == "review"          # 7.5: asked, not rejected
     assert pol.appealable("task_success", _f("failure")) and not pol.appealable("timestamp_check", _f("gap"))
 
 

@@ -340,6 +340,8 @@ def global_lag(
                                     # 1.2 下 13 条测不准救回、判废零新增(1.3+ 无增益)
     peak_sep_s: float = 0.3,
     _probe_visibility: bool = True,  # 递归守卫:可见窗探针内部会再调本函数,那一次必须关
+    _windowed: bool = True,          # 递归守卫:分窗估计内部逐窗调本函数,那一次必须关
+    window: dict | None = None,      # 分窗估计的参数覆盖(windowed_lag 的 win_s / min_frames),来自配置
 ) -> CheckResult:
     """L1:光流能量 × 关节速度 → 重采样公共轴 → scipy 互相关扫全局 lag。**单路相机**。
 
@@ -415,6 +417,12 @@ def global_lag(
               "peak_ratio": peak_ratio, "peak_width_s": peak_width_s,
               "at_scan_edge": at_scan_edge,
               "trusted": False}
+    # 相关曲线本身随读数落盘(2026-10-13,MV-3「借峰检验」用,见 findings._video_action_sync):
+    # 一路可信错位给出 Δ 后,测不准的路不必自己定峰,只看它的曲线在 Δ 处是不是明显低于
+    # 最高值。扫描窗内按步长抽样,最多 241 点(30fps ±2s 正好一点一帧);只存曲线,不改判定。
+    step = max(1, int(np.ceil(len(xc_win) / 241)))
+    detail["xc_curve"] = {"lags_s": [round(float(x), 4) for x in lags_win[::step]],
+                          "corr": [round(float(x), 4) for x in xc_win[::step]]}
     # 可见性度量与判决无关(只喂诊断层),故对每一路无条件计算:同一段数据的
     # "有没有拍到"不该随它最后被判可信与否而变。成本 = 一次窄窗互相关,
     # 相对同一路已经付掉的 Farneback 光流可以忽略。
@@ -422,6 +430,9 @@ def global_lag(
         detail["visibility"] = _visibility_probe(
             f_full, s_full, ft_full, s, st,
             quiet_frac=quiet_frac, max_lag_s=max_lag_s, trim_static=trim_static)
+    # 第二估计量(见 windowed_lag):用未剔静止段的全程曲线分窗,只作读数,不改本函数的判定
+    if _windowed and len(f_full) >= 60:
+        detail["lag_windows"] = windowed_lag(f_full, ft_full, s, st, **(window or {}))
     # 样本量下限(统计正当性):N 个样本的互相关标准差≈1/√N,在 ±K 个滞后点里取最大
     # 值的噪声假峰可达 (1/√N)·√(2lnK)——bridge 25样本实测假峰 lag 0.8-1.8s/corr 0.44。
     # 短序列的滞后估计统计上不可靠 → 硬门诚实弃权(5fps 短片=方法边界,非数据有罪)
@@ -486,6 +497,74 @@ def global_lag(
     detail["code"] = "lag_exceeds_tol"
     detail["trusted"] = True
     return CheckResult(name="video_action_sync", passed=False, detail=detail)
+
+
+# ── 第二估计量:分窗取中位数(2026-10-13,MV-3 第 3 步 spike 定)────────────────────────
+# 整条互相关在远机位上峰宽 0.5~1.4 s,0.2 s 的错开读不出来,还会给出 +1.1 s 这类假峰;
+# 把曲线切成 3 s 的窗(步进 1.5 s),每个有运动的窗各算一次 lag,只取可信窗的中位数:
+# so101 前视相机在 Qian 的样本上,整条读数 −0.73 / +1.10 / +0.60(全部不可信),分窗中位数
+# −0.13(真值 −0.20)/ +0.07 / +0.03(真值 0);腕部相机两者一致。可信窗太少(ep15 wrist 2 个)时
+# 中位数会退化,所以它只是第二读数,判定仍以整条读数为准。
+# 窗长 2 s(2026-10-13 扫描定,12 个数据集 82 条:Qian 19、时间戳变体、droid 20、anchor 的 so101 标反 4 子集与
+# FastUMI 2 子集;窗长 2/3/4/6 s × 掩膜有无 × IQR 门槛):2 s 窗在对照上零误报(31 对两路都稳的条目),0.2 s 的注入
+# 报出 3/5,比 3 s 窗(2/5)多;≥ 1 s 的错开留给整条读数(窗内只扫 ±win/2)。前景掩膜光流没有额外收益,不做。
+def windowed_lag(flow: np.ndarray, flow_t: np.ndarray, speed: np.ndarray, speed_t: np.ndarray, *,
+                 win_s: float = 2.0, min_frames: int = 64, max_lag_s: float = 1.5,
+                 min_samples: int = 60, corr_min: float = 0.3) -> dict:
+    """每个窗的 lag 由 global_lag 自己判可信;返回可信窗的中位数、窗数、四分位距与逐窗读数。
+
+    窗长 = max(win_s, min_frames 个采样周期),步进半窗,窗内只扫 ±半窗。两个数都从配置来
+    (default.yaml 的 window_s / window_min_frames):2 s 是 2026-10-13 在 12 个数据集 82 条上扫 2/3/4/6 s
+    定的(对照零误报、0.2 s 注入命中最多);64 帧是 global_lag 要 60 个样本的统计下限留一点余量,
+    15 fps 的 droid 由它把窗拉到 4.27 s,10 Hz 的序列拉到 6.4 s。窗长只随采样率走,不随动作节奏走——
+    一路相机在某个数据集上稳不稳,看报告里的分窗覆盖率(sync_health),别猜。
+    """
+    f = np.asarray(flow, dtype=np.float64)
+    ft = np.asarray(flow_t, dtype=np.float64)
+    s = np.asarray(speed, dtype=np.float64)
+    st = np.asarray(speed_t, dtype=np.float64)
+    lags: list[dict] = []
+    # 窗长随采样率:global_lag 要求一个窗至少 60 个样本(统计正当性),30 fps 下 2 s 够,15 fps 的
+    # droid / 10 Hz 的合成序列要拉长到 min_frames 个样本以上;步进保持半窗
+    dt = float(np.median(np.diff(ft))) if len(ft) > 1 else 0.0
+    win_s = float(win_s)
+    if dt > 0 and int(min_frames) * dt > win_s:
+        win_s = int(min_frames) * dt
+    hop_s = win_s / 2
+    max_lag_s = min(max_lag_s, win_s / 2)      # 窗内能分辨的滞后不超过半窗;更大的错开由整条读数负责
+    t0 = float(ft[0]) if len(ft) else 0.0
+    end = float(ft[-1]) if len(ft) else 0.0
+    while t0 + win_s <= end + 1e-9:
+        sel = (ft >= t0) & (ft < t0 + win_s)
+        ss = (st >= t0) & (st < t0 + win_s)
+        if sel.sum() >= min_samples and ss.sum() >= min_samples \
+                and float(np.std(np.interp(ft[sel], st, s))) > 1e-6:
+            r = global_lag(f[sel], ft[sel], s[ss], st[ss], max_lag_s=max_lag_s, _probe_visibility=False,
+                           _windowed=False)
+            d = r.detail or {}
+            if float(d.get("corr_peak") or 0.0) >= corr_min and d.get("lag_s") is not None:
+                lags.append({"t0_s": round(t0, 3), "lag_s": round(float(d["lag_s"]), 4),
+                             "corr_peak": round(float(d["corr_peak"]), 4), "trusted": bool(d.get("trusted"))})
+        t0 += hop_s
+    trusted = [w["lag_s"] for w in lags if w["trusted"]]
+    out = {"win_s": round(win_s, 3), "hop_s": round(hop_s, 3), "dt_s": round(dt, 4),
+           "n_windows": len(lags), "n_trusted": len(trusted),
+           "lag_s": round(float(np.median(trusted)), 4) if trusted else None,
+           "iqr_s": round(float(np.percentile(trusted, 75) - np.percentile(trusted, 25)), 4) if len(trusted) >= 2 else None,
+           "windows": lags}
+    return out
+
+
+def windows_stable(lw: dict | None, *, min_trusted: int = 3, max_iqr_s: float = 0.15) -> bool:
+    """一路相机的分窗读数「稳」:可信窗 ≥ min_trusted 且可信窗滞后的四分位距 ≤ max_iqr_s。发现层(分窗之差)、
+    报告层(分窗覆盖率)与界面(校正量取分窗中位的条件)都只认这一个函数;两个门槛是任务的模块参数
+    (registry 7.2 的 window_min_trusted / window_max_iqr_s),默认 3 / 0.15 的来历见 findings._video_action_sync。"""
+    if not isinstance(lw, dict) or lw.get("lag_s") is None or lw.get("iqr_s") is None:
+        return False
+    try:
+        return int(lw.get("n_trusted") or 0) >= int(min_trusted) and float(lw["iqr_s"]) <= float(max_iqr_s)
+    except (TypeError, ValueError):
+        return False
 
 
 # ── 单路读数 → 接口契约里的 per_camera 条目 ──────────────────────────────────
@@ -682,6 +761,12 @@ def camera_reading(res: CheckResult) -> dict:
     # 必须容忍缺席。缺席时**不写空壳**——写了会让"没探针"与"探针说没漏拍"分不清
     if isinstance(d.get("visibility"), dict):
         out["visibility"] = d["visibility"]
+    # 相关曲线(2026-10-13 新增,同为可选键):发现层的借峰检验读它;老读数里没有,缺席即跳过
+    if isinstance(d.get("xc_curve"), dict):
+        out["xc_curve"] = d["xc_curve"]
+    # 分窗中位数(2026-10-13 新增,可选键):第二估计量,随读数落盘供发现层与评测读
+    if isinstance(d.get("lag_windows"), dict):
+        out["lag_windows"] = d["lag_windows"]
     # 病因诊断随读数一起落盘:UI 的逐图诊断框直接读它,不在界面层重新推理
     out["diagnosis"] = camera_diagnosis(out)
     return out
@@ -703,9 +788,11 @@ def sync_verdict(
     n_cams: int,
     *,
     lag_tol_s: float = 0.25,
-    spread_tol_s: float = 0.3,      # 各路 lag 彼此"接近"的上限(极差)
-    kill_lag_min_s: float = 0.5,    # 正 lag 判废门槛:超出常见相机链路延迟才够格
-    neg_kill_lag_min_s: float = 0.25,  # 负 lag 判废门槛:无良性解释,容差量级即定罪
+    spread_tol_s: float = 0.2,      # 各路 lag 彼此"接近"的上限(极差)。2026-10-13 由 0.3 降到 0.2:17 集基准上
+                                    # 0.3/0.25/0.2 对照命中同为 4 条(皆已知老错位),注入命中不变;与分窗的 0.1 同量级
+    kill_lag_min_s: float = 0.25,   # 正 lag 「全部一致」门槛。2026-10-13 由 0.5 降到 0.25 与负向统一:这条自 7.5 起
+                                    # 只进人工不判废,不必再为"相机链路延迟"抬高;基准上对照命中不变(仅 g1 ep26)
+    neg_kill_lag_min_s: float = 0.25,  # 负 lag 门槛:无良性解释,容差量级即报
     min_kill_cameras: int = 2,      # 判废至少要几路可信相机同证(孤证不定罪)
 ) -> dict:
     """逐相机读数 → episode 级结论。返回值即 CheckResult.detail(接口契约顶层结构)。
@@ -831,17 +918,14 @@ def sync_verdict(
     thr = neg_kill_lag_min_s if consensus < 0 else kill_lag_min_s
     if abs(consensus) < thr:
         out["reason"] = (
-            f"全部 {len(trusted)} 路可信相机一致滞后 {consensus:+.2f}s,"
-            f"但幅度未达判废门槛 {thr}s"
-            + ("(负滞后=数据装配错误嫌疑,门槛已从严)" if consensus < 0
-               else "(正滞后有良性解释:相机链路延迟普遍存在)")
-            + " → 标注,建议整库标定")
+            f"全部 {len(trusted)} 路可信相机一致滞后 {consensus:+.2f}s,但幅度未达门槛 {thr}s"
+            " → 标注,建议整库标定")
         return out
     out["verdict"] = "misaligned_all"
     out["reason"] = (
         f"全部 {len(trusted)}/{n_cams} 路可信相机一致指向 Δ={consensus:+.2f}s"
-        f"(极差 {spread:.2f}s ≤ {spread_tol_s}s),超判废门槛 {thr}s → 判废整条"
-        + ("。**负滞后无良性解释**,只可能来自数据装配错误(转换错行/边界切错/开头掉帧)"
+        f"(极差 {spread:.2f}s ≤ {spread_tol_s}s),超门槛 {thr}s → 整条一致错开,交人工"
+        + ("。负滞后无良性解释,只可能来自数据装配错误(转换错行/边界切错/开头掉帧)"
            if consensus < 0 else ""))
     return out
 
@@ -860,7 +944,8 @@ def sync_check_result(per_camera: dict, n_cams: int, **kw) -> CheckResult:
 # ── 数据集级诊断:全库逐相机 lag 分布 → 结论倾向 ──────────────────────────────
 
 def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
-                stable_iqr_s: float = 0.2) -> dict:
+                stable_iqr_s: float = 0.2, window_min_trusted: int = 3,
+                window_max_iqr_s: float = 0.15) -> dict:
     """{episode_id: sync_verdict 输出} → report["dataset"]["sync_health"]。
 
     产品逻辑(本次改造的主要产品):全库同号同量 → "建议整库标定 Δ"(一次系统性
@@ -873,8 +958,14 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
     suspect_eps: list = []      # 疑似错位但证据不足:必须能被数出来,不许静默
     noisy_eps: list = []        # 假峰(峰偏离 0 但赢不过 0):同上,不许静默
     abstained_eps: list = []    # 其余测不准(弃权路,剔除疑似/假峰):同上,不许静默
+    window_comparable = 0       # 分窗规则能发言的条目:两路以上相机逐窗读数都稳(覆盖率的分子)
     for eid in sorted(per_episode):
         det = per_episode[eid] or {}
+        n_stable = sum(1 for r in (det.get("per_camera") or {}).values()
+                       if windows_stable(r.get("lag_windows"), min_trusted=window_min_trusted,
+                                         max_iqr_s=window_max_iqr_s))
+        if n_stable >= 2:
+            window_comparable += 1
         if det.get("flagged_cameras"):
             flagged_eps.append({
                 "episode_id": eid, "verdict": det.get("verdict"),
@@ -906,9 +997,12 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
         for cam, r in (det.get("per_camera") or {}).items():
             slot = per_cam.setdefault(cam, {"lags": [], "n_flagged": 0,
                                             "n_suspect": 0, "n_noisy": 0,
-                                            "n_abstained": 0})
+                                            "n_abstained": 0, "n_window_stable": 0})
             if r.get("trusted") and r.get("lag_s") is not None:
                 slot["lags"].append(float(r["lag_s"]))
+            if windows_stable(r.get("lag_windows"), min_trusted=window_min_trusted,
+                              max_iqr_s=window_max_iqr_s):
+                slot["n_window_stable"] += 1
             if cam in (det.get("flagged_cameras") or []):
                 slot["n_flagged"] += 1
             if cam in (det.get("suspect_cameras") or []):
@@ -931,7 +1025,8 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
         extra = {"n_flagged": int(slot["n_flagged"]),
                  "n_suspect": int(slot.get("n_suspect", 0)),
                  "n_noisy": int(slot.get("n_noisy", 0)),
-                 "n_abstained": int(slot.get("n_abstained", 0))}
+                 "n_abstained": int(slot.get("n_abstained", 0)),
+                 "n_window_stable": int(slot.get("n_window_stable", 0))}
         if len(lags):
             q1, q3 = np.percentile(lags, [25, 75])
             out_cams[cam] = {"n": len(lags),
@@ -987,7 +1082,17 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
         advice += (f";{'、'.join(chronic)} 在多数 episode 上都测不准"
                    "(机位太远/机械臂在画面里占比小/背景干扰大)——"
                    "该路的同步结论请以人工抽检为准")
+    # 分窗规则的覆盖率(2026-10-13 用户提的泛化顾虑):这条规则只在两路以上相机逐窗读数都稳的条目上发言,
+    # 稳不稳取决于每路相机的信号(机位远近、机械臂占比、背景动静),同一款机器人同一帧率也能从七成掉到零
+    # (Qian 的 so101 14/19,anchor 的 so101 0/3)——事前猜不到,只能在报告里亮出来;没报不等于没错位。
+    if n_ep:
+        advice += f";分窗规则可比对 {window_comparable}/{n_ep} 条(两路以上相机逐窗读数都稳)"
+        quiet = sorted(c for c, v in out_cams.items() if v["n_window_stable"] < 0.5 * n_ep)
+        if quiet and window_comparable < n_ep:
+            advice += ("," + "、".join(f"{c} 只有 {out_cams[c]['n_window_stable']} 条稳" for c in quiet)
+                       + ";没比上的条目 0.2 s 级的错开只靠整条读数,整条读数的分辨率见各路峰宽")
     return {"per_camera": out_cams, "advice": advice,
+            "window_comparable_episodes": window_comparable,
             "suspect_episodes": suspect_eps,
             "noisy_episodes": noisy_eps,
             "abstained_episodes": abstained_eps,

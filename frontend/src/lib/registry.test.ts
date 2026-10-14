@@ -20,6 +20,7 @@ describe('registry 2.0: what the finding codes say about a module', () => {
   });
 
   it('the adjudication page lists the modules that ask or may be appealed - as registry 1.14 did', () => {
-    expect(ids(producesAdjudication)).toEqual(['data_integrity', 'eef_video_consistency', 'task_success']);
+    // registry 7.2: the sync check asks about cameras out of step with each other (sync_check)
+    expect(ids(producesAdjudication)).toEqual(['data_integrity', 'video_action_sync', 'eef_video_consistency', 'task_success']);
   });
 });

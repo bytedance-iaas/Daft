@@ -23,9 +23,10 @@ The rules, in this order (v1's, unchanged):
 
 v2's own lines (C1 1.9, F5.11; 1.11, design doc 14): ``eef_check`` answers a conflict between
 the EEF module's two channels (design doc 25 §7), ``integrity_check`` an episode the data
-integrity module suspects. "consistent" / "intact" count as the module passing it,
-"inconsistent" / "broken" as the module rejecting it - the gate's result, as a human task
-verdict is task_success's; nothing runs again.
+integrity module suspects, ``sync_check`` (registry 7.2) an episode whose cameras the sync
+module found out of step with each other. "consistent" / "intact" / "usable" count as the module
+passing it, "inconsistent" / "broken" / "misaligned" as the module rejecting it - the gate's
+result, as a human task verdict is task_success's; nothing runs again.
 
 Decisions never cross tasks (D32): only this task's decisions are given, and
 nothing is read from the delivery root.
@@ -57,12 +58,14 @@ LINE_DECISIONS = {
     "reject_appeal": ("restore", "keep_rejected", "unsure"),
     "eef_check": ("consistent", "inconsistent", "unsure"),
     "integrity_check": ("intact", "broken", "unsure"),
+    "sync_check": ("usable", "misaligned", "shifted", "unsure"),
 }
 #: the words of the self-contained CSV copies (v1's CSV schema, :func:`write_human_copies`)
 CSV_WORDS = {"unsure": "拿不准", "discard": "弃用该条",
             "success": "判成功", "failure": "判失败", "restore": "捞回",
             "keep_rejected": "维持拒绝", "consistent": "一致", "inconsistent": "不一致",
-            "intact": "数据无误", "broken": "数据确有问题"}
+            "intact": "数据无误", "broken": "数据确有问题",
+            "usable": "可用", "misaligned": "确有错位", "shifted": "整条平移"}
 
 
 class DecisionError(ValueError):
@@ -254,6 +257,7 @@ def write_human_copies(run_dir: str, decisions: Decisions) -> None:
         "reject_appeal": ("reject_appeals.csv", ["episode_id", "appeal", "note", "at"]),
         "eef_check": ("eef_checks.csv", ["episode_id", "decision", "note", "at"]),
         "integrity_check": ("integrity_checks.csv", ["episode_id", "decision", "note", "at"]),
+        "sync_check": ("sync_checks.csv", ["episode_id", "decision", "note", "at"]),
     }
     for line, (name, fields) in tables.items():
         rows = [d for d in decisions.applied if d["line"] == line]
@@ -267,7 +271,7 @@ def write_human_copies(run_dir: str, decisions: Decisions) -> None:
             row = {"episode_id": f"ep{int(d['episode_index']):06d}", "note": d.get("note") or "",
                    "at": at}
             word = CSV_WORDS[d["decision"]]
-            if line in ("eef_check", "integrity_check"):
+            if line in ("eef_check", "integrity_check", "sync_check"):
                 row["decision"] = word
             elif line == "task_verdict":
                 row.update(verdict=word, new_label=d.get("new_label") or "")

@@ -295,13 +295,17 @@ function syncModel(s: Summary): ViewModel {
     stats.push({ label: Z.verdicts.misaligned, value: c.fail, tone: c.fail ? 'bad' : undefined }, { label: S().checked, value: checkedOf(c) });
   }
   if (num(s.flagged_camera_readings) !== null) stats.push({ label: Z.flagged, value: `${num(s.flagged_camera_readings)} ${Z.flaggedUnit}` });
+  // the windowed comparison's coverage (registry 7.2): on how many episodes it could speak at all
+  if (num(s.window_comparable_episodes) !== null && num(s.episodes_with_readings)) {
+    stats.push({ label: Z.windowCoverage, value: `${num(s.window_comparable_episodes)}/${num(s.episodes_with_readings)}`, foot: Z.windowCoverageFoot });
+  }
   const tol = num(s.lag_tol_s) ?? 0.25;
   const charts: ChartSpec[] = [];
   if (raw && anyValue(raw)) {
     const color: Record<string, string> = { aligned: GREEN, misaligned: RED, annotated: ORANGE, suspect: ORANGE, undecidable: CHART_COLORS[0] };
     charts.push({ key: 'verdicts', title: Z.verdictChart, items: raw.map((i) => ({ name: Z.verdicts[i.name] ?? i.name, value: i.value })), colors: raw.map((i) => color[i.name]), horizontal: true });
   }
-  const cams = rowsOf<{ camera: string; readings?: number; n: number; median_lag_s: number | null; iqr_s: number | null; n_flagged: number; n_suspect: number; n_noisy?: number; n_abstained: number }>(s.cameras) ?? [];
+  const cams = rowsOf<{ camera: string; readings?: number; n: number; median_lag_s: number | null; iqr_s: number | null; n_flagged: number; n_suspect: number; n_noisy?: number; n_abstained: number; n_window_stable?: number }>(s.cameras) ?? [];
   const measured = cams.filter((x) => num(x.median_lag_s) !== null);
   if (measured.length) {
     charts.push({
@@ -335,6 +339,7 @@ function syncModel(s: Summary): ViewModel {
             { title: Z.cols.iqr, dataIndex: 'iqr_s', align: 'right' as const, render: (x: number | null) => fmt(x) },
             { title: Z.cols.suspect, dataIndex: 'n_suspect', align: 'right' as const },
             { title: Z.cols.abstained, dataIndex: 'n_abstained', align: 'right' as const },
+            ...(cams.some((x) => typeof x.n_window_stable === 'number') ? [{ title: Z.cols.windowStable, dataIndex: 'n_window_stable', align: 'right' as const }] : []),
             { title: Z.cols.flagged, dataIndex: 'n_flagged', align: 'right' as const },
           ]}
         />
