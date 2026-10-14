@@ -268,7 +268,7 @@ info:
     misaligned / shifted / unsure; "misaligned" rejects the episode, "shifted" keeps it and records the offset for a
     correction to come). Each camera's lag is also read window by window: `GET /tasks/{id}/episodes/{index}/sync-curves`
     adds `windows` per camera, the windowed comparison's lines are module parameters (`window_min_trusted`,
-    `window_max_iqr_s`, `window_spread_tol_s`, registry 7.2), each camera's `lag_windows` reading says whether it is
+    `window_max_iqr_s`, `window_spread_tol_s`), each camera's `lag_windows` reading says whether it is
     `stable` by them, and the report's sync summary counts the episodes the windowed comparison could speak on
     (`window_comparable_episodes` of `episodes_with_readings`, per camera `n_window_stable`). A single camera's offset
     is read from the camera's best reading: its trusted whole-episode lag, else its steady windowed median.
@@ -448,7 +448,7 @@ info:
     而其它路没有（AV-1 `camera_misaligned`）、各路相机的滞后彼此不同（MV-3 `lag_inconsistent`）、全部可信相机一致错开（AV-1 `misaligned_all`，
     以前机器判废）——都进新复核线 `sync_check`（可用 / 确有错位 / 整条平移 / 拿不准；「确有错位」判废，「整条平移」保留并记下错开量等以后校正）。
     每路相机的滞后另按分窗测：`GET /tasks/{id}/episodes/{index}/sync-curves` 每路多返回 `windows`，分窗比对的门槛是模块参数
-    （`window_min_trusted`、`window_max_iqr_s`、`window_spread_tol_s`，登记表 7.2），条目发现里每路的 `lag_windows` 多一个 `stable`，
+    （`window_min_trusted`、`window_max_iqr_s`、`window_spread_tol_s`），条目发现里每路的 `lag_windows` 多一个 `stable`，
     报告同步概览数出分窗比对能发言的条目数（`window_comparable_episodes` / `episodes_with_readings`，逐相机 `n_window_stable`）。
     单路错位按每路最好的读数判：整条可信用整条，否则用稳的分窗中位。
 

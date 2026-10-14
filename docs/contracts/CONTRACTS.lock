@@ -30,7 +30,7 @@
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:25bb51c38e94acbfa7277d33be9ad4239cf2cff4d0e97e3abd5c191262761279",
   "docs/contracts/eef/umi_calibration.schema.json": "sha256:875fbe6ea53fdd5b40513e86e153c464108ae885b6cb3ea40769e67720095c44",
   "docs/contracts/modules.json": "sha256:ffa00f5ebf04ee3268972402576cfa8104db862e19e630be0c9624689d51ab72",
-  "docs/contracts/openapi.yaml": "sha256:5b3faeadb2b4ed6bb4e2f6ac2f1b2ea7cd35e9257226aa4c2a8ae817915f8d6b",
+  "docs/contracts/openapi.yaml": "sha256:5312d4cea6960ac17bbb2bbecd8aab207e2b8d29306487acd13616d35f20695f",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:a24d8ee4b08af94b68d167f7886b2acd6331c1791840ed880bdf8f3707618a65",
   "docs/contracts/progress.schema.json": "sha256:dbab7f4f139612c484ab37c1a042131ed3f3515c66dbfe1b29775755362ecbdd",
   "docs/contracts/taxonomy.json": "sha256:fd823f60b18ffb2386a92e2f48f6e75b19f658a08af1bc2b2a5cd88ed60b6bcc",
