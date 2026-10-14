@@ -128,3 +128,44 @@ def test_legacy_rpy_path_unchanged_without_rotation_blocks():
                          same_space=True)
     assert res.detail["actuator_saturation"] is not None
     assert "path_efficiency_cols" not in res.detail
+
+
+# ---- 2026-10-14:没有列名时按数值认四元数块与夹爪(RH20T) -----------------------------------
+
+def _rh20t_like_action(t: int = 120):
+    tt = np.linspace(0, 2 * np.pi, t)
+    xyz = np.stack([0.5 + 0.1 * np.sin(tt), 0.1 * np.cos(tt), 0.17 + 0.05 * np.sin(2 * tt)], 1)
+    q = Rotation.from_euler("xyz", np.stack([0.1 * np.sin(tt), 0.2 * np.cos(tt), np.pi + 0.3 * np.sin(tt)], 1)).as_quat()
+    q[(np.arange(t) // 30) % 2 == 1] *= -1
+    grip = np.where(np.arange(t) < 60, 95.0, 0.0)
+    return np.column_stack([xyz, q, grip]).astype(np.float32)
+
+
+def test_numeric_layout_finds_the_unit_quaternion_block_and_the_switch_gripper():
+    from curation.ingest.dataset_semantics import detect_ee_layout_numeric
+    lay = detect_ee_layout_numeric(_rh20t_like_action(), 8)
+    assert lay["rotation_blocks"] == [(3, 4, "quat")] and lay["angle_dims"] == (3, 4, 5, 6)
+    assert lay["translation_dims"] == (0, 1, 2) and lay["gripper_dims"] == (7,)
+    assert lay["source"] == "numeric" and lay["euler_triplet"] is False
+
+
+def test_numeric_layout_does_not_mistake_rpy_or_joints_for_a_quaternion():
+    from curation.ingest.dataset_semantics import detect_ee_layout_numeric
+    a = _rh20t_like_action()
+    rpy = np.column_stack([a[:, :3], Rotation.from_quat(a[:, 3:7] * np.sign(a[:, 6:7])).as_euler("xyz"), a[:, 7] / 95.0])
+    assert detect_ee_layout_numeric(rpy, 7) is None
+    joints = np.cumsum(np.random.default_rng(0).normal(size=(120, 6)) * 0.01, axis=0)
+    assert detect_ee_layout_numeric(joints, 6) is None
+
+
+def test_reader_layout_without_names_uses_the_numeric_fingerprint_and_keeps_the_preflight_gripper():
+    from curation.ingest.lerobot_reader import resolve_dataset_semantics
+    a = _rh20t_like_action()
+    s = np.column_stack([a[:, :7], np.zeros((len(a), 7)), a[:, 7]])     # like RH20T's 15-column state
+    info = {"robot_type": "flexiv", "fps": 10,
+            "features": {"action": {"shape": [8]}, "observation.state": {"shape": [15]}}}
+    rows = [{"action": a, "proprio_state": s, "fps": 10.0}] * 2
+    sem = resolve_dataset_semantics(info, rows, "rh20t_like")
+    lay = sem.extras.get("layout") or {}
+    assert lay.get("rotation_blocks") == [[3, 4, "quat"]] and lay.get("source") == "numeric"
+    assert tuple(lay.get("gripper_dims") or ()) == (7,) and sem.gripper_dims == (7,)

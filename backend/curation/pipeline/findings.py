@@ -514,11 +514,14 @@ def _motion_quality(passed, score, d, p) -> Derived:
         out.readings["score"] = _r(score)
     for key in ("smoothness", "spike", "gripper_jitter", "actuator_saturation", "stuck", "fluency",
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
-                "idle_mid_count", "idle_mid_total_s"):
+                "idle_mid_count", "idle_mid_total_s",
+                # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
+                "smoothness_cols", "smoothness_min_col", "discrete_cols"):
         if d.get(key) is not None:
             out.readings[key] = _r(d.get(key))
     _sub_score(out, m, "smoothness_low", d.get("smoothness"), p["smoothness_min"], "动作不平滑，平滑度分",
-               high_below=p["severe_below"])
+               high_below=p["severe_below"],
+               readings={"smoothness_cols": d.get("smoothness_cols")} if isinstance(d.get("smoothness_cols"), dict) else None)
     spike_frames = [int(f) + 1 for f in d.get("spike_frames") or [] if isinstance(f, (int, float))]
     _sub_score(out, m, "spike", d.get("spike"), p["spike_min"], "动作有孤立尖刺，尖刺分",
                high_below=p["severe_below"], readings={"spike_frames": spike_frames[:20]} if spike_frames else None)
@@ -549,7 +552,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
         out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "算不出开头与结尾的空转")[:200])
     # sub-items v1 could not compute: why (its own reason, else no state columns)
     no_state = d.get("stuck") is None and "stuck_reason" not in d and "stuck_strategy" not in d
-    for key, item, why_key in (("smoothness", "ACT-1", None), ("spike", "ACT-2", "spike_reason"),
+    for key, item, why_key in (("smoothness", "ACT-1", "smoothness_reason"), ("spike", "ACT-2", "spike_reason"),
                                ("gripper_jitter", "ACT-5", "gripper_reason"),
                                ("actuator_saturation", "ACT-4", "saturation_reason"),
                                ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-7", "fluency_reason")):

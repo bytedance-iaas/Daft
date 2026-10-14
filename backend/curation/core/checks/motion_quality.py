@@ -19,6 +19,11 @@ import numpy as np
 from ..contract import CheckResult
 
 
+#: 开关型指令列的取值种类上限:开 / 关两档加中间档(RH20T 夹爪一条里只有 0 与 95 两种值;
+#: 连续舵机夹爪、关节角一条里取值上百种)。只用来把开关列挡在平滑度与尖刺之外,不是判定线
+DISCRETE_LEVELS = 4
+
+
 def _rotation_sequence(block: np.ndarray, repr_: str):
     """一段姿态分量序列 → scipy Rotation 序列;表示法认不出/数值退化返回 None。"""
     from scipy.spatial.transform import Rotation
@@ -107,6 +112,16 @@ def motion_quality(
                 else:
                     half = angle_period / 2.0
                     a[:, cols] = (a[:, cols] + half) % angle_period - half
+            elif repr_ in ("quat", "rot6d", "rotmat") and len(cols) == int(length):
+                # 四元数 / 6D / 矩阵分量不是角度,直接差分会把 q 与 −q 的符号翻转当成 2.0 的跳变
+                # (RH20T 2026-10-14:一条里翻 3~7 次,单这一项就把平滑度打到 0.0007)。指令侧也换成
+                # 姿态里程表:累计转角进块首列,其余列清零(与下面 proprio 的处理一致)
+                rot_a = _rotation_sequence(a[:, cols], str(repr_))
+                if rot_a is not None:
+                    steps_a = (rot_a[:-1].inv() * rot_a[1:]).magnitude()
+                    a[:, cols[0]] = np.concatenate([[0.0], np.cumsum(steps_a)])
+                    for c in cols[1:]:
+                        a[:, c] = 0.0
         if proprio is not None:
             p_ = np.asarray(proprio, dtype=np.float64).copy()
             for start, length, repr_ in blocks:
@@ -164,15 +179,40 @@ def motion_quality(
     sub: dict[str, float | None] = {}
     detail: dict = {}
 
-    # ① smoothness:加速度 RMS,基准自适应(步长尺度/dt²)
+    # 离散列:一条里取值种类 ≤ DISCRETE_LEVELS 的列是开关型指令(开 / 关两档加中间档,如 RH20T
+    # 0↔95 的夹爪),不是轨迹,不进平滑度与尖刺;连续舵机夹爪一条里取值上百种,不受影响。
+    # 2026-10-14 教训:预检认不出夹爪列时,一列 0↔95 的跳变把其余 7 列的平滑度一起拖成 0
+    discrete = [c for c in arm_cols
+                if T >= 8 and len(np.unique(np.round(a[:, c], 6))) <= DISCRETE_LEVELS]
+    kin_cols = [c for c in arm_cols if c not in discrete]
+    if discrete:
+        detail["discrete_cols"] = discrete
+
+    # ① smoothness:逐列算加速度 RMS 相对该列自己的步长尺度(4×步长/dt²),再取各列均值。
+    # 合在一起算时一列的单位或表示法(夹爪 0–95、四元数翻转)就能污染全体;逐列算,一列坏只坏一列,
+    # 坏列在 smoothness_cols 里自己露出来。恒定列(没动过)不计
+    cols_s: list[float] = []
+    cols_used: list[int] = []
+    rms_cols: list[float] = []
     if T >= 3:
-        accel = np.diff(arm, n=2, axis=0) / dt**2
-        rms = float(np.sqrt((accel**2).mean()))
-        ref = smooth_ref if smooth_ref is not None else 4.0 * step_scale / dt**2
-        sub["smoothness"] = float(np.exp(-rms / (ref + 1e-12)))
-        detail["accel_rms"] = round(rms, 4)
+        for c in kin_cols:
+            st = float(np.abs(np.diff(a[:, c])).mean())
+            if st < 1e-12:
+                continue
+            rms_c = float(np.sqrt((np.diff(a[:, c], n=2) ** 2).mean())) / dt**2
+            ref_c = smooth_ref if smooth_ref is not None else 4.0 * st / dt**2
+            cols_s.append(float(np.exp(-rms_c / (ref_c + 1e-12))))
+            cols_used.append(int(c))
+            rms_cols.append(rms_c)
+    if cols_s:
+        sub["smoothness"] = float(np.mean(cols_s))
+        detail["smoothness_cols"] = {str(c): round(x, 4) for c, x in zip(cols_used, cols_s)}
+        detail["smoothness_min_col"] = cols_used[int(np.argmin(cols_s))]
+        detail["accel_rms"] = round(float(np.mean(rms_cols)), 4)
     else:
         sub["smoothness"] = None
+        if T >= 3:
+            detail["smoothness_reason"] = "手臂列全程没动或都是开关型指令，算不出平滑度"
 
     # ② path_efficiency:直线/路径(关节空间;scorer 同款;软分,来回动作天然低)
     _pe_cols = [c for c in (translation_dims or ()) if c < dim]
@@ -186,10 +226,11 @@ def motion_quality(
 
     # ③ spike:加速度离群帧。真数据加速度**重尾**(aloha 实测 MAD-z>15 的帧占 10%+)→
     # MAD/中位数阈值全军覆没;真尖刺的特征是比自身 p99 还高一个量级 → 分位数相对阈值
-    if proprio is not None and np.asarray(proprio).shape[1] > max(arm_cols, default=-1):
-        src = np.asarray(proprio, dtype=np.float64)[:, arm_cols]
+    _spk_cols = kin_cols or arm_cols
+    if proprio is not None and np.asarray(proprio).shape[1] > max(_spk_cols, default=-1):
+        src = np.asarray(proprio, dtype=np.float64)[:, _spk_cols]
     else:
-        src = arm
+        src = a[:, _spk_cols]
     # 判别量 = **峰值孤立度**:数据尖刺是孤立 1-3 帧(前后干净),真实接触有物理衰减
     # (邻域整体抬高)。2026-07-02 实测:aloha 干净(含猛烈接触)iso 3~28,注入 69~101;
     # 合成平滑轨迹 干净 iso≈1,注入 6.6~9 → **无普适绝对阈值**,拐点是配置项

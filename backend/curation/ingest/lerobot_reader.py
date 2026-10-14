@@ -437,14 +437,22 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
             sem.gripper_dims = tuple(pf["gripper_dims"])
         if sem.action_space == "ee" and not sem.angle_dims:
             # 布局按 names 识别(2026-09-16 umi 教训:rot6d 不是 rpy),写进 extras 随行流到漏斗
-            from .dataset_semantics import detect_ee_layout, layout_for_extras
+            from .dataset_semantics import (detect_ee_layout, detect_ee_layout_numeric,
+                                            layout_for_extras)
             a0 = np.asarray(sample_rows[0]["action"])
             if a0.ndim == 2:
                 lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+                if lay["source"] != "names":
+                    # 没有列名:先按数值认四元数块(2026-10-14 RH20T),认不出再用维数规则
+                    lay = detect_ee_layout_numeric(a0, int(a0.shape[1])) or lay
                 sem.angle_dims = tuple(lay["angle_dims"])
                 sem.euler_triplet = bool(lay["euler_triplet"])
                 if not sem.gripper_dims and lay["gripper_dims"]:
                     sem.gripper_dims = tuple(lay["gripper_dims"])
+                elif sem.gripper_dims and not lay["gripper_dims"]:
+                    # 预检按数值认出的夹爪列要随布局进 extras,运动质量只从 layout 读夹爪列
+                    # (2026-10-14:RH20T 的夹爪预检认出了,却从没传到运动质量)
+                    lay = dict(lay, gripper_dims=tuple(sem.gripper_dims))
                 sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
         if sem.gripper_dims:
             # 极性三层:字段名(width/opening → 宽度制)→ 样本开局状态(多数条目开局张开)→ droid 约定
@@ -463,7 +471,9 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
     extras["semantics_preflight"] = pf
     if sem.profile_name:
         extras["profile_name"] = sem.profile_name
-    sem.extras = extras
+    # 布局是上面刚写进 sem.extras 的,这里合并而不是覆盖(2026-10-14:覆盖把 layout 丢了,
+    # 运动质量从来没收到过预检认出的布局与夹爪列)
+    sem.extras = dict(sem.extras or {}, **extras)
     return sem
 
 

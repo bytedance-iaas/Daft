@@ -157,6 +157,48 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
             "gripper_closed": "high"}
 
 
+#: 单位四元数的模长容差:float32 存储的归一化误差约 1e-7,留三个数量级余量;四列随机数逐帧
+#: 都落在 1±1e-3 里几乎不可能,所以这条指纹没有第二种解释
+QUAT_NORM_TOL = 1e-3
+#: 开关型列的取值种类上限(与 core.checks.motion_quality.DISCRETE_LEVELS 同一口径)
+_DISCRETE_LEVELS = 4
+
+
+def detect_ee_layout_numeric(action, dim: int) -> dict | None:
+    """没有列名时按数值认 EE 布局(2026-10-14 RH20T 教训:8 列无名,xyz + 四元数 + 夹爪 0–95,
+    谁都认不出,运动质量把四元数翻转和夹爪跳变当成手臂抖动)。指纹:连续 4 列逐帧模长 ≈ 1 → 四元数块;
+    块前紧挨的 3 列 → 平移;块外取值种类 ≤ 4 或在 [0,1] / [−1,1] 内且大多数帧不变的列 → 夹爪。
+    认不出四元数块就返回 None,让调用方走原来的规则。"""
+    a = np.asarray(action, dtype=np.float64)
+    if a.ndim != 2 or a.shape[0] < 8 or a.shape[1] != dim or dim < 4:
+        return None
+    if not np.all(np.isfinite(a)):
+        return None
+    start = None
+    for s0 in range(0, dim - 3):
+        norms = np.linalg.norm(a[:, s0:s0 + 4], axis=1)
+        if np.all(np.abs(norms - 1.0) <= QUAT_NORM_TOL) and len(np.unique(np.round(a[:, s0:s0 + 4], 6), axis=0)) > 1:
+            start = s0
+            break
+    if start is None:
+        return None
+    quat = tuple(range(start, start + 4))
+    trans = tuple(range(start - 3, start)) if start >= 3 else ()
+    grip = []
+    for c in range(dim):
+        if c in quat or c in trans:
+            continue
+        col = a[:, c]
+        uniq = len(np.unique(np.round(col, 3)))
+        still = float(np.mean(np.abs(np.diff(col)) < 1e-6))
+        bounded = float(col.min()) >= -1.0 - 1e-6 and float(col.max()) <= 1.0 + 1e-6
+        if uniq <= _DISCRETE_LEVELS or (bounded and still > 0.6):
+            grip.append(c)
+    return {"angle_dims": quat, "rotation_blocks": [(start, 4, "quat")], "euler_triplet": False,
+            "gripper_dims": tuple(grip), "translation_dims": trans, "source": "numeric",
+            "gripper_closed": "high"}
+
+
 def layout_for_extras(layout: dict) -> dict:
     """布局写进 semantics_extras(JSON 列,随行流到漏斗;tuple 型语义字段进不了 daft)。"""
     return {"angle_dims": list(layout.get("angle_dims") or ()),

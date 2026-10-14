@@ -165,6 +165,15 @@ def make_motion_check(cfg: dict, registry) -> Callable:
                      proprio_space, embodiment_id, stuck_strategy, semantics_extras):
         pr = np.asarray(proprio_state) if proprio_state is not None else None
         a = np.asarray(action)
+        if str(action_space) in ("", "unknown", "None") or str(control_mode) in ("", "unknown", "None"):
+            # 预检没把握这些列是什么(2026-10-14 HIW-500:unknown 照算,平滑度 0 分):不猜,弃权,
+            # 每个子项带原因进发现(ACT-6 数据集级的「判断不了动作的语义」另有一条)
+            why = "动作列含义不明（预检分不清是关节角还是末端位姿），运动质量不算"
+            return result_to_struct(CheckResult(
+                name="motion_quality", passed=None,
+                detail={"reason": why, "smoothness_reason": why, "spike_reason": why,
+                        "gripper_reason": why, "saturation_reason": why, "stuck_reason": why,
+                        "fluency_reason": why, "semantics_undetermined": True}))
         kw = dict(p_motion)
         # 语义层识别出的 EE 布局(2026-09-16,只在无档案的数据集上出现):按块给运动质量,
         # 不再一律假定"第 3-5 列是 rpy";有档案的数据集走下面的老规则,数值一字不变
