@@ -690,8 +690,9 @@ describe('新建任务 · 第二屏按轨迹来源、相机与 VLM 开关 (desig
     expect(within(block).getByTestId('eef-goto-declaration')).toHaveAttribute('href', '/datasets/ds_droid100?declaration=1');
     expect(within(block).getByText('改为上传 trajectory.json')).toBeInTheDocument();
     expect(within(block).queryByTestId('upload-button-trajectory_json')).toBeNull();          // folded
-    // third-person cameras: the gripper reference is offered
+    // third-person cameras: the gripper reference is offered, nothing to explain
     expect(within(s2()).getByTestId('choice-gripper_reference')).toBeInTheDocument();
+    expect(within(s2()).queryByTestId('third-person-only-eef_video_consistency')).toBeNull();
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(fieldErrors(s2())).toContain('补完数据集声明后重新预检，或上传 trajectory.json，或跳过该模块'));
     await user.click(within(block).getByText('改为上传 trajectory.json'));
@@ -704,6 +705,10 @@ describe('新建任务 · 第二屏按轨迹来源、相机与 VLM 开关 (desig
     expect(within(s2()).getByTestId('eef-trajectory-source')).toHaveTextContent('轨迹由平台从数据集自身的数据生成');
     expect(requiredFieldLabels(s2())).not.toContain('trajectory.json');
     expect(within(s2()).queryByTestId('choice-gripper_reference')).toBeNull();      // two wrist cameras
+    // said where it would have been, not left out without a word (2026-10-13)
+    expect(within(s2()).getByTestId('third-person-only-eef_video_consistency')).toHaveTextContent(
+      '没有「夹爪参考」：它只用于第三视角相机，这个数据集的相机 left_wrist（腕部）、right_wrist（腕部） 都不是。相机角色在数据集页的「数据集声明」里改。',
+    );
     expect(within(s2()).getByRole('switch', { name: '使用 VLM 辅助' })).toBeChecked();
   });
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.3.0
+  version: 7.4.0
   description: |
     ## Overview
 
@@ -258,6 +258,10 @@ info:
     format the platform reads - LeRobot, Lance, mcap and raw UMI sessions - not only LeRobot, including readable
     directories inside a mirrored repository (`<repository>/<path>`); `format_hint` adds `umi_session`.
 
+    **7.4.0** (2026-10-13): `GET /datasets/{id}/declaration` returns the dataset's columns (`features`). A dataset
+    registered before its preflight listed columns has them read from its metadata, so its declaration's draft names
+    its pose, joint and camera columns as a newly registered one's does, instead of coming out empty.
+
   x-description-zh: |
     ## 概览
 
@@ -418,6 +422,9 @@ info:
 
     **7.3.0**（2026-10-12）：`GET /datasets/browse?source=public` 列出 HuggingFace 缓存桶里平台能读的全部格式——LeRobot、Lance、mcap
     与 UMI 原始会话，不再只有 LeRobot；镜像仓库里能读的子目录也列出来（名字是 `<仓库>/<路径>`）；`format_hint` 多 `umi_session`。
+
+    **7.4.0**（2026-10-13）：`GET /datasets/{id}/declaration` 多返回数据集的列（`features`）。登记时预检还不列出列信息的数据集，改为从它的
+    元数据现读，声明草稿和新登记的一样写出位姿、关节角与相机列，不再是空的。
 
 servers:
   - url: "{base}/api/v1"
@@ -6100,8 +6107,8 @@ components:
     DatasetDeclaration:
       type: object
       additionalProperties: false
-      required: [dataset_id, format, state, declaration, version, updated_at, draft, unresolved, cameras, trajectory,
-                 assumed, suspects, warnings]
+      required: [dataset_id, format, state, declaration, version, updated_at, draft, unresolved, cameras, features,
+                 trajectory, assumed, suspects, warnings]
       properties:
         dataset_id: {type: string}
         format: {enum: [lerobot, mcap, lance, umi_session]}
@@ -6119,10 +6126,26 @@ components:
             - $ref: "#/components/schemas/Declaration"
         unresolved: {type: array, items: {$ref: "#/components/schemas/DeclarationNote"}}
         cameras: {type: array, items: {$ref: "#/components/schemas/DeclarationCamera"}}
+        features:
+          description: >-
+            the dataset's columns as its metadata declares them (LeRobot / Lance; empty for mcap): what the
+            declaration's records can name, read from the dataset's meta/info.json when the registration's
+            preflight does not list them
+          type: array
+          items: {$ref: "#/components/schemas/DatasetFeature"}
         trajectory: {$ref: "#/components/schemas/DeclarationTrajectory"}
         assumed: {type: array, items: {$ref: "#/components/schemas/DeclarationAssumed"}}
         suspects: {type: array, items: {$ref: "#/components/schemas/DeclarationSuspect"}}
         warnings: {type: array, items: {$ref: "#/components/schemas/VizWarning"}}
+    DatasetFeature:
+      type: object
+      additionalProperties: false
+      required: [key, dtype, shape, names]
+      properties:
+        key: {type: string}
+        dtype: {type: string}
+        shape: {type: [array, "null"], items: {type: integer}}
+        names: {type: [array, "null"], items: {type: string}, description: "component names, flattened"}
     DatasetDeclarationPut:
       type: object
       additionalProperties: false

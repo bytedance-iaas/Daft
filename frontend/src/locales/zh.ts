@@ -617,6 +617,9 @@ export const zh = {
     },
     eefNoModel: '没选模型服务：只用 CPU 的测量，模型那一路记为「没有模型后端」。要模型的意见就回第一屏选一个。',
     eefOffNoReference: '关掉「使用 VLM 辅助」又没给夹爪参考：第三视角相机不测，那几项判断不了',
+    // a parameter left out because no camera can be a third-person one (design doc 25 §4.2)
+    thirdPersonOnly: (what: string, cameras: string) => `没有「${what}」：它只用于第三视角相机，这个数据集的相机${cameras ? ` ${cameras} ` : ''}都不是。相机角色在数据集页的「数据集声明」里改。`,
+    mountName: { wrist: '腕部', moving: '移动', fixed_external: '第三视角' } as Record<string, string>,
     skippedTitle: '已跳过',
     skipModule: '跳过该模块',
     advancedLines: '判定线（高级）',

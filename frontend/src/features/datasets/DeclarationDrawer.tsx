@@ -82,9 +82,11 @@ function Opened({ dataset, onClose, onMapping }: { dataset: { id: string; name: 
   }, [d, value]);
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<{ field: string; problem: string }[]>([]);
+  // the dataset's columns as the declaration reads them (C4 7.4.0): a registration whose preflight predates them
+  // has them read from its metadata - its own preflight would offer no column to pick (design doc 25 §9.7)
   const columns = useMemo(
-    () => (detail.data?.preflight?.dataset?.features ?? []).filter((f) => !['video', 'image', 'string', 'bool'].includes(f.dtype)),
-    [detail.data],
+    () => (d?.features ?? detail.data?.preflight?.dataset?.features ?? []).filter((f) => !['video', 'image', 'string', 'bool'].includes(f.dtype)),
+    [d, detail.data],
   );
   const unchanged = Boolean(d?.declaration && value && JSON.stringify(d.declaration) === JSON.stringify(value));
   const sources = (d?.cameras ?? []).map((c) => c.source);

@@ -434,11 +434,11 @@ const DIGEST2 = 'sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6
 
 type EefCamera = NonNullable<PreflightResult['modules'][number]['cameras']>[number];
 
-/** EEF's parameters that apply (design doc 25 §4.2): the gripper reference only with a third-person camera (or when
- * the cameras are not known). */
+/** EEF's parameters that apply (design doc 25 §4.2, as the CLI's): the gripper reference unless every camera is known
+ * not to be a third-person one (wrist, moving) - a camera whose mount nobody declared may be one. */
 function eefApplicable(m: (typeof registry.modules)[number], cameras: EefCamera[]): string[] {
   const props = ((m.param_schema as { properties?: Record<string, { 'x-applies-when'?: string }> }).properties ?? {}) as Record<string, { 'x-applies-when'?: string }>;
-  const third = !cameras.length || cameras.some((c) => c.mount === 'fixed_external');
+  const third = !cameras.length || cameras.some((c) => c.mount !== 'wrist' && c.mount !== 'moving');
   return Object.entries(props)
     .filter(([, x]) => x['x-applies-when'] !== 'third_person_camera' || third)
     .map(([k]) => k);

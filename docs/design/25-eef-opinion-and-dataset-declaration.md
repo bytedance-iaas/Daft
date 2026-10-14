@@ -130,6 +130,9 @@
 - 工具模型：只预填、不当常数。`robot_type` 认得出机型就按该机型官方夹爪预填（Franka：位姿点 `panda_link8`，TCP 沿 z 0.1034 m，手指沿 y，开口 0.08 m），假设代码 `tool_from_robot_type`；
   位姿列的分量名或列名含 `tcp` / `ee` 时预填「位姿列已是 TCP、偏移 0」；手持夹爪按型号预填今天的 DEMO 值。每个数据集在声明里确认或改。
 - 语义：沿用 `record_draft.py`，位姿列的 `frame_id` 不起草为 null 而是按机型给缺省并标假设（机械臂的 `cartesian_position` 多数是法兰或 TCP，表单里改）。
+- 列从哪来（2026-10-13，§9.7）：起草、确认时的校验与相机列表读登记时预检的 `dataset.features` / `camera_info`；10-04 之前登记的数据集，
+  那份预检里没有这两项，这时现读数据集的 `meta/info.json`（与 CLI 预检同一套函数），按（数据集、预检时间）缓存。声明接口把这份列一并
+  返回（`features`），声明表单的列选择器用它，不再依赖登记时的预检。
 
 ### 3.4 确认时的校验
 
@@ -162,7 +165,9 @@
 
 - `trajectory_source`：`upload` / `generate` / `dataset_file` / `session` / `mcap_derive` / `missing_declaration` / `missing_pose`；`missing_*` 时 `needs_input` 的 `input_hint` 指向声明页的哪一节或 `trajectory_json`；
 - `cameras[]`：每路相机的 `mount`、归属、`drawable`（算得出投影）、算不出的原因码、可做的分项（第三视角：位置 / 朝向 / 时间 / 画面运动；腕部：自运动）；
-- `applicable_params`：这个数据集上第二屏该出现的参数（有第三视角相机才有 `observation_seeds` / `gripper_template`）。
+- `applicable_params`：这个数据集上第二屏该出现的参数：有第三视角相机，或有相机的角色还不知道（`mount: null`，可能是第三视角）时有
+  `observation_seeds` / `gripper_template`；每路都确定不是第三视角（`wrist`、`moving`）才没有（2026-10-13，§9.7：角色不明曾被当成「没有第三视角」，
+  夹爪参考无声无息地不见了）。
 
 模块可用的条件不变：任一分项可用即可用。预检不解码视频，`drawable` 只说明「算得出投影」，证明不了「画得对」，后者是模块要查的。
 
@@ -171,7 +176,7 @@
 | 项 | 规则 |
 |---|---|
 | trajectory.json | `trajectory_source` 是 `missing_pose` → 必填；`missing_declaration` → 先出一句「到数据集页补声明」并链过去，上传框折叠在下面的「改为上传 trajectory.json」里（上传即绕过声明）；其余可选，说明「上传即覆盖平台生成的轨迹，并额外比对上传件与数据集记录」 |
-| 夹爪参考 | 只在 `cameras[]` 有第三视角相机时出现；二选一分组不必填；说明「给了就按画面测量，不给只有模型意见」 |
+| 夹爪参考 | 在 `applicable_params` 里才出现（有第三视角相机，或有相机角色不明）；二选一分组不必填；说明「给了就按画面测量，不给只有模型意见」。不出现时卡片里写一句为什么：夹爪参考只用于第三视角相机，后面列出各路相机与角色 |
 | 使用 VLM 辅助 | 开关，缺省开。没有可用的 VLM 后端时照常允许建任务，预检的 EEF 条目照常 `available`，`notes` 里一条 `vlm_backend_missing` 作提醒，运行时模型渠道按「缺」处理（§7.1 的 `single_source` 写明原因）；关掉时不提醒、不要求后端。两种情况下都只跑 CPU 块里的那一半（D84） |
 | 其余 | 阈值 profile、参与的相机、窗口与搜索范围照旧放高级设置 |
 
@@ -512,6 +517,18 @@ episode 级：取所有分项、所有相机里 **p 最大**的那个，不平�
   没有这条——真数据上的反例。② DAS（按内置 DEMO 标定）：只有腕部相机、不测位置，记录里没有可比的位置读数，不会触发；触发时写出按假设值的
   `T_camera_tcp`、`body_to_optical`、`pose_frame`（单测）。测试：`tests/eef/test_calibration_suspect.py`（判定、反例、假设值、报告的发现与 C2 Schema）、
   前端 `eefReadings`、`episodeBlocks` 的用例。
+
+### 9.7 空草稿与夹爪参考消失的修正（2026-10-13，阶段 25）
+
+需求方问「新建任务里观测种子、夹爪外观模板怎么没了」。galbot 上 eef_ds2_lr3 是 09-23 登记的，登记预检里没有列信息（`features` 10-04
+才进预检），声明表单据此起草出只有工具一栏的草稿；保存后相机角色全空、位姿为空，`applicable_params` 又把角色不明当成没有第三视角相机。
+两处都改了：
+
+- **草稿与校验现读 `info.json`**：`daemon/viz/declaration.py` 的列来源先看登记预检，没有列时读数据集的 `meta/info.json`（`lerobot_info.features_of`
+  / `camera_info_of`），起草、`facts_of` 的校验、`cameras_of` 共用，按（数据集 id、预检时间）缓存；读不到就照旧（草稿里列为待补）。C4 的
+  `DatasetDeclaration` 加 `features`（与 C2 预检的 `dataset.features` 同形），声明表单的列选择器用它。
+- **夹爪参考**：`eef_preflight.applicable_params` 的条件改成「没有相机，或任一路不是确定的非第三视角（`wrist`、`moving`）」；第二屏按注册表里
+  带 `x-applies-when: third_person_camera` 而不在 `applicable_params` 里的参数，在 EEF 卡片里写一句为什么（列出相机与角色）。
 
 ## 10. 开工时的缺省选择（实测后可改）
 

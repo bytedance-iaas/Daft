@@ -3605,10 +3605,19 @@ export interface components {
             draft: null | components["schemas"]["dataset-declaration.schema"];
             unresolved: components["schemas"]["DeclarationNote"][];
             cameras: components["schemas"]["DeclarationCamera"][];
+            /** @description the dataset's columns as its metadata declares them (LeRobot / Lance; empty for mcap): what the declaration's records can name, read from the dataset's meta/info.json when the registration's preflight does not list them */
+            features: components["schemas"]["DatasetFeature"][];
             trajectory: components["schemas"]["DeclarationTrajectory"];
             assumed: components["schemas"]["DeclarationAssumed"][];
             suspects: components["schemas"]["DeclarationSuspect"][];
             warnings: components["schemas"]["VizWarning"][];
+        };
+        DatasetFeature: {
+            key: string;
+            dtype: string;
+            shape: number[] | null;
+            /** @description component names, flattened */
+            names: string[] | null;
         };
         DatasetDeclarationPut: {
             /** @description a dataset-declaration/1.0 document (a viz-mapping/1.x one is taken as its first layer) */

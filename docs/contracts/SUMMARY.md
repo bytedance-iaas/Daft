@@ -538,3 +538,12 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **C4 → 7.3.0（只加）**：`BrowsedDataset.format_hint` 多 `umi_session`；`GET /datasets/browse?source=public` 不再只列 LeRobot，按桶根清单
   `dataset_files.json` 的文件列表认 LeRobot v2 / v3、Lance、mcap、UMI 原始会话，镜像仓库里能读的子目录也列（`<仓库>/<路径>`）。
   实现在 B 类的 `curation/public_formats.py`，A 类的 `ingest/public_catalog.py` 不动（它的配置与匿名桶登记照用）。C1、C2、C3 不变。
+
+## 二十六、数据集声明的空草稿与夹爪参考消失（2026-10-13）
+
+- **C4 → 7.4.0（只加）**：`DatasetDeclaration` 多 `features`（数据集的列，同 C2 预检 `dataset.features` 的形状，新组件 `DatasetFeature`）。
+  10-04 之前登记的数据集，登记预检里没有列，Daemon 起草、核对声明与列相机时现读它的 `meta/info.json`（按数据集与预检时间缓存），声明表单的列下拉用这份；
+  之前草稿只剩工具一栏，存下来就等于说数据集没有位姿、没有相机角色。中英变更记录。
+- **C2 行为**：EEF 预检的 `applicable_params` 在相机角色不明（`mount: null`）时也给夹爪参考，只有每路都确定是 `wrist` / `moving` 时才不给。
+  C1、C2 的 Schema、C3 不变。
+

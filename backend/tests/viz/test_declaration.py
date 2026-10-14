@@ -65,6 +65,7 @@ def test_a_draft_says_what_a_person_still_has_to_declare(arm):
     mounts = {src: c["mount"] for src, c in draft["calibration"]["cameras"].items()}
     assert mounts == {FRONT: "fixed_external", WRIST: "wrist"}
     assert [c["source"] for c in doc["cameras"]] == [FRONT, WRIST] and doc["cameras"][0]["width"]
+    assert {f["key"] for f in doc["features"]} == set(arm.info["features"])
     assert doc["trajectory"]["kind"] == "missing_declaration"
     codes = {(m["field"], m["code"]) for m in doc["trajectory"]["missing"]}
     assert (f"calibration.cameras.{FRONT}.intrinsics", "intrinsics_missing") in codes
@@ -73,6 +74,33 @@ def test_a_draft_says_what_a_person_still_has_to_declare(arm):
     entry = next(m for m in arm.get(f"{API}/datasets/{ds['id']}").json()["preflight"]["modules"]
                  if m["id"] == "eef_video_consistency")
     assert (entry["reason_code"], entry["trajectory_source"]["kind"]) == ("declaration_incomplete", "missing_declaration")
+
+
+def test_a_registration_whose_preflight_predates_its_columns_drafts_from_the_metadata(arm):
+    """A dataset registered before the preflight listed its columns (2026-10-04) kept a preflight without
+    ``features`` / ``camera_info``: its draft used to come out empty - only the tool from the robot type - and, saved,
+    told every task the dataset records no pose and has no third-person camera (galbot's eef_ds2_lr3, 2026-10-13).
+    The columns are read from the dataset's meta/info.json instead (design doc 25 §3.3, §9.7)."""
+    ds = arm.ds["id"]
+    repo = arm.app.state.runtime.repo
+    kept = repo.get_dataset(ds)
+    old = json.loads(json.dumps(kept.preflight))
+    for k in ("features", "camera_info"):
+        old["dataset"].pop(k)
+    repo.update_dataset(ds, preflight=old, meta_fingerprint=kept.meta_fingerprint,
+                        source_fingerprint=kept.source_fingerprint, preflighted_at=kept.preflighted_at + 1)
+    doc = arm.get(f"{API}/datasets/{ds}/declaration").json()
+    assert_schema("DatasetDeclaration", doc)
+    draft = doc["draft"]
+    assert draft["semantics"]["pose"]["key"] == "observation.state.cartesian_position"
+    assert {src: c["mount"] for src, c in draft["calibration"]["cameras"].items()} == {FRONT: "fixed_external",
+                                                                                        WRIST: "wrist"}
+    assert [c["source"] for c in doc["cameras"]] == [FRONT, WRIST] and doc["cameras"][0]["width"]
+    assert "observation.state.cartesian_position" in {f["key"] for f in doc["features"]}   # the form's column picker
+    assert doc["trajectory"]["kind"] == "missing_declaration"
+    r = arm.put(f"{API}/datasets/{ds}/declaration", json={"declaration": _complete(draft)})   # checked: columns known
+    assert r.status_code == 200, r.text
+    assert r.json()["trajectory"]["kind"] == "generate"
 
 
 def test_a_new_version_is_checked_against_the_dataset_and_the_preflight_follows(arm):

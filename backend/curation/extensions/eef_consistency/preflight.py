@@ -97,14 +97,20 @@ def bundle_cameras(result) -> list[dict]:
     return list(out.values())
 
 
+#: mounts known not to be a fixed third-person camera: the gripper reference has nothing to measure in them
+NOT_THIRD_PERSON = ("wrist", "moving")
+
+
 def applicable_params(cameras: list[dict] | None) -> list[str]:
     """The module's parameters that apply to the dataset (design doc 25 §4.2): those with ``x-applies-when:
-    third_person_camera`` (the gripper reference) only where a camera is a fixed third-person one - or where the
-    cameras are not known (``cameras`` empty)."""
+    third_person_camera`` (the gripper reference) unless every camera is known not to be a third-person one (wrist,
+    moving). A camera whose mount is not known yet (``null``) may be one, and so may the cameras of a dataset whose
+    cameras are not known (``cameras`` empty): the reference is offered there too - leaving it out said nothing,
+    and a dataset declaration without mounts lost it silently (2026-10-13, §9.7)."""
     from ...contracts import modules as registry
 
     props = registry.get(MODULE_ID).param_schema.get("properties") or {}
-    third = not cameras or any(c.get("mount") == "fixed_external" for c in cameras)
+    third = not cameras or any(c.get("mount") not in NOT_THIRD_PERSON for c in cameras)
     return [k for k, p in props.items() if p.get("x-applies-when") != "third_person_camera" or third]
 
 

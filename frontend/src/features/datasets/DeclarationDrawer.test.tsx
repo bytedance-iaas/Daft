@@ -36,6 +36,17 @@ describe('数据集声明 (design doc 25 §3, F5.23)', () => {
     await waitFor(() => expect(screen.getByTestId('dataset-declaration-state')).toHaveTextContent('第 1 版'));
   });
 
+  it('offers the dataset\'s columns though its registration\'s preflight lists none (2026-10-13, C4 7.4.0)', async () => {
+    const { user } = renderApp('/datasets/ds_droid100?declaration=1');
+    const drawer = await findDrawer('数据集声明 · droid_100');
+    await within(drawer).findByTestId('decl-draft-note');
+    expect(db.datasets.find((x) => x.id === 'ds_droid100')?.preflight?.dataset?.features ?? []).toEqual([]);
+    await user.click(within(drawer).getByRole('tab', { name: T.tabs.semantics }));
+    await user.click(within(drawer).getByTestId('decl-pose-key'));
+    // a column the draft did not use: only the declaration's own list has it
+    expect(await screen.findByRole('option', { name: 'observation.state.joint_position' })).toBeInTheDocument();
+  });
+
   it('a declaration the dataset cannot take is refused with what is wrong', async () => {
     const { user } = renderApp('/datasets/ds_droid100?declaration=1');
     const drawer = await findDrawer('数据集声明 · droid_100');

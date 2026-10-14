@@ -161,7 +161,7 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
 - 任务成败判定：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它标灰，只在 `notes` 里提示这些条不判成败（D72）。
 - EEF–视频一致性（注册表 5.2 起不必有模型）：没传 `--vlm-backend` 照常 `available`，`notes` 末尾一条 `vlm_backend_missing: …` 作提醒，
   `--param eef_video_consistency.use_vlm=false` 时不提醒。它的条目另有 `trajectory_source`（轨迹从哪来）、`cameras`（每路相机的安装方式、归属、
-  能否画与原因）和 `applicable_params`（这个数据集上适用的参数：有第三视角相机才有夹爪参考）。
+  能否画与原因）和 `applicable_params`（这个数据集上适用的参数：有第三视角相机或有相机角色不明时有夹爪参考，每路都确定是腕部或移动相机时没有）。
 - `--declaration`：数据集声明（C7 `dataset-declaration/1.0`，设计 25 §3）。声明够了，EEF 的 `trajectory_source` 是 `generate`；声明里写了位姿或
   关节角记录，`subitems.record_consistency` 就按它核对列或 topic 在不在。不给声明时预检按元数据起草一份，只用来说缺什么（`missing`），从不拿它生成。
   `check` 同样收 `--declaration`（Daemon 传任务开跑时冻结的那份）。

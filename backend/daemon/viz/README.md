@@ -262,6 +262,9 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
     `trajectory.kind` 是 `generate`；`$B/datasets/$D` 的 `declaration` 是 `{state: confirmed, version: 1, layers: [semantics, calibration], …}`，预检里 EEF 条目
     `trajectory_source.kind` 是 `generate`。把位姿列写成 `observation.state.nope` 再 PUT 回 400，`details.errors` 是 `declaration.semantics.pose.key`。
     建一个只勾 EEF、不传 trajectory.json 的任务：运行目录 `inputs/declaration.json` 是第 1 版，`checks/eef_video_consistency/trajectory/episode_*.json` 逐条生成。
+    声明接口另带 `features`（数据集的列，`jq '.features | length'` 不为 0，声明表单的列下拉用它）。10-04 之前登记的数据集，登记预检里没有
+    `dataset.features`：草稿、`features` 与相机照样从数据集的 `meta/info.json` 现读，结果同上，不再只剩工具一栏（2026-10-13；
+    用例 `tests/viz/test_declaration.py` 的 `test_a_registration_whose_preflight_predates_its_columns_drafts_from_the_metadata`）。
 27. **数据集级 EEF 叠加（设计 25 §5，F5.25）**：接着上一步（`eef_ds2_lr3` 的声明已确认）：
     `curl -s -o /dev/null -w '%{http_code}\n' "$B/datasets/$D/episodes/0/eef-overlay?generate=false"` 是 404 `not_made`（只查不做，什么也没生成）；
     `curl -s -o /dev/null -w '%{http_code}\n' $B/datasets/$D/episodes/0/eef-overlay` 第一次是 202（轨迹包在做，`VizMediaPending`），

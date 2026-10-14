@@ -99,6 +99,27 @@ export function moduleParamFields(spec: ModuleSpec | undefined, result: Prefligh
   return asked ? fields.map((f) => (f.key === asked && !f.choiceGroup ? { ...f, required: true } : f)) : fields;
 }
 
+/**
+ * The parameters screen 2 leaves out because no camera of the dataset can be a third-person one (design doc 25
+ * §4.2): marked `x-applies-when: third_person_camera` in the registry (EEF's gripper reference) and not in the
+ * preflight's `applicable_params`. Said on the card - leaving them out without a word was taken for a bug
+ * (2026-10-13). Null when nothing was left out for that reason.
+ */
+export function thirdPersonOnly(spec: ModuleSpec | undefined, result: PreflightResult | null | undefined): { what: string; cameras: { id: string; mount: string | null }[] } | null {
+  const a = spec ? availabilityOf(result, spec.id) : undefined;
+  if (!spec || !a?.applicable_params) return null;
+  type Prop = { title?: string; 'x-applies-when'?: string; 'x-choice-group'?: { title?: string } };
+  const props = ((spec.param_schema as { properties?: Record<string, Prop> } | undefined)?.properties ?? {}) as Record<string, Prop>;
+  const applicable = new Set(a.applicable_params);
+  const left = Object.entries(props).filter(([k, p]) => p['x-applies-when'] === 'third_person_camera' && !applicable.has(k));
+  if (!left.length) return null;
+  const group = left.map(([, p]) => p['x-choice-group']?.title).find((t): t is string => Boolean(t));
+  return {
+    what: group ?? left.map(([k, p]) => p.title ?? k).join('、'),
+    cameras: (a.cameras ?? []).map((c) => ({ id: c.camera_id, mount: c.mount ?? null })),
+  };
+}
+
 /** The input a needs_input module asks for on screen 2, if it is one screen 2 handles. */
 export function embodimentHint(result: PreflightResult | null | undefined, id: string): { options: string[] } | null {
   const a = availabilityOf(result, id);
