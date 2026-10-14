@@ -114,6 +114,31 @@ describe('任务详情 (07 §4.2)', () => {
     release();
   });
 
+  it('a running 执行裁决 names its first step 应用裁决, not its id (2026-10-13)', async () => {
+    const t = findTask(MAIN)!;
+    const applying: Subtask = {
+      id: 'sub_adj2',
+      task_id: MAIN,
+      kind: 'apply_adjudication',
+      scope: {},
+      state: 'running',
+      state_reason: null,
+      progress: { stages: [{ id: 'adjudicate', state: 'running', done: 3, total: 12 }, { id: 'vlm', state: 'pending', done: 0, total: 0 }, ...['final', 'report', 'verify'].map((id) => ({ id, state: 'pending' as const, done: 0, total: 0 }))] },
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+      result_rev: null,
+    };
+    db.subtasks.get(MAIN)!.push(applying);
+    t.active_subtask = applying;
+    renderApp(`/tasks/${MAIN}`);
+    await screen.findByRole('heading', { name: /droid 前 50 条质检/ });
+    expect(await screen.findByTestId('stages-subtask')).toHaveTextContent(/子任务 · 执行裁决/);
+    expect(screen.getByTestId('stage-adjudicate')).toHaveTextContent(/^应用裁决/);
+    expect(screen.getByTestId('stage-adjudicate')).toHaveTextContent('3 / 12');
+    expect(screen.getByTestId('stages')).not.toHaveTextContent('adjudicate');
+  });
+
   it("a subtask's SSE events move the subtask, never the task's own state or the main run's stages (D46)", async () => {
     const t = findTask(MAIN)!;
     const running: Subtask = {
@@ -399,16 +424,21 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.getByTestId('inflight-model')).toHaveTextContent('32');
     // a group's time per episode adds up its stages' (0.06 + 13 + 0.02 s)
     expect(screen.getByTestId('stage-cpu')).toHaveTextContent('平均每条 13.08 s');
-    // sixth round: the data integrity layer is a low strip on top - progress and time per episode
-    // only, no card, not on the timeline; the timeline hatches the waits under the solid work
-    const strip = screen.getByTestId('stage-integrity');
-    expect(strip).toHaveClass('pipeline-strip');
-    expect(strip).toHaveTextContent(/^数据完整性640 \/ 640平均每条 2\.65 s$/);
-    expect(strip.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#00B42A' });   // green
-    expect(screen.queryByTestId('inflight-integrity')).toBeNull();
+    // 数据完整性 is a card beside the other two (2026-10-13; a low strip from the sixth round until then), green,
+    // and has its timeline row; the timeline hatches the waits under the solid work
+    const integrity = screen.getByTestId('stage-integrity');
+    expect(integrity).toHaveClass('pipeline-layer');
+    expect(integrity).toHaveTextContent('640 / 640');
+    expect(integrity).toHaveTextContent('平均每条 2.65 s');
+    expect(integrity).toHaveStyle({ borderTopColor: '#00B42A' });
+    expect(integrity.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#00B42A' });   // green
+    expect(screen.getByTestId('inflight-integrity')).toBeInTheDocument();
+    const cards = screen.getByTestId('pipeline-activity').querySelector('.pipeline-layers') as HTMLElement;
+    expect([...cards.children].map((c) => c.getAttribute('data-testid'))).toEqual(['stage-integrity', 'stage-cpu', 'stage-model']);
+    expect(cards.style.getPropertyValue('--cards')).toBe('3');
     const timeline = screen.getByTestId('pipeline-overlap');
     expect(timeline).toHaveTextContent('运行时间线');
-    expect(screen.queryByTestId('timeline-integrity')).toBeNull();
+    expect(screen.getByTestId('timeline-integrity')).toBeInTheDocument();
     // a row per group: the group's run hatched, its stages' spans with episodes out solid over it
     const cpuRow = screen.getByTestId('timeline-cpu');
     expect(cpuRow.querySelectorAll('.pipeline-time-bar.is-waiting')).toHaveLength(1);

@@ -134,6 +134,8 @@ export const zh = {
     duplicate: '重复检测',
     // registry 5.3 (design doc 23 §1): the CPU halves of model modules, the CPU block's second root
     vlm_prep: '模型准备档',
+    // the 执行裁决 subtask's first step (2026-10-13: was shown as its id)
+    adjudicate: '应用裁决',
     final: '终判',
     report: '报告',
     verify: '交付核验',
