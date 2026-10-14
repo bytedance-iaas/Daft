@@ -141,7 +141,7 @@ describe('质检报告 (07 §5)', () => {
     expect(figures('video_action_sync')).toContain('已标注异常2不判废');
     expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 44'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
     expect(within(screen.getByTestId('sync-cameras')).getByText('wrist_image_left')).toBeInTheDocument();
-    expect(figures('video_action_sync')).toContain('分窗可比对26/50');                      // registry 7.2: the windowed rule's coverage
+    expect(figures('video_action_sync')).toContain('分窗可比对26/50');                      // registry 8.1: the windowed rule's coverage
     expect(within(screen.getByTestId('sync-cameras')).getByText('分窗稳')).toBeInTheDocument();
     expect(screen.getByTestId('sync-advice')).toHaveTextContent('数据集结论：全库逐相机中位滞后均在容差内');
     expect(figures('task_success')).toContain('任务文本来源原始标注 48');
@@ -506,7 +506,7 @@ describe('质检报告 (07 §5)', () => {
     const labels = within(curves).getAllByTestId('chart').map((c) => c.getAttribute('aria-label'));
     expect(labels).toHaveLength(5);
     expect(labels[3]).toContain('互相关：exterior_image_1_left 峰');
-    // registry 7.2: the lag window by window, one line per camera
+    // registry 8.1: the lag window by window, one line per camera
     expect(within(curves).getByTestId('sync-windows')).toHaveTextContent('分窗滞后');
     expect(labels[4]).toMatch(/^分窗滞后：exterior_image_1_left 中位 [+-]\d/);
   }, 40_000); // many steps, each rendering the whole report: room for a busy CI machine

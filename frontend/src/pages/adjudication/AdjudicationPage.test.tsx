@@ -275,7 +275,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(within(ev).getByTestId('eef-cpu')).toHaveTextContent('可疑');   // the evidence below, as before
   });
 
-  it('a sync question shows why, each camera\'s readings and the side-by-side button; 确有错位 answers sync_check (registry 7.2)', async () => {
+  it('a sync question shows why, each camera\'s readings and the side-by-side button; 确有错位 answers sync_check (registry 8.1)', async () => {
     const why = '可信相机之间的滞后相差 0.38 秒（超过 0.3 秒）：exterior_image_1_left +0.38，wrist_image_left +0.00';
     db.extraQuestions = new Map([[MAIN_TASK, new Map([[12, [{ line: 'sync_check', source_module: 'video_action_sync', reason: why, latest_decision: null }]]])]]);
     const seen = recordRequests();

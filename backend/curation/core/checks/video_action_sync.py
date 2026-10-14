@@ -558,7 +558,7 @@ def windowed_lag(flow: np.ndarray, flow_t: np.ndarray, speed: np.ndarray, speed_
 def windows_stable(lw: dict | None, *, min_trusted: int = 3, max_iqr_s: float = 0.15) -> bool:
     """一路相机的分窗读数「稳」:可信窗 ≥ min_trusted 且可信窗滞后的四分位距 ≤ max_iqr_s。发现层(分窗之差)、
     报告层(分窗覆盖率)与界面(校正量取分窗中位的条件)都只认这一个函数;两个门槛是任务的模块参数
-    (registry 7.2 的 window_min_trusted / window_max_iqr_s),默认 3 / 0.15 的来历见 findings._video_action_sync。"""
+    (registry 8.1 的 window_min_trusted / window_max_iqr_s),默认 3 / 0.15 的来历见 findings._video_action_sync。"""
     if not isinstance(lw, dict) or lw.get("lag_s") is None or lw.get("iqr_s") is None:
         return False
     try:

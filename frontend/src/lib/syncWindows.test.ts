@@ -7,7 +7,7 @@ function cam(camera: string, lags: (readonly [number, number, boolean])[], extra
   return { camera, t: [], flow: [], speed: [], lags: [], xcorr: [], peak: null, windows: { win_s: 2, hop_s: 1, lag_s: 0.1, iqr_s: 0.02, n_trusted: points.filter((p) => p.trusted).length, n_windows: points.length, points, ...extra } };
 }
 
-describe('the sync check windows as drawn (registry 7.2)', () => {
+describe('the sync check windows as drawn (registry 8.1)', () => {
   const label = { trusted: (c: string) => `${c} ok`, untrusted: (c: string) => `${c} ?` };
   it('one track per camera: the dashed whole track underneath only when a camera has untrusted windows, the solid one on top with holes at them; cameras without windows are left out', () => {
     const cams = [cam('front', [[1, 0.1, true], [3, 0.5, false], [2, 0.12, true], [4, 0.11, true]]), cam('wrist', [[1, -0.02, true], [2, 0.0, true]]), { ...cam('side', []), windows: null }];

@@ -295,7 +295,7 @@ function syncModel(s: Summary): ViewModel {
     stats.push({ label: Z.verdicts.misaligned, value: c.fail, tone: c.fail ? 'bad' : undefined }, { label: S().checked, value: checkedOf(c) });
   }
   if (num(s.flagged_camera_readings) !== null) stats.push({ label: Z.flagged, value: `${num(s.flagged_camera_readings)} ${Z.flaggedUnit}` });
-  // the windowed comparison's coverage (registry 7.2): on how many episodes it could speak at all
+  // the windowed comparison's coverage (registry 8.1): on how many episodes it could speak at all
   if (num(s.window_comparable_episodes) !== null && num(s.episodes_with_readings)) {
     stats.push({ label: Z.windowCoverage, value: `${num(s.window_comparable_episodes)}/${num(s.episodes_with_readings)}`, foot: Z.windowCoverageFoot });
   }

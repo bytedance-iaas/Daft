@@ -1726,7 +1726,7 @@ export const zh = {
   },
 
   /** The report's Episode tab (F6.2): one episode, module by module. */
-  // the sync review (registry 7.2, 2026-10-13): cameras the sync check found out of step with each other
+  // the sync review (registry 8.1, 2026-10-13): cameras the sync check found out of step with each other
   syncDetail: {
     why: '为什么转人工',
     ask: '点「可视化」并排播放各路相机，看同一个动作是不是同时发生。',
@@ -1796,7 +1796,7 @@ export const zh = {
       lagAxis: '滞后（秒，> 0 表示画面晚）',
       timeAxis: '时间（秒）',
       peak: (cam: string, lag: string, corr: string) => `${cam} 峰 ${corr} @ ${lag} 秒`,
-      // registry 7.2 (2026-10-13): the lag read window by window
+      // registry 8.1 (2026-10-13): the lag read window by window
       windows: '分窗滞后',
       windowsDesc: '每路相机逐窗的滞后：同步时各路重合，错开的那路整条偏离。实线可信，虚线不可信',
       windowAxis: '滞后（秒）',

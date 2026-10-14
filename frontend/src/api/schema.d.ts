@@ -2771,7 +2771,7 @@ export interface components {
                 lag_s: number;
                 corr: number;
             };
-            /** @description the camera's windowed lag readings (registry 7.2, MV-3): one point per window at its middle, the median of the trusted windows and their interquartile range; null when the record has none (older records) */
+            /** @description the camera's windowed lag readings (registry 8.1, MV-3): one point per window at its middle, the median of the trusted windows and their interquartile range; null when the record has none (older records) */
             windows?: null | {
                 /** @description window length, seconds */
                 win_s?: number | null;

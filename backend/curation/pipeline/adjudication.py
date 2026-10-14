@@ -23,7 +23,7 @@ The rules, in this order (v1's, unchanged):
 
 v2's own lines (C1 1.9, F5.11; 1.11, design doc 14): ``eef_check`` answers a conflict between
 the EEF module's two channels (design doc 25 §7), ``integrity_check`` an episode the data
-integrity module suspects, ``sync_check`` (registry 7.2) an episode whose cameras the sync
+integrity module suspects, ``sync_check`` (registry 8.1) an episode whose cameras the sync
 module found out of step with each other. "consistent" / "intact" / "usable" count as the module
 passing it, "inconsistent" / "broken" / "misaligned" as the module rejecting it - the gate's
 result, as a human task verdict is task_success's; nothing runs again.

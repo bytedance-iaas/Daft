@@ -1,4 +1,4 @@
-// 同步存疑 (registry 7.2, 2026-10-13): the sync check found the cameras out of step with each other - one camera
+// 同步存疑 (registry 8.1, 2026-10-13): the sync check found the cameras out of step with each other - one camera
 // off against the arm's motion while the others are not, or cameras whose lags differ. The module cannot say
 // which camera is right, so a person looks: why it was asked, each camera's readings (whole-episode and window
 // by window: the curves); the card's own 可视化 button plays the cameras side by side (a compare button and a

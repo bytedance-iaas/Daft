@@ -1659,7 +1659,7 @@ export function mainSyncCurves(ep: number, revision: number): SyncCurves | null 
     }
     const hasLag = typeof rd.lag_s === 'number';
     const at = hasLag ? xcorr[Math.round(((lag + 2) / 4) * 60)] : null;
-    // the windowed readings (registry 7.2): 2 s windows every second, around the camera's lag, trusted when the peak is
+    // the windowed readings (registry 8.1): 2 s windows every second, around the camera's lag, trusted when the peak is
     const points = [];
     for (let t0 = 0; t0 + 2 <= T; t0 += 1) {
       const trusted = peak >= 0.5 && r() > 0.2;

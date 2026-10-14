@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.5.0
+  version: 7.6.0
   description: |
     ## Overview
 
@@ -261,7 +261,15 @@ info:
     **7.4.0** (2026-10-13): `GET /datasets/{id}/declaration` returns the dataset's columns (`features`). A dataset
     registered before its preflight listed columns has them read from its metadata, so its declaration's draft names
     its pose, joint and camera columns as a newly registered one's does, instead of coming out empty.
-    **7.5.0** (2026-10-13): the video-action sync check (AV-1 / MV-3) asks a person instead of passing or rejecting on
+
+    **7.5.0** (2026-10-14): the check-item taxonomy 2.0 is final and its numbers are frozen: an item keeps its number,
+    name, kind, level and dimension, a new item takes the next free number of its dimension, and a removed number is
+    not used again. Three things change from 2.8.0: the index and reference item is FILE-9 (it was FILE-10), and data
+    integrity's table findings name it; the control for rare but legal encodings and layouts is gone; privacy and
+    safety is IMG-15, an episode item (it was SET-3, a dataset item). Results of tasks run before keep the numbers they
+    were run with.
+
+    **7.6.0** (2026-10-13): the video-action sync check (AV-1 / MV-3) asks a person instead of passing or rejecting on
     its own. Cameras out of step with each other - one camera off against the arm's motion while the others are not
     (AV-1 `camera_misaligned`), cameras whose lags differ (MV-3 `lag_inconsistent`), or every trusted camera agreeing on
     one offset (AV-1 `misaligned_all`, a machine reject before) - go to the new review line `sync_check` (usable /
@@ -272,14 +280,6 @@ info:
     `stable` by them, and the report's sync summary counts the episodes the windowed comparison could speak on
     (`window_comparable_episodes` of `episodes_with_readings`, per camera `n_window_stable`). A single camera's offset
     is read from the camera's best reading: its trusted whole-episode lag, else its steady windowed median.
-
-
-    **7.5.0** (2026-10-14): the check-item taxonomy 2.0 is final and its numbers are frozen: an item keeps its number,
-    name, kind, level and dimension, a new item takes the next free number of its dimension, and a removed number is
-    not used again. Three things change from 2.8.0: the index and reference item is FILE-9 (it was FILE-10), and data
-    integrity's table findings name it; the control for rare but legal encodings and layouts is gone; privacy and
-    safety is IMG-15, an episode item (it was SET-3, a dataset item). Results of tasks run before keep the numbers they
-    were run with.
 
   x-description-zh: |
     ## 概览
@@ -444,18 +444,18 @@ info:
 
     **7.4.0**（2026-10-13）：`GET /datasets/{id}/declaration` 多返回数据集的列（`features`）。登记时预检还不列出列信息的数据集，改为从它的
     元数据现读，声明草稿和新登记的一样写出位姿、关节角与相机列，不再是空的。
-    **7.5.0**（2026-10-13）：视频-动作同步检查（AV-1 / MV-3）不再自己放行或判废，改为交人工。相机之间步调不一致——一路相机与机械臂运动错开
+
+    **7.5.0**（2026-10-14）：检测项分类表 2.0 定稿，编号从此冻结：已有的检测项不再改编号、名称、类型、级别与维度，新检测项接在本维度最后、
+    拿下一个编号，删掉的编号不再使用。与 2.8.0 相比改了三处：索引与引用对不上改为 FILE-9（原 FILE-10），数据完整性的表检查发现挂在它上面；
+    对照项「少见但合法的编码与布局」删掉；隐私与安全改为逐条判的 IMG-15（原数据集级的 SET-3）。这一版之前跑的任务，结果里仍是原来的编号。
+
+    **7.6.0**（2026-10-13）：视频-动作同步检查（AV-1 / MV-3）不再自己放行或判废，改为交人工。相机之间步调不一致——一路相机与机械臂运动错开
     而其它路没有（AV-1 `camera_misaligned`）、各路相机的滞后彼此不同（MV-3 `lag_inconsistent`）、全部可信相机一致错开（AV-1 `misaligned_all`，
     以前机器判废）——都进新复核线 `sync_check`（可用 / 确有错位 / 整条平移 / 拿不准；「确有错位」判废，「整条平移」保留并记下错开量等以后校正）。
     每路相机的滞后另按分窗测：`GET /tasks/{id}/episodes/{index}/sync-curves` 每路多返回 `windows`，分窗比对的门槛是模块参数
     （`window_min_trusted`、`window_max_iqr_s`、`window_spread_tol_s`），条目发现里每路的 `lag_windows` 多一个 `stable`，
     报告同步概览数出分窗比对能发言的条目数（`window_comparable_episodes` / `episodes_with_readings`，逐相机 `n_window_stable`）。
     单路错位按每路最好的读数判：整条可信用整条，否则用稳的分窗中位。
-
-
-    **7.5.0**（2026-10-14）：检测项分类表 2.0 定稿，编号从此冻结：已有的检测项不再改编号、名称、类型、级别与维度，新检测项接在本维度最后、
-    拿下一个编号，删掉的编号不再使用。与 2.8.0 相比改了三处：索引与引用对不上改为 FILE-9（原 FILE-10），数据完整性的表检查发现挂在它上面；
-    对照项「少见但合法的编码与布局」删掉；隐私与安全改为逐条判的 IMG-15（原数据集级的 SET-3）。这一版之前跑的任务，结果里仍是原来的编号。
 
 servers:
   - url: "{base}/api/v1"
@@ -5121,7 +5121,7 @@ components:
                 corr: {type: number}
         windows:
           description: >-
-            the camera's windowed lag readings (registry 7.2, MV-3): one point per window at its middle, the median
+            the camera's windowed lag readings (registry 8.1, MV-3): one point per window at its middle, the median
             of the trusted windows and their interquartile range; null when the record has none (older records)
           oneOf:
             - {type: "null"}

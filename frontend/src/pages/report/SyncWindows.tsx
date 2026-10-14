@@ -1,4 +1,4 @@
-// The sync check's windowed lag chart (registry 7.2, MV-3): each camera's lag read window by window along the
+// The sync check's windowed lag chart (registry 8.1, MV-3): each camera's lag read window by window along the
 // episode. Two cameras in step draw on top of each other; a camera whose line sits apart is the one out of step.
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { lagAxis, windowSeries, windowSummaries } from '../../lib/syncWindows';

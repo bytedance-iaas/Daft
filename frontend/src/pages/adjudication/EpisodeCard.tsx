@@ -235,7 +235,7 @@ function EefQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index
 }
 
 /**
- * 同步存疑 (registry 7.2): why the sync check could not settle it, each camera's readings, the curves and the
+ * 同步存疑 (registry 8.1): why the sync check could not settle it, each camera's readings, the curves and the
  * cameras side by side; 可用 keeps the episode, 确有错位 rejects it, 整条平移 keeps it for a correction to come (7.5).
  */
 function SyncQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {

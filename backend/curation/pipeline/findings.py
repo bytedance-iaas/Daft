@@ -308,7 +308,7 @@ def _video_action_sync(passed, score, d, p) -> Derived:
     # 「稳」= 可信窗 ≥ 3 且四分位距 ≤ 0.15 s：12 个数据集 82 条的扫描里（2 s 窗），这组条件下没错开的条目
     # 31 对两路都稳、零误报，两路之差 p90 0.07 s；IQR 放到 0.3 就出 2 条误报。错开 0.2 s 的注入条目报出 3/5，
     # 漏的两条是腕部相机本身不稳（IQR ≥ 0.4）。比整条读数的 0.3 s 规则细，两条规则各出各的发现，同一条最多报一次。
-    # 「稳」的两个门槛与差的门槛是任务的模块参数(registry 7.2);稳不稳的判断本身在 windows_stable,报告层与界面同用。
+    # 「稳」的两个门槛与差的门槛是任务的模块参数(registry 8.1);稳不稳的判断本身在 windows_stable,报告层与界面同用。
     # 每路读数的 lag_windows.stable 随读数落盘:界面取校正量、报告算覆盖率都读它,不在别处重算这条规则。
     from ..core.checks.video_action_sync import windows_stable
 
@@ -377,7 +377,7 @@ def _unsync_text(lags: dict) -> str:
 SINGLE_CAMERA_TOL_S = 0.25
 
 #: 分窗中位数之差的门槛下限（帧）：互相关的滞后分辨率是一个采样周期，3 帧与整条规则的容差下限（2 帧）同源、
-#: 再留一帧给两路各自的量化误差；秒数门槛与「稳」的两个条件是模块参数（registry 7.2），来历见 _video_action_sync
+#: 再留一帧给两路各自的量化误差；秒数门槛与「稳」的两个条件是模块参数（registry 8.1），来历见 _video_action_sync
 WINDOW_SPREAD_FRAMES = 3
 
 

@@ -92,9 +92,9 @@
       "why": "design 27 (D89): the profile fields are described by what v2 reads; the arbitration and camera_view.py readers went with v1 (documentation only)"
     },
     "core/checks/video_action_sync.py": {
-      "blob": "3e9cf7310419b8aaadd1789b5fd82955e40cc55b",
+      "blob": "db44f53a42273069ec0b9e4f46e4a41a2af00115",
       "since": "feat/mv3-sync-layers-v2 (2026-10-13, PR #166)",
-      "why": "AV-1 / MV-3 (registry 7.2): windowed_lag reads each camera's lag window by window beside the whole-episode reading (max(window_s, window_min_frames) windows, half-window hop, the same trust rules per window), windows_stable is the one steadiness rule the findings, the report and the console share, sync_health counts the episodes the windowed comparison could speak on; sync_verdict's lines are one scale (spread_tol_s 0.3 -> 0.2, kill_lag_min_s 0.5 -> 0.25 either way) and its misaligned_all is asked, not rejected. global_lag's own measurement is unchanged. Benchmark: spikes/mv3/bench (17 datasets, 149 episodes) - no control episode moves, injected offsets 4/4"
+      "why": "AV-1 / MV-3 (registry 8.1): windowed_lag reads each camera's lag window by window beside the whole-episode reading (max(window_s, window_min_frames) windows, half-window hop, the same trust rules per window), windows_stable is the one steadiness rule the findings, the report and the console share, sync_health counts the episodes the windowed comparison could speak on; sync_verdict's lines are one scale (spread_tol_s 0.3 -> 0.2, kill_lag_min_s 0.5 -> 0.25 either way) and its misaligned_all is asked, not rejected. global_lag's own measurement is unchanged. Benchmark: spikes/mv3/bench (17 datasets, 149 episodes) - no control episode moves, injected offsets 4/4"
     }
   }
 }

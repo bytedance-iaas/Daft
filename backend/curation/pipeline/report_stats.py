@@ -362,7 +362,7 @@ def sync_kind(d: dict) -> str | None:
 def sync_stats(records: list[dict], lag_tol_s: float, params: dict | None = None) -> dict:
     """Episode verdicts, flagged camera readings and the per-camera health of the whole
     dataset (``sync_health``, v1's dataset-level diagnosis) - its counts, never its lists. ``params``: the
-    module's parameters with defaults filled in (the windowed estimator's stability lines, registry 7.2)."""
+    module's parameters with defaults filled in (the windowed estimator's stability lines, registry 8.1)."""
     from ..core.checks.video_action_sync import sync_health
     from .findings import params_of
 

@@ -1,4 +1,4 @@
-// The sync check's windowed lag readings as drawn (registry 7.2, MV-3): pure functions over the
+// The sync check's windowed lag readings as drawn (registry 8.1, MV-3): pure functions over the
 // sync-curves endpoint's `windows` per camera - one series of the trusted windows and one of the rest
 // per camera, and a one-line summary per camera for the chart's text alternative.
 import type { SyncCurveCamera } from '../api/types';
