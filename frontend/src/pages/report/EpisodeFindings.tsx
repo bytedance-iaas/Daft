@@ -60,10 +60,12 @@ export function EpisodeFindings({
     const appeal = f.level === 'blocking' && f.appealable && targets.appeals.has(f.module);
     // the text's colour follows the code's own level in the registry (how serious the finding is), not the task's
     // policy (how this task treats it): under 只报不拒 every finding is info, and a camera out of step still shows
-    const own = codeSpec(reg.data, f.module, f.finding.code)?.level;
+    const spec = codeSpec(reg.data, f.module, f.finding.code);
+    const suspect = f.finding.code === 'suspect' || f.finding.code.endsWith('_suspect');   // 疑似: worth a look too
+    const own = spec?.level === 'blocking' ? 'blocking' : spec?.level === 'review' || suspect ? 'review' : undefined;
     const tone = own === 'blocking' ? 'var(--c-danger)' : own === 'review' ? 'var(--c-warning)' : undefined;
     return (
-      <li key={i} data-testid="episode-finding" data-tone={own === 'blocking' || own === 'review' ? own : undefined}>
+      <li key={i} data-testid="episode-finding" data-tone={own}>
         <Space size={6} wrap>
           <span style={tone ? { color: tone } : undefined}>{f.finding.message_zh}</span>
           {f.human ? (
