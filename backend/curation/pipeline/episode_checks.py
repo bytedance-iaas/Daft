@@ -473,7 +473,8 @@ def internal_error_struct(e: BaseException) -> dict:
                 "internal_error": True}))   # 展示层按它区分「系统坏了」与「证据不足」
 
 
-def task_check_episode(cfg: dict, deps: TaskDeps, video, task_desc, task_src, semantics_extras="") -> dict:
+def task_check_episode(cfg: dict, deps: TaskDeps, video, task_desc, task_src, semantics_extras="",
+                       claim=None) -> dict:
     """One episode's task-success judgement from its continuous multi-camera videos -> result struct (may raise).
 
     One request answers for the whole episode and every camera (D71); there is no label guard (D73)."""
@@ -481,7 +482,7 @@ def task_check_episode(cfg: dict, deps: TaskDeps, video, task_desc, task_src, se
 
     return result_to_struct(judge_video_episode(
         cfg, video, task_desc, deps.vlm_completion,
-        task_src=str(task_src), hints=str(semantics_extras or "")))
+        task_src=str(task_src), hints=str(semantics_extras or ""), claim=claim))
 
 
 def result_to_struct_none() -> dict:

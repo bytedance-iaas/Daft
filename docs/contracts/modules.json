@@ -1,5 +1,5 @@
 {
- "registry_version": "8.1",
+ "registry_version": "8.3",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -73,6 +73,10 @@
   {
    "id": "model_no_answer",
    "title_zh": "模型没有回答这一项"
+  },
+  {
+   "id": "measurement_inconclusive",
+   "title_zh": "量过了，但证据不够下结论"
   },
   {
    "id": "single_description",
@@ -941,6 +945,16 @@
      "review_line": "integrity_check"
     },
     {
+     "code": "resolution_mismatch",
+     "item": "FILE-7",
+     "name_zh": "分辨率与声明不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
      "code": "camera_start_offset",
      "item": "AV-1",
      "name_zh": "某路相机的视频起点与时间轴错开",
@@ -1045,6 +1059,7 @@
     "FILE-6",
     "FILE-8",
     "FILE-9",
+    "FILE-7",
     "AV-1",
     "MV-3",
     "STRM-9",
@@ -2150,7 +2165,7 @@
   {
    "id": "camera_defects",
    "name_zh": "镜头画面缺陷",
-   "summary_zh": "借任务成败判定的那一次模型请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+   "summary_zh": "借任务成败判定的那一次模型请求，由模型顺带按机位报告花屏、抖动、镜头污染与视觉遮挡（遮挡另给比例、位置与时长），并对照各路相机的画面、命名与左右臂身份；只出结果，不影响判决",
    "level": "episode",
    "needs": [
     "video",
@@ -2172,7 +2187,7 @@
     {
      "code": "shake",
      "item": "IMG-6",
-     "name_zh": "画面抖动",
+     "name_zh": "相机抖动",
      "severity": "low",
      "level": "info",
      "scope_kind": "camera",
@@ -2181,8 +2196,26 @@
     {
      "code": "contamination",
      "item": "IMG-7",
-     "name_zh": "镜头污染或遮挡",
+     "name_zh": "镜头污染",
      "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "occlusion",
+     "item": "IMG-8",
+     "name_zh": "视觉遮挡",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "identity",
+     "item": "MV-2",
+     "name_zh": "机位身份与数据集的说明不符，或左右臂在相机之间串线",
+     "severity": "medium",
      "level": "info",
      "scope_kind": "camera",
      "appealable": false
@@ -2191,7 +2224,9 @@
    "covers": [
     "IMG-5",
     "IMG-6",
-    "IMG-7"
+    "IMG-7",
+    "IMG-8",
+    "MV-2"
    ],
    "param_schema": {
     "type": "object",
@@ -2207,7 +2242,13 @@
       "camera",
       "glitch",
       "shake",
-      "contamination"
+      "contamination",
+      "occlusion",
+      "occlusion_coverage",
+      "occlusion_region",
+      "occlusion_duration_s",
+      "view_matches_name",
+      "identity"
      ],
      "default_sort": "episode_index"
     }

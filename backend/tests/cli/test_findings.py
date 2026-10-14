@@ -160,6 +160,30 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
              "per_camera": {"observation.images.a": {"answered": True, "glitch": {"level": "none"},
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
+# registry 8.1: occlusion per camera with its share, place and length, and the camera's own identity
+CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
+            "items": {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "severe"},
+            "per_camera": {
+                "observation.images.wrist": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "severe", "source": "person", "times": [[1.0, 4.0]],
+                                                           "share": 0.3, "coverage": 0.45, "region": "center", "duration_s": 3.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "no", "same_as": "",
+                                                      "note": "scene never moves with the arm"}},
+                "observation.images.front": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
+                                                      "note": ""}}}}
+# registry 8.1: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
+# only the measured pairing shows that the one called left rides the right arm
+CAM_ARMS = {"protocol": "camera-check/10", "reason": "", "identity": "inconsistent",
+            "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+            "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+                     "basis": "motion_pairing", "readings": {"margin": 1.4},
+                     "note": "画面运动跟的是另一条臂"},
+            "per_camera": {"observation.images.left_wrist": {"answered": True},
+                           "observation.images.right_wrist": {"answered": True}}}
 
 #: registry 5.0 (design doc 25 §7): the merged cells - a conflict between the CPU and the model's review ...
 _CPU_ISSUE = {"verdict": "issue", "p": 0.9, "confidence": 0.8}
@@ -281,9 +305,23 @@ CASES = [
     ("task_success", None, None, TASK_UNSURE, {"uncertain"}, set()),
     ("task_success", None, None, TASK_SKIPPED, {"task_text_missing"}, {"TASK-4"}),
     ("task_success", True, None, {"verdict": "success", "task_desc_source": "原始标注"}, set(), set()),
-    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
-    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
-    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
+    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6", "IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, {"IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_VIEW, {"occlusion", "identity"}, set()),
+    ("camera_defects", None, None, CAM_ARMS, {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(),
+     {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
+    # the pairing is measured, so a crossing stands even when the request brought no picture answers
+    ("camera_defects", None, None, {"reason": "判定请求没有按相机作答", "identity": "inconsistent",
+      "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+               "basis": "motion_pairing", "note": "left_wrist 的画面跟着 right 动（余量 1.0）"}},
+     {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    # and an unknown says which half was missing: measured but inconclusive, never "the model did not answer"
+    ("camera_defects", None, None, {"items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+      "per_camera": {"observation.images.left_wrist": {"answered": True}},
+      "arms": {"identity": "unknown", "reason": "measurement_inconclusive",
+               "note": "几种对应关系的证据一样强"}},
+     set(), {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
     # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
     ("eef_video_consistency", True, None, EEF_RECORD, {"inconsistent", "record_mismatch"}, {"AV-1"}),
@@ -293,8 +331,23 @@ CASES = [
     ("duplicate_check", False, None, {"same_as": [43, 50], "group_id": 12}, {"duplicate"}, set()),
     ("duplicate_check", True, None, {"action_hash": "abc"}, set(), set()),
 
-] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
-     for f, code in INTEG_CASES]
+] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code},
+      {"FILE-7"})            # these fixtures measured no camera's size: FILE-7 is unassessed
+     for f, code in INTEG_CASES] + [
+    # the sizes measured are a reading, so FILE-7 is assessed - and one that disagrees is a finding
+    ("data_integrity", None, None,
+     {"outcome": "suspect", "reason": "x", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96]}, "findings": [
+          {"level": "suspect", "code": "resolution_mismatch", "tier": "L1", "camera": "wrist",
+           "message": "wrist 相机实际是 128×96，元数据声明 64×48，对不上",
+           "args": {"mismatches": [{"kind": "declared", "expected": [64, 48], "actual": [128, 96],
+                                    "measured_from": "frame"}], "size_wh": [128, 96]}}]},
+     {"resolution_mismatch"}, set()),
+    ("data_integrity", True, None,
+     {"outcome": "pass", "reason": "", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96], "exterior": [128, 96]}, "findings": []},
+     set(), set()),
+]
 
 
 def _record(module, passed, score, details, **kw):

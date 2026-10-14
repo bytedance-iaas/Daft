@@ -286,7 +286,10 @@ def test_resume_rejudges_old_frame_records_and_keeps_current_video_records(monke
 def _check(**over):
     base = {"glitch": {"level": "none", "times": [], "note": ""},
             "shake": {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"},
-            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"}}
+            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"},
+            "occlusion": {"level": "minor", "source": "arm", "region": "left", "coverage": 0.3,
+                          "duration_s": 0.5, "times": [[1.0, 1.5]], "note": "arm in front"},
+            "view": {"kind": "wrist", "arm": "single", "matches_name": "yes", "note": ""}}
     base.update(over)
     return base
 
@@ -321,14 +324,31 @@ def test_a_cameras_defect_report_is_normalised():
     assert got["glitch"] == {"level": "none", "times": [], "note": ""}
     assert got["shake"] == {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"}
     assert got["contamination"]["level"] == "severe" and got["contamination"]["kind"] == "smudge"
+    # occlusion answers three things of its own: how much of the picture, where, how long
+    assert got["occlusion"]["source"] == "arm" and got["occlusion"]["region"] == "left"
+    assert got["occlusion"]["coverage"] == 0.3 and got["occlusion"]["duration_s"] == 0.5
+    assert got["occlusion"]["share"] == 0.25                  # 0.5 s of a 2 s window
+    assert got["view"] == {"kind": "wrist", "arm": "single", "matches_name": "yes", "note": ""}
+    assert got["problems"] == []
     # malformed pieces degrade to unknown / are dropped, never raise
     bad = parse_camera_check({"glitch": {"level": "awful", "times": [[5, 9], [1, "x"], [0, 1]]},
-                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"}}, [clip()])
+                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"},
+                              "occlusion": {"level": "severe", "source": "ghost"},
+                              "view": {"kind": "drone", "arm": "left", "matches_name": "no"}}, [clip()])
     assert bad["glitch"]["level"] == "unknown" and bad["glitch"]["times"] == [[0, 1]]
     assert bad["shake"]["level"] == "unknown"
     assert bad["contamination"] == {"level": "minor", "times": [], "note": "", "kind": "other"}
-    assert len(bad["problems"]) == 5          # level, two intervals, missing shake, kind
+    # severe with no stretch named covers the whole clip; an unknown source reads other, and the
+    # three numbers of its own are repaired from what else is known rather than left out
+    assert bad["occlusion"] == {"level": "severe", "times": [], "note": "", "source": "other",
+                                "region": "unknown", "coverage": None, "duration_s": 2.0, "share": 1.0}
+    assert bad["view"] == {"kind": "unknown", "arm": "left", "matches_name": "no", "note": ""}
+    assert len(bad["problems"]) == 7          # level, two intervals, missing shake, kind, source, view kind
     assert parse_camera_check("nope", [clip()])["problems"] == ["camera_check is not an object"]
+    # the members added later missing: the items read unknown and the slip is named, nothing raises
+    old = parse_camera_check({k: v for k, v in _check().items() if k in ("glitch", "shake", "contamination")}, [clip()])
+    assert old["occlusion"]["level"] == "unknown" and old["view"]["matches_name"] == "unknown"
+    assert old["problems"] == ["occlusion: missing or not an object", "view: missing or not an object"]
     # the five core fields and the cameras block are exactly required
     with pytest.raises(ValueError):
         parse_assessment(json.dumps(dict(judged(), extra=1)), [clip()])
@@ -377,8 +397,9 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     assert len(sent) == 1                                # the verdict was never sent back for repair
     assert out["verdict"] == "success" and out["completion"] == 0.9
     check = out["cameras"]["cam"]["camera_check"]
-    assert {k: v["level"] for k, v in check.items() if isinstance(v, dict)} == \
-        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown"}
+    assert {k: v["level"] for k, v in check.items() if isinstance(v, dict) and "level" in v} == \
+        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown", "occlusion": "unknown"}
+    assert check["view"]["matches_name"] == "unknown"
     assert any("not valid JSON" in p for p in check["problems"])
 
     # a core field broken is still a repair and then an error
@@ -387,3 +408,41 @@ def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
     with pytest.raises(ValueError):
         make_video_assessor("http://test/v1", "video-model")([clip()], "pick up")
     assert len(sent) == 2
+
+
+def test_the_arm_question_is_not_asked_of_the_model(monkeypatch):
+    """camera-check/8: which arm a wrist camera rides is measured, not looked at, so neither
+    request asks for it any more - and no camera may be called crossed on the model's word."""
+    from curation.adapters.video_vlm import (CAMERAS_ONLY_PROMPT, CAMERAS_PROMPT,
+                                             make_video_assessor, parse_cameras_only)
+
+    for prompt in (CAMERAS_PROMPT, CAMERAS_ONLY_PROMPT):
+        assert '"arms"' not in prompt and "crossed" not in prompt
+    # the picture half of the identity is still asked for: the mount, against what the dataset says
+    assert '"matches_name"' in CAMERAS_PROMPT and "the MOUNT you saw" in CAMERAS_PROMPT
+    clips = [clip(), clip(camera="wrist")]
+    answer = json.dumps({"cameras": {}, "arms": {"identity": "crossed", "crossed": ["wrist"]}})
+    assert "arms" not in parse_cameras_only(answer, clips)
+    sent = mock_transport(monkeypatch, [json.dumps(dict(judged(), arms={"identity": "crossed"}))] * 2)
+    with pytest.raises(ValueError):                       # an unasked-for field is an invalid answer
+        make_video_assessor("http://test/v1", "m")([clip()], "pick up")
+    assert len(sent) == 2                                 # it got one repair attempt, as ever
+
+
+def test_the_request_carries_what_the_dataset_says(monkeypatch):
+    """The dataset's own words go into both requests, so the camera identity is read against them;
+    a dataset that says nothing leaves the request as it was."""
+    from curation.adapters.video_vlm import DATASET_SAYS, make_video_assessor
+
+    claim = {"arms": ["left", "right"],
+             "cameras": {"cam": {"mount": "wrist", "owner": "left"}}}
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
+    make_video_assessor("http://test/v1", "m")([clip()], "pick up", claim=claim)
+    prompt = sent[0]["messages"][0]["content"][0]["text"]
+    assert "This robot has 2 arms" in prompt and "cam is declared a wrist camera on left" in prompt
+    assert DATASET_SAYS not in prompt
+
+    sent = mock_transport(monkeypatch, [json.dumps(judged())])
+    make_video_assessor("http://test/v1", "m")([clip()], "pick up")
+    plain = sent[0]["messages"][0]["content"][0]["text"]
+    assert "What the dataset says" not in plain and DATASET_SAYS not in plain

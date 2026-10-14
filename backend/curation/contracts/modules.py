@@ -103,6 +103,20 @@ whether it is ``stable`` by them; the dataset's sync health counts the episodes 
 (``window_comparable_episodes``, per camera ``n_window_stable``). ``camera_misaligned`` is raised from the camera's best
 reading (its trusted whole-episode lag, else its steady windowed median), ``spread_tol_s`` is 0.2 and the every-camera
 offset asks at 0.25 s either way - on the 17-dataset benchmark none of it moves a control episode.
+8.3 (design doc 14 §4.2.1): data integrity reports FILE-7 - the picture size the video actually has,
+against the size ``meta/info.json`` declares for that camera and the size the container header
+claims (``resolution_mismatch``, review on the integrity line). It is measured in L1, on every task:
+one frame costs what opening the file costs (1.1 ms a camera on 1280x720), so the item does not wait
+for the frame-by-frame tier, which costs thirty times as much. A dataset whose episodes are not all
+one size shows up as the episodes that differ from the declared one. Nobody covered FILE-7 before.
+8.2 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
+hidden by something between the lens and the scene, with the share of the picture it takes, where it sits and how long
+it lasts) and ``identity`` (MV-2, a camera whose picture contradicts the mount the dataset declares for it, duplicates
+another camera, or measurably rides the other arm) - and its table carries their columns. Each finding code's name is
+now its taxonomy item's name: ``shake`` is 相机抖动 and ``contamination`` 镜头污染, which IMG-7 is, now that the
+occlusion it used to be lumped with is IMG-8 of its own. One more reason an item goes unassessed:
+``measurement_inconclusive`` (it was measured and the evidence did not settle it - MV-2's arm pairing is a
+measurement, so "the model did not answer" would be untrue of it).
 """
 from __future__ import annotations
 
@@ -110,7 +124,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.1"
+REGISTRY_VERSION = "8.3"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -156,6 +170,7 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("no_action", "没有动作"),
     ("format_unsupported_by_module", "本模块不支持这种数据格式"),
     ("model_no_answer", "模型没有回答这一项"),
+    ("measurement_inconclusive", "量过了，但证据不够下结论"),
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
     ("no_task_text", "没有任务标注，没有做任务成败判定"),
@@ -563,6 +578,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
+               # 8.3: the picture size the frames actually have, against what the dataset and the
+               # container header say it is (the decode for FILE-4 measures it on the way past)
+               _review("resolution_mismatch", "FILE-7", "分辨率与声明不符", "integrity_check"),
                # 8.1 (2026-10-13): the MV-3 record layer - each camera's container timing (sample
                # tables + edit list) against the episode's window, and the cameras against each other
                _review("camera_start_offset", "AV-1", "某路相机的视频起点与时间轴错开", "integrity_check"),
@@ -704,16 +722,22 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="camera_defects", name_zh="镜头画面缺陷",
-        summary_zh="借任务成败判定的那一次模型请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+        summary_zh="借任务成败判定的那一次模型请求，由模型顺带按机位报告花屏、抖动、镜头污染与视觉遮挡"
+                   "（遮挡另给比例、位置与时长），并对照各路相机的画面、命名与左右臂身份；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=(),
-        # minor -> low, severe -> medium
+        # minor -> low, severe -> medium; identity: the picture contradicts the camera's name
         codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
-               _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),
-               _info("contamination", "IMG-7", "镜头污染或遮挡", scope_kind="camera")),
+               _info("shake", "IMG-6", "相机抖动", scope_kind="camera"),
+               _info("contamination", "IMG-7", "镜头污染", scope_kind="camera"),
+               _info("occlusion", "IMG-8", "视觉遮挡", scope_kind="camera"),
+               _info("identity", "MV-2", "机位身份与数据集的说明不符，或左右臂在相机之间串线",
+                     severity="medium", scope_kind="camera")),
         param_schema=_no_params(),
         tables=(TableSpec("camera_defects", "逐机位画面缺陷",
-                          ("episode_index", "camera", "glitch", "shake", "contamination")),),
+                          ("episode_index", "camera", "glitch", "shake", "contamination", "occlusion",
+                           "occlusion_coverage", "occlusion_region", "occlusion_duration_s",
+                           "view_matches_name", "identity")),),
         rides_on="task_success"),
     ModuleSpec(
         id="duplicate_check", name_zh="重复检测",

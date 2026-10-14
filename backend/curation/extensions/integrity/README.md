@@ -25,7 +25,8 @@ CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文�
 | `files.py` | 单个文件的 L1 结构与 L2 整读（parquet、mp4、mcap）；`Blob` 把存储读失败变成 `ReadFailure` |
 | `mp4.py` | 不解码读 mp4：顶层 box、moov、视频轨样本表 → 每帧的时间、字节位置与大小 |
 | `rows.py` | 逐条读行（v1 的读取函数，不先解析数据集语义），跑 `validate_episode_row` |
-| `decode.py` | L3 逐帧解码（模块参数 `decode_test`，默认关）；FFmpeg 错误日志按线程捕获 |
+| `decode.py` | L3 逐帧解码（模块参数 `decode_test`，默认关）；FFmpeg 错误日志按线程捕获。另有 `sizes()`：只开容器、解一帧，量画面尺寸（L1，默认就跑） |
+| `resolution.py` | FILE-7 的纯比对：声明的 `shape`（轴序自适应）、容器头、实际帧三者对照，不读文件 |
 | `findings.py` | 原因码、级别与结论 |
 | `report.py` | 报告小节的统计、report.md 的几行、`integrity_findings` 明细表 |
 
@@ -84,6 +85,9 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    干净的条目的 `details.files[0].crc` 是 `mcap_chunk`。CRC 要整读（L2）才查，不加 `full_read` 时只有 `cut_unreadable 1, stream_missing 1`（设计 23 §3.1）。
 
 4. 逐帧解码：在第 1 步的目录上加 `--resume --param data_integrity.decode_test=true` 再跑，`skipped_existing` 是 0（换了参数全部重做），每条 `details.tiers.L3` 为 `true`。
+5. 分辨率（FILE-7）：把 `meta/info.json` 里某个相机视频特征的 `shape` 改成别的尺寸，按默认配置跑（不用开逐帧解码），
+   该相机每条都出一条 `resolution_mismatch`（可疑），`args.mismatches` 写明「声明 64×48、实际 128×96」；改回去再跑应当一条都没有，
+   且 `details.resolution` 逐路给出量到的尺寸、FILE-7 算评估过。
 
 5. 判决与裁决：把第 2 步的结果接着算判决：
 

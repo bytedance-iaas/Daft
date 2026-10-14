@@ -609,14 +609,22 @@ def _task_success(passed, score, d, p) -> Derived:
 
 #: camera_defects' answer levels -> a finding's severity (design doc 17 §2.2: minor -> low, severe -> medium)
 CAMERA_LEVELS = {"minor": "low", "severe": "medium"}
-_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "画面抖动"), ("contamination", "IMG-7", "镜头污染或遮挡"))
-_CONTAMINATION = {"dirt": "脏污", "smudge": "污渍", "water": "水滴", "obstruction": "遮挡", "other": "其他"}
+_CAMERA_ITEMS = (("glitch", "IMG-5", "花屏"), ("shake", "IMG-6", "相机抖动"), ("contamination", "IMG-7", "镜头污染"),
+                 ("occlusion", "IMG-8", "视觉遮挡"))
+# the kinds of IMG-7: what is ON the lens. "obstruction" is something stuck to it, not IMG-8's occlusion
+_CONTAMINATION = {"dirt": "脏污", "smudge": "污渍", "water": "水滴", "obstruction": "糊住镜头", "other": "其他"}
+_OCCLUSION = {"arm": "机械臂", "body": "机身", "person": "人", "object": "物件", "cable": "线缆", "other": "其他"}
+_VIEW_KIND = {"wrist": "腕部相机", "fixed": "固定机位"}
+_VIEW_ARM = {"left": "左臂", "right": "右臂", "single": "单臂"}
+_REGION = {"left": "画面左侧", "right": "画面右侧", "top": "画面上方", "bottom": "画面下方",
+           "center": "画面中央", "whole": "整幅画面"}
 
 
 @deriver("camera_defects")
 def _camera_defects(passed, score, d, p) -> Derived:
     """Per camera and item, a minor or severe answer is a finding with the stretches the model named; an
-    item no camera answered could not be assessed (``model_no_answer``)."""
+    item no camera answered could not be assessed (``model_no_answer``). The camera identity (MV-2) is
+    one finding per camera whose picture contradicts its name or duplicates another camera."""
     out = Derived()
     m = "camera_defects"
     if d.get("clean_ratio") is not None:
@@ -628,6 +636,9 @@ def _camera_defects(passed, score, d, p) -> Derived:
         reason = "video_undecodable" if d.get("undecodable") else "model_no_answer"     # D93
         for _, item, _ in _CAMERA_ITEMS:
             out.cannot(item, reason, why[:200])
+        # the arm pairing is this module's own measurement: it stands even when the request that
+        # carried the picture questions brought nothing back
+        _camera_identity(out, m, d, {})
         return out
     for key, item, name in _CAMERA_ITEMS:
         if items.get(key, "unknown") == "unknown":
@@ -641,14 +652,68 @@ def _camera_defects(passed, score, d, p) -> Derived:
             label = name
             if key == "contamination" and entry.get("kind") in _CONTAMINATION and entry.get("kind") != "other":
                 label = f"镜头{_CONTAMINATION[entry['kind']]}"
+            if key == "occlusion" and entry.get("source") in _OCCLUSION and entry.get("source") != "other":
+                label = f"被{_OCCLUSION[entry['source']]}遮挡"
             note = str(entry.get("note") or "").strip()
-            out.add(m, key, f"{short_camera(cam)} {label}（{'严重' if level == 'severe' else '轻微'}）"
+            extra = {}
+            if key == "contamination":
+                extra["kind"] = entry.get("kind")
+            where = ""
+            if key == "occlusion":
+                extra["source"] = entry.get("source")
+                for name in ("coverage", "duration_s", "share"):       # how much, how long, what share
+                    if isinstance(entry.get(name), (int, float)):
+                        extra[name] = _r(entry[name])
+                extra["region"] = entry.get("region")
+                parts = []
+                if isinstance(entry.get("coverage"), (int, float)):
+                    parts.append(f"遮住 {round(float(entry['coverage']) * 100)}% 画面")
+                if entry.get("region") in _REGION:
+                    parts.append(_REGION[entry["region"]])
+                if isinstance(entry.get("duration_s"), (int, float)) and entry["duration_s"] > 0:
+                    parts.append(f"共 {_r(entry['duration_s'])} 秒")
+                where = f"，{'、'.join(parts)}" if parts else ""
+            out.add(m, key, f"{short_camera(cam)} {label}（{'严重' if level == 'severe' else '轻微'}）{where}"
                             + (f"：{note[:120]}" if note else ""),
                     severity=CAMERA_LEVELS[level], scope={"camera": short_camera(cam)},
                     time_s=(float(times[0][0]), float(times[0][1])) if times else None,
-                    readings={"level": level, "times": times[:8],
-                              **({"kind": entry.get("kind")} if key == "contamination" else {})})
+                    readings={"level": level, "times": times[:8], **extra})
+    _camera_identity(out, m, d, per)
     return out
+
+
+def _camera_identity(out: Derived, m: str, d: dict, per: dict) -> None:
+    """MV-2: which arm each camera measurably rides (the reading no single camera can give) and what
+    each camera's own picture says it is, against what the dataset declares for it."""
+    arms = d.get("arms") if isinstance(d.get("arms"), dict) else {}
+    if str(d.get("identity") or "unknown") == "unknown":
+        why = str(arms.get("note") or "").strip()
+        # which half was missing: the model's mount comparison, or the measurement that was taken
+        # and did not settle it. Never "the model did not answer" about a reading nobody asked it for.
+        cause = str(arms.get("reason") or "") or ("video_undecodable" if d.get("undecodable")
+                                                  else "model_no_answer")
+        out.cannot("MV-2", cause,
+                   "没有一路相机的画面被对照过数据集的说明，也没有测出左右臂是否串线"
+                   + (f"（{why[:120]}）" if why else ""))
+    if arms.get("identity") == "crossed":
+        crossed = [short_camera(c) for c in (arms.get("crossed") or []) if isinstance(c, str)]
+        note = str(arms.get("note") or "").strip()
+        # the note names each camera and the arm it rides, so the headline does not list them again
+        out.add(m, "identity", "左右臂、机位身份串线：" + (note[:160] if note else
+                               f"{'、'.join(crossed) or '未指明相机'} 骑的不是数据集给它的那条臂"),
+                severity="medium", scope={"cameras": crossed} if crossed else None,
+                readings={"arms": "crossed", "crossed": crossed,
+                          "basis": arms.get("basis") or None,
+                          "margin": (arms.get("readings") or {}).get("margin")})
+    for cam, e in sorted((per or {}).items()):
+        view = (e or {}).get("view") or {}
+        what = "、".join(x for x in (_VIEW_KIND.get(view.get("kind")), _VIEW_ARM.get(view.get("arm"))) if x)
+        note = str(view.get("note") or "").strip()
+        if view.get("matches_name") == "no":
+            out.add(m, "identity", f"{short_camera(cam)} 的画面与数据集的说明不符" + (f"（画面是{what}）" if what else "")
+                                   + (f"：{note[:120]}" if note else ""),
+                    severity="medium", scope={"camera": short_camera(cam)},
+                    readings={"kind": view.get("kind"), "arm": view.get("arm")})
 
 
 @deriver("eef_video_consistency")
@@ -792,6 +857,13 @@ def _data_integrity(passed, score, d, p) -> Derived:
     for key in ("outcome", "tiers"):
         if d.get(key) is not None:
             out.readings[key] = d.get(key)
+    # FILE-7 (registry 8.3) needs a size to compare: the record carries the one measured per camera,
+    # and without it - no video, a file that would not open, a format with no declared size - the
+    # item reads unassessed rather than clean
+    if not d.get("resolution"):
+        out.cannot("FILE-7", "no_video", "没有量到任何一路相机的画面尺寸")
+    else:
+        out.readings["resolution"] = d.get("resolution")
     return out
 
 
