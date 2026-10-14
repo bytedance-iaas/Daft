@@ -38,12 +38,6 @@ class Decoded:
     frames: int = 0
     error: str | None = None                     # an exception: the decode stopped
     concealed: list[str] = field(default_factory=list)   # decoder error lines
-    #: the first decoded frame's own size, and what the stream header claims it is (h, w; FILE-7).
-    #: Free of charge: this pass already decodes every frame for FILE-4.
-    height: int | None = None
-    width: int | None = None
-    header_height: int | None = None
-    header_width: int | None = None
 
 
 def decode(path: str, start_s: float, end_s: float) -> Decoded:
@@ -92,14 +86,10 @@ def _decode_once(path: str, start_s: float, end_s: float) -> Decoded:
         try:
             with av.open(src, options=REMOTE_OPEN_OPTIONS if remote else None) as container:
                 stream = container.streams.video[0]
-                out.header_height = int(stream.codec_context.height or 0) or None
-                out.header_width = int(stream.codec_context.width or 0) or None
                 if start_s > 0:
                     container.seek(int(start_s / stream.time_base), stream=stream,
                                    any_frame=False)
                 for frame in container.decode(stream):
-                    if out.height is None and frame.height:
-                        out.height, out.width = int(frame.height), int(frame.width)
                     if frame.pts is None:
                         out.frames += 1
                         continue
@@ -115,4 +105,51 @@ def _decode_once(path: str, start_s: float, end_s: float) -> Decoded:
             out.error = f"{type(e).__name__}: {e}"[:300]
     out.concealed = [msg.strip() for level, _name, msg in logs
                      if level is not None and level <= av.logging.ERROR][:20]
+    return out
+
+
+@dataclass
+class Sizes:
+    """How big this camera's picture is, by the two things that can say so (h, w; FILE-7)."""
+
+    header_height: int | None = None      # what the stream header claims
+    header_width: int | None = None
+    height: int | None = None             # the first decoded frame's own size
+    width: int | None = None
+    error: str | None = None              # why one of them is missing
+
+    @property
+    def nothing(self) -> bool:
+        return not (self.height or self.header_height)
+
+
+def sizes(path: str) -> Sizes:
+    """Open the video, read the header's claim and decode ONE frame; never raises.
+
+    Its own small read rather than a by-product of the frame-by-frame decode (L3): the picture size
+    needs one frame, measured at 1.1 ms a camera on 1280x720, the same price as opening the file at
+    all, so FILE-7 does not have to wait for a tier that costs thirty times as much. A file this
+    cannot open says so in ``error`` and the item reads unassessable - it is never turned into a
+    decode failure here, which would make the default gate reject what it used to let through.
+    """
+    import av
+
+    from ...adapters.decode import REMOTE_OPEN_OPTIONS
+    from ...ingest import dsfs
+
+    _quiet_ffmpeg_log()
+    out = Sizes()
+    remote = dsfs.is_remote(path)
+    src = dsfs.media_source(path) if remote else path
+    try:
+        with av.open(src, options=REMOTE_OPEN_OPTIONS if remote else None) as container:
+            stream = container.streams.video[0]
+            out.header_height = int(stream.codec_context.height or 0) or None
+            out.header_width = int(stream.codec_context.width or 0) or None
+            for frame in container.decode(stream):
+                if frame.height:
+                    out.height, out.width = int(frame.height), int(frame.width)
+                break
+    except Exception as e:  # noqa: BLE001 - FFmpeg's errors come in many classes; all mean "no size"
+        out.error = f"{type(e).__name__}: {e}"[:200]
     return out

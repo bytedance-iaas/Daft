@@ -857,11 +857,13 @@ def _data_integrity(passed, score, d, p) -> Derived:
     for key in ("outcome", "tiers"):
         if d.get(key) is not None:
             out.readings[key] = d.get(key)
-    # FILE-7 is measured on the frames themselves (registry 8.3), so without the decode tier there
-    # is nothing to compare - the record says so rather than counting the item as assessed
-    tiers = d.get("tiers") if isinstance(d.get("tiers"), dict) else {}
-    if tiers and not tiers.get("L3"):
-        out.cannot("FILE-7", "not_applicable", "没有逐帧解码，量不到画面的实际分辨率")
+    # FILE-7 (registry 8.3) needs a size to compare: the record carries the one measured per camera,
+    # and without it - no video, a file that would not open, a format with no declared size - the
+    # item reads unassessed rather than clean
+    if not d.get("resolution"):
+        out.cannot("FILE-7", "no_video", "没有量到任何一路相机的画面尺寸")
+    else:
+        out.readings["resolution"] = d.get("resolution")
     return out
 
 

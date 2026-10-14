@@ -327,6 +327,7 @@ class IntegrityJudge:
         files = []
         video_counts: dict[str, int] = {}
         timing: dict[str, dict] = {}
+        resolutions: dict[str, list[int]] = {}
         cut_off = False
         for ref in self.plan.get(ep, []):
             rep = self._file(ep, ref)
@@ -375,8 +376,12 @@ class IntegrityJudge:
                 infra.append(f"read: {row_error}")
         elif row is not None:
             self._row_checks(ep, row, findings, video_counts)
-            if self.decode_test and not any(f.level == REJECT for f in findings):
-                self._decode(ep, row, findings, video_counts, infra)
+            if not any(f.level == REJECT for f in findings):
+                # FILE-7 on its own one-frame read, L1: a broken file is already rejected above and
+                # is not opened again for a size
+                resolutions = self._resolution(row, findings, infra)
+                if self.decode_test:
+                    self._decode(ep, row, findings, video_counts, infra)
         rejected = any(f.level == REJECT for f in findings)
         if infra and not rejected:
             for what in infra:
@@ -389,6 +394,8 @@ class IntegrityJudge:
                    "files": files}
         if timing:
             details["camera_timing"] = timing
+        if resolutions:
+            details["resolution"] = resolutions      # per camera [w, h]: FILE-7 was measured
         return {"passed": passed, "score": None,
                 "detail": json.dumps(details, ensure_ascii=False)}
 
@@ -504,24 +511,39 @@ class IntegrityJudge:
                     and abs(got.frames - length) > self.tolerance:
                 findings.append(Finding("count_mismatch", f"{short} 相机解码出 {got.frames} 帧，episode 表记 {length} 帧",
                                         "L3", camera=short, args={"frames": got.frames, "length": length}))
-            self._resolution(cam, short, got, findings)
 
-    def _resolution(self, cam: str, short: str | None, got, findings: list) -> None:
-        """FILE-7 for one camera of one episode: the frames' own size against what the dataset says
-        it is and what the container header claims.
+    def _resolution(self, row: dict, findings: list, infra: list) -> dict:
+        """FILE-7 for every camera of one episode: the picture's real size against what the dataset
+        declares for it and what the container header claims (design doc 14 §4.2.1).
 
-        A dataset whose episodes are not all one size shows up here too, episode by episode: they
-        are the ones that differ from the single size ``meta/info.json`` declares."""
+        Its own one-frame read, not part of the frame-by-frame decode: a size costs what opening the
+        file costs, so this runs on every task instead of only those that asked for L3. Returns what
+        was measured per camera, which the record keeps as a reading - without it FILE-7 reads
+        unassessed rather than clean.
+        """
+        from .decode import sizes
         from . import resolution
 
-        if not got.height or not got.width:
-            return                                   # nothing measured (no frames): no verdict
-        found = resolution.mismatches((got.height, got.width), (got.header_height, got.header_width),
-                                      self.declared_sizes.get(str(cam)))
-        if found:
-            findings.append(Finding("resolution_mismatch", resolution.text(short or str(cam), found),
-                                    "L3", camera=short,
-                                    args={"mismatches": found, "frame_size_wh": [int(got.width), int(got.height)]}))
+        out: dict[str, list[int]] = {}
+        for cam, v in sorted((row.get("video") or {}).items()):
+            short = _short(cam) or str(cam)
+            try:
+                got = sizes(str(v["path"]))
+            except Exception as e:  # noqa: BLE001 - the storage failed, not the file
+                infra.append(f"resolution {short}: {type(e).__name__}: {e}")
+                continue
+            if got.nothing:
+                continue                              # neither a frame nor a header: no verdict
+            real = (got.height, got.width) if got.height else (got.header_height, got.header_width)
+            out[short] = [int(real[1]), int(real[0])]
+            found = resolution.mismatches((got.height, got.width),
+                                          (got.header_height, got.header_width),
+                                          self.declared_sizes.get(str(cam)))
+            if found:
+                findings.append(Finding("resolution_mismatch", resolution.text(short, found), "L1",
+                                        camera=short, args={"mismatches": found,
+                                                            "size_wh": out[short]}))
+        return out
 
     # ------------------------------------------------------------ bookkeeping
 

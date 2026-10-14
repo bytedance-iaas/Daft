@@ -49,17 +49,28 @@ def test_a_size_that_matches_is_no_finding():
 def test_the_declared_size_and_the_header_are_each_their_own_mismatch():
     """Both comparisons are reported, in pixels as people read them (width x height)."""
     said = R.mismatches((360, 640), (360, 640), (720, 1280))
-    assert said == [{"kind": "declared", "expected": [1280, 720], "actual": [640, 360]}]
+    assert said == [{"kind": "declared", "expected": [1280, 720], "actual": [640, 360],
+                     "measured_from": "frame"}]
     header = R.mismatches((360, 640), (720, 1280), (360, 640))
-    assert header == [{"kind": "header", "expected": [1280, 720], "actual": [640, 360]}]
+    assert header == [{"kind": "header", "expected": [1280, 720], "actual": [640, 360],
+                       "measured_from": "frame"}]
     both = R.mismatches((360, 640), (720, 1280), (720, 1280))
     assert [m["kind"] for m in both] == ["declared", "header"]
     assert "实际是 640×360" in R.text("wrist", both)
     assert "元数据声明 1280×720" in R.text("wrist", both) and "容器头写 1280×720" in R.text("wrist", both)
 
 
+def test_without_a_frame_the_header_stands_in_for_it():
+    """A file whose first frame will not decode still has a header, and a declaration that
+    disagrees with it is still caught - the reading says which it was measured from."""
+    only_header = R.mismatches((None, None), (720, 1280), (360, 640))
+    assert only_header == [{"kind": "declared", "expected": [640, 360], "actual": [1280, 720],
+                            "measured_from": "header"}]
+    assert R.mismatches((None, None), (720, 1280), (720, 1280)) == []       # and it agrees
+
+
 def test_nothing_measured_is_never_a_verdict():
-    """A camera whose frames were not decoded (no frames, decode stopped) says nothing at all -
-    an unmeasured size must not read as a mismatch against the declaration."""
-    assert R.mismatches((None, None), (720, 1280), (360, 640)) == []
-    assert R.mismatches((0, 0), (720, 1280), (360, 640)) == []
+    """Neither a frame nor a header: the camera says nothing at all, rather than reading as a
+    mismatch against the declaration."""
+    assert R.mismatches((None, None), (None, None), (360, 640)) == []
+    assert R.mismatches((0, 0), (0, 0), (360, 640)) == []

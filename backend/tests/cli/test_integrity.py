@@ -182,7 +182,7 @@ def test_the_decode_test_finds_what_the_structure_cannot(cli, dataset, tmp_path)
 
 def test_a_declared_resolution_the_frames_do_not_have(cli, dataset, tmp_path):
     """FILE-7 (registry 8.3): the frames are 128x96, the metadata says 64x48 - every camera of
-    every episode says so, and only with the decode tier, which is what measures the frames."""
+    every episode says so, in the default configuration, without the frame-by-frame decode."""
     info_path = os.path.join(dataset, "meta", "info.json")
     with open(info_path, encoding="utf-8") as fh:
         info = json.load(fh)
@@ -194,22 +194,18 @@ def test_a_declared_resolution_the_frames_do_not_have(cli, dataset, tmp_path):
 
     rd = str(tmp_path / "run")
     check(cli, dataset, rd, "0-3")
-    rec = results(rd)[0]
-    assert not [c for c in codes(rec) if c[1] == "resolution_mismatch"]    # not measured without L3
-    assert [u["reason"] for u in rec["unassessable"] if u["item"] == "FILE-7"] == ["not_applicable"]
-
-    rd = str(tmp_path / "run_l3")
-    check(cli, dataset, rd, "0-3", "--param", f"{MOD}.decode_test=true")
     recs = results(rd)
+    assert not any(r["details"]["tiers"]["L3"] for r in recs.values())     # no decode tier asked for
     assert all([c for c in codes(r) if c == ("suspect", "resolution_mismatch")] for r in recs.values())
     found = [f for f in recs[0]["details"]["findings"] if f["code"] == "resolution_mismatch"]
     assert {f["camera"] for f in found} == {"exterior", "wrist"}
     assert found[0]["args"]["mismatches"] == [{"kind": "declared", "expected": [64, 48],
-                                               "actual": [128, 96]}]
-    assert found[0]["args"]["frame_size_wh"] == [128, 96]
+                                               "actual": [128, 96], "measured_from": "frame"}]
+    assert found[0]["args"]["size_wh"] == [128, 96]
     assert "实际是 128×96" in found[0]["message"] and "元数据声明 64×48" in found[0]["message"]
-    # the item is assessed now, and a review finding keeps the episode out of the passed set
+    # the item is assessed, its measured sizes are a reading, and a review finding holds the episode
     assert not [u for u in recs[0]["unassessable"] if u["item"] == "FILE-7"]
+    assert recs[0]["readings"]["resolution"] == {"exterior": [128, 96], "wrist": [128, 96]}
     assert verdicts(recs)[0] == "abstain"
 
 
@@ -217,7 +213,7 @@ def test_a_clean_dataset_says_nothing_about_its_resolution(cli, dataset, tmp_pat
     """The declared size is the frames' size, so FILE-7 is assessed and silent - no false finding
     from the axis order ([h, w, c] here, labelled by the feature's own names)."""
     rd = str(tmp_path / "run")
-    check(cli, dataset, rd, "0-3", "--param", f"{MOD}.decode_test=true")
+    check(cli, dataset, rd, "0-3")
     recs = results(rd)
     assert not [c for r in recs.values() for c in codes(r) if c[1] == "resolution_mismatch"]
     assert "FILE-7" in recs[0]["assessed"]

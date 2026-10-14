@@ -15,9 +15,16 @@ FILE-7's other half, "the dataset's episodes are not all one resolution", needs 
 own here: a LeRobot dataset declares one size per camera, so the episodes that differ from the rest
 are exactly the ones comparison 1 reports.
 
-Nothing here reads a file: :func:`declared` reads metadata the module already loaded and
-:func:`mismatches` is a pure comparison, so every branch is testable without a video. The measuring
-rides the decode the module already does for FILE-4 - no second pass over the bytes.
+Both run without the frame-by-frame decode (L3): the size needs ONE frame, which costs what opening
+the file costs (1.1 ms a camera on 1280x720, against 27 ms to decode a whole episode), so the item
+is assessed on every task rather than only on those that asked for the expensive tier. A file whose
+first frame cannot be read leaves the header to stand in; a file that cannot be opened at all
+leaves FILE-7 unassessed, and never becomes a decode failure here - that would make the default
+gate reject what it used to let through.
+
+Nothing in this module reads a file: :func:`declared` reads metadata the module already loaded and
+:func:`mismatches` is a pure comparison, so every branch is testable without a video
+(``extensions.integrity.decode.sizes`` does the reading).
 """
 from __future__ import annotations
 
@@ -72,18 +79,24 @@ def declared(info: dict[str, Any] | None) -> dict[str, tuple[int, int]]:
 def mismatches(frame: tuple[int | None, int | None], header: tuple[int | None, int | None],
                said: tuple[int, int] | None) -> list[dict]:
     """What this camera's sizes disagree about: ``[{kind, expected, actual}]``, empty when they
-    agree or when there is nothing to compare. ``frame`` / ``header`` / ``said`` are (h, w)."""
+    agree or when there is nothing to compare. ``frame`` / ``header`` / ``said`` are (h, w).
+
+    The frames are the truth when they could be read; without them the header stands in, so a
+    declaration that disagrees with the file is still caught (``measured_from``).
+    """
     f_h, f_w = frame
-    if not f_h or not f_w:
-        return []                                    # nothing was measured: no verdict
-    out: list[dict] = []
-    if said and (int(said[0]), int(said[1])) != (int(f_h), int(f_w)):
-        out.append({"kind": "declared", "expected": [int(said[1]), int(said[0])],
-                    "actual": [int(f_w), int(f_h)]})
     h_h, h_w = header
-    if h_h and h_w and (int(h_h), int(h_w)) != (int(f_h), int(f_w)):
+    out: list[dict] = []
+    real = (f_h, f_w) if (f_h and f_w) else ((h_h, h_w) if (h_h and h_w) else (None, None))
+    if not real[0] or not real[1]:
+        return []                                    # nothing was measured: no verdict
+    source = "frame" if (f_h and f_w) else "header"
+    if said and (int(said[0]), int(said[1])) != (int(real[0]), int(real[1])):
+        out.append({"kind": "declared", "expected": [int(said[1]), int(said[0])],
+                    "actual": [int(real[1]), int(real[0])], "measured_from": source})
+    if f_h and f_w and h_h and h_w and (int(h_h), int(h_w)) != (int(f_h), int(f_w)):
         out.append({"kind": "header", "expected": [int(h_w), int(h_h)],
-                    "actual": [int(f_w), int(f_h)]})
+                    "actual": [int(f_w), int(f_h)], "measured_from": "frame"})
     return out
 
 

@@ -1,6 +1,6 @@
 {
  "files": {
-  "backend/curation/contracts/modules.py": "sha256:c6aa77bbc6d42f93c807c09968969dba3e8cd8036e774b9a7ce8c81b7730ef1c",
+  "backend/curation/contracts/modules.py": "sha256:def35b1f1d36f10eba0202ab9e1101d11d351b4cfe0c74db75eba0312d4d0317",
   "backend/daemon/repo/protocol.py": "sha256:b1a5706297e9362b172cf2380a7b30a62c7dd2aff9c1d9d5979cd390fda08f62",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:10ad0bbb4e1421d7a89a89c7b79e3c18ef31a8dcea9941ce8818bd3d2fe6a870",
   "docs/contracts/cli/aggregate.schema.json": "sha256:b31245925f721d2dcef3455d9389986ae5993034831c84341033adf873d430cf",

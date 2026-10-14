@@ -332,17 +332,21 @@ CASES = [
     ("duplicate_check", True, None, {"action_hash": "abc"}, set(), set()),
 
 ] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code},
-      {"FILE-7"})                      # the fixture has no decode tier: nothing measured the frames
+      {"FILE-7"})            # these fixtures measured no camera's size: FILE-7 is unassessed
      for f, code in INTEG_CASES] + [
-    # with the decode tier the frames' own size is measured, and FILE-7 is assessed (registry 8.3)
+    # the sizes measured are a reading, so FILE-7 is assessed - and one that disagrees is a finding
     ("data_integrity", None, None,
-     {"outcome": "suspect", "reason": "x", "tiers": {"L1": True, "L2": True, "L3": True},
-      "files": [], "findings": [
-          {"level": "suspect", "code": "resolution_mismatch", "tier": "L3", "camera": "wrist",
+     {"outcome": "suspect", "reason": "x", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96]}, "findings": [
+          {"level": "suspect", "code": "resolution_mismatch", "tier": "L1", "camera": "wrist",
            "message": "wrist 相机实际是 128×96，元数据声明 64×48，对不上",
-           "args": {"mismatches": [{"kind": "declared", "expected": [64, 48], "actual": [128, 96]}],
-                    "frame_size_wh": [128, 96]}}]},
+           "args": {"mismatches": [{"kind": "declared", "expected": [64, 48], "actual": [128, 96],
+                                    "measured_from": "frame"}], "size_wh": [128, 96]}}]},
      {"resolution_mismatch"}, set()),
+    ("data_integrity", True, None,
+     {"outcome": "pass", "reason": "", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96], "exterior": [128, 96]}, "findings": []},
+     set(), set()),
 ]
 
 

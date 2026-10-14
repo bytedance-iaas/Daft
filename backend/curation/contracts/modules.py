@@ -103,12 +103,12 @@ whether it is ``stable`` by them; the dataset's sync health counts the episodes 
 (``window_comparable_episodes``, per camera ``n_window_stable``). ``camera_misaligned`` is raised from the camera's best
 reading (its trusted whole-episode lag, else its steady windowed median), ``spread_tol_s`` is 0.2 and the every-camera
 offset asks at 0.25 s either way - on the 17-dataset benchmark none of it moves a control episode.
-8.3 (design doc 14 §4.6): data integrity reports FILE-7 - the picture size the decoded frames
-actually have, against the size ``meta/info.json`` declares for that camera and the size the
-container header claims (``resolution_mismatch``, review on the integrity line). It is measured on
-the decode the module already does for FILE-4, so it costs no second pass; a dataset whose episodes
-are not all one size shows up as the episodes that differ from the declared one. Nobody covered
-FILE-7 before.
+8.3 (design doc 14 §4.2.1): data integrity reports FILE-7 - the picture size the video actually has,
+against the size ``meta/info.json`` declares for that camera and the size the container header
+claims (``resolution_mismatch``, review on the integrity line). It is measured in L1, on every task:
+one frame costs what opening the file costs (1.1 ms a camera on 1280x720), so the item does not wait
+for the frame-by-frame tier, which costs thirty times as much. A dataset whose episodes are not all
+one size shows up as the episodes that differ from the declared one. Nobody covered FILE-7 before.
 8.2 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
 hidden by something between the lens and the scene, with the share of the picture it takes, where it sits and how long
 it lasts) and ``identity`` (MV-2, a camera whose picture contradicts the mount the dataset declares for it, duplicates
