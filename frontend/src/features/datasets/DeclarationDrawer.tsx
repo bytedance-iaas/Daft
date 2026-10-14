@@ -338,10 +338,10 @@ function Sure({
   );
 }
 
-function ColumnSelect({ value, columns, onChange, testid }: { value: string | undefined; columns: string[]; onChange: (v: string) => void; testid?: string }) {
+function ColumnSelect({ value, columns, onChange, testid, width = 320, size }: { value: string | undefined; columns: string[]; onChange: (v: string) => void; testid?: string; width?: number; size?: 'mini' }) {
   const options = value && !columns.includes(value) ? [value, ...columns] : columns;
   return (
-    <Select value={value} style={{ width: 320 }} showSearch data-testid={testid} onChange={onChange}>
+    <Select value={value} style={{ width }} size={size} showSearch data-testid={testid} onChange={onChange}>
       {options.map((c) => (
         <Select.Option key={c} value={c}>
           {c}
@@ -558,10 +558,12 @@ function Cameras({ value, onChange, rows, columns }: { value: Declaration; onCha
         },
         {
           title: T.cameraCols.intrinsics,
+          width: INTR_COL,
           render: (_: unknown, r: CameraRow) => <IntrinsicsCell row={r} onChange={(intr) => set(r.source, { intrinsics: intr })} />,
         },
         {
           title: T.cameraCols.extrinsics,
+          width: EXT_W + 32,
           render: (_: unknown, r: CameraRow) => <ExtrinsicsCell row={r} columns={columns} onChange={(e) => set(r.source, { extrinsics: e })} />,
         },
         {
@@ -582,6 +584,11 @@ function Cameras({ value, onChange, rows, columns }: { value: Declaration; onCha
   );
 }
 
+const INTR_NAMES = ['fx', 'cx', 'fy', 'cy'];
+/** An intrinsic's input, its column: two inputs side by side and the cell's padding. */
+const INTR_INPUT = 100;
+const INTR_COL = INTR_INPUT * 2 + 4 + 32;
+
 /** fx cx fy cy kept while a person types them (the declaration takes the four once they are all there). */
 function IntrinsicsCell({ row, onChange }: { row: CameraRow; onChange: (i: Intrinsics | null) => void }) {
   const intr = row.calibration?.intrinsics ?? null;
@@ -589,14 +596,17 @@ function IntrinsicsCell({ row, onChange }: { row: CameraRow; onChange: (i: Intri
   if (!row.calibration) return <span className="muted">—</span>;
   return (
     <Space direction="vertical" size={4}>
-      <Space size={4}>
+      {/* two by two (fx cx / fy cy), each labelled: four in a row ran under the 外参 column (2026-10-13) */}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(2, ${INTR_INPUT}px)`, gap: 4 }}>
         {four.map((x, i) => (
           <InputNumber
             key={i}
             size="mini"
-            style={{ width: 86 }}
+            hideControl
+            style={{ width: INTR_INPUT }}
+            prefix={INTR_NAMES[i]}
             value={x ?? undefined}
-            placeholder={['fx', 'cx', 'fy', 'cy'][i]}
+            aria-label={INTR_NAMES[i]}
             data-testid={`decl-intr-${row.name}-${i}`}
             onChange={(v) => {
               const next = [...four];
@@ -607,11 +617,11 @@ function IntrinsicsCell({ row, onChange }: { row: CameraRow; onChange: (i: Intri
             }}
           />
         ))}
-      </Space>
+      </div>
       <Select
         size="mini"
         value={intr?.model ?? 'pinhole'}
-        style={{ width: 180 }}
+        style={{ width: INTR_INPUT * 2 + 4 }}
         disabled={!intr}
         onChange={(m) => intr && onChange({ ...intr, model: m, coefficients: m === 'pinhole' ? [] : intr.coefficients })}
       >
@@ -633,6 +643,9 @@ function IntrinsicsCell({ row, onChange }: { row: CameraRow; onChange: (i: Intri
   );
 }
 
+/** The 外参 cell's controls, one width: a long column name is cut with an ellipsis, not run into 能否画 (2026-10-13). */
+const EXT_W = 200;
+
 function ExtrinsicsCell({ row, columns, onChange }: { row: CameraRow; columns: string[]; onChange: (e: Extrinsics | null) => void }) {
   const ext = (row.calibration?.extrinsics ?? null) as Extrinsics | null;
   if (!row.calibration) return <span className="muted">—</span>;
@@ -642,7 +655,7 @@ function ExtrinsicsCell({ row, columns, onChange }: { row: CameraRow; columns: s
       <Select
         size="mini"
         value={mode}
-        style={{ width: 180 }}
+        style={{ width: EXT_W }}
         onChange={(m: string) =>
           onChange(
             m === 'none'
@@ -663,11 +676,12 @@ function ExtrinsicsCell({ row, columns, onChange }: { row: CameraRow; columns: s
         ))}
       </Select>
       {ext?.mode === 'column' ? (
-        <ColumnSelect value={ext.key} columns={columns} onChange={(k) => onChange({ ...ext, key: k })} />
+        <ColumnSelect value={ext.key} columns={columns} width={EXT_W} size="mini" onChange={(k) => onChange({ ...ext, key: k })} />
       ) : ext?.mode === 'static' && 'xyz_rpy' in ext && ext.xyz_rpy ? (
         <Input
           size="mini"
           addBefore={T.xyzRpy}
+          style={{ width: EXT_W }}
           defaultValue={ext.xyz_rpy.join(' ')}
           onBlur={(e) => {
             const v = e.target.value.split(/[\s,]+/).filter(Boolean).map(Number);
@@ -677,6 +691,7 @@ function ExtrinsicsCell({ row, columns, onChange }: { row: CameraRow; columns: s
       ) : ext?.mode === 'camera_tcp' ? (
         <Input.TextArea
           autoSize
+          style={{ width: EXT_W }}
           defaultValue={JSON.stringify(ext.T_camera_tcp)}
           onBlur={(e) => {
             try {
