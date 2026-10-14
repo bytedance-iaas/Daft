@@ -554,13 +554,8 @@ def _camera_identity(out: Derived, m: str, d: dict, per: dict) -> None:
         view = (e or {}).get("view") or {}
         what = "、".join(x for x in (_VIEW_KIND.get(view.get("kind")), _VIEW_ARM.get(view.get("arm"))) if x)
         note = str(view.get("note") or "").strip()
-        if view.get("same_as"):
-            out.add(m, "identity", f"{short_camera(cam)} 与 {short_camera(view['same_as'])} 是同一路画面"
-                                   + (f"：{note[:120]}" if note else ""),
-                    severity="medium", scope={"camera": short_camera(cam)},
-                    readings={"kind": view.get("kind"), "arm": view.get("arm"), "same_as": view["same_as"]})
-        elif view.get("matches_name") == "no":
-            out.add(m, "identity", f"{short_camera(cam)} 的画面与命名不符" + (f"（画面是{what}）" if what else "")
+        if view.get("matches_name") == "no":
+            out.add(m, "identity", f"{short_camera(cam)} 的画面与数据集的说明不符" + (f"（画面是{what}）" if what else "")
                                    + (f"：{note[:120]}" if note else ""),
                     severity="medium", scope={"camera": short_camera(cam)},
                     readings={"kind": view.get("kind"), "arm": view.get("arm")})

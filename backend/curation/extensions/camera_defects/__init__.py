@@ -77,7 +77,7 @@ def struct_from_task(task_struct: dict | None, *, undecodable: bool = False,
                 for key in ("coverage", "duration_s", "share"):      # the share of the picture, the
                     value = got.get(key)                             # seconds, the share of the clip
                     entry[item][key] = value if isinstance(value, (int, float)) else None
-        entry["view"] = _view_of(check, cam, cams)
+        entry["view"] = _view_of(check)
         per_camera[cam] = entry
 
     # One status per item: the worst level over the cameras that answered, unknown when none
@@ -113,17 +113,13 @@ def struct_from_task(task_struct: dict | None, *, undecodable: bool = False,
     return {"passed": None, "score": None, "detail": json.dumps(out, ensure_ascii=False, default=str)}
 
 
-def _view_of(check, cam: str, cams: list[str]) -> dict:
-    """This camera's ``view`` as the model gave it, ``same_as`` settled against the supplied
-    cameras: it must name another one of them (an exact name or a unique dotted suffix), else
-    it reads empty and the slip is kept in the entry's ``problems`` by the caller's record."""
+def _view_of(check) -> dict:
+    """This camera's ``view`` as the model gave it: what the picture shows the camera physically is,
+    which the record holds against what the dataset declares for it (MV-2)."""
     raw = check.get("view") if isinstance(check, dict) else None
-    view = {k: str((raw or {}).get(k) or empty_view()[k]) for k in VIEW_FIELDS} if isinstance(raw, dict) else empty_view()
-    same = view.get("same_as") or ""
-    if same:
-        matches = [c for c in cams if c != cam and (c == same or c.endswith("." + same))]
-        view["same_as"] = matches[0] if len(matches) == 1 else ""
-    return view
+    if not isinstance(raw, dict):
+        return empty_view()
+    return {k: str(raw.get(k) or empty_view()[k]) for k in VIEW_FIELDS}
 
 
 def _arms_of(raw: dict | None) -> dict:
@@ -147,12 +143,12 @@ def _arms_of(raw: dict | None) -> dict:
 
 def identity_of(per_camera: dict[str, dict], arms: dict | None = None) -> str:
     """The episode's camera identity (MV-2): ``inconsistent`` as soon as one camera plainly
-    contradicts the mount the dataset declares for it, duplicates another, or measurably rides the
-    other arm (``arms``, which no single camera's picture can give); ``consistent`` when something
-    was checked and nothing objected, ``unknown`` when nothing was said."""
+    contradicts the mount the dataset declares for it, or measurably rides the other arm (``arms``,
+    which no single camera's picture can give); ``consistent`` when something was checked and
+    nothing objected, ``unknown`` when nothing was said."""
     arms = arms or {}
     views = [e.get("view") or {} for e in per_camera.values() if e.get("answered")]
-    if arms.get("identity") == "crossed" or any(v.get("matches_name") == "no" or v.get("same_as") for v in views):
+    if arms.get("identity") == "crossed" or any(v.get("matches_name") == "no" for v in views):
         return "inconsistent"
     if arms.get("identity") == "consistent" or any(v.get("matches_name") == "yes" for v in views):
         return "consistent"

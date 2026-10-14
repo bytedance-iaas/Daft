@@ -18,8 +18,8 @@ def _review(check=None, error=None):
     return out
 
 
-def _view(kind="fixed", arm="single", matches="yes", same_as=""):
-    return {"kind": kind, "arm": arm, "matches_name": matches, "same_as": same_as, "note": ""}
+def _view(kind="fixed", arm="single", matches="yes"):
+    return {"kind": kind, "arm": arm, "matches_name": matches, "note": ""}
 
 
 def _check(glitch="none", shake="none", contamination="none", kind="none", times=None,
@@ -62,21 +62,17 @@ def test_worst_camera_wins_and_kinds_are_kept():
 
 
 def test_identity_follows_the_cameras_views():
-    """One camera that contradicts its name, or duplicates another, makes the episode inconsistent;
-    same_as must name another supplied camera (exact or a unique dotted suffix) or it reads empty."""
+    """A camera whose picture contradicts the mount the dataset declares for it makes the episode
+    inconsistent; a camera that agrees, and no measured crossing, makes it consistent."""
     d = json.loads(CD.struct_from_task(_task({
         "observation.images.wrist": _review(_check(view=_view(kind="fixed", matches="no"))),
         "observation.images.front": _review(_check())}))["detail"])
     assert d["identity"] == "inconsistent"
     assert d["per_camera"]["observation.images.wrist"]["view"]["matches_name"] == "no"
+    assert set(d["per_camera"]["observation.images.wrist"]["view"]) == {"kind", "arm", "matches_name", "note"}
     d = json.loads(CD.struct_from_task(_task({
-        "observation.images.a": _review(_check(view=_view(same_as="b"))),
-        "observation.images.b": _review(_check())}))["detail"])
-    assert d["identity"] == "inconsistent"
-    assert d["per_camera"]["observation.images.a"]["view"]["same_as"] == "observation.images.b"
-    d = json.loads(CD.struct_from_task(_task({
-        "a": _review(_check(view=_view(same_as="nowhere"))), "b": _review(_check(view=_view(matches="unknown")))}))["detail"])
-    assert d["identity"] == "consistent" and d["per_camera"]["a"]["view"]["same_as"] == ""
+        "a": _review(_check(view=_view())), "b": _review(_check(view=_view(matches="unknown")))}))["detail"])
+    assert d["identity"] == "consistent"
     d = json.loads(CD.struct_from_task(_task({"a": _review(_check(view=_view(matches="unknown")))}))["detail"])
     assert d["identity"] == "unknown"
     # a record from before the view existed: unknown, never an error

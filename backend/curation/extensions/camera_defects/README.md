@@ -34,10 +34,10 @@ anchor-arms-fastumi 上 14 条对调抓到 12 条、不发一次请求、48 个�
 污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`），遮挡另给 `source`（`arm` / `body` / `person` /
 `object` / `cable` / `other`）和解析时算出的 `share`（时间段合计占这路窗口的比例）。
 
-机位身份 `view`：`kind`（`wrist` / `fixed`）、`arm`（`left` / `right` / `single`）、`matches_name`（画面是否与相机命名相符，
-只在明显矛盾时答 `no`；单臂或双目命名里的 left / right 答 `unknown`）、`same_as`（与另一路是同一份录像时写它的名字，
-解析时核对必须是本次送的另一路）。整条的 `identity`：有一路 `no` 或 `same_as` → `inconsistent`；有一路 `yes` 且无人反对 →
-`consistent`；否则 `unknown`（MV-2 记 unassessable）。
+机位身份 `view`：`kind`（`wrist` / `fixed`，看画面是否随臂摆动）、`arm`（固定机位主要看哪条臂；腕部相机一律 `unknown`，
+哪条臂由 CPU 量）、`matches_name`（看到的**安装方式**与数据集声明是否矛盾，只在明显矛盾时答 `no`，数据集没说就 `unknown`）。
+整条的 `identity`：有一路 `no`，或量出左右臂串线 → `inconsistent`；有一路 `yes` 且无人反对 → `consistent`；
+否则 `unknown`（MV-2 记 unassessable，原因是量不出结论还是数据集没有可比的两条臂，见上）。
 
 ## 代码在哪
 
@@ -50,9 +50,9 @@ anchor-arms-fastumi 上 14 条对调抓到 12 条、不发一次请求、48 个�
 | `pipeline/dataset_claim.py` | 数据集自己的说法：几条臂、每条臂占哪几列动作通道、每路相机声明的 `mount` / `owner` |
 | `pipeline/findings.py` | `_camera_defects`：把记录换成发现（minor → low、severe → medium） |
 | `contracts/modules.py` | 注册表条目与 `riders_of` / `with_riders`；`cli/check.py`、planner、`cli/preflight.py`、`daemon/`、`pipeline/reporting.py` 都经 `with_riders` 展开清单 |
-| `tools/parity/fakevlm.py` | 假模型的 `_fake_camera_check`：按相机名与窗口给出每一档、漏一项、整个不答、一路与命名不符 |
+| `tools/parity/fakevlm.py` | 假模型的 `_fake_camera_check`：按相机名与窗口给出每一档、漏一项、整个不答、一路与数据集的说明不符 |
 
-记录的 `details`：`protocol`（`camera-check/9`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
+记录的 `details`：`protocol`（`camera-check/10`）、`source="task_success.cameras"`、`cams`、`known`、`clean_ratio`
 （已答项里判为 `none` 的比例）、`reason`（为什么是 unknown：成败判定没产生结果 / 没有任务标注且画面缺陷请求没有结果 / 判定请求没有按相机作答 /
 模型没答 `camera_check`）、`items`（四项各一个跨机位最坏档，就是一个字符串）、`identity`（整条的机位身份）、
 `arms`（量出来的左右臂配对：`identity`、`crossed`、`basis="motion_pairing"`、`readings`——各臂单独在动的时刻数、

@@ -569,7 +569,7 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
 - **C1 8.1**：`camera_defects` 多两个细码 `occlusion`（IMG-8，info，按机位）、`identity`（MV-2，info，严重度 medium，按机位），
   明细表加 `occlusion`、`occlusion_coverage`、`occlusion_region`、`occlusion_duration_s`、`view_matches_name`、`identity` 六列；
   `covers` 相应多 IMG-8、MV-2。其他模块不变。
-- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/9`（`5` 起有遮挡的三个数与 `arms`，
+- **C2**（开放的 details 字段，契约文件没改）：`camera_defects` 记录的 `protocol` 为 `camera-check/10`（`5` 起有遮挡的三个数与 `arms`，
   `6` 起机位身份对照数据集的说法而不是相机名字：臂的数量取自数据集的动作 / 状态通道名，每路相机取自冻结的数据集声明
   `calibration.cameras[*].mount` / `owner`，由 `--declaration` 送进 `check`——参数与 Daemon 的传递早就有了；`8` 起左右臂配对不再问模型，
   改由 CPU 实测画面运动与各臂速度，模型只比安装方式），`items` 多 `occlusion`，

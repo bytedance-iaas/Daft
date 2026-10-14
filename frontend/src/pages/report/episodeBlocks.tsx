@@ -510,7 +510,6 @@ interface CdView {
   kind?: string;
   arm?: string;
   matches_name?: string;
-  same_as?: string;
   note?: string;
 }
 
@@ -564,7 +563,6 @@ function cdArmsLine(arms: CdArms | undefined): string {
 function cdIdentityLine(view: CdView | undefined): string {
   const K = E().cameraDefects;
   if (!view) return '';
-  if (view.same_as) return K.sameAs(view.same_as);
   if (view.matches_name !== 'no') return '';
   const what = [K.viewKind[str(view.kind) ?? ''] ?? '', K.viewArm[str(view.arm) ?? ''] ?? ''].filter(Boolean).join('、');
   return K.mismatch(what) + (view.note ? `：${view.note}` : '');

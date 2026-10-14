@@ -318,7 +318,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `shake` | IMG-6 | 同上 | info | 带时间段 |
 | `contamination` | IMG-7 | 同上 | info | 带时间段与种类 |
 | `occlusion` | IMG-8 | 同上 | info | 带时间段、来源、遮住画面的比例、位置与总时长（注册表 8.1） |
-| `identity` | MV-2 | medium | info | 这路相机的画面与声明的安装方式不符、与另一路是同一份录像，或实测出它骑的是另一条臂（注册表 8.1）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
+| `identity` | MV-2 | medium | info | 这路相机的画面与数据集声明的安装方式不符，或实测出它骑的是另一条臂（注册表 8.1）；整条的 `identity` 为 unknown 时 MV-2 记 unassessable |
 | unknown | — | — | unassessable `measurement_inconclusive` / `not_applicable` / `model_no_answer` | 量不出结论 / 数据集没有可比的两条臂 / 模型连安装方式都没答 |
 
 **重复检测**（`duplicate_check`，D87 起取代精确去重 `dedup`，设计 26）

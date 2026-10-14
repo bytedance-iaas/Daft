@@ -61,7 +61,7 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
         assert d["arms"]["identity"] == "unknown" and d["arms"]["basis"] in ("", "motion_pairing")
         assert set(d["per_camera"]) == set(d["cams"])
         for cam_entry in d["per_camera"].values():
-            assert set(ITEMS) <= set(cam_entry) and set(cam_entry["view"]) == {"kind", "arm", "matches_name", "same_as", "note"}
+            assert set(ITEMS) <= set(cam_entry) and set(cam_entry["view"]) == {"kind", "arm", "matches_name", "note"}
     # the fake model answers by camera and window: over the fixture the levels differ
     statuses = {r["details"]["items"][i] for r in cam.values() for i in ITEMS}
     assert len(statuses - {"unknown"}) >= 2, statuses
@@ -118,12 +118,12 @@ def test_resume_redoes_an_episode_whose_defect_report_is_from_an_older_protocol(
     path = os.path.join(part, name)
     with open(path, "rb") as fh:                       # same length in, same length out: the
         raw = fh.read()                               # part index addresses records by offset
-    old, new = b'"camera-check/9"', b'"camera-check/0"'
+    old, new = b'"camera-check/10"', b'"camera-check/00"'
     assert len(old) == len(new) and raw.count(old) == len(results(run_dir, MOD))
     with open(path, "wb") as fh:
         fh.write(raw.replace(old, new, 1))
     stale = [json.loads(ln)["episode_index"] for ln in open(path, encoding="utf-8")
-             if '"camera-check/0"' in ln]
+             if '"camera-check/00"' in ln]
     assert len(stale) == 1
 
     with FakeVlmServer() as vlm:

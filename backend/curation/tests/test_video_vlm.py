@@ -289,7 +289,7 @@ def _check(**over):
             "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"},
             "occlusion": {"level": "minor", "source": "arm", "region": "left", "coverage": 0.3,
                           "duration_s": 0.5, "times": [[1.0, 1.5]], "note": "arm in front"},
-            "view": {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}}
+            "view": {"kind": "wrist", "arm": "single", "matches_name": "yes", "note": ""}}
     base.update(over)
     return base
 
@@ -328,13 +328,13 @@ def test_a_cameras_defect_report_is_normalised():
     assert got["occlusion"]["source"] == "arm" and got["occlusion"]["region"] == "left"
     assert got["occlusion"]["coverage"] == 0.3 and got["occlusion"]["duration_s"] == 0.5
     assert got["occlusion"]["share"] == 0.25                  # 0.5 s of a 2 s window
-    assert got["view"] == {"kind": "wrist", "arm": "single", "matches_name": "yes", "same_as": "", "note": ""}
+    assert got["view"] == {"kind": "wrist", "arm": "single", "matches_name": "yes", "note": ""}
     assert got["problems"] == []
     # malformed pieces degrade to unknown / are dropped, never raise
     bad = parse_camera_check({"glitch": {"level": "awful", "times": [[5, 9], [1, "x"], [0, 1]]},
                               "shake": "yes", "contamination": {"level": "minor", "kind": "mud"},
                               "occlusion": {"level": "severe", "source": "ghost"},
-                              "view": {"kind": "drone", "arm": "left", "matches_name": "no", "same_as": 3}}, [clip()])
+                              "view": {"kind": "drone", "arm": "left", "matches_name": "no"}}, [clip()])
     assert bad["glitch"]["level"] == "unknown" and bad["glitch"]["times"] == [[0, 1]]
     assert bad["shake"]["level"] == "unknown"
     assert bad["contamination"] == {"level": "minor", "times": [], "note": "", "kind": "other"}
@@ -342,8 +342,8 @@ def test_a_cameras_defect_report_is_normalised():
     # three numbers of its own are repaired from what else is known rather than left out
     assert bad["occlusion"] == {"level": "severe", "times": [], "note": "", "source": "other",
                                 "region": "unknown", "coverage": None, "duration_s": 2.0, "share": 1.0}
-    assert bad["view"] == {"kind": "unknown", "arm": "left", "matches_name": "no", "same_as": "", "note": ""}
-    assert len(bad["problems"]) == 8          # level, two intervals, missing shake, kind, source, view kind, same_as
+    assert bad["view"] == {"kind": "unknown", "arm": "left", "matches_name": "no", "note": ""}
+    assert len(bad["problems"]) == 7          # level, two intervals, missing shake, kind, source, view kind
     assert parse_camera_check("nope", [clip()])["problems"] == ["camera_check is not an object"]
     # the members added later missing: the items read unknown and the slip is named, nothing raises
     old = parse_camera_check({k: v for k, v in _check().items() if k in ("glitch", "shake", "contamination")}, [clip()])

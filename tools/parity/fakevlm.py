@@ -237,6 +237,6 @@ def _fake_camera_check(k: int, start: float, end: float, camera: str = "") -> di
         check["shake"] = item(levels[(k // 3) % 3])
     wrist = "wrist" in camera.lower() or "hand" in camera.lower()
     check["view"] = {"kind": "wrist" if wrist else "fixed", "arm": "single",
-                     "matches_name": "no" if k % 13 == 0 else "yes", "same_as": "",
+                     "matches_name": "no" if k % 13 == 0 else "yes",
                      "note": "synthetic view"}
     return check

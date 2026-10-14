@@ -35,8 +35,13 @@ PROTOCOL = "video-task/2"
 #: human hand: its travel and reframing with that hand is the rig working, not shake, and the hand
 #: holding the gripper is the arm, not a person passing in front of the lens. On 24 FastUMI episodes
 #: with no defect in them, ``8`` reported shake on 6 and occlusion on 3, every note describing
-#: exactly those two things.
-CAMERA_CHECK_PROTOCOL = "camera-check/9"
+#: exactly those two things; ``10`` keeps each item inside the taxonomy item it reports (C6 2.0,
+#: frozen): glitch is damage to the recording, not a soft picture (a focus problem) and not a
+#: still one (the frozen check); contamination carries the item's own discriminator - it sits ON
+#: the lens, so it travels with the camera while the scene moves behind it; a view knocked to a new
+#: angle for good is not shake (a camera that moved for good is its own item); and the view no
+#: longer answers whether two cameras are one recording, which no item asks for.
+CAMERA_CHECK_PROTOCOL = "camera-check/10"
 CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
@@ -44,11 +49,11 @@ OCCLUSION_SOURCES = ("none", "arm", "body", "person", "object", "cable", "other"
 #: where in the picture the occluding thing sits at its worst moment
 OCCLUSION_REGIONS = ("none", "left", "right", "top", "bottom", "center", "whole")
 CAMERA_CHECK_MAX_TIMES = 8
-#: the camera's view, read from the picture alone and held against the camera's name (MV-2)
+#: the camera's view, read from the picture alone and held against what the dataset declares (MV-2)
 VIEW_KINDS = ("wrist", "fixed")
 VIEW_ARMS = ("left", "right", "single")
 VIEW_MATCHES = ("yes", "no")
-VIEW_FIELDS = ("kind", "arm", "matches_name", "same_as", "note")
+VIEW_FIELDS = ("kind", "arm", "matches_name", "note")
 #: How long one video request may take grows with what it carries (2026-10-08): the model's
 #: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
 #: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
@@ -88,8 +93,12 @@ objects or the relevant action cannot be observed, return uncertain.
 """
 #: what the three picture-defect items mean. Shared word for word by the two requests below (the
 #: judgement's per-camera block and the defects-only request), so both ask exactly the same question.
-CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn, blocky, smeared or
-garbled frames, wrong colours in patches, or a frozen picture with artifacts. shake: the WHOLE
+CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn, blocky or garbled
+frames, blocks and stripes of wrong colour, a row of the picture displaced. It is damage to the
+recording itself, so it appears and goes with the frames and no object explains it. A soft, dragging
+or out-of-focus picture is not glitch (that is a focus or motion problem), and neither is a picture
+that merely stands still with nothing broken in it (that is a frozen picture); report glitch only
+when something in the picture is actually damaged. shake: the WHOLE
 picture moves as one while the scene itself stays intact - the view jolts, drifts or wobbles, the
 framing jumps, and the edges may show black bars or a changed field of view; the camera body is
 moving, not the robot or the objects. A camera that RIDES the arm or the hand - a wrist camera, and
@@ -98,14 +107,19 @@ however fast, however far, and for however much of the clip: that is the rig doi
 at "none". Never report it because the view "tilts", "drifts", "reframes" or "swings with the arm"
 during the manipulation. On such a camera report shake only for motion the hand's own work does not
 explain: a knock or jolt no arm motion accounts for, a high-frequency judder or buzz, a picture that
-keeps wobbling while the gripper stands still, or a mount so loose the view slips and never returns.
+keeps wobbling while the gripper stands still, or a mount so loose the picture trembles on its own.
+A view that moves once and then stays at its new angle for the rest of the clip is not shake: the
+camera was knocked or re-aimed, which is not this item - leave shake at "none" for it.
 On a camera that should stand still - a fixed third-person view - any sustained movement of the whole
 picture is shake. Say in the note why the motion is not the hand's own; if you cannot say, it is
 "none". Decide between the two by asking whether the scene is still whole: a whole
 scene that jumps is shake, a broken-looking scene is glitch; report both only when both are really
-there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
-"minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
-the episode. occlusion: for part of this clip something BETWEEN the lens and the scene hides the
+there. contamination: dirt, grease, dust, water drops or a mark on the lens itself. What tells it
+apart from occlusion: it is ON the lens, so it travels with the camera - it stays over the same part
+of the picture while the scene moves behind it, and it is there wherever the camera is pointed.
+Something that drifts with the scene, comes and goes, or passes in front of the lens is occlusion,
+not contamination. "minor" is visible but leaves the scene readable; "severe" hides or distorts the
+scene for part of the episode. occlusion: for part of this clip something BETWEEN the lens and the scene hides the
 working area - the gripper, the object being handled, or the place it goes. What that looks like: a
 patch of the picture is taken over by something much nearer the lens (out of focus, over-large,
 running off the frame edge) while the rest of the picture carries on unchanged behind it. Report it
@@ -150,8 +164,7 @@ own words above: "no" when they contradict - a camera the dataset declares a wri
 stays still, or one it declares fixed whose picture swings and turns with the arm; "yes" when what
 you saw is the mount the dataset declared; "unknown" when the dataset says nothing about this camera
 or you could not tell, and never "yes" from the camera's name. Do not answer "no" over which ARM you
-think the camera is on - that question is not yours here. same_as names another supplied camera
-when the two pictures are the same recording, else leave it empty. Keep every note under twelve
+think the camera is on - that question is not yours here. Keep every note under twelve
 words. Use "unknown" when you cannot judge an item. These items never change verdict, completion or
 evidence."""
 
@@ -171,7 +184,7 @@ CAMERA_CHECK_SHAPE = """"glitch":{"level":"none|minor|severe|unknown","times":[[
                   "coverage":0.0,"region":"none|left|right|top|bottom|center|whole",
                   "duration_s":0.0,"times":[[start_s,end_s]],"note":"..."},
      "view":{"kind":"wrist|fixed|unknown","arm":"left|right|single|unknown",
-             "matches_name":"yes|no|unknown","same_as":"","note":"..."}"""
+             "matches_name":"yes|no|unknown","note":"..."}"""
 
 #: the single-pass shape: ONE request judges the episode and every camera. The five core fields keep
 #: their meaning - they are the episode's verdict - and each camera says what it alone shows, so a
@@ -401,13 +414,12 @@ def _num(v) -> float | None:
 
 def empty_view() -> dict:
     """A camera's ``view`` when the model said nothing about it."""
-    return {"kind": "unknown", "arm": "unknown", "matches_name": "unknown", "same_as": "", "note": ""}
+    return {"kind": "unknown", "arm": "unknown", "matches_name": "unknown", "note": ""}
 
 
 def parse_view(raw, problems: list[str]) -> dict:
     """The ``view`` member of a camera's ``camera_check``, normalised; never raises. Enum values the
-    model got wrong read ``unknown`` and are named in ``problems``; ``same_as`` is kept as the model
-    wrote it (which supplied camera it names is settled by the rider, which knows them all)."""
+    model got wrong read ``unknown`` and are named in ``problems``."""
     out = empty_view()
     if not isinstance(raw, dict):
         problems.append("view: missing or not an object")
@@ -418,11 +430,6 @@ def parse_view(raw, problems: list[str]) -> dict:
             out[field] = value
         elif value != "unknown":
             problems.append(f"view: {field} {raw.get(field)!r} is not one of {'/'.join(allowed)}/unknown")
-    same_as = raw.get("same_as")
-    if isinstance(same_as, str):
-        out["same_as"] = same_as.strip()[:120]
-    elif same_as is not None:
-        problems.append("view: same_as is not a string")
     note = raw.get("note")
     if isinstance(note, str):
         out["note"] = note.strip()[:200]

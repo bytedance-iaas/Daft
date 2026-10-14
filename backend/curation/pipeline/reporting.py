@@ -684,7 +684,7 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 lines.append(f"- {name}:" + " · ".join(f"{LEVEL_ZH[lv]} {c.get(lv, 0)}"
                                                        for lv in ("severe", "minor", "none", "unknown")))
             ident = s.get("identity") or {}
-            lines.append("- 机位身份与命名:" + " · ".join(f"{IDENTITY_ZH[k]} {ident.get(k, 0)}"
+            lines.append("- 机位身份:" + " · ".join(f"{IDENTITY_ZH[k]} {ident.get(k, 0)}"
                                                         for k in ("inconsistent", "consistent", "unknown")))
             lines.append(f"- 未答机位 {s.get('cameras_unanswered', 0)} / {s.get('cameras', 0)} · 出错 {cnt['error']}")
             lines.append("")
