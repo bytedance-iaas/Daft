@@ -228,8 +228,8 @@ def motion_quality(
         detail["accel_rms"] = round(float(np.mean(rms_cols)), 4)
     else:
         sub["smoothness"] = None
-        if T >= 3:
-            detail["smoothness_reason"] = "手臂列全程没动或都是开关型指令，算不出平滑度"
+        detail["smoothness_reason"] = ("手臂列全程没动或都是开关型指令，算不出平滑度" if T >= 3
+                                       else f"只有 {T} 帧，算不出平滑度")
 
     # ② path_efficiency:直线/路径(关节空间;scorer 同款;软分,来回动作天然低)
     _pe_cols = [c for c in (translation_dims or ()) if c < dim]
