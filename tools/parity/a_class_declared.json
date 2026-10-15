@@ -1,125 +1,130 @@
 {
-  "about": "A-class files adopted with a known difference from the freeze commit, or whose removal was adopted (design doc 10, section 2.1). A difference pins the file's git blob hash, a removal pins \"removed\": true; each entry says why. The guard lets exactly that through, and any further edit is caught again.",
-  "files": {
-    "core/checks/camera_view.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the camera-view hints of the frame-probe prompts; the video judge names the cameras itself"
-    },
-    "core/checks/task_success.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the frame-probe task-success judge (probes, end-state votes, arbitration); v2 judges task success from the continuous videos (pipeline/video_task.py, design 13)"
-    },
-    "core/task_type.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the persistent / transient task classification of the frame-probe prompts"
-    },
-    "dataset_level/audit.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D90): the label-conflict queue it built came from the label guard's holds, gone since D73; the merged label audit and label_audit.json went with it, and nothing else read the file"
-    },
-    "dataset_level/caption.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the v1 caption pass (one caption per episode for the skill profile and the label audit)"
-    },
-    "dataset_level/decisions.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the human-decision CSVs of v1's review page and `curation rejudge`; v2 adjudicates through the Daemon (adjudicate-apply)"
-    },
-    "dataset_level/profile.py": {
-      "removed": true,
-      "since": "jinxin_drop_skill_profile (2026-10-06)",
-      "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
-    },
-    "dataset_level/reassign.py": {
-      "removed": true,
-      "since": "jinxin_drop_skill_profile (2026-10-06)",
-      "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
-    },
-    "dataset_level/stuck_events.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the stuck-event list v1's run built for its report"
-    },
-    "dataset_level/taxonomy.py": {
-      "removed": true,
-      "since": "jinxin_drop_skill_profile (2026-10-06)",
-      "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
-    },
-    "export/lerobot_writer.py": {
-      "removed": true,
-      "since": "jinxin_drop_skill_profile (2026-10-07)",
-      "why": "D69: the platform only produces the report, it no longer writes a delivery dataset - the LeRobot writer has no caller left (the mcap / rrd writers, the incremental re-export and the export command went with it; v1's own export raises through export/retired.py)"
-    },
-    "ingest/dsfs.py": {
-      "blob": "a3c6bd953263073b2e80418de975fd6f1fa17810",
-      "since": "jinxin_drop_skill_profile (2026-10-08)",
-      "why": "the listing a command already has is handed to the readers (seed): one listing of the bucket per task instead of three per stage worker; no read path changes - prefetch, exists, glob and the reads are as they were (tests/cli test_the_bucket_is_listed_once_per_task)"
-    },
-    "ingest/mcap_reader.py": {
-      "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
-      "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",
-      "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes)"
-    },
-    "ingest/schema.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the column-name constants of v1's Daft DataFrame (no v2 module imports them)"
-    },
-    "pipeline/verdict.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - v1's hard-gate / soft-score verdict; v2 judges by policy over findings (pipeline/policy.py, pipeline/verdicts.py, design 17)"
-    },
-    "registry/fk.py": {
-      "removed": true,
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - a forward-kinematics wrapper for a self-collision check that never shipped (nothing imported it)"
-    },
-    "vlm_call_kinds.py": {
-      "blob": "445653cdb03807fd35d155f9f1680b118c8f10ca",
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89, D90): only the call kinds v2 sends are named - probe (task_success's one request) and eef_review; v1's endstate, arbitration, caption and llm went with v1"
-    },
-    "ingest/dataset_profiles/_README.md": {
-      "blob": "6cf1a5d07eec64effb418742876f72f27c8e6683",
-      "since": "feat/curator-v2 (2026-10-11)",
-      "why": "design 27 (D89): the profile fields are described by what v2 reads; the arbitration and camera_view.py readers went with v1 (documentation only)"
-    },
-    "core/checks/video_action_sync.py": {
-      "blob": "ecd00eca73566b663b6e6df8637b428c83e2ed32",
-      "since": "feat/mv3-sync-layers-v2 (2026-10-13, PR #166)",
-      "why": "AV-1 / MV-3 (registry 8.1): windowed_lag reads each camera's lag window by window beside the whole-episode reading (max(window_s, window_min_frames) windows, half-window hop, the same trust rules per window), windows_stable is the one steadiness rule the findings, the report and the console share, sync_health counts the episodes the windowed comparison could speak on; sync_verdict's lines are one scale (spread_tol_s 0.3 -> 0.2, kill_lag_min_s 0.5 -> 0.25 either way) and its misaligned_all is asked, not rejected. global_lag's own measurement is unchanged. Benchmark: spikes/mv3/bench (17 datasets, 149 episodes) - no control episode moves, injected offsets 4/4 2026-10-14 (registry 8.3): grouped_lag reads the record limb by limb and trusts a camera only when the trusted limbs agree (median of their lags; a conflict is undecidable); a whole-episode reading is trusted only when its peak survives leaving any window-length span out (_jackknife_stable, span capped at a sixth of the episode) and, when the windows are steady, agrees with them - steady windows take over an unreliable whole-episode peak (basis windowed_median), two steady estimators that disagree make the camera undecidable. Benchmark (17 datasets, 149 episodes): windowed false positives 0, picture injections 4/4, record-layer 3/6 (unchanged from the proxy fix), G1 ep7/42/108 cleared, trusted readings 240 -> 315. 2026-10-15: the limbs' summed motion is a gate - when the sum cannot be matched to the picture while it moves, the camera is undecidable (sum_unexplained); benchmark unchanged except G1 (trusted 69 -> 35, ep26/49 no longer alarms) and two FastUMI readings."
-    },
-    "core/checks/motion_quality.py": {
-      "blob": "8282ca86361226f928dcd934d882e47a06447734",
-      "since": "feat/motion-quality-columns (2026-10-14)",
-      "why": "ACT-1 / ACT-2 (2026-10-14): smoothness is read column by column against each column's own step scale and averaged (one column's unit or representation no longer drags the rest down), switch-like columns (<= 4 distinct values, e.g. a 0/95 gripper) stay out of smoothness and spike, and a quaternion / rot6d / rotation-matrix block in the action is turned into a rotation odometer like the state's. Parity: on the anchor sample set (19 LeRobot subsets, 205 episodes) the healthy subsets move by at most 0.03 in median smoothness, RH20T goes from 5/5 at 0 to a median of 0.57 and its spike scores from 3/5 low to 0/5, HIW-500 (semantics unknown) abstains instead of scoring 0; two all-zero droid200 episodes that scored 1.0 now abstain. F7b: each column's step scale counts only the frames that move (|step| above a tenth of the column's p95, the spike section's duty rule), so stop-and-go teleoperation (RH20T, HABIT) is no longer read as jagged; on the anchor set RH20T goes 0.57 -> 0.78, HABIT 0.14 -> 0.83, healthy subsets rise by 0.03-0.10, no episode is below 0.5 any more. A positive control (sawtooth / white jitter of 0.25x-2x the moving step injected into real so101 and RH20T episodes) bottoms out at 0.67-0.74: the self-normalised ratio cannot reach 0.5 for zero-mean roughness (pure sawtooth r=2, white noise r=sqrt(3)), and never could - ACT-1's low scores were always pauses. F8: velocity_dims (joystick-style velocity commands named by the dataset) stay out of smoothness and spike like switch columns."
-    },
-    "ingest/dataset_semantics.py": {
-      "blob": "ac101ee2e2b03c05dc0ca36ff2a4e7c91bcc84ab",
-      "since": "feat/motion-quality-columns (2026-10-14)",
-      "why": "detect_ee_layout_numeric (2026-10-14): without column names, four consecutive columns of unit norm are a quaternion block, the three before it the translation, discrete or bounded-and-still columns the gripper; a plain rpy or joint array returns None so the old rules apply. Parity: layout detection only; no reading changes on named datasets. F8: column names also classify velocities (vx/vy/vyaw/vel/velocity/speed/omega) and hand controls (trigger/squeeze as grippers); a names layout says whether it is informative (a pose block or translation found). 2026-10-14: the name classifier tokenises camelCase; hand (finger) columns are named in the layout (hand_dims) so the sync proxy can leave them out. 2026-10-14: the names layout carries the limbs (left / right from the column names, limbs_from_names) so the sync proxy can read each limb on its own."
-    },
-    "ingest/lerobot_reader.py": {
-      "blob": "325e2f82488af32e1dd86f0f386113f5f71eb15b",
-      "since": "feat/motion-quality-columns (2026-10-14)",
-      "why": "_apply_preflight (2026-10-14): the numeric layout fingerprint runs when names are missing, the preflight's gripper columns ride into the layout, and the extras are merged instead of overwritten (the layout was being dropped before it reached motion_quality). Parity: datasets with a profile or names are unchanged; RH20T-like datasets now carry a layout. F8: when the preflight has no verdict (mixed layouts such as HIW-500's chassis velocities + two arm poses + hand controls against a joint-angle state), an informative names layout still rides along marked names_only so motion_quality runs block-wise; the layout written here wins the final extras merge. Parity: the anchor rescan (238 episodes, 16 subsets) changed no reading outside HIW-500, which goes from abstaining to 0.81-0.82. 2026-10-14: the names hint comes from the tokeniser; a confident joint-space dataset also carries a names layout (gripper / hand columns); action names keep their case and a nested names list is flattened."
-    },
-    "core/checks/kinematics.py": {
-      "blob": "f2147b662de098f9baf3e0c17c3a4d1d48dfa1fc",
-      "since": "feat/motion-quality-columns (2026-10-14, 11-3)",
-      "why": "ACT-4 (2026-10-14, so101): kinematic_limits takes gripper_dims and leaves those columns out of the velocity check (an opening is not a joint; so101's 0-100 gripper was held to the 300/s joint envelope), and reports the profile's quality in its detail so the findings layer can downgrade an approximate velocity limit to a note. Position limits, dimension / NaN checks and the sustained-out-of-limit abstention are unchanged. Parity: svla_so101_pickplace 7/10 rejected -> 0/10 (the regression key marks all seven ACT-4 clean); franka / aloha / pusht tests unchanged."
-    },
-    "ingest/semantics_preflight.py": {
-      "blob": "7277bdf3968ccfb4eaff7724da7b8863e008e660",
-      "since": "feat/motion-quality-columns (2026-10-14)",
-      "why": "2026-10-14 (G1 ep26, AV-1): column names are tokenised (camelCase too) and are strong evidence - joint words (shoulder/elbow/wrist/hip/knee/joint/motor/finger...) scale the end-effector hypotheses by 0.2 and vice versa; without a profile the joint-absolute hypothesis gets data evidence (command tracks reading column by column, magnitudes within 2pi); the end-effector hypotheses require a pose-like column count (6-8 single, 12-16 dual). A 26-joint humanoid is joint space now (was ee, whose first three state columns - the left shoulder - fed the sync proxy and produced a 0.33 s phantom offset). Parity: sync benchmark injections 2/2 + 2/2 unchanged, windowed false positives 1 unchanged, whole-rule alarms 7 -> 6 (g1 ep26 gone; g1 ep7 appears with an ego-moving head camera), record-layer injections 3/3 -> 2/3 and 2/3 -> 0/3 on the so101-based synthetic sets (their proxy is now the five arm joints, the same as production so101 with a profile, instead of the accidental first three)."
-    }
+ "about": "A-class files adopted with a known difference from the freeze commit, or whose removal was adopted (design doc 10, section 2.1). A difference pins the file's git blob hash, a removal pins \"removed\": true; each entry says why. The guard lets exactly that through, and any further edit is caught again.",
+ "files": {
+  "core/checks/camera_view.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the camera-view hints of the frame-probe prompts; the video judge names the cameras itself"
+  },
+  "core/checks/kinematics.py": {
+   "blob": "f2147b662de098f9baf3e0c17c3a4d1d48dfa1fc",
+   "since": "feat/motion-quality-columns (2026-10-14, 11-3)",
+   "why": "ACT-4 (2026-10-14, so101): kinematic_limits takes gripper_dims and leaves those columns out of the velocity check (an opening is not a joint; so101's 0-100 gripper was held to the 300/s joint envelope), and reports the profile's quality in its detail so the findings layer can downgrade an approximate velocity limit to a note. Position limits, dimension / NaN checks and the sustained-out-of-limit abstention are unchanged. Parity: svla_so101_pickplace 7/10 rejected -> 0/10 (the regression key marks all seven ACT-4 clean); franka / aloha / pusht tests unchanged."
+  },
+  "core/checks/motion_quality.py": {
+   "blob": "e9754fbf95e1bf52037c947018fdc214082e3a43",
+   "since": "feat/column-semantics-declared (2026-10-15)",
+   "why": "ACT-1 / ACT-2 (2026-10-14): smoothness is read column by column against each column's own step scale and averaged (one column's unit or representation no longer drags the rest down), switch-like columns (<= 4 distinct values, e.g. a 0/95 gripper) stay out of smoothness and spike, and a quaternion / rot6d / rotation-matrix block in the action is turned into a rotation odometer like the state's. Parity: on the anchor sample set (19 LeRobot subsets, 205 episodes) the healthy subsets move by at most 0.03 in median smoothness, RH20T goes from 5/5 at 0 to a median of 0.57 and its spike scores from 3/5 low to 0/5, HIW-500 (semantics unknown) abstains instead of scoring 0; two all-zero droid200 episodes that scored 1.0 now abstain. F7b: each column's step scale counts only the frames that move (|step| above a tenth of the column's p95, the spike section's duty rule), so stop-and-go teleoperation (RH20T, HABIT) is no longer read as jagged; on the anchor set RH20T goes 0.57 -> 0.78, HABIT 0.14 -> 0.83, healthy subsets rise by 0.03-0.10, no episode is below 0.5 any more. A positive control (sawtooth / white jitter of 0.25x-2x the moving step injected into real so101 and RH20T episodes) bottoms out at 0.67-0.74: the self-normalised ratio cannot reach 0.5 for zero-mean roughness (pure sawtooth r=2, white noise r=sqrt(3)), and never could - ACT-1's low scores were always pauses. F8: velocity_dims (joystick-style velocity commands named by the dataset) stay out of smoothness and spike like switch columns. | nonjoint_dims (2026-10-15, registry 8.6): columns named as joints that carry a normalized opening leave the kinematic columns of the smoothness, spike and stuck checks (detail nonjoint_cols); every other number is unchanged."
+  },
+  "core/checks/task_success.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the frame-probe task-success judge (probes, end-state votes, arbitration); v2 judges task success from the continuous videos (pipeline/video_task.py, design 13)"
+  },
+  "core/checks/video_action_sync.py": {
+   "blob": "ecd00eca73566b663b6e6df8637b428c83e2ed32",
+   "since": "feat/mv3-sync-layers-v2 (2026-10-13, PR #166)",
+   "why": "AV-1 / MV-3 (registry 8.1): windowed_lag reads each camera's lag window by window beside the whole-episode reading (max(window_s, window_min_frames) windows, half-window hop, the same trust rules per window), windows_stable is the one steadiness rule the findings, the report and the console share, sync_health counts the episodes the windowed comparison could speak on; sync_verdict's lines are one scale (spread_tol_s 0.3 -> 0.2, kill_lag_min_s 0.5 -> 0.25 either way) and its misaligned_all is asked, not rejected. global_lag's own measurement is unchanged. Benchmark: spikes/mv3/bench (17 datasets, 149 episodes) - no control episode moves, injected offsets 4/4 2026-10-14 (registry 8.3): grouped_lag reads the record limb by limb and trusts a camera only when the trusted limbs agree (median of their lags; a conflict is undecidable); a whole-episode reading is trusted only when its peak survives leaving any window-length span out (_jackknife_stable, span capped at a sixth of the episode) and, when the windows are steady, agrees with them - steady windows take over an unreliable whole-episode peak (basis windowed_median), two steady estimators that disagree make the camera undecidable. Benchmark (17 datasets, 149 episodes): windowed false positives 0, picture injections 4/4, record-layer 3/6 (unchanged from the proxy fix), G1 ep7/42/108 cleared, trusted readings 240 -> 315. 2026-10-15: the limbs' summed motion is a gate - when the sum cannot be matched to the picture while it moves, the camera is undecidable (sum_unexplained); benchmark unchanged except G1 (trusted 69 -> 35, ep26/49 no longer alarms) and two FastUMI readings."
+  },
+  "core/task_type.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the persistent / transient task classification of the frame-probe prompts"
+  },
+  "dataset_level/audit.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D90): the label-conflict queue it built came from the label guard's holds, gone since D73; the merged label audit and label_audit.json went with it, and nothing else read the file"
+  },
+  "dataset_level/caption.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the v1 caption pass (one caption per episode for the skill profile and the label audit)"
+  },
+  "dataset_level/decisions.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the human-decision CSVs of v1's review page and `curation rejudge`; v2 adjudicates through the Daemon (adjudicate-apply)"
+  },
+  "dataset_level/profile.py": {
+   "removed": true,
+   "since": "jinxin_drop_skill_profile (2026-10-06)",
+   "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
+  },
+  "dataset_level/reassign.py": {
+   "removed": true,
+   "since": "jinxin_drop_skill_profile (2026-10-06)",
+   "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
+  },
+  "dataset_level/stuck_events.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the stuck-event list v1's run built for its report"
+  },
+  "dataset_level/taxonomy.py": {
+   "removed": true,
+   "since": "jinxin_drop_skill_profile (2026-10-06)",
+   "why": "registry 3.0: the skill profile left the funnel - no module reads it any more, and the algorithm it carried has no caller (the label-conflict queue is now the kill guard's alone, dataset_level/audit.py)"
+  },
+  "export/lerobot_writer.py": {
+   "removed": true,
+   "since": "jinxin_drop_skill_profile (2026-10-07)",
+   "why": "D69: the platform only produces the report, it no longer writes a delivery dataset - the LeRobot writer has no caller left (the mcap / rrd writers, the incremental re-export and the export command went with it; v1's own export raises through export/retired.py)"
+  },
+  "ingest/dataset_profiles/_README.md": {
+   "blob": "a3f63535de8ca8b45da68a14206cc9c81b1bf7bb",
+   "since": "feat/column-semantics-declared (2026-10-15)",
+   "why": "design 27 (D89): the profile fields are described by what v2 reads; the arbitration and camera_view.py readers went with v1 (documentation only) | velocity_dims / hand_dims / limbs documented as the front door for column kinds (2026-10-15); the word lists are the fallback."
+  },
+  "ingest/dataset_profiles/aloha.yaml": {
+   "blob": "acff687192d9bec04a2b1ab2c4bd7ac2db81870f",
+   "since": "feat/column-semantics-declared (2026-10-15)",
+   "why": "aloha declares its two arms (limbs left 0-5 / right 7-12) so the sync measurement reads each arm on its own; no anchor subset is aloha, the bench is unchanged."
+  },
+  "ingest/dataset_semantics.py": {
+   "blob": "8c80a49f922d5dd9789f9826e8e9e2caf90b493f",
+   "since": "feat/column-semantics-declared (2026-10-15)",
+   "why": "detect_ee_layout_numeric (2026-10-14): without column names, four consecutive columns of unit norm are a quaternion block, the three before it the translation, discrete or bounded-and-still columns the gripper; a plain rpy or joint array returns None so the old rules apply. Parity: layout detection only; no reading changes on named datasets. F8: column names also classify velocities (vx/vy/vyaw/vel/velocity/speed/omega) and hand controls (trigger/squeeze as grippers); a names layout says whether it is informative (a pose block or translation found). 2026-10-14: the name classifier tokenises camelCase; hand (finger) columns are named in the layout (hand_dims) so the sync proxy can leave them out. 2026-10-14: the names layout carries the limbs (left / right from the column names, limbs_from_names) so the sync proxy can read each limb on its own. | declared layout + nonjoint_columns (2026-10-15): a dataset profile's velocity_dims / hand_dims / limbs are written into the layout (the name word lists are the fallback); a joint-space column that never leaves [0, 1], touches a bound and spans half of it is not a joint angle (88 anchor subsets: only G1's six)."
+  },
+  "ingest/dsfs.py": {
+   "blob": "a3c6bd953263073b2e80418de975fd6f1fa17810",
+   "since": "jinxin_drop_skill_profile (2026-10-08)",
+   "why": "the listing a command already has is handed to the readers (seed): one listing of the bucket per task instead of three per stage worker; no read path changes - prefetch, exists, glob and the reads are as they were (tests/cli test_the_bucket_is_listed_once_per_task)"
+  },
+  "ingest/lerobot_reader.py": {
+   "blob": "8e644e9e3639b2f94bcdb9231d1c591d529d469b",
+   "since": "feat/column-semantics-declared (2026-10-15)",
+   "why": "_apply_preflight (2026-10-14): the numeric layout fingerprint runs when names are missing, the preflight's gripper columns ride into the layout, and the extras are merged instead of overwritten (the layout was being dropped before it reached motion_quality). Parity: datasets with a profile or names are unchanged; RH20T-like datasets now carry a layout. F8: when the preflight has no verdict (mixed layouts such as HIW-500's chassis velocities + two arm poses + hand controls against a joint-angle state), an informative names layout still rides along marked names_only so motion_quality runs block-wise; the layout written here wins the final extras merge. Parity: the anchor rescan (238 episodes, 16 subsets) changed no reading outside HIW-500, which goes from abstaining to 0.81-0.82. 2026-10-14: the names hint comes from the tokeniser; a confident joint-space dataset also carries a names layout (gripper / hand columns); action names keep their case and a nested names list is flattened. | _apply_preflight (2026-10-15): after the layout is settled, joint-space records with column names are checked for non-joint columns on the sample episodes (rows of one width only, never raising into the reader); hits ride in layout.nonjoint_dims / nonjoint_names."
+  },
+  "ingest/mcap_reader.py": {
+   "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
+   "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",
+   "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes)"
+  },
+  "ingest/schema.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - the column-name constants of v1's Daft DataFrame (no v2 module imports them)"
+  },
+  "ingest/semantics_preflight.py": {
+   "blob": "7277bdf3968ccfb4eaff7724da7b8863e008e660",
+   "since": "feat/motion-quality-columns (2026-10-14)",
+   "why": "2026-10-14 (G1 ep26, AV-1): column names are tokenised (camelCase too) and are strong evidence - joint words (shoulder/elbow/wrist/hip/knee/joint/motor/finger...) scale the end-effector hypotheses by 0.2 and vice versa; without a profile the joint-absolute hypothesis gets data evidence (command tracks reading column by column, magnitudes within 2pi); the end-effector hypotheses require a pose-like column count (6-8 single, 12-16 dual). A 26-joint humanoid is joint space now (was ee, whose first three state columns - the left shoulder - fed the sync proxy and produced a 0.33 s phantom offset). Parity: sync benchmark injections 2/2 + 2/2 unchanged, windowed false positives 1 unchanged, whole-rule alarms 7 -> 6 (g1 ep26 gone; g1 ep7 appears with an ego-moving head camera), record-layer injections 3/3 -> 2/3 and 2/3 -> 0/3 on the so101-based synthetic sets (their proxy is now the five arm joints, the same as production so101 with a profile, instead of the accidental first three)."
+  },
+  "pipeline/verdict.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - v1's hard-gate / soft-score verdict; v2 judges by policy over findings (pipeline/policy.py, pipeline/verdicts.py, design 17)"
+  },
+  "registry/fk.py": {
+   "removed": true,
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89): v1 is gone and nothing in v2 reads this file - a forward-kinematics wrapper for a self-collision check that never shipped (nothing imported it)"
+  },
+  "vlm_call_kinds.py": {
+   "blob": "445653cdb03807fd35d155f9f1680b118c8f10ca",
+   "since": "feat/curator-v2 (2026-10-11)",
+   "why": "design 27 (D89, D90): only the call kinds v2 sends are named - probe (task_success's one request) and eef_review; v1's endstate, arbitration, caption and llm went with v1"
   }
+ }
 }
