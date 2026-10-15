@@ -1,6 +1,6 @@
 {
  "files": {
-  "backend/curation/contracts/modules.py": "sha256:3b1096280c0bf656d5885a1ab34c61c91554ea0af69a9e763859626e6b1b4eb8",
+  "backend/curation/contracts/modules.py": "sha256:cf5c2108dfc5a3f8c8b7e5e75aa7e62ffaa4e7a0c4863efa59f4cf2f7511b716",
   "backend/daemon/repo/protocol.py": "sha256:b1a5706297e9362b172cf2380a7b30a62c7dd2aff9c1d9d5979cd390fda08f62",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:10ad0bbb4e1421d7a89a89c7b79e3c18ef31a8dcea9941ce8818bd3d2fe6a870",
   "docs/contracts/cli/aggregate.schema.json": "sha256:b31245925f721d2dcef3455d9389986ae5993034831c84341033adf873d430cf",
@@ -29,7 +29,7 @@
   "docs/contracts/eef/sample.schema.json": "sha256:2b1764a2cbf8a5278d256517ba66f33eb85307095ebbb937c0eaba04f16036e2",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:25bb51c38e94acbfa7277d33be9ad4239cf2cff4d0e97e3abd5c191262761279",
   "docs/contracts/eef/umi_calibration.schema.json": "sha256:875fbe6ea53fdd5b40513e86e153c464108ae885b6cb3ea40769e67720095c44",
-  "docs/contracts/modules.json": "sha256:e759dc5e75530771b4eff532836c85ba037ecdcd8f2217c572316c7a68136873",
+  "docs/contracts/modules.json": "sha256:0e705f43f956aa10c58806ed7c2d34a802e244df942ed38458db20422cfc549c",
   "docs/contracts/openapi.yaml": "sha256:9b77c4b602cae01d8e4d132ab8a250753caa141f88541ac03df4592839da283a",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:a24d8ee4b08af94b68d167f7886b2acd6331c1791840ed880bdf8f3707618a65",
   "docs/contracts/progress.schema.json": "sha256:dbab7f4f139612c484ab37c1a042131ed3f3515c66dbfe1b29775755362ecbdd",

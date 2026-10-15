@@ -1115,7 +1115,8 @@
    "platform": "**部分（实测）**：注入幅度 20% 量程的锯齿被运动学极限的末端速度上限（1.87 m/s）抓到；5% 的放行（平滑度 0.54 不扣）",
    "platform_status": "部分",
    "platform_codes": [
-    "motion_quality.smoothness_low"
+    "motion_quality.smoothness_low",
+    "motion_quality.jagged"
    ],
    "platform_conditions": [
     "数据集要有状态量"

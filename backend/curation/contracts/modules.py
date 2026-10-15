@@ -141,6 +141,13 @@ one curve they bent the whole-episode correlation to -1.8 s while every window r
 fallback), and the reader checks a joint-space record for columns named as joints that carry a normalized opening
 instead (never outside [0, 1], saturating at a bound, spanning at least half of it - G1's right arm): they leave the
 sync proxies and the smoothness, and ``motion_quality`` reports them once per dataset as ``columns_not_joints``.
+
+8.7 (2026-10-15): ``motion_quality`` reads jaggedness (ACT-1) as its own item: a kinematic column that reverses
+direction frame after frame over a 2 s window (lag-1 correlation of the step at or below -0.7, between white
+noise's -0.5 and a pure alternation's -1) with an alternating amplitude of at least 5 % of the column's range
+(half the answer key's borderline injection), on the command or on the reading, is reported as ``jagged`` with its
+frames. The smoothness score could not see the injected sawtooth (0.54 / 0.73 against a clean 0.8-0.95 spread)
+and stays what it was.
 """
 from __future__ import annotations
 
@@ -148,7 +155,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.6"
+REGISTRY_VERSION = "8.7"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -664,6 +671,9 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", needs=frozenset({"action", "state"}), block="cpu", stage="numeric", depends_on=(),
         # the composite score is retired (P18): every sub-item reports on its own, info by default
         codes=(_info("smoothness_low", "ACT-1", "动作不平滑", "medium"),
+               # 8.7 (2026-10-15): a column that reverses direction frame after frame with an amplitude that
+               # matters, per 2 s window, on the command or the reading - the smoothness cannot see it
+               _info("jagged", "ACT-1", "动作来回抖动", "medium", scope_kind="channel"),
                _info("spike", "ACT-2", "动作尖刺", "medium"),
                _info("actuator_saturation", "ACT-4", "执行器饱和", "medium", scope_kind="channel"),
                _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),

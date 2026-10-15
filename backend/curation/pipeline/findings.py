@@ -540,12 +540,21 @@ def _motion_quality(passed, score, d, p) -> Derived:
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
                 "idle_mid_count", "idle_mid_total_s",
                 # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
-                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols", "nonjoint_cols"):
+                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols", "nonjoint_cols", "jagged_amp"):
         if d.get(key) is not None:
             out.readings[key] = _r(d.get(key))
     _sub_score(out, m, "smoothness_low", d.get("smoothness"), p["smoothness_min"], "动作不平滑，平滑度分",
                high_below=p["severe_below"],
                readings={"smoothness_cols": d.get("smoothness_cols")} if isinstance(d.get("smoothness_cols"), dict) else None)
+    for s in d.get("jagged") or []:
+        if not isinstance(s, dict) or s.get("start") is None:
+            continue
+        a, b = int(s["start"]), int(s["end"])
+        which = "读数" if s.get("stream") == "state" else "指令"
+        out.add(m, "jagged", f"第 {int(s['col'])} 列的{which}在第 {a + 1}–{b + 1} 帧来回抖动：每帧都反向，"
+                             f"幅度有这列整条变化范围的 {100 * float(s.get('amp_rel') or 0.0):.0f}%",
+                scope={"channel": f"col {int(s['col'])}"}, frames=(a, b),
+                readings={"amp_rel": _r(s.get("amp_rel")), "step_corr": _r(s.get("step_corr")), "stream": s.get("stream")})
     spike_frames = [int(f) + 1 for f in d.get("spike_frames") or [] if isinstance(f, (int, float))]
     _sub_score(out, m, "spike", d.get("spike"), p["spike_min"], "动作有孤立尖刺，尖刺分",
                high_below=p["severe_below"], readings={"spike_frames": spike_frames[:20]} if spike_frames else None)

@@ -23,6 +23,54 @@ from ..contract import CheckResult
 #: 连续舵机夹爪、关节角一条里取值上百种)。只用来把开关列挡在平滑度与尖刺之外,不是判定线
 DISCRETE_LEVELS = 4
 
+#: 锯齿(ACT-1,2026-10-15):一列在一个窗口里「逐帧反向」——步长的滞后 1 相关 ≤ JAG_STEP_CORR_MAX——且交替幅度相对
+#: 该列整条量程 ≥ JAG_AMP_MIN。相关门槛的两端有物理含义:纯逐帧交替是 −1,静止关节上的白噪声差分恰好是 −0.5,门槛取在
+#: 两者之间偏交替一侧,噪声永远不够格;幅度门槛是答案卡「边缘」注入(量程 5% 的锯齿,交替幅度 ≈ 量程的 0.1)的一半。
+#: 17 个基准子集 149 条、58 936 个运动列窗口(指令与读数都算)核过:越过相关门槛的窗口交替幅度最大 0.003;
+#: 注入「明显」109/109、「边缘」108/109 抓到(脚本 scratchpad jag_rule.py,2026-10-15)。窗口 2 s:答案卡的注入段长
+#: 4 s,2 s 窗按四分之一步进总有一窗整个落在里面。两个量都按帧算,逐帧锯齿在任何帧率下读数相同。
+#: 局限:只认逐帧反向;周期长于 4 帧的抖动读不出来——没有真实锯齿样本可校(见 jaggedness-metric-backlog)。
+JAG_STEP_CORR_MAX = -0.7
+JAG_AMP_MIN = 0.05
+JAG_WIN_S = 2.0
+
+
+def jagged_segments(x: np.ndarray, fps: float, cols, *, win_s: float = JAG_WIN_S,
+                    corr_max: float = JAG_STEP_CORR_MAX, amp_min: float = JAG_AMP_MIN) -> list[dict]:
+    """每列按 2 s 窗(步进四分之一窗)找「逐帧反向且幅度够」的窗口,相邻窗口并成段:
+    [{col, start, end, amp_rel, step_corr}](帧号含两端)。幅度 = 步长交替成分的均方根 / 该列整条量程。"""
+    x = np.asarray(x, dtype=np.float64)
+    if x.ndim != 2 or x.shape[0] < 10:
+        return []
+    w = max(8, int(round(win_s * fps)))
+    hop = max(1, w // 4)
+    out: list[dict] = []
+    for c in cols:
+        if c >= x.shape[1]:
+            continue
+        col = x[:, c]
+        rng_c = float(col.max() - col.min())
+        if rng_c < 1e-9:
+            continue
+        d = np.diff(col)
+        segs: list[list] = []
+        for s0 in range(0, max(1, len(d) - w + 1), hop):
+            dd = d[s0:s0 + w]
+            if len(dd) < 8 or dd.std() < 1e-12:
+                continue
+            alt = (dd[1:] - dd[:-1]) / 2.0                     # 步长里逐帧交替的那部分
+            amp = float(np.sqrt((alt ** 2).mean())) / rng_c
+            corr = float(np.corrcoef(dd[1:], dd[:-1])[0, 1])
+            if corr <= corr_max and amp >= amp_min:
+                a, z = s0, s0 + len(dd)                        # 位置帧号:步 s0 连接帧 s0 与 s0+1
+                if segs and a <= segs[-1][1] + 1:
+                    segs[-1][1] = max(segs[-1][1], z); segs[-1][2] = max(segs[-1][2], amp); segs[-1][3] = min(segs[-1][3], corr)
+                else:
+                    segs.append([a, z, amp, corr])
+        out.extend({"col": int(c), "start": int(a), "end": int(z), "amp_rel": round(amp, 4), "step_corr": round(corr, 3)}
+                   for a, z, amp, corr in segs)
+    return out
+
 
 def _moving_step_scale(x: np.ndarray) -> float:
     """一列的步长尺度,只数**在动的帧**:|Δ| 超过自身非零 |Δ| 的 p95 的一成(与尖刺段「运动占空比」同一口径)。
@@ -234,6 +282,16 @@ def motion_quality(
         sub["smoothness"] = None
         detail["smoothness_reason"] = ("手臂列全程没动或都是开关型指令，算不出平滑度" if T >= 3
                                        else f"只有 {T} 帧，算不出平滑度")
+
+    # ①b jagged(ACT-1):逐帧反向的来回抖动,指令与读数各看一遍(答案卡的锯齿注在读数上);平滑度量不出它
+    # (2026-10-14:注入 2 倍锯齿平滑度只到 0.67,与干净数据重叠),所以是独立读数,不进平滑度分
+    jag = [dict(s, stream="action") for s in jagged_segments(a, fps, kin_cols)]
+    if proprio is not None and np.asarray(proprio).ndim == 2:
+        jag += [dict(s, stream="state") for s in jagged_segments(np.asarray(proprio, dtype=np.float64), fps,
+                                                                 [c for c in kin_cols if c < np.asarray(proprio).shape[1]])]
+    detail["jagged_amp"] = round(max((s["amp_rel"] for s in jag), default=0.0), 4)
+    if jag:
+        detail["jagged"] = sorted(jag, key=lambda s: -s["amp_rel"])[:20]
 
     # ② path_efficiency:直线/路径(关节空间;scorer 同款;软分,来回动作天然低)
     _pe_cols = [c for c in (translation_dims or ()) if c < dim]
