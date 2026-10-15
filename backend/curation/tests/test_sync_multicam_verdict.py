@@ -703,7 +703,9 @@ _CONTRACT_CAM = {"lag_s", "corr_peak", "corr_at_zero", "peak_ratio", "peak_width
                  "trusted", "code", "note", "diagnosis"}
 #: 2026-08-11 之后新增的键:新读数一定有,老交付一定没有 → 只能是可选,
 #: 契约检查两头都要放行(必需集一个不能少,多出来的只准是这些)
-_CONTRACT_CAM_OPT = {"at_scan_edge", "visibility", "xc_curve", "lag_windows"}  # xc_curve: 2026-10-13 随读数落盘的相关曲线(MV-3 借峰检验)
+_CONTRACT_CAM_OPT = {"at_scan_edge", "visibility", "xc_curve", "lag_windows",  # xc_curve: 2026-10-13 随读数落盘的相关曲线(MV-3 借峰检验)
+                     # 2026-10-14 读数的来历:整段/分窗、整段留一法稳不稳、按肢体分组的明细、不可信的原因
+                     "basis", "whole_stable", "whole_lag_s", "instability", "jackknife", "groups", "group", "group_agreement"}
 _CONTRACT_VERDICTS = {"aligned", "misaligned_all", "annotated", "undecidable"}
 _CONTRACT_CODES = {"aligned", "misaligned", "ambiguous_peak", "flat_peak",
                    "low_corr", "no_motion"}

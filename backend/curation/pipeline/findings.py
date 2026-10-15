@@ -205,7 +205,8 @@ def _video_action_sync(passed, score, d, p) -> Derived:
         for item in registry.get(m).covers:
             out.cannot(item, "not_applicable", why[:200])
         return out
-    out.readings["per_camera"] = {cam: {k: _r(v) for k, v in c.items() if k in ("lag_s", "corr_peak", "code", "trusted")}
+    out.readings["per_camera"] = {cam: {k: _r(v) for k, v in c.items()
+                                        if k in ("lag_s", "corr_peak", "code", "trusted", "basis", "whole_stable", "instability")}
                                   for cam, c in sorted(per.items()) if isinstance(c, dict)}
     # the windowed median (second estimator, 2026-10-13): its summary beside each camera's reading
     for cam, c in sorted(per.items()):
@@ -242,7 +243,7 @@ def _video_action_sync(passed, score, d, p) -> Derived:
             text = f"{cam} 比动作{'早' if lag < 0 else '晚'} {abs(lag):.2f} 秒" if lag is not None else f"{cam} 与动作错位"
             out.add(m, "camera_misaligned", text,
                     scope={"camera": cam}, readings={"lag_s": _r(lag), "corr_peak": _r(c.get("corr_peak")),
-                                                     "basis": "whole" if whole else "windowed_median"})
+                                                     "basis": (str(c.get("basis") or "whole") if whole else "windowed_median")})
         suspects = sorted(str(c) for c in d.get("suspect_cameras") or [])
         if suspects:
             # the same words as the other AV-1 texts (2026-10-13): the camera, its whole-episode reading (not trusted),
@@ -350,7 +351,12 @@ def _best_readings(per: dict, p: dict) -> dict:
             continue
         lag = _num(c.get("lag_s"))
         if c.get("trusted") and lag is not None and c.get("code") in ("aligned", "misaligned"):
-            out[cam] = (lag, "whole", c.get("code"))
+            out[cam] = (lag, str(c.get("basis") or "whole"), c.get("code"))
+            continue
+        if c.get("instability"):
+            # 2026-10-14:整段与逐窗各自稳定却不同、整段峰靠一小段数据撑着、各肢体读数矛盾——这一路没有「最好读数」,
+            # 分窗中位数也不单独拿出来报
+            out[cam] = (None, None, None)
             continue
         lw = c.get("lag_windows")
         if windows_stable(lw, min_trusted=int(p["window_min_trusted"]), max_iqr_s=float(p["window_max_iqr_s"])) \

@@ -19,6 +19,7 @@ from ..core.checks.motion_quality import motion_quality
 from ..core.checks.video_action_sync import (
     camera_reading,
     global_lag,
+    grouped_lag,
     joint_speed,
     optical_flow_energy,
     sync_check_result,
@@ -278,20 +279,60 @@ def sync_speed_columns(n_cols: int, proprio_space, layout: dict | None, profile_
     FastUMI's names both give them); without a layout the first three columns, but only when the column count
     looks like a pose (3..8) - a 26-joint humanoid misread as ee would otherwise have its left shoulder taken for
     xyz (2026-10-14 G1 ep26). joint: every column but the gripper (profile or layout) and the fingers of a
-    dexterous hand (layout hand_dims) - their flutter is not arm motion."""
+    dexterous hand (layout hand_dims) - their flutter is not arm motion.
+
+    This is the union of ``sync_speed_groups``; the measurement reads the groups one by one (see there)."""
+    cols: list[int] = []
+    for g in sync_speed_groups(n_cols, proprio_space, layout, profile_gripper_dims).values():
+        cols.extend(c for c in g if c not in cols)
+    return sorted(cols)
+
+
+def sync_speed_groups(n_cols: int, proprio_space, layout: dict | None, profile_gripper_dims=()) -> dict:
+    """The same columns split into limbs: ``{"left": [...], "right": [...]}`` when the layout's names carry a side,
+    else one group (``"arm"`` for joints, ``"ee"`` for a pose). A time offset between picture and record is a
+    property of the stream, so every moving limb must show the same one; the measurement reads each limb on its
+    own and only trusts a camera when the limbs agree (2026-10-14 G1 ep7/42/108: six columns named as the right
+    arm's joints are a bounded, finger-like signal - mixed into one curve with the left arm they bent the
+    whole-episode correlation to -1.8 s while every 2 s window read 0)."""
     lay = layout if isinstance(layout, dict) else {}
     if str(proprio_space) == "ee":
         tr = [int(c) for c in (lay.get("translation_dims") or ()) if 0 <= int(c) < n_cols]
         if tr:
-            return tr
-        if 3 <= n_cols <= 8:
-            return [0, 1, 2]
-        return list(range(n_cols))
-    drop = {int(c) for c in (profile_gripper_dims or ())}
-    drop |= {int(c) for c in (lay.get("gripper_dims") or ())}
-    drop |= {int(c) for c in (lay.get("hand_dims") or ())}
-    keep = [j for j in range(n_cols) if j not in drop]
-    return keep or list(range(n_cols))
+            base, name = tr, "ee"
+        elif 3 <= n_cols <= 8:
+            return {"ee": [0, 1, 2]}
+        else:
+            return {"ee": list(range(n_cols))}
+    else:
+        drop = {int(c) for c in (profile_gripper_dims or ())}
+        drop |= {int(c) for c in (lay.get("gripper_dims") or ())}
+        drop |= {int(c) for c in (lay.get("hand_dims") or ())}
+        base, name = [j for j in range(n_cols) if j not in drop] or list(range(n_cols)), "arm"
+    groups: dict = {}
+    for side, cols in (lay.get("limbs") or []):
+        got = [int(c) for c in cols if int(c) in base]
+        if got:
+            groups[str(side) or name] = got
+    placed = {c for g in groups.values() for c in g}
+    rest = [c for c in base if c not in placed]
+    if rest:
+        if groups and name not in groups:
+            groups[name] = rest
+        elif not groups:
+            groups[name] = rest
+        else:
+            groups[name].extend(rest)
+    return groups
+
+
+def sync_speed_proxies(state, fps: float, proprio_space, layout: dict | None, profile_gripper_dims=()) -> dict:
+    """``{limb: joint_speed}`` - the per-limb speed proxies the sync measurement reads (shared with the benchmark)."""
+    from ..core.checks.video_action_sync import joint_speed as _js
+
+    p = np.asarray(state, dtype=np.float64)
+    return {name: _js(p[:, cols], fps)
+            for name, cols in sync_speed_groups(p.shape[1], proprio_space, layout, profile_gripper_dims).items()}
 
 
 def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) -> Callable:
@@ -309,7 +350,8 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
     _VERDICT_KEYS = {"spread_tol_s", "kill_lag_min_s", "neg_kill_lag_min_s",
                      "min_kill_cameras"}
     # 分窗估计的两个测量层参数(default.yaml 的 window_s / window_min_frames)打包给 global_lag(window=...)
-    _WINDOW_KEYS = {"window_s": "win_s", "window_min_frames": "min_frames"}
+    _WINDOW_KEYS = {"window_s": "win_s", "window_min_frames": "min_frames",
+                    "window_min_trusted": "min_trusted", "window_max_iqr_s": "max_iqr_s"}
     ps = {k: v for k, v in _ps_all.items() if k not in _VERDICT_KEYS and k not in _WINDOW_KEYS}
     _win = {_WINDOW_KEYS[k]: v for k, v in _ps_all.items() if k in _WINDOW_KEYS}
     if _win:
@@ -355,6 +397,8 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
                 _gd = tuple(registry.get(str(embodiment_id)).gripper_dims)
             except Exception:  # noqa: BLE001  未知 embodiment → 没有夹爪约定
                 _gd = ()
+            # 逐肢体各一根速度曲线(测量按组求一致);曲线图仍画它们的并集
+            speeds = sync_speed_proxies(p_sync, fps, proprio_space, _lay, _gd)
             p_sync = p_sync[:, sync_speed_columns(p_sync.shape[1], proprio_space, _lay, _gd)]
             speed = joint_speed(p_sync, fps)
 
@@ -407,8 +451,8 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
                 per_cam[c] = visual_quality(samp, **pv)
             if do_sync and speed is not None and len(frames) >= 8:
                 flow = optical_flow_energy(frames)
-                _res = global_lag(flow, fts[1:], speed,
-                                  np.asarray(timestamps)[1:], **ps)
+                _res = grouped_lag(flow, fts[1:], speeds,
+                                   np.asarray(timestamps)[1:], **ps)
                 sync_cams[_short_of[c]] = camera_reading(_res)
                 # 曲线搭质检顺风车暂存(光流是全管线最贵计算,算完就扔=白扔);
                 # 降采样到 ≤600 点(画图够用,控内存),导出层渲染

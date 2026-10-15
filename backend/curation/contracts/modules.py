@@ -127,6 +127,14 @@ arm's gripper closed in one frame at 406 units/s while the follower peaked at 18
 marks approximate (an observed envelope: so100 / so101 / aloha / widowx) informs as ``velocity_limit_approx``
 instead of rejecting; gripper columns (an opening, not a joint) are outside the velocity check. Position limits
 and authoritative velocity limits still reject.
+
+8.5 (2026-10-14): the sync check reads the record limb by limb (left / right from the column names, else one group)
+and only trusts a camera when the limbs agree; each reading is trusted only when its whole-episode peak survives
+leaving any 2 s span out (a peak carried by one burst is not a stream offset) and, when the 2 s windows are steady,
+agrees with them - steady windows take over an unreliable whole-episode peak, two steady estimators that disagree
+make the camera undecidable. ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` / ``groups`` /
+``instability``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
+one curve they bent the whole-episode correlation to -1.8 s while every window read 0.
 """
 from __future__ import annotations
 

@@ -159,6 +159,7 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
         return {"angle_dims": tuple(rot_idx), "rotation_blocks": blocks,
                 "euler_triplet": bool(blocks) and all(b[2] == "rpy" for b in blocks),
                 "gripper_dims": grip, "translation_dims": trans, "velocity_dims": vel, "hand_dims": hand, "source": "names",
+                "limbs": limbs_from_names(names, exclude=set(grip) | set(vel) | set(hand)),
                 "gripper_closed": gripper_closed_from_names(names, grip),
                 # 名字认出了至少一个位姿块:预检对整列空间没把握时,布局本身就够运动质量按块算(F8)
                 "informative": bool(blocks or trans)}
@@ -213,6 +214,26 @@ def detect_ee_layout_numeric(action, dim: int) -> dict | None:
             "gripper_closed": "high"}
 
 
+#: 列名里的肢体侧别词:left / right(拆驼峰后 kLeftShoulderPitch → left;left_arm_joint_0 → left)
+_SIDE_TOKENS = {"left": "left", "right": "right"}
+
+
+def limbs_from_names(names: list, exclude=()) -> list:
+    """按列名把本体列分成肢体组:[[side, [列...]], ...],side 是 left / right / ""(没写侧别)。
+    同步检查的速度代理按组各算一次再求一致(2026-10-14 G1:右臂六列实为手指样有界信号,
+    与左臂混成一根曲线时整段互相关被带偏);夹爪、速度型、手指列不进任何肢体组。
+    没有侧别词的列归一组;只认得出一侧时也照样返回(单臂数据集就是一组)。"""
+    from .semantics_preflight import name_tokens
+    groups: dict = {}
+    for i, n in enumerate(names):
+        if i in exclude:
+            continue
+        toks = set(name_tokens(n))
+        side = next((v for k, v in _SIDE_TOKENS.items() if k in toks), "")
+        groups.setdefault(side, []).append(i)
+    return [[side, cols] for side, cols in groups.items() if cols]
+
+
 def layout_for_extras(layout: dict) -> dict:
     """布局写进 semantics_extras(JSON 列,随行流到漏斗;tuple 型语义字段进不了 daft)。"""
     return {"angle_dims": list(layout.get("angle_dims") or ()),
@@ -222,6 +243,7 @@ def layout_for_extras(layout: dict) -> dict:
             "translation_dims": list(layout.get("translation_dims") or ()),
             "velocity_dims": list(layout.get("velocity_dims") or ()),
             "hand_dims": list(layout.get("hand_dims") or ()),
+            "limbs": [[str(side), [int(c) for c in cols]] for side, cols in (layout.get("limbs") or [])],
             "source": str(layout.get("source") or ""),
             "gripper_closed": str(layout.get("gripper_closed") or "high"),
             "informative": bool(layout.get("informative"))}
