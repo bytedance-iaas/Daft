@@ -107,6 +107,12 @@ def _camera(name: str, cv: dict, reading: dict) -> dict | None:
     if len(lags):
         step = _every(len(lags))
         out.update(lags=_rounded(lags[::step], 3), xcorr=_rounded(xc[::step], 4))
+        # the marker is the whole-episode reading of the drawn curve (its peak): when the camera's reading came
+        # from the windowed median instead (basis windowed_median, 2026-10-14), the curve's own lag is whole_lag_s
+        # and the reading is drawn by the windows chart below
+        whole = reading.get("whole_lag_s", cv.get("whole_lag_s"))
+        if str(reading.get("basis", cv.get("basis")) or "") == "windowed_median" and isinstance(whole, (int, float)) and not isinstance(whole, bool):
+            lag_s = whole
         x = None if lag_s is None or isinstance(lag_s, bool) else float(lag_s)
         # the reading on the drawn curve: its x is the check's, its y read off the curve;
         # a reading outside the drawn window gets no marker (v1's _peak_marker)

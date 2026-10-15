@@ -5102,7 +5102,7 @@ components:
         camera: {type: string}
         t: {type: array, items: {type: [number, "null"]}, description: "seconds from the episode start"}
         flow: {type: array, items: {type: [number, "null"]}, description: "picture motion (optical-flow energy) at t"}
-        speed: {type: array, items: {type: [number, "null"]}, description: "arm motion (joint speed) at t"}
+        speed: {type: array, items: {type: [number, "null"]}, description: "arm motion (joint speed) at t, of the limb the reading came from"}
         lags: {type: array, items: {type: [number, "null"]}, description: "seconds; > 0 = the picture is later than the motion"}
         xcorr: {type: array, items: {type: [number, "null"]}, description: "cross-correlation at each lag"}
         lag_s: {type: [number, "null"], description: "the check's reading"}
@@ -5110,7 +5110,10 @@ components:
         code: {type: [string, "null"], description: "aligned, misaligned, ambiguous_peak, flat_peak, low_corr, no_motion"}
         trusted: {type: [boolean, "null"]}
         peak:
-          description: the reading on the drawn curve; null when there is none or it lies outside the window
+          description: >-
+            the drawn curve's own reading (its peak); when the camera's reading came from the windowed median
+            instead, the peak is the whole-episode lag and the windows carry the reading; null when there is
+            none or it lies outside the window
           oneOf:
             - {type: "null"}
             - type: object

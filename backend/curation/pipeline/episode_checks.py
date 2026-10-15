@@ -457,14 +457,18 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
                 # 曲线搭质检顺风车暂存(光流是全管线最贵计算,算完就扔=白扔);
                 # 降采样到 ≤600 点(画图够用,控内存),导出层渲染
                 _ft2 = np.asarray(fts[1:], dtype=float)
-                _sp2 = np.interp(_ft2, np.asarray(timestamps)[1:], speed)
+                # 画的是出读数的那组肢体的速度曲线(2026-10-14):曲线、最高点与读数必须同源,
+                # 画并集速度会让图上的最高点与读数对不上(G1 ep26)
+                _grp = _res.detail.get("group")
+                _sp_src = speeds.get(_grp, speed) if isinstance(_grp, str) else speed
+                _sp2 = np.interp(_ft2, np.asarray(timestamps)[1:], _sp_src)
                 _st = max(1, len(flow) // 600)
                 sync_curves[_short_of[c]] = {
                     "t": np.round(_ft2[::_st], 3).tolist(),
                     "flow": np.round(np.asarray(flow)[::_st], 5).tolist(),
                     "speed": np.round(_sp2[::_st], 6).tolist(),
                     **{k: _res.detail.get(k) for k in
-                       ("lag_s", "corr_peak", "code", "n_trimmed_static")}}
+                       ("lag_s", "corr_peak", "code", "n_trimmed_static", "group", "basis", "whole_lag_s")}}
             del frames, samp
 
         if do_visual and per_cam:

@@ -100,3 +100,20 @@ def test_a_task_that_did_not_select_the_sync_check(world):
     report.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     body = assert_error(world.get("/episodes/3/sync-curves"), "not_found", 404)
     assert body["error"]["details"]["reason"] == "module_not_run"
+
+
+def test_a_windowed_reading_keeps_the_marker_on_the_curves_own_peak(tmp_path):
+    """When the camera's reading is the windowed median (basis windowed_median, 2026-10-14), the marker on the
+    correlation curve is the curve's own whole-episode lag (whole_lag_s); the windows chart carries the reading."""
+    from daemon.results.sync_curves import _camera
+
+    t = [i / 30 for i in range(120)]
+    flow = [1.0 if 30 <= i < 45 else 0.0 for i in range(120)]
+    speed = [1.0 if 30 <= i < 45 else 0.0 for i in range(120)]
+    cv = {"t": t, "flow": flow, "speed": speed}
+    reading = {"lag_s": -0.3333, "corr_peak": 0.48, "code": "misaligned", "trusted": True,
+               "basis": "windowed_median", "whole_lag_s": 0.0, "lag_windows": {"windows": []}}
+    cam = _camera("cam", cv, reading)
+    assert cam["lag_s"] == -0.3333 and cam["peak"]["lag_s"] == 0.0
+    plain = _camera("cam", cv, {"lag_s": 0.0, "corr_peak": 0.9, "code": "aligned", "trusted": True})
+    assert plain["peak"]["lag_s"] == 0.0
