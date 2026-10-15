@@ -2754,7 +2754,7 @@ export interface components {
             t: (number | null)[];
             /** @description picture motion (optical-flow energy) at t */
             flow: (number | null)[];
-            /** @description arm motion (joint speed) at t */
+            /** @description arm motion (joint speed) at t, of the limb the reading came from */
             speed: (number | null)[];
             /** @description seconds; > 0 = the picture is later than the motion */
             lags: (number | null)[];
@@ -2766,7 +2766,7 @@ export interface components {
             /** @description aligned, misaligned, ambiguous_peak, flat_peak, low_corr, no_motion */
             code?: string | null;
             trusted?: boolean | null;
-            /** @description the reading on the drawn curve; null when there is none or it lies outside the window */
+            /** @description the drawn curve's own reading (its peak); when the camera's reading came from the windowed median instead, the peak is the whole-episode lag and the windows carry the reading; null when there is none or it lies outside the window */
             peak: null | {
                 lag_s: number;
                 corr: number;
