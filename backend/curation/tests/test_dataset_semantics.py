@@ -197,3 +197,38 @@ def test_gripper_polarity_third_layer_from_start_state():
              "features": {"action": {"names": names}}}
     s2 = resolve_semantics(info2, np.zeros((30, 7)))
     assert s2.extras["gripper"]["closed_source"] == "default"      # 档案没写极性:缺省,来源留痕
+
+
+# ---- 2026-10-15:列种类的正门是档案声明,列名词表只是缺省 --------------------------------------------
+
+def test_profile_declares_velocity_hand_and_limb_columns():
+    """档案 action 段的 velocity_dims / hand_dims / limbs 写进 layout(映射或列表两种写法都认);
+    没声明任何布局项的档案不写 layout(老档案 extras 一字不变)。"""
+    prof = {"action": {"space": "joint", "gripper_dims": [6], "velocity_dims": [7, 8],
+                       "hand_dims": [9, 10], "limbs": {"left": [0, 1, 2], "right": [3, 4, 5]}}}
+    lay = DS._profile_extras_with_layout(prof)["layout"]
+    assert lay["source"] == "profile" and lay["velocity_dims"] == [7, 8] and lay["hand_dims"] == [9, 10]
+    assert lay["limbs"] == [["left", [0, 1, 2]], ["right", [3, 4, 5]]] and lay["gripper_dims"] == [6]
+    assert lay["rotation_blocks"] == [] and lay["informative"] is False
+    as_list = {"action": {"limbs": [["left", [0, 1]], ["right", [2, 3]]]}}
+    assert DS._profile_extras_with_layout(as_list)["layout"]["limbs"] == [["left", [0, 1]], ["right", [2, 3]]]
+    assert "layout" not in DS._profile_extras_with_layout({"action": {"space": "joint", "gripper_dims": [6]}})
+
+
+def test_declared_limbs_reach_the_sync_groups_for_aloha():
+    """aloha 档案声明了双臂分组:同步检查的速度代理按左右臂各成一组,夹爪列不进任何组。"""
+    from curation.pipeline.episode_checks import sync_speed_groups
+    names = ["left_waist", "left_shoulder", "left_elbow", "left_forearm_roll", "left_wrist_angle", "left_wrist_rotate",
+             "left_gripper", "right_waist", "right_shoulder", "right_elbow", "right_forearm_roll", "right_wrist_angle",
+             "right_wrist_rotate", "right_gripper"]
+    info = {"robot_type": "aloha", "features": {"action": {"names": names}}}
+    s = resolve_semantics(info, np.zeros((30, 14)))
+    assert s.source == "profile" and s.extras["layout"]["limbs"] == [["left", [0, 1, 2, 3, 4, 5]], ["right", [7, 8, 9, 10, 11, 12]]]
+    assert sync_speed_groups(14, "joint", s.extras["layout"], s.gripper_dims) == {"left": [0, 1, 2, 3, 4, 5], "right": [7, 8, 9, 10, 11, 12]}
+
+
+def test_a_bad_limb_declaration_fails_loudly():
+    """列号写成字符串这种档案错误要在加载时抛出,不能静默变成没声明。"""
+    import pytest
+    with pytest.raises(ValueError):
+        DS.limbs_declared({"left": ["a", "b"]})

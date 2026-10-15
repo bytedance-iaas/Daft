@@ -54,6 +54,8 @@ _ROT_TOKENS = ("rot6d", "rot_6d", "6d", "quat", "qx", "qy", "qz", "qw", "roll", 
                "rx", "ry", "rz", "rotvec", "axis_angle", "axisangle", "rot", "orient", "euler",
                "wx", "wy", "wz")
 _POS_TOKENS = ("pos_x", "pos_y", "pos_z", "x", "y", "z", "pos", "position", "trans", "tx", "ty", "tz")
+#: 下面几份词表是**没有档案时**按列名猜列种类的缺省;正门是语义档案(dataset_profiles/*.yaml)的 action 段:
+#: velocity_dims / hand_dims / limbs 直接声明,声明了就不靠词(2026-10-15:新命名习惯进档案一行,不改代码)
 _GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw",
                 "trigger", "squeeze")   # 手柄扳机 / 握力 = 手部指令(2026-10-14 HIW-500 left_trigger / left_squeeze)
 #: 速度型指令列(2026-10-14 HIW-500:pivot_vx / pivot_vy / pivot_vyaw 是底盘速度,91–94% 的帧步长为零、
@@ -340,15 +342,36 @@ def _profile_extras_with_layout(prof: dict) -> dict:
                              "closed": gripper_closed_of(act),
                              "closed_source": ("profile" if act.get("gripper_closed") else "default")}
     blocks = act.get("rotation_blocks")
-    if blocks:
+    # 列种类声明(2026-10-15):速度型列 / 灵巧手手指列 / 肢体分组,档案写了就是正门,列名词表只是没档案时的缺省
+    declared = {k: act.get(k) for k in ("velocity_dims", "hand_dims", "limbs") if act.get(k)}
+    if blocks or declared:
         lay = {"angle_dims": tuple(act.get("angle_dims", [])),
-               "rotation_blocks": [tuple(b) for b in blocks],
+               "rotation_blocks": [tuple(b) for b in (blocks or [])],
                "euler_triplet": bool(act.get("euler_triplet", False)),
                "gripper_dims": tuple(act.get("gripper_dims", [])),
                "translation_dims": tuple(act.get("translation_dims", [])),
+               "velocity_dims": tuple(int(x) for x in (act.get("velocity_dims") or [])),
+               "hand_dims": tuple(int(x) for x in (act.get("hand_dims") or [])),
+               "limbs": limbs_declared(act.get("limbs")),
+               "informative": bool(blocks or act.get("translation_dims")),
                "source": "profile"}
         extras["layout"] = layout_for_extras(lay)
     return extras
+
+
+def limbs_declared(value) -> list:
+    """档案里的肢体分组 → [[side, [列...]], ...]。接受映射 {left: [...], right: [...]} 或列表 [[left, [...]], ...];
+    side 是任意短名(left / right / arm / base),同步检查按组各读一次滞后再求一致。写错了(不是整数列号)抛错,
+    档案错误要在加载时暴露,不能静默变成没声明。"""
+    if not value:
+        return []
+    items = list(value.items()) if isinstance(value, dict) else [tuple(v) for v in value]
+    out = []
+    for side, cols in items:
+        cols = [int(c) for c in (cols or [])]
+        if cols:
+            out.append([str(side), cols])
+    return out
 
 
 def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,

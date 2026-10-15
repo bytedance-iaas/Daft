@@ -26,6 +26,12 @@
 - rotation_blocks / translation_dims：非 rpy 的姿态表示（如 umi 的 rot6d）按块声明。
     声明了 rotation_blocks 时，angle_dims、euler_triplet、gripper_dims 连同它一起写进 extras 的 `layout`，运动质量按块处理；
     没声明的 profile，运动质量走老规则（EE 取第 3–5 列 rpy，关节取全部列），angle_dims / euler_triplet 不起作用
+- velocity_dims：速度型指令列（底盘 vx / vy / vyaw 这类摇杆信号，不是轨迹），平滑度与尖刺不算它们
+- hand_dims：灵巧手手指列，同步检查的速度代理不看它们（手指碎动会盖过手臂）
+- limbs：肢体分组，`{left: [0,1,2,3,4,5], right: [7,8,9,10,11,12]}`（也可写成 `[[left, [...]], ...]`）。
+    同步检查按组各读一次画面与记录的滞后，各组一致才认这路相机。
+    这三项任一声明了就写进 `layout`；没声明时系统按列名里的词猜（vx / velocity / omega、hand / finger / thumb、left / right），
+    词表是缺省不是正门：新的命名习惯写进档案，不加词
 - stuck_strategy（运动质量的执行器卡死检测）：
     cmd_delta_vs_pos   —— 绝对目标：diff(action) vs diff(proprio)
     increment_vs_pos   —— 增量：|action| vs diff(proprio)
