@@ -1214,6 +1214,8 @@
    "platform_codes": [
     "kinematic_limits.joint_limit",
     "kinematic_limits.velocity_limit",
+    "kinematic_limits.velocity_limit_approx",
+    "kinematic_limits.command_velocity_limit",
     "kinematic_limits.ee_reach",
     "kinematic_limits.ee_translation_velocity",
     "kinematic_limits.ee_rotation_velocity",

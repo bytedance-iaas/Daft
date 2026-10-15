@@ -121,6 +121,21 @@ measurement, so "the model did not answer" would be untrue of it).
 integrity, not an execution error: ``data_missing`` (FILE-1, a data parquet that is not there - with data integrity
 selected such an episode is judged, not left out) and ``column_missing`` (STRM-1, a column info.json declares that the
 parquet does not have), both blocking.
+8.2 (2026-10-14, requester, ACT-4): kinematic limits are the robot's. ``kinematic_limits`` reads the joint state when
+one is in the action's space and only notes a command that moved faster (``command_velocity_limit``, info: a leader
+arm's gripper closed in one frame at 406 units/s while the follower peaked at 181); a velocity limit the profile
+marks approximate (an observed envelope: so100 / so101 / aloha / widowx) informs as ``velocity_limit_approx``
+instead of rejecting; gripper columns (an opening, not a joint) are outside the velocity check. Position limits
+and authoritative velocity limits still reject.
+
+8.5 (2026-10-14): the sync check reads the record limb by limb (left / right from the column names, else one group)
+and only trusts a camera when the limbs agree; each reading is trusted only when its whole-episode peak survives
+leaving any 2 s span out (a peak carried by one burst is not a stream offset) and, when the 2 s windows are steady,
+agrees with them - steady windows take over an unreliable whole-episode peak, two steady estimators that disagree
+make the camera undecidable; the limbs' summed motion must itself match the picture before a single limb's
+reading counts (sum_unexplained otherwise). ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` /
+``groups`` / ``instability`` / ``sum``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
+one curve they bent the whole-episode correlation to -1.8 s while every window read 0.
 """
 from __future__ import annotations
 
@@ -128,7 +143,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.4"
+REGISTRY_VERSION = "8.5"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -626,6 +641,10 @@ MODULES: tuple[ModuleSpec, ...] = (
         # they stay ACT-4 until motion_quality's spike detection improves (design doc 17 §2.2)
         codes=(_blocking("joint_limit", "ACT-4", "关节位置越限", scope_kind="channel"),
                _blocking("velocity_limit", "ACT-4", "关节速度越限", scope_kind="channel"),
+               # 8.2 (2026-10-14): a velocity limit the profile calls approximate informs instead of rejecting;
+               # a command (leader arm, joystick) faster than the robot may move is a note - the state decides
+               _info("velocity_limit_approx", "ACT-4", "速度超出近似限值", "medium", scope_kind="channel"),
+               _info("command_velocity_limit", "ACT-4", "指令速度超限", scope_kind="channel"),
                _blocking("ee_reach", "ACT-4", "末端超出工作空间"),
                _blocking("ee_translation_velocity", "ACT-4", "末端平移速度越限"),
                _blocking("ee_rotation_velocity", "ACT-4", "末端转动速度越限"),

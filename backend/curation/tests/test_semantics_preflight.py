@@ -116,3 +116,49 @@ def test_reader_uses_preflight_when_profiles_ignored(monkeypatch):
     ex2 = json.loads(rows[0]["semantics_extras"])
     assert rows[0]["semantics_source"] in ("preflight", "preflight_unknown")
     assert "semantics_preflight" in ex2 and "profile_name" not in ex2
+
+
+# ---- 2026-10-14 (G1 ep26):列名与维数都算证据,26 关节的人形不再被判成末端 ---------------------------
+
+from curation.ingest.semantics_preflight import names_hint_of, name_tokens
+
+
+def test_name_tokens_split_camel_case_and_separators():
+    assert name_tokens("kLeftShoulderPitch") == ["k", "left", "shoulder", "pitch"]
+    assert name_tokens("left_joint_0.pos") == ["left", "joint", "pos"]
+    assert name_tokens("target_arm_left_joint_0") == ["target", "arm", "left", "joint"]
+
+
+def test_names_hint_prefers_joint_words_over_pose_words():
+    assert names_hint_of(["kLeftShoulderPitch", "kLeftWristRoll", "kLeftHandThumbBend"]) == "joint"
+    assert names_hint_of(["left_joint_0.pos", "left_joint_1.pos"]) == "joint"
+    assert names_hint_of(["arm_left_joint_0", "arm_right_joint_5"]) == "joint"
+    assert names_hint_of(["left_x", "left_y", "left_z", "left_roll", "left_gripper"]) == "ee"
+    assert names_hint_of(["a0", "a1"]) is None and names_hint_of(None) is None
+
+
+def _humanoid_rows(n_joints: int = 26, t: int = 200, seed: int = 0):
+    rng = np.random.default_rng(seed); tt = np.linspace(0, 4 * np.pi, t)[:, None]
+    q = 0.4 * np.sin(tt + rng.uniform(0, 6, n_joints)) * rng.uniform(0.2, 1.0, n_joints)
+    s = q + rng.normal(0, 0.003, q.shape)
+    return [{"action": q.astype(np.float32), "proprio_state": s.astype(np.float32), "fps": 30.0}] * 3
+
+
+def test_a_26_joint_humanoid_without_a_profile_is_joint_space():
+    names = ["kLeftShoulderPitch", "kLeftShoulderRoll", "kLeftShoulderYaw", "kLeftElbow", "kLeftWristRoll", "kLeftWristPitch",
+             "kLeftWristYaw"] + [f"kLeftHand{f}" for f in ("Pinky", "Ring", "Middle", "Index", "ThumbBend", "ThumbRotation")]
+    names = names + [n.replace("Left", "Right") for n in names]
+    pf = preflight(_humanoid_rows(), names_hint=names_hint_of(names))
+    assert pf["status"] == "confident" and pf["action_space"] == "joint" and pf["control_mode"] == "absolute", pf
+    # without names the column count alone keeps the end-effector hypotheses out (26 columns are no pose)
+    pf2 = preflight(_humanoid_rows(), names_hint=None)
+    assert pf2["scores"]["ee_absolute"] == 0.0 and pf2["action_space"] == "joint", pf2
+
+
+def test_an_unnamed_8_column_pose_is_still_end_effector():
+    rng = np.random.default_rng(1); t = 200; tt = np.linspace(0, 2 * np.pi, t)
+    xyz = np.stack([0.5 + 0.1 * np.sin(tt), 0.1 * np.cos(tt), 0.2 + 0.05 * np.sin(2 * tt)], 1)
+    a = np.column_stack([xyz, np.tile([0.0, 0.0, 1.0, 0.0], (t, 1)), np.where(np.arange(t) < 100, 95.0, 0.0)])
+    s = np.column_stack([a[:, :7], np.zeros((t, 7)), a[:, 7]])         # RH20T-like 15-column state
+    pf = preflight([{"action": a, "proprio_state": s, "fps": 10.0}] * 2, names_hint=None)
+    assert pf["status"] == "confident" and pf["action_space"] == "ee", pf

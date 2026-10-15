@@ -1,6 +1,7 @@
 """P3.2 验收:add_spike/stuck_joint 注入检出>95%;干净集(合成+aloha 真数据)分布合理。"""
 from __future__ import annotations
 
+import json
 import os
 
 import numpy as np
@@ -213,3 +214,120 @@ def test_clean_aloha_distribution_sane():
     assert min(scores) > 0.5 and np.median(scores) > 0.7, f"分布异常: {np.round(scores, 2)}"
     # 有意保持不应触发 stuck(本数据集大量单臂保持)
     assert all(r.detail["stuck"] == 1.0 for r in res), "干净 aloha 出现 stuck 误报"
+
+# ---- 2026-10-14 RH20T 教训:一列开关、一块四元数,别拖垮其它列 ------------------------------
+
+def _rh20t_like(t: int = 300, flips: bool = True):
+    """xyz 平滑 + 单位四元数(每 6 s 换一次符号)+ 夹爪 0/95 两档,8 列无名,10 Hz。"""
+    from scipy.spatial.transform import Rotation
+    tt = np.linspace(0, 2 * np.pi, t)
+    xyz = np.stack([0.5 + 0.1 * np.sin(tt), 0.1 * np.cos(tt), 0.17 + 0.05 * np.sin(2 * tt)], 1)
+    rot = Rotation.from_euler("xyz", np.stack([0.1 * np.sin(tt), 0.2 * np.cos(tt), np.pi + 0.3 * np.sin(tt)], 1))
+    q = rot.as_quat()
+    if flips:
+        q[(np.arange(t) // 60) % 2 == 1] *= -1
+    grip = np.where(np.arange(t) < 100, 95.0, np.where(np.arange(t) < 200, 0.0, 95.0))
+    return np.column_stack([xyz, q, grip]).astype(np.float32)
+
+
+def test_switch_column_stays_out_of_smoothness_and_spike():
+    a = _rh20t_like(flips=False)
+    r = motion_quality(a, None, 10.0, control_mode="absolute")      # nothing declared, no gripper known
+    assert r.detail["discrete_cols"] == [7]
+    assert "7" not in r.detail["smoothness_cols"]
+    assert r.detail["smoothness"] > 0.9 and r.detail["spike"] > 0.9
+
+
+def test_quaternion_block_sign_flips_are_not_motion():
+    a = _rh20t_like(flips=True)
+    bare = motion_quality(a, None, 10.0, control_mode="absolute")
+    lay = motion_quality(a, None, 10.0, control_mode="absolute", rotation_blocks=[(3, 4, "quat")],
+                         angle_dims=(3, 4, 5, 6), angle_mode="absolute", gripper_dims=(7,),
+                         translation_dims=(0, 1, 2))
+    assert lay.detail["smoothness"] > 0.95 and lay.detail["spike"] > 0.95
+    assert lay.detail["smoothness"] - bare.detail["smoothness"] > 0.2     # the flips still cost without a layout
+    assert set(lay.detail["smoothness_cols"]) == {"0", "1", "2", "3"}   # xyz + the rotation odometer
+
+
+def test_one_jerky_column_is_named_and_only_costs_its_share():
+    row = _clean_synthetic(11)
+    a = row["action"].astype(np.float64)
+    rng = np.random.default_rng(1)
+    a[:, 2] += rng.normal(0, 0.01, len(a))                            # one noisy joint
+    r = motion_quality(a, None, row["fps"], gripper_dims=(6,), control_mode="absolute")
+    cols = r.detail["smoothness_cols"]
+    assert r.detail["smoothness_min_col"] == 2 and cols["2"] < min(v for k, v in cols.items() if k != "2")
+    assert r.detail["smoothness"] > 0.5                               # six clean columns keep the mean up
+
+
+def test_unknown_semantics_abstain_instead_of_scoring():
+    from curation.pipeline.episode_checks import make_motion_check
+
+    class _Reg:
+        def get(self, _id):
+            raise KeyError(_id)
+    check = make_motion_check({"checks": {"motion_quality": {"params": {}}}}, _Reg())
+    out = check(_rh20t_like(), None, 10.0, "unknown", "unknown", "unknown", "flexiv", "auto", "{}")
+    d = json.loads(out["detail"]) if isinstance(out.get("detail"), str) else out["detail"]
+    assert out["passed"] is None and out.get("score") is None
+    assert d["semantics_undetermined"] is True and "smoothness" not in d
+    assert "不算" in d["smoothness_reason"] and d["reason"] == d["spike_reason"]
+
+
+# ---- F7b (2026-10-14):走走停停不是抖动 -------------------------------------------------------
+
+def _same_motion_at(fps: float, jitter: float = 0.0, seed: int = 0, seconds: float = 20.0):
+    """一段 20 s 的平滑动作(几条正弦叠加)按 fps 采样;jitter 是每帧叠加的白噪声幅度(米)。"""
+    rng = np.random.default_rng(seed)
+    t = np.arange(0.0, seconds, 1.0 / fps)
+    base = np.stack([0.2 * np.sin(0.6 * t + k) + 0.05 * np.sin(1.7 * t + 2 * k) for k in range(6)], 1)
+    return (base + rng.normal(0, jitter, base.shape)).astype(np.float64)
+
+
+def _with_pauses(a: np.ndarray, every: int = 40, hold: int = 30) -> np.ndarray:
+    """每 every 帧插入 hold 帧的停顿(值不变):同一段动作,只是走走停停。"""
+    chunks = []
+    for i in range(0, len(a), every):
+        chunks.append(a[i:i + every])
+        chunks.append(np.repeat(a[min(i + every, len(a)) - 1:min(i + every, len(a))], hold, axis=0))
+    return np.concatenate(chunks)
+
+
+def test_pauses_do_not_make_a_smooth_motion_jagged():
+    for fps in (10.0, 30.0):
+        a = _same_motion_at(fps)
+        cont = motion_quality(a, None, fps, control_mode="absolute").detail["smoothness"]
+        paused = motion_quality(_with_pauses(a), None, fps, control_mode="absolute").detail["smoothness"]
+        assert abs(cont - paused) < 0.08, (fps, cont, paused)
+
+
+def test_jitter_still_separates_from_clean_at_every_rate():
+    for fps in (10.0, 30.0, 50.0):
+        clean = motion_quality(_same_motion_at(fps), None, fps, control_mode="absolute").detail["smoothness"]
+        noisy = motion_quality(_same_motion_at(fps, jitter=0.01), None, fps, control_mode="absolute").detail["smoothness"]
+        assert clean - noisy > 0.25, (fps, clean, noisy)
+
+
+# ---- F8 (2026-10-14):列名分块优先于预检的整列假设,只在预检没把握时启用 ------------------------
+
+def test_names_layout_lets_motion_quality_run_on_unknown_semantics_without_velocity_columns():
+    from curation.pipeline.episode_checks import make_motion_check
+    from curation.tests.test_ee_layout_rot6d import HIW_NAMES, _hiw_like
+    from curation.ingest.dataset_semantics import detect_ee_layout, layout_for_extras
+
+    class _Reg:
+        def get(self, _id):
+            raise KeyError(_id)
+    check = make_motion_check({"checks": {"motion_quality": {"params": {}}}}, _Reg())
+    a = _hiw_like(); s = np.cumsum(np.random.default_rng(1).normal(size=(len(a), 29)) * 0.01, axis=0)
+    extras = json.dumps({"layout": dict(layout_for_extras(detect_ee_layout(HIW_NAMES, 23)), names_only=True)})
+    out = check(a, s, 30.0, "unknown", "unknown", "unknown", "unitree_g1", "auto", extras)
+    d = json.loads(out["detail"]) if isinstance(out.get("detail"), str) else out["detail"]
+    assert d.get("semantics_undetermined") is None and d["smoothness"] > 0.9
+    assert d["velocity_cols"] == [0, 1, 2] and not ({"0", "1", "2"} & set(d["smoothness_cols"]))
+    assert d["gripper_jitter"] is not None and not ({"19", "20", "21", "22"} & set(d["smoothness_cols"]))  # hand controls are grippers
+    assert d["actuator_saturation"] is None                      # 23 commands vs 29 joints: no same-space comparison
+    # the same episode without a names layout still abstains (F1 unchanged)
+    out2 = check(a, s, 30.0, "unknown", "unknown", "unknown", "unitree_g1", "auto", "{}")
+    d2 = json.loads(out2["detail"]) if isinstance(out2.get("detail"), str) else out2["detail"]
+    assert d2["semantics_undetermined"] is True

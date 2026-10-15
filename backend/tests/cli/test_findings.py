@@ -26,6 +26,13 @@ KIN_JOINT = {"n_violations": 3, "violations": [
     {"type": "velocity_limit", "joint": 3, "frame": 39, "value": 27.2314, "limit": 2.175},
     {"type": "velocity_limit", "joint": 3, "frame": 40, "value": 27.7019, "limit": 2.175}],
     "profile": "franka", "unit": "rad", "margin": 0.02}
+# 8.2 (2026-10-14, so101): the state is read, the profile's velocity limit is an observed envelope (approximate), the
+# leader arm's gripper command closed in one frame - the robot itself never exceeded anything
+KIN_SO101 = {"n_violations": 1, "violations": [
+    {"type": "velocity_limit", "joint": 1, "frame": 46, "value": 308.2107, "limit": 300.0}],
+    "profile": "so101", "unit": "deg_normalized", "margin": 0.02, "quality": "approximate", "basis": "state",
+    "n_command_velocity": 1, "command_velocity_violations": [
+    {"type": "velocity_limit", "joint": 5, "frame": 76, "value": 405.7187, "limit": 300.0}]}
 KIN_EE = {"mode": "ee", "n_violations": 3, "violations": [
     {"type": "ee_reach", "joint": "xyz", "frame": 50, "value": 2.0248, "limit": 1.4875},
     {"type": "ee_translation_velocity", "joint": "xyz", "frame": 49, "value": 22.4762, "limit": 1.87},
@@ -293,6 +300,7 @@ CASES = [
     ("timestamp_check", False, None, TS_ORDER, {"out_of_order"}, set()),
     ("timestamp_check", False, None, TS_SINGLE, {"single_stamp"}, set()),
     ("kinematic_limits", False, None, KIN_JOINT, {"joint_limit", "velocity_limit"}, set()),
+    ("kinematic_limits", True, None, KIN_SO101, {"velocity_limit_approx", "command_velocity_limit"}, set()),
     ("kinematic_limits", False, None, KIN_EE, {"ee_reach", "ee_translation_velocity", "ee_rotation_velocity"}, set()),
     ("kinematic_limits", False, None, KIN_DOF, {"data_invalid"}, set()),
     ("kinematic_limits", None, None, KIN_DRAFT, set(), {"ACT-4"}),

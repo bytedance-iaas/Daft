@@ -431,8 +431,11 @@ def global_lag(
             f_full, s_full, ft_full, s, st,
             quiet_frac=quiet_frac, max_lag_s=max_lag_s, trim_static=trim_static)
     # 第二估计量(见 windowed_lag):用未剔静止段的全程曲线分窗,只作读数,不改本函数的判定
+    _win = dict(window or {})
+    _min_trusted = int(_win.pop("min_trusted", 3))
+    _max_iqr = float(_win.pop("max_iqr_s", 0.15))
     if _windowed and len(f_full) >= 60:
-        detail["lag_windows"] = windowed_lag(f_full, ft_full, s, st, **(window or {}))
+        detail["lag_windows"] = windowed_lag(f_full, ft_full, s, st, **_win)
     # 样本量下限(统计正当性):N 个样本的互相关标准差≈1/√N,在 ±K 个滞后点里取最大
     # 值的噪声假峰可达 (1/√N)·√(2lnK)——bridge 25样本实测假峰 lag 0.8-1.8s/corr 0.44。
     # 短序列的滞后估计统计上不可靠 → 硬门诚实弃权(5fps 短片=方法边界,非数据有罪)
@@ -441,10 +444,64 @@ def global_lag(
         detail["reason"] = (f"有效样本只有 {len(zf)} 个(不足 60),这么短的片段"
                             f"读出的时间差在统计上站不住,不下结论")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
+    # ── 两把尺各自的「稳」,再合成本路读数(2026-10-14,G1 ep7/42/108)─────────────────────
+    # 整段互相关的峰形(主次峰比、峰宽)只说明峰尖不尖,不说明它是不是整条流的属性:一次挥臂恰好对上
+    # 另一组列的一次跳变也能凑出尖峰。整段的「稳」= 留一法:按窗长把整条切成 K 段,逐段抹掉重算,
+    # 读数都不动才算稳(真错位去掉哪一段都在)。分窗的「稳」= windows_stable(可信窗数、四分位距)。
+    # 合成规则(与用户 2026-10-14 定的表一致):
+    #   整段稳 + 分窗稳且一致 → 整段;整段稳 + 分窗不稳/窗不够 → 整段(大错位、短条目走这里);
+    #   整段不稳(或峰形不过)+ 分窗稳 → 分窗中位数(局部一段段都对得上,整条流就不可能偏那么多);
+    #   两把尺都稳却不同 → 测不准;都不稳 → 测不准。窗一级的递归调用不走这一段。
+    lw = detail.get("lag_windows") if _windowed else None
+    ws = windows_stable(lw, min_trusted=_min_trusted, max_iqr_s=_max_iqr)
+    wl = float(lw["lag_s"]) if ws else None
+    tol_eff = max(lag_tol_s, 2.0 * dt)
+    peak_ok = peak_ratio >= min_peak_ratio and peak_width_s <= max_peak_width_s
+    whole_stable = None
+    if _windowed and corr_peak >= corr_min and peak_ok:
+        chunk_s = float((lw or {}).get("win_s") or (_win.get("win_s") or 2.0))
+        whole_stable, jk = _jackknife_stable(zf, zs, lags, dt, max_lag_s, lag_s, tol_eff, chunk_s)
+        detail["whole_stable"] = whole_stable
+        detail["jackknife"] = jk
+    whole_ok = corr_peak >= corr_min and peak_ok and whole_stable is not False
+    if ws and not whole_ok:
+        # 分窗接管:整段的峰不可靠(相关弱 / 峰形差 / 留一法不稳),逐窗读数却一段段都站得住
+        detail["whole_lag_s"] = round(lag_s, 4)
+        detail["basis"] = "windowed_median"
+        detail["lag_tol_s"] = round(tol_eff, 4)
+        lag_s = wl
+        detail["lag_s"] = round(lag_s, 4)
+        detail["trusted"] = True
+        n_w = int(lw.get("n_trusted") or 0)
+        if abs(lag_s) <= tol_eff:
+            detail["code"] = "aligned"
+            detail["reason"] = (f"整条合算的读数不可靠,以逐段读数为准:{n_w} 段读数稳定落在零点附近"
+                                f"({lag_s:+.2f}s)")
+            return CheckResult(name="video_action_sync", passed=True, detail=detail)
+        detail["code"] = "lag_exceeds_tol"
+        detail["reason"] = f"整条合算的读数不可靠,以逐段读数为准:{n_w} 段一致读出错开 {lag_s:+.2f}s"
+        return CheckResult(name="video_action_sync", passed=False, detail=detail)
+    if ws and whole_ok and abs(lag_s - wl) > tol_eff:
+        # 两把尺各自稳定却不同:周期动作让分窗对到邻拍、或逐渐漂移,都不是「整条流偏了 Δ」
+        detail["instability"] = "estimators_disagree"
+        detail["peak_issue"] = "ambiguous_peak"
+        detail["code"] = "ambiguous_peak"
+        detail["reason"] = (f"整条合算读出 {lag_s:+.2f}s,逐段读出 {wl:+.2f}s({int(lw.get('n_trusted') or 0)} 段),"
+                            f"两种算法各自稳定却不一致,本路测不准")
+        return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if corr_peak < corr_min:
         detail["code"] = "weak_corr"
         detail["reason"] = (f"相似度只有 {corr_peak:.2f},低于 {corr_min} 的可判门槛,"
                             f"读不出结论")
+        return CheckResult(name="video_action_sync", passed=None, detail=detail)
+    if whole_stable is False:
+        # 峰形过关但靠一小段数据撑着:抹掉那一段峰就跑了,不是整条流的偏移
+        jk = detail.get("jackknife") or {}
+        detail["instability"] = "whole_unstable"
+        detail["peak_issue"] = "ambiguous_peak"
+        detail["code"] = "ambiguous_peak"
+        detail["reason"] = (f"整条合算的读数不稳:抹掉其中 {jk.get('chunk_s', 0):.1f} 秒,读数就从 {lag_s:+.2f}s "
+                            f"跑到 {jk.get('worst_lag_s', 0):+.2f}s,说明它靠一小段数据撑着;逐段读数也不稳,本路测不准")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     # 峰值突出度门控(2026-07-07 评测教训:bridge 26帧@5fps 短序列互相关噪声假峰
     # lag 高达 0.8-1.8s,而 LeRobot 转换数据按构造对齐,真错位不可能存在):
@@ -497,6 +554,130 @@ def global_lag(
     detail["code"] = "lag_exceeds_tol"
     detail["trusted"] = True
     return CheckResult(name="video_action_sync", passed=False, detail=detail)
+
+
+#: 留一法至少保留的独立片段数 = 分窗估计「稳」所要求的可信窗数(windows_stable 的 min_trusted 默认 3)
+_JACKKNIFE_MIN_SPANS = 3
+
+
+def _jackknife_stable(zf: np.ndarray, zs: np.ndarray, lags: np.ndarray, dt: float, max_lag_s: float,
+                      lag_s: float, tol_s: float, chunk_s: float) -> tuple:
+    """整段读数的留一法稳定性:把(已标准化的)两条曲线上长 chunk_s 的一段抹成 0(保持时间轴不动),
+    重算互相关的峰位;抹的段按半段步进滑过全程(一次爆发跨在两段交界上也总有一段能整个盖住它),
+    每个峰位都在原读数的 tol_s 内才算稳。全程不足两段时无法检验,按稳处理(短条目由整段读数负责,
+    不因检验不了而弃权)。返回 (stable, {"n_chunks", "chunk_s", "max_dev_s", "worst_lag_s"})。"""
+    from scipy import signal
+
+    n = len(zf)
+    # 抹掉的一段不能太长:短条目上一段就是半条数据,抹掉后剩下的太少,对齐的读数也会被判成不稳
+    # (droid 9 s 条目、4.27 s 的窗:抹一段去掉 45%)。上限 = 全程的 1/(2·min_trusted) = 1/6,与分窗估计
+    # 要求「至少 3 个可信窗、步进半窗」同源:留一法也至少留下同样多的独立片段。
+    chunk_s = min(float(chunk_s), n * dt / (2 * _JACKKNIFE_MIN_SPANS)) if dt > 0 else chunk_s
+    chunk = max(16, int(round(chunk_s / dt))) if dt > 0 else n
+    hop = max(1, chunk // 2)
+    starts = list(range(0, max(n - chunk, 0) + 1, hop))
+    if starts and starts[-1] + chunk < n:
+        starts.append(n - chunk)
+    info = {"n_chunks": len(starts), "chunk_s": round(chunk * dt, 3), "max_dev_s": 0.0, "worst_lag_s": round(lag_s, 4)}
+    if n < 2 * chunk:
+        return True, info
+    win = np.abs(lags * dt) <= max_lag_s
+    lags_win = lags[win] * dt
+    worst = 0.0
+    for k0 in starts:
+        f2, s2 = zf.copy(), zs.copy()
+        f2[k0:k0 + chunk] = 0.0
+        s2[k0:k0 + chunk] = 0.0
+        if f2.std() < 1e-9 or s2.std() < 1e-9:
+            continue
+        xc = signal.correlate(f2, s2, mode="full", method="direct") / n
+        lag_k = float(lags_win[int(np.argmax(xc[win]))])
+        dev = abs(lag_k - lag_s)
+        if dev > worst:
+            worst, info["worst_lag_s"] = dev, round(lag_k, 4)
+    info["max_dev_s"] = round(worst, 4)
+    return bool(worst <= tol_s), info
+
+
+#: 肢体组名 → 文案用词
+_LIMB_WORDS = {"left": "左臂", "right": "右臂", "arm": "手臂", "ee": "末端"}
+
+
+def grouped_lag(flow_energy: np.ndarray, flow_t: np.ndarray, speeds: dict, speed_t: np.ndarray, *,
+                lag_tol_s: float = 0.25, **kw) -> CheckResult:
+    """逐肢体测量再求一致(2026-10-14):``speeds`` 是 {肢体名: 速度曲线}(episode_checks.sync_speed_proxies)。
+    每组各跑一次 global_lag(整段 + 分窗 + 留一法都在里面),可信组之间的读数在容差内才算这一路可信,
+    读数取可信组的中位数;可信组互相矛盾 → 这一路测不准(错位是整条流的属性,一条臂不会单独错位——
+    真要是两路采集流各有延迟,也只能留明细交人看,不能判)。只有一组时与直接调 global_lag 完全一样。"""
+    if not speeds:
+        return CheckResult(name="video_action_sync", passed=None,
+                           detail={"code": "no_motion", "trusted": False, "reason": "没有可用的本体状态列"})
+    res = {name: global_lag(flow_energy, flow_t, sp, speed_t, lag_tol_s=lag_tol_s, **kw) for name, sp in speeds.items()}
+    summary = {name: {"lag_s": r.detail.get("lag_s"), "trusted": bool(r.detail.get("trusted")),
+                      "code": r.detail.get("code"), "corr_peak": r.detail.get("corr_peak"),
+                      "basis": r.detail.get("basis", "whole"), "whole_stable": r.detail.get("whole_stable")}
+               for name, r in res.items()}
+    if len(res) == 1:
+        (name, r), = res.items()
+        r.detail["groups"] = summary
+        r.detail["group"] = name
+        return r
+    trusted = {n: r for n, r in res.items() if r.detail.get("trusted") and r.detail.get("lag_s") is not None}
+
+    def _corr(r):
+        return float(r.detail.get("corr_peak") or 0.0)
+
+    def _pick(cands: dict):
+        return max(cands, key=lambda n: _corr(cands[n]))
+
+    if not trusted:
+        pick = _pick(res)
+        d = dict(res[pick].detail)
+        d.update(groups=summary, group=pick)
+        return CheckResult(name="video_action_sync", passed=res[pick].passed, detail=d)
+    dt = float(res[next(iter(res))].detail.get("dt") or 0.0)
+    tol_eff = max(lag_tol_s, 2.0 * dt)
+    lags = [float(r.detail["lag_s"]) for r in trusted.values()]
+    spread = max(lags) - min(lags)
+    pick = _pick(trusted)
+    d = dict(trusted[pick].detail)
+    d.update(groups=summary, group=pick,
+             group_agreement={"n_trusted": len(trusted), "spread_s": round(spread, 4), "tol_s": round(tol_eff, 4)})
+    words = "、".join(f"{_LIMB_WORDS.get(n, n)} {float(r.detail['lag_s']):+.2f}s" for n, r in sorted(trusted.items()))
+    if spread <= tol_eff:
+        lag = float(np.median(lags))
+        d["lag_s"] = round(lag, 4)
+        if abs(lag) <= tol_eff:
+            d["code"], d["trusted"] = "aligned", True
+            passed = True
+        else:
+            d["code"], d["trusted"] = "lag_exceeds_tol", True
+            passed = False
+        if len(trusted) > 1:
+            d["reason"] = f"{len(trusted)} 个肢体的读数一致({words}),取中位数 {lag:+.2f}s"
+        # 总和闸门(2026-10-15,用户定):画面光流是所有在动的东西之和,记录的总和(各肢体速度相加)必须先能
+        # 解释画面,单条肢体的读数才算数。总和曲线对不上画面(在动却不可信)= 画面里有记录解释不了的运动
+        # (G1 ep26/49:干活的右臂六列不是关节角,左臂小动作对着整幅画面读出 −0.33),这一路测不准。
+        # 只有一组时总和就是它自己,不另算;总和没动(no_motion)不算对不上。
+        tot = np.sum([np.asarray(sp, dtype=np.float64) for sp in speeds.values()], axis=0)
+        u = global_lag(flow_energy, flow_t, tot, speed_t, lag_tol_s=lag_tol_s, **kw).detail
+        d["sum"] = {"lag_s": u.get("lag_s"), "trusted": bool(u.get("trusted")), "code": u.get("code"),
+                    "corr_peak": u.get("corr_peak"), "basis": u.get("basis", "whole")}
+        if not u.get("trusted") and u.get("code") not in ("no_motion", "short_signal", "short_sequence"):
+            d["trusted"] = False
+            d["instability"] = "sum_unexplained"
+            d["peak_issue"] = "ambiguous_peak"
+            d["code"] = "ambiguous_peak"
+            d["reason"] = (f"各肢体相加的总运动对不上画面(相似度 {float(u.get('corr_peak') or 0.0):.2f}),"
+                           f"画面里有记录解释不了的运动;单条肢体的读数({words})不作数,本路测不准")
+            return CheckResult(name="video_action_sync", passed=None, detail=d)
+        return CheckResult(name="video_action_sync", passed=passed, detail=d)
+    d["trusted"] = False
+    d["instability"] = "limb_conflict"
+    d["peak_issue"] = "ambiguous_peak"
+    d["code"] = "ambiguous_peak"
+    d["reason"] = f"各肢体的读数不一致({words})。错位应是整条数据共有的,一条臂不会单独错位,本路测不准"
+    return CheckResult(name="video_action_sync", passed=None, detail=d)
 
 
 # ── 第二估计量:分窗取中位数(2026-10-13,MV-3 第 3 步 spike 定)────────────────────────
@@ -643,6 +824,41 @@ def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
         return {"cause": "no_motion", "label": "无信号",
                 "text": "这一路几乎没有运动信号(静止段占满或画面冻结)。",
                 "advice": "确认该路是否录制正常,或本来就是占位相机。"}
+    lw = r.get("lag_windows") if isinstance(r.get("lag_windows"), dict) else {}
+    if r.get("trusted") and r.get("basis") == "windowed_median":
+        n_w = int(lw.get("n_trusted") or 0)
+        if code == "misaligned":
+            return {"cause": "misaligned", "label": "错位",
+                    "text": (f"这一路测出画面与动作错开 {lag:+.2f}s(超出容差):{n_w} 段逐段读数一致;"
+                             f"整条合算的读数不可靠,以逐段读数为准。"),
+                    "advice": ("画面晚于动作(正滞后)多为相机链路延迟;画面早于动作"
+                               "(负滞后)无良性解释,应回查数据装配环节。")}
+        return {"cause": "aligned", "label": "对齐",
+                "text": (f"画面与动作对得上:{n_w} 段逐段读数稳定落在零点附近({lag:+.2f}s);"
+                         f"整条合算的读数不可靠,以逐段读数为准。"),
+                "advice": ""}
+    if not r.get("trusted") and r.get("instability"):
+        kind = str(r.get("instability"))
+        jk = r.get("jackknife") if isinstance(r.get("jackknife"), dict) else {}
+        if kind == "whole_unstable":
+            text = (f"整条合算的读数不稳:抹掉其中 {float(jk.get('chunk_s') or 0.0):.1f} 秒的数据,读数就从 "
+                    f"{lag:+.2f}s 跑到 {float(jk.get('worst_lag_s') or 0.0):+.2f}s,说明它靠一小段数据撑着,"
+                    f"不是整条数据共有的偏移;逐段读数也不稳。")
+        elif kind == "estimators_disagree":
+            text = (f"整条合算读出 {lag:+.2f}s,逐段读出 {float(lw.get('lag_s') or 0.0):+.2f}s"
+                    f"({int(lw.get('n_trusted') or 0)} 段),两种算法各自稳定却不一致。")
+        elif kind == "sum_unexplained":
+            sm = r.get("sum") if isinstance(r.get("sum"), dict) else {}
+            text = (f"各肢体相加的总运动对不上画面(相似度 {float(sm.get('corr_peak') or 0.0):.2f}):画面里有记录"
+                    f"解释不了的运动,单条肢体读出的 {lag:+.2f}s 不作数。")
+        else:
+            gs = r.get("groups") if isinstance(r.get("groups"), dict) else {}
+            words = "、".join(f"{_LIMB_WORDS.get(n, n)} {float(g.get('lag_s') or 0.0):+.2f}s"
+                             for n, g in sorted(gs.items()) if g.get("trusted") and g.get("lag_s") is not None)
+            text = f"各肢体的读数不一致({words})。错位应是整条数据共有的,一条臂不会单独错位。"
+        return {"cause": "unstable_estimate", "label": "测不准 · 读数不稳",
+                "text": text + "本路不参与判定。",
+                "advice": "结论以其它相机为准。常见原因:动作有周期性、某组状态列记录的不是真实运动、两条采集流各有延迟。"}
     if r.get("trusted"):
         if code == "misaligned":
             return {"cause": "misaligned", "label": "错位",
@@ -767,6 +983,10 @@ def camera_reading(res: CheckResult) -> dict:
     # 分窗中位数(2026-10-13 新增,可选键):第二估计量,随读数落盘供发现层与评测读
     if isinstance(d.get("lag_windows"), dict):
         out["lag_windows"] = d["lag_windows"]
+    # 读数的来历(2026-10-14 新增,可选键):整段还是分窗、整段稳不稳、按肢体分组的明细与不可信的原因
+    for k in ("basis", "whole_stable", "whole_lag_s", "instability", "jackknife", "groups", "group", "group_agreement", "sum"):
+        if d.get(k) is not None:
+            out[k] = d[k]
     # 病因诊断随读数一起落盘:UI 的逐图诊断框直接读它,不在界面层重新推理
     out["diagnosis"] = camera_diagnosis(out)
     return out

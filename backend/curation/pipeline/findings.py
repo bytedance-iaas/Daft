@@ -205,7 +205,8 @@ def _video_action_sync(passed, score, d, p) -> Derived:
         for item in registry.get(m).covers:
             out.cannot(item, "not_applicable", why[:200])
         return out
-    out.readings["per_camera"] = {cam: {k: _r(v) for k, v in c.items() if k in ("lag_s", "corr_peak", "code", "trusted")}
+    out.readings["per_camera"] = {cam: {k: _r(v) for k, v in c.items()
+                                        if k in ("lag_s", "corr_peak", "code", "trusted", "basis", "whole_stable", "instability")}
                                   for cam, c in sorted(per.items()) if isinstance(c, dict)}
     # the windowed median (second estimator, 2026-10-13): its summary beside each camera's reading
     for cam, c in sorted(per.items()):
@@ -242,7 +243,7 @@ def _video_action_sync(passed, score, d, p) -> Derived:
             text = f"{cam} 比动作{'早' if lag < 0 else '晚'} {abs(lag):.2f} 秒" if lag is not None else f"{cam} 与动作错位"
             out.add(m, "camera_misaligned", text,
                     scope={"camera": cam}, readings={"lag_s": _r(lag), "corr_peak": _r(c.get("corr_peak")),
-                                                     "basis": "whole" if whole else "windowed_median"})
+                                                     "basis": (str(c.get("basis") or "whole") if whole else "windowed_median")})
         suspects = sorted(str(c) for c in d.get("suspect_cameras") or [])
         if suspects:
             # the same words as the other AV-1 texts (2026-10-13): the camera, its whole-episode reading (not trusted),
@@ -350,7 +351,12 @@ def _best_readings(per: dict, p: dict) -> dict:
             continue
         lag = _num(c.get("lag_s"))
         if c.get("trusted") and lag is not None and c.get("code") in ("aligned", "misaligned"):
-            out[cam] = (lag, "whole", c.get("code"))
+            out[cam] = (lag, str(c.get("basis") or "whole"), c.get("code"))
+            continue
+        if c.get("instability"):
+            # 2026-10-14:整段与逐窗各自稳定却不同、整段峰靠一小段数据撑着、各肢体读数矛盾——这一路没有「最好读数」,
+            # 分窗中位数也不单独拿出来报
+            out[cam] = (None, None, None)
             continue
         lw = c.get("lag_windows")
         if windows_stable(lw, min_trusted=int(p["window_min_trusted"]), max_iqr_s=float(p["window_max_iqr_s"])) \
@@ -468,16 +474,34 @@ def _kinematic_limits(passed, score, d, p) -> Derived:
     for v in d.get("violations") or []:
         if isinstance(v, dict) and v.get("type") in KINEMATIC_TYPES:
             groups.setdefault((v["type"], str(v.get("joint", ""))), []).append(v)
+    approx = str(d.get("quality") or "") == "approximate"      # 速度限值是经验包络,不许硬判(2026-10-14 so101)
     for (kind, joint), vs in sorted(groups.items()):
         frames = sorted({int(v.get("frame", 0)) for v in vs})
         worst = max((abs(_num(v.get("value")) or 0.0) for v in vs), default=None)
         limit = vs[0].get("limit")
         channel = None if joint in ("", "xyz", "rpy") else f"joint {joint}"
         where = f"关节 {joint}" if channel else ("末端位置" if joint == "xyz" else "末端姿态" if joint == "rpy" else "")
-        out.add(m, kind, f"{where}{_KIN_NAMES[kind]}：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，"
-                         f"最大 {worst:.4g}（限值 {limit}）" if worst is not None else f"{where}{_KIN_NAMES[kind]}",
+        code, name = kind, _KIN_NAMES[kind]
+        if kind == "velocity_limit" and approx:
+            code, name = "velocity_limit_approx", " 速度超出近似限值"
+        out.add(m, code, f"{where}{name}：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，"
+                         f"最大 {worst:.4g}（限值 {limit}{'，规格待核' if code == 'velocity_limit_approx' else ''}）"
+                if worst is not None else f"{where}{name}",
                 scope={"channel": channel} if channel else None,
                 readings={"frames": frames[:20], "max_value": _r(worst), "limit": limit})
+    # the command (a leader arm, a joystick) moved faster than the robot may: a note, the robot's own reading decides
+    cmd: dict[str, list[dict]] = {}
+    for v in d.get("command_velocity_violations") or []:
+        if isinstance(v, dict):
+            cmd.setdefault(str(v.get("joint", "")), []).append(v)
+    for joint, vs in sorted(cmd.items()):
+        frames = sorted({int(v.get("frame", 0)) for v in vs})
+        worst = max((abs(_num(v.get("value")) or 0.0) for v in vs), default=0.0)
+        tail = "读数未超" if d.get("basis") == "state" else "无读数可核"
+        out.add(m, "command_velocity_limit",
+                f"关节 {joint} 指令速度超限：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，最大 {worst:.4g}（限值 {vs[0].get('limit')}；{tail}）",
+                scope={"channel": f"joint {joint}"},
+                readings={"frames": frames[:20], "max_value": _r(worst), "limit": vs[0].get("limit")})
     if passed is False and not out.findings:
         out.add(m, "data_invalid", str(d.get("reason") or "动作数据无法与规格表对照"))
     return out
@@ -514,11 +538,14 @@ def _motion_quality(passed, score, d, p) -> Derived:
         out.readings["score"] = _r(score)
     for key in ("smoothness", "spike", "gripper_jitter", "actuator_saturation", "stuck", "fluency",
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
-                "idle_mid_count", "idle_mid_total_s"):
+                "idle_mid_count", "idle_mid_total_s",
+                # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
+                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols"):
         if d.get(key) is not None:
             out.readings[key] = _r(d.get(key))
     _sub_score(out, m, "smoothness_low", d.get("smoothness"), p["smoothness_min"], "动作不平滑，平滑度分",
-               high_below=p["severe_below"])
+               high_below=p["severe_below"],
+               readings={"smoothness_cols": d.get("smoothness_cols")} if isinstance(d.get("smoothness_cols"), dict) else None)
     spike_frames = [int(f) + 1 for f in d.get("spike_frames") or [] if isinstance(f, (int, float))]
     _sub_score(out, m, "spike", d.get("spike"), p["spike_min"], "动作有孤立尖刺，尖刺分",
                high_below=p["severe_below"], readings={"spike_frames": spike_frames[:20]} if spike_frames else None)
@@ -549,7 +576,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
         out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "算不出开头与结尾的空转")[:200])
     # sub-items v1 could not compute: why (its own reason, else no state columns)
     no_state = d.get("stuck") is None and "stuck_reason" not in d and "stuck_strategy" not in d
-    for key, item, why_key in (("smoothness", "ACT-1", None), ("spike", "ACT-2", "spike_reason"),
+    for key, item, why_key in (("smoothness", "ACT-1", "smoothness_reason"), ("spike", "ACT-2", "spike_reason"),
                                ("gripper_jitter", "ACT-5", "gripper_reason"),
                                ("actuator_saturation", "ACT-4", "saturation_reason"),
                                ("stuck", "ACT-8", "stuck_reason"), ("fluency", "TASK-7", "fluency_reason")):

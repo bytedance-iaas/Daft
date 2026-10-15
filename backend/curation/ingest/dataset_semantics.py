@@ -54,15 +54,24 @@ _ROT_TOKENS = ("rot6d", "rot_6d", "6d", "quat", "qx", "qy", "qz", "qw", "roll", 
                "rx", "ry", "rz", "rotvec", "axis_angle", "axisangle", "rot", "orient", "euler",
                "wx", "wy", "wz")
 _POS_TOKENS = ("pos_x", "pos_y", "pos_z", "x", "y", "z", "pos", "position", "trans", "tx", "ty", "tz")
-_GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw")
+_GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw",
+                "trigger", "squeeze")   # 手柄扳机 / 握力 = 手部指令(2026-10-14 HIW-500 left_trigger / left_squeeze)
+#: 速度型指令列(2026-10-14 HIW-500:pivot_vx / pivot_vy / pivot_vyaw 是底盘速度,91–94% 的帧步长为零、
+#: 偶尔一跳的摇杆信号,不是轨迹):平滑度与尖刺不算它们
+#: 手指关节列(灵巧手):同步的速度代理不看它们——12 根手指的碎动会盖过手臂(2026-10-14 G1 ep26)
+_HAND_TOKENS = frozenset({"hand", "finger", "thumb", "pinky", "index", "middle", "ring"})
+_VEL_TOKENS = ("vx", "vy", "vz", "vyaw", "vroll", "vpitch", "vel", "velocity", "speed", "omega")
 
 
 def _name_kind(name: str) -> str:
     """一列的名字 → pos / rot / grip / other。按下划线/点/空格切成词元后逐词判,
     夹爪最先(robot0_gripper_width 里也有 x 之类的短词元不能抢)。"""
-    toks = [t for t in str(name).lower().replace(".", "_").replace(" ", "_").split("_") if t]
+    from .semantics_preflight import name_tokens
+    toks = name_tokens(name)                       # 拆驼峰(kLeftHandPinky)、下划线、点
     if any(t in _GRIP_TOKENS for t in toks):
         return "grip"
+    if any(t in _VEL_TOKENS for t in toks):
+        return "vel"
     if any(t in _ROT_TOKENS for t in toks) or any(t.startswith("rot6d") for t in toks):
         return "rot"
     if any(t in _POS_TOKENS for t in toks):
@@ -144,10 +153,16 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
             i = j + 1
         grip = tuple(i for i, k in enumerate(kinds) if k == "grip")
         trans = tuple(i for i, k in enumerate(kinds) if k == "pos")
+        vel = tuple(i for i, k in enumerate(kinds) if k == "vel")
+        from .semantics_preflight import name_tokens
+        hand = tuple(i for i, n in enumerate(names) if set(name_tokens(n)) & _HAND_TOKENS and kinds[i] != "grip")
         return {"angle_dims": tuple(rot_idx), "rotation_blocks": blocks,
                 "euler_triplet": bool(blocks) and all(b[2] == "rpy" for b in blocks),
-                "gripper_dims": grip, "translation_dims": trans, "source": "names",
-                "gripper_closed": gripper_closed_from_names(names, grip)}
+                "gripper_dims": grip, "translation_dims": trans, "velocity_dims": vel, "hand_dims": hand, "source": "names",
+                "limbs": limbs_from_names(names, exclude=set(grip) | set(vel) | set(hand)),
+                "gripper_closed": gripper_closed_from_names(names, grip),
+                # 名字认出了至少一个位姿块:预检对整列空间没把握时,布局本身就够运动质量按块算(F8)
+                "informative": bool(blocks or trans)}
     if dim in (6, 7):                                   # 经典 xyz+rpy(+夹爪):老规则原样
         return {"angle_dims": (3, 4, 5), "rotation_blocks": [(3, 3, "rpy")],
                 "euler_triplet": True, "gripper_dims": (6,) if dim == 7 else (),
@@ -157,6 +172,68 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
             "gripper_closed": "high"}
 
 
+#: 单位四元数的模长容差:float32 存储的归一化误差约 1e-7,留三个数量级余量;四列随机数逐帧
+#: 都落在 1±1e-3 里几乎不可能,所以这条指纹没有第二种解释
+QUAT_NORM_TOL = 1e-3
+#: 开关型列的取值种类上限(与 core.checks.motion_quality.DISCRETE_LEVELS 同一口径)
+_DISCRETE_LEVELS = 4
+
+
+def detect_ee_layout_numeric(action, dim: int) -> dict | None:
+    """没有列名时按数值认 EE 布局(2026-10-14 RH20T 教训:8 列无名,xyz + 四元数 + 夹爪 0–95,
+    谁都认不出,运动质量把四元数翻转和夹爪跳变当成手臂抖动)。指纹:连续 4 列逐帧模长 ≈ 1 → 四元数块;
+    块前紧挨的 3 列 → 平移;块外取值种类 ≤ 4 或在 [0,1] / [−1,1] 内且大多数帧不变的列 → 夹爪。
+    认不出四元数块就返回 None,让调用方走原来的规则。"""
+    a = np.asarray(action, dtype=np.float64)
+    if a.ndim != 2 or a.shape[0] < 8 or a.shape[1] != dim or dim < 4:
+        return None
+    if not np.all(np.isfinite(a)):
+        return None
+    start = None
+    for s0 in range(0, dim - 3):
+        norms = np.linalg.norm(a[:, s0:s0 + 4], axis=1)
+        if np.all(np.abs(norms - 1.0) <= QUAT_NORM_TOL) and len(np.unique(np.round(a[:, s0:s0 + 4], 6), axis=0)) > 1:
+            start = s0
+            break
+    if start is None:
+        return None
+    quat = tuple(range(start, start + 4))
+    trans = tuple(range(start - 3, start)) if start >= 3 else ()
+    grip = []
+    for c in range(dim):
+        if c in quat or c in trans:
+            continue
+        col = a[:, c]
+        uniq = len(np.unique(np.round(col, 3)))
+        still = float(np.mean(np.abs(np.diff(col)) < 1e-6))
+        bounded = float(col.min()) >= -1.0 - 1e-6 and float(col.max()) <= 1.0 + 1e-6
+        if uniq <= _DISCRETE_LEVELS or (bounded and still > 0.6):
+            grip.append(c)
+    return {"angle_dims": quat, "rotation_blocks": [(start, 4, "quat")], "euler_triplet": False,
+            "gripper_dims": tuple(grip), "translation_dims": trans, "source": "numeric",
+            "gripper_closed": "high"}
+
+
+#: 列名里的肢体侧别词:left / right(拆驼峰后 kLeftShoulderPitch → left;left_arm_joint_0 → left)
+_SIDE_TOKENS = {"left": "left", "right": "right"}
+
+
+def limbs_from_names(names: list, exclude=()) -> list:
+    """按列名把本体列分成肢体组:[[side, [列...]], ...],side 是 left / right / ""(没写侧别)。
+    同步检查的速度代理按组各算一次再求一致(2026-10-14 G1:右臂六列实为手指样有界信号,
+    与左臂混成一根曲线时整段互相关被带偏);夹爪、速度型、手指列不进任何肢体组。
+    没有侧别词的列归一组;只认得出一侧时也照样返回(单臂数据集就是一组)。"""
+    from .semantics_preflight import name_tokens
+    groups: dict = {}
+    for i, n in enumerate(names):
+        if i in exclude:
+            continue
+        toks = set(name_tokens(n))
+        side = next((v for k, v in _SIDE_TOKENS.items() if k in toks), "")
+        groups.setdefault(side, []).append(i)
+    return [[side, cols] for side, cols in groups.items() if cols]
+
+
 def layout_for_extras(layout: dict) -> dict:
     """布局写进 semantics_extras(JSON 列,随行流到漏斗;tuple 型语义字段进不了 daft)。"""
     return {"angle_dims": list(layout.get("angle_dims") or ()),
@@ -164,8 +241,12 @@ def layout_for_extras(layout: dict) -> dict:
             "euler_triplet": bool(layout.get("euler_triplet")),
             "gripper_dims": list(layout.get("gripper_dims") or ()),
             "translation_dims": list(layout.get("translation_dims") or ()),
+            "velocity_dims": list(layout.get("velocity_dims") or ()),
+            "hand_dims": list(layout.get("hand_dims") or ()),
+            "limbs": [[str(side), [int(c) for c in cols]] for side, cols in (layout.get("limbs") or [])],
             "source": str(layout.get("source") or ""),
-            "gripper_closed": str(layout.get("gripper_closed") or "high")}
+            "gripper_closed": str(layout.get("gripper_closed") or "high"),
+            "informative": bool(layout.get("informative"))}
 
 
 def _infer_control_mode(action: np.ndarray) -> str:

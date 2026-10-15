@@ -13,6 +13,33 @@ from __future__ import annotations
 import numpy as np
 
 HYPOTHESES = ("joint_absolute", "joint_delta", "ee_absolute", "ee_increment")
+#: 一个末端位姿 = 3 平移 + 3/4/6 旋转(+夹爪):单臂 6–8 列,双臂 12–16 列;列数在此之外的 action 不可能是位姿
+#: (2026-10-14:26 关节的 G1 人形被判成末端,同步代理拿左肩三关节当 xyz)
+EE_ARM_COLS = frozenset(range(6, 9)) | frozenset(range(12, 17))
+#: 列名分词后含这些词 = 关节空间(肩肘腕髋膝踝腰、joint/motor/servo、手指);末端名(x/y/z/roll/pitch/yaw)可以跟在关节词后面
+#: (kLeftWristRoll 是关节),所以关节词优先
+JOINT_WORDS = frozenset({"joint", "joints", "motor", "servo", "shoulder", "elbow", "wrist", "hip", "knee", "ankle",
+                         "waist", "torso", "finger", "thumb", "pinky", "index", "middle", "ring", "hand", "q", "dof"})
+EE_WORDS = frozenset({"x", "y", "z", "roll", "pitch", "yaw", "qx", "qy", "qz", "qw", "rot6d", "ee", "eef", "pose", "tcp"})
+
+
+def name_tokens(name: str) -> list[str]:
+    """kLeftShoulderPitch / left_joint_0.pos / target_arm_left_joint_0 → 小写词元(拆驼峰、下划线、点、数字)。"""
+    import re
+    t = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name))
+    t = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", t)
+    return [w for w in re.split(r"[^A-Za-z]+", t.lower()) if w]
+
+
+def names_hint_of(names) -> str | None:
+    """列名给出的空间提示:有关节词 → "joint";只有末端词 → "ee";都没有 → None。
+    关节词优先:kLeftWristRoll / wrist_roll.pos 是关节,不是姿态角。"""
+    toks = {w for n in (names or []) for w in name_tokens(n)}
+    if toks & JOINT_WORDS:
+        return "joint"
+    if toks & EE_WORDS:
+        return "ee"
+    return None
 CONFIDENT_MIN = 0.6       # 最像的假设至少这么像
 CONFIDENT_MARGIN = 0.2    # 且比第二名至少高这么多,否则"没把握"
 _HEAD = 5
@@ -74,11 +101,18 @@ def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, grippe
     elif dof and a.shape[1] == dof:
         ev["joint_absolute"] = 0.35        # 维数对但没极限可验:弱证据
         ev["joint_delta"] = 0.2
+    elif s is not None and s.shape[1] == a.shape[1] and len(s) == len(a) and len(a) >= 10:
+        # 没有规格库(未登记本体):关节位置指令就是关节读数的目标,两者逐列高度相关;幅值在 ±2π 内
+        # (弧度)或 ±360(度)。末端位姿的 xyz 也和自己的读数相关,所以这条只给到 0.8,靠列名和维数门分胜负
+        r = float(np.median(_corr_cols(a, s)))
+        mag_ok = float(np.percentile(np.abs(arm), 99)) <= 2 * np.pi + 1e-6 or float(np.percentile(np.abs(arm), 99)) <= 360.0
+        ev["joint_absolute"] = 0.8 * float(np.clip(r, 0, 1)) * (1.0 if mag_ok else 0.3)
+        ev["joint_delta"] = 0.1
     else:
         ev["joint_absolute"] = 0.0
         ev["joint_delta"] = 0.0
-    # ── 末端两种:至少 6 个手臂列;靠状态列验 ──
-    if len(arm_cols) >= 6:
+    # ── 末端两种:手臂列数要像位姿(单臂 6–8,双臂 12–16);靠状态列验 ──
+    if len(arm_cols) in EE_ARM_COLS:
         ev["ee_absolute"] = 0.2
         ev["ee_increment"] = 0.2
         if s is not None and s.shape[1] >= 6 and len(s) == len(a) and len(a) >= 10:
@@ -128,10 +162,14 @@ def preflight(sample_rows: list[dict], *, joint_limits=None, dof: int | None = N
         for h in HYPOTHESES:
             per[h].append(ev.get(h, 0.0))
     scores = {h: (float(np.median(v)) if v else 0.0) for h, v in per.items()}
+    # 列名是强证据(2026-10-14):写着 shoulder / elbow / joint 的不是位姿,写着 x / y / z 的不是关节角;
+    # 另一族的假设打两折,本族加 0.1
     if names_hint == "ee":
         scores["ee_absolute"] += 0.1; scores["ee_increment"] += 0.1
+        scores["joint_absolute"] *= 0.2; scores["joint_delta"] *= 0.2
     elif names_hint == "joint":
         scores["joint_absolute"] += 0.1; scores["joint_delta"] += 0.1
+        scores["ee_absolute"] *= 0.2; scores["ee_increment"] *= 0.2
     # 关节-绝对拿到了"维数对上 + 每个关节从第 0 帧起全程在极限内"的强证据时,末端假设
     # 让位:关节角数据也会和自己的读数高相关(那正是 ee_absolute 的证据),但一个 7 维向量
     # 恰好全程落进 Franka 那几个不对称区间,靠巧合几乎不可能(libero 的末端量就栽在这)。

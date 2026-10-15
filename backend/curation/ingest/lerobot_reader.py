@@ -418,9 +418,8 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
         limits, dof, hint = prof.joint_limits, prof.dof, tuple(prof.gripper_dims or ())
     except Exception:  # noqa: BLE001  未注册本体:没有极限可验,只靠状态列
         pass
-    names = _action_names_flat(info)
-    names_hint = "ee" if set(names) & _EE_NAMES else ("joint" if any(
-        n.startswith(("joint", "motor", "j")) for n in names) else None)
+    from .semantics_preflight import names_hint_of
+    names_hint = names_hint_of(_action_names_list(info))      # 分词识别(2026-10-14):kLeftShoulderPitch / left_joint_0.pos 都是关节
     try:
         pf = preflight(sample_rows, joint_limits=limits, dof=dof, gripper_hint=hint,
                        names_hint=names_hint)
@@ -437,15 +436,33 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
             sem.gripper_dims = tuple(pf["gripper_dims"])
         if sem.action_space == "ee" and not sem.angle_dims:
             # 布局按 names 识别(2026-09-16 umi 教训:rot6d 不是 rpy),写进 extras 随行流到漏斗
-            from .dataset_semantics import detect_ee_layout, layout_for_extras
+            from .dataset_semantics import (detect_ee_layout, detect_ee_layout_numeric,
+                                            layout_for_extras)
             a0 = np.asarray(sample_rows[0]["action"])
             if a0.ndim == 2:
                 lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+                if lay["source"] != "names":
+                    # 没有列名:先按数值认四元数块(2026-10-14 RH20T),认不出再用维数规则
+                    lay = detect_ee_layout_numeric(a0, int(a0.shape[1])) or lay
                 sem.angle_dims = tuple(lay["angle_dims"])
                 sem.euler_triplet = bool(lay["euler_triplet"])
                 if not sem.gripper_dims and lay["gripper_dims"]:
                     sem.gripper_dims = tuple(lay["gripper_dims"])
+                elif sem.gripper_dims and not lay["gripper_dims"]:
+                    # 预检按数值认出的夹爪列要随布局进 extras,运动质量只从 layout 读夹爪列
+                    # (2026-10-14:RH20T 的夹爪预检认出了,却从没传到运动质量)
+                    lay = dict(lay, gripper_dims=tuple(sem.gripper_dims))
                 sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
+        if sem.action_space == "joint":
+            # 关节空间也要布局(2026-10-14 G1):列名里的夹爪 / 手指列要让同步的速度代理剔掉;没有列名就没有布局
+            from .dataset_semantics import detect_ee_layout, layout_for_extras
+            a0 = np.asarray(sample_rows[0]["action"])
+            if a0.ndim == 2:
+                lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+                if lay["source"] == "names":
+                    if not sem.gripper_dims and lay["gripper_dims"]:
+                        sem.gripper_dims = tuple(lay["gripper_dims"])
+                    sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
         if sem.gripper_dims:
             # 极性三层:字段名(width/opening → 宽度制)→ 样本开局状态(多数条目开局张开)→ droid 约定
             from .dataset_semantics import (gripper_closed_from_samples,
@@ -459,11 +476,26 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
     elif pf.get("status") in ("ambiguous", "none"):
         sem.action_space = sem.proprio_space = sem.control_mode = "unknown"
         sem.source = "preflight_unknown"
+        # F8 (2026-10-14 HIW-500):整列空间判不出(底盘速度 + 双臂位姿 + 手柄的混合布局,state 又是
+        # 关节角),但列名把每块都写清了 → 布局照样随行,运动质量按块算;认不出名字的数据集不受影响
+        from .dataset_semantics import detect_ee_layout, layout_for_extras
+        a0 = np.asarray(sample_rows[0]["action"])
+        have = (sem.extras or {}).get("layout")
+        if isinstance(have, dict) and have.get("source") == "names" and have.get("informative"):
+            sem.extras = dict(sem.extras or {}, layout=dict(have, names_only=True))   # 推断阶段已按名字分好块
+        elif a0.ndim == 2:
+            lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+            if lay["source"] == "names" and lay.get("informative"):
+                if not sem.gripper_dims and lay["gripper_dims"]:
+                    sem.gripper_dims = tuple(lay["gripper_dims"])
+                sem.extras = dict(sem.extras or {}, layout=dict(layout_for_extras(lay), names_only=True))
     pf.pop("gripper_dims", None)
     extras["semantics_preflight"] = pf
     if sem.profile_name:
         extras["profile_name"] = sem.profile_name
-    sem.extras = extras
+    # 布局是上面刚写进 sem.extras 的,这里合并而不是覆盖(2026-10-14:覆盖把 layout 丢了,
+    # 运动质量从来没收到过预检认出的布局与夹爪列)
+    sem.extras = dict(sem.extras or {}, **{k: v for k, v in extras.items() if k != "layout"})  # 布局以本函数写的为准
     return sem
 
 
@@ -472,7 +504,9 @@ def _action_names_list(info: dict) -> list:
     names = info.get("features", {}).get("action", {}).get("names") or []
     if isinstance(names, dict):
         names = next(iter(names.values()), [])
-    return [str(n).lower() for n in names]
+    if len(names) == 1 and isinstance(names[0], (list, tuple)):   # [["kLeftShoulderPitch", ...]]:一层套一层(G1)
+        names = list(names[0])
+    return [str(n) for n in names]                                  # 保留大小写:拆驼峰要靠它(2026-10-14)
 
 
 def _action_names_flat(info: dict) -> set:
