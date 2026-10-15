@@ -27,6 +27,8 @@ def kinematic_limits(
     *,
     margin: float = 0.02,       # 极限裕度(量程的 2%;标定误差容忍)
     check_velocity: bool = True,
+    gripper_dims: tuple = (),   # 夹爪列:开合度不是关节角,没有转速规格可对照,不进速度检查
+                                #   (2026-10-14 so101:夹爪 0–100 开合度被拿 300/s 的关节限值硬卡)
 ) -> CheckResult:
     """values: [T, dof] 关节空间序列(action 或 proprio 关节列,由调用方按语义选)。"""
     v = np.asarray(values, dtype=np.float64)
@@ -81,7 +83,10 @@ def kinematic_limits(
     # ④ 速度极限(差分×fps,带同样裕度)
     if check_velocity and profile.velocity_limits:
         speed = np.abs(np.diff(v, axis=0)) * fps
+        skip = {int(g) for g in (gripper_dims or ())}
         for j, vmax in enumerate(profile.velocity_limits):
+            if j in skip:
+                continue
             bad_frames = np.where(speed[:, j] > vmax * (1.0 + margin))[0]
             for f in bad_frames[:_MAX_VIOLATIONS_IN_DETAIL]:
                 violations.append({"type": "velocity_limit", "joint": j, "frame": int(f),
@@ -104,6 +109,7 @@ def kinematic_limits(
             "profile": profile.embodiment_id,
             "unit": profile.unit,
             "margin": margin,
+            "quality": profile.quality,          # approximate 的速度限值不许硬判(发现层据此降级)
         },
     )
 

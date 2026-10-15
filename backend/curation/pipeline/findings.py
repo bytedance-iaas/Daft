@@ -468,16 +468,34 @@ def _kinematic_limits(passed, score, d, p) -> Derived:
     for v in d.get("violations") or []:
         if isinstance(v, dict) and v.get("type") in KINEMATIC_TYPES:
             groups.setdefault((v["type"], str(v.get("joint", ""))), []).append(v)
+    approx = str(d.get("quality") or "") == "approximate"      # 速度限值是经验包络,不许硬判(2026-10-14 so101)
     for (kind, joint), vs in sorted(groups.items()):
         frames = sorted({int(v.get("frame", 0)) for v in vs})
         worst = max((abs(_num(v.get("value")) or 0.0) for v in vs), default=None)
         limit = vs[0].get("limit")
         channel = None if joint in ("", "xyz", "rpy") else f"joint {joint}"
         where = f"关节 {joint}" if channel else ("末端位置" if joint == "xyz" else "末端姿态" if joint == "rpy" else "")
-        out.add(m, kind, f"{where}{_KIN_NAMES[kind]}：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，"
-                         f"最大 {worst:.4g}（限值 {limit}）" if worst is not None else f"{where}{_KIN_NAMES[kind]}",
+        code, name = kind, _KIN_NAMES[kind]
+        if kind == "velocity_limit" and approx:
+            code, name = "velocity_limit_approx", " 速度超出近似限值"
+        out.add(m, code, f"{where}{name}：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，"
+                         f"最大 {worst:.4g}（限值 {limit}{'，规格待核' if code == 'velocity_limit_approx' else ''}）"
+                if worst is not None else f"{where}{name}",
                 scope={"channel": channel} if channel else None,
                 readings={"frames": frames[:20], "max_value": _r(worst), "limit": limit})
+    # the command (a leader arm, a joystick) moved faster than the robot may: a note, the robot's own reading decides
+    cmd: dict[str, list[dict]] = {}
+    for v in d.get("command_velocity_violations") or []:
+        if isinstance(v, dict):
+            cmd.setdefault(str(v.get("joint", "")), []).append(v)
+    for joint, vs in sorted(cmd.items()):
+        frames = sorted({int(v.get("frame", 0)) for v in vs})
+        worst = max((abs(_num(v.get("value")) or 0.0) for v in vs), default=0.0)
+        tail = "读数未超" if d.get("basis") == "state" else "无读数可核"
+        out.add(m, "command_velocity_limit",
+                f"关节 {joint} 指令速度超限：{len(vs)} 处，首次在第 {frames[0] + 1} 帧，最大 {worst:.4g}（限值 {vs[0].get('limit')}；{tail}）",
+                scope={"channel": f"joint {joint}"},
+                readings={"frames": frames[:20], "max_value": _r(worst), "limit": vs[0].get("limit")})
     if passed is False and not out.findings:
         out.add(m, "data_invalid", str(d.get("reason") or "动作数据无法与规格表对照"))
     return out

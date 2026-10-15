@@ -110,6 +110,11 @@
       "blob": "cfce3a4b844bfcd09b08c87282f9a8d3592bd876",
       "since": "feat/motion-quality-columns (2026-10-14)",
       "why": "_apply_preflight (2026-10-14): the numeric layout fingerprint runs when names are missing, the preflight's gripper columns ride into the layout, and the extras are merged instead of overwritten (the layout was being dropped before it reached motion_quality). Parity: datasets with a profile or names are unchanged; RH20T-like datasets now carry a layout. F8: when the preflight has no verdict (mixed layouts such as HIW-500's chassis velocities + two arm poses + hand controls against a joint-angle state), an informative names layout still rides along marked names_only so motion_quality runs block-wise; the layout written here wins the final extras merge. Parity: the anchor rescan (238 episodes, 16 subsets) changed no reading outside HIW-500, which goes from abstaining to 0.81-0.82."
+    },
+    "core/checks/kinematics.py": {
+      "blob": "f2147b662de098f9baf3e0c17c3a4d1d48dfa1fc",
+      "since": "feat/motion-quality-columns (2026-10-14, 11-3)",
+      "why": "ACT-4 (2026-10-14, so101): kinematic_limits takes gripper_dims and leaves those columns out of the velocity check (an opening is not a joint; so101's 0-100 gripper was held to the 300/s joint envelope), and reports the profile's quality in its detail so the findings layer can downgrade an approximate velocity limit to a note. Position limits, dimension / NaN checks and the sustained-out-of-limit abstention are unchanged. Parity: svla_so101_pickplace 7/10 rejected -> 0/10 (the regression key marks all seven ACT-4 clean); franka / aloha / pusht tests unchanged."
     }
   }
 }

@@ -151,7 +151,34 @@ def make_kinematic_check(cfg: dict, registry) -> Callable:
                 name="kinematic_limits", passed=None,
                 detail={"reason": f"action 是 EE 空间指令,{prof.embodiment_id} 极限是关节空间,"
                                   "且 profile 无 EE 规格/无 EE 位姿读数——不可判"}))
-        return result_to_struct(kinematic_limits(np.asarray(action), prof, fps, **p_kin))
+        # 2026-10-14(11-3 so101):极限是机器人的属性。有同空间的关节读数就查读数;leader 臂的指令
+        # 想多快多快(人手一帧捏到底 406/s,follower 读数峰值 181/s),指令超速只作提示。没有读数时
+        # 位置极限仍按指令硬判,速度仍只提示(没有读数就说不准机器人超没超)
+        a = np.asarray(action)
+        gd = tuple(int(x) for x in (prof.gripper_dims or ()) if a.ndim == 2 and int(x) < a.shape[1])
+        st = None
+        if proprio_state is not None and str(proprio_space) == str(action_space) and str(action_space) != "ee":
+            st = np.asarray(proprio_state)
+            if st.ndim != 2 or st.shape[1] != prof.dof or len(st) != len(a):
+                st = None
+        kw = dict(p_kin, gripper_dims=gd)
+        if st is not None:
+            res = kinematic_limits(st, prof, fps, **kw)
+            basis = "state"
+        else:
+            res = kinematic_limits(a, prof, fps, **dict(kw, check_velocity=False))
+            basis = "command"
+        cmd = kinematic_limits(a, prof, fps, **dict(kw, check_velocity=True))
+        cmd_vel = ([v for v in (cmd.detail.get("violations") or []) if v.get("type") == "velocity_limit"]
+                   if cmd.passed is not None else [])
+        if res.passed is None:
+            return result_to_struct(res)
+        # an approximate velocity limit (an observed envelope, so101 / aloha) informs, it does not fail the gate
+        blocking = [v for v in (res.detail.get("violations") or [])
+                    if not (v.get("type") == "velocity_limit" and prof.quality == "approximate")]
+        detail = dict(res.detail, basis=basis, n_command_velocity=len(cmd_vel),
+                      command_velocity_violations=cmd_vel[:20])
+        return result_to_struct(_CR(name="kinematic_limits", passed=not blocking, score=res.score, detail=detail))
 
     return kin_check
 

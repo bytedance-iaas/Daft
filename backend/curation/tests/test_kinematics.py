@@ -218,3 +218,43 @@ def test_head_frames_out_of_limit_abstains_not_kills():
     good[50:53, 3] = 0.0                # 中途三帧越界 = 真违规
     r2 = kinematic_limits(good, prof, fps=10.0)
     assert r2.passed is False and r2.detail["n_violations"] >= 3
+
+
+# ---- 2026-10-14 (11-3, so101):极限是机器人的,指令不是 ---------------------------------------------
+
+def _so101_like(t: int = 120, fps: float = 30.0):
+    """限内的 so101 关节轨迹(归一化 ±100,夹爪 0–100),指令与读数相同。"""
+    tt = np.linspace(0, np.pi, t)[:, None]
+    q = np.column_stack([40 * np.sin(tt + k) for k in range(5)] + [50 + 40 * np.sin(tt)])
+    return q.astype(np.float64)
+
+
+def test_gripper_column_is_outside_the_velocity_check(reg):
+    prof = reg.get("so101")
+    a = _so101_like(); a[60, 5] = a[59, 5] - 14.0           # the gripper closes 14 units in one frame: 420/s
+    assert any(v["type"] == "velocity_limit" and v["joint"] == 5 for v in kinematic_limits(a, prof, 30.0).detail["violations"])
+    r = kinematic_limits(a, prof, 30.0, gripper_dims=(5,))
+    assert r.passed is True and r.detail["quality"] == "approximate"
+
+
+def test_stage_runner_reads_the_state_and_only_notes_a_fast_command(reg):
+    from curation.pipeline.episode_checks import make_kinematic_check
+    check = make_kinematic_check({"checks": {"kinematic_limits": {"params": {}}}}, reg)
+    a = _so101_like(); s = a.copy()
+    a[60:, 1] += 12.0                                         # leader: joint 1 jumps 12 units in one frame (360/s) and stays
+    out = check(a, "so101", 30.0, "joint", "absolute", s, "joint")
+    d = out["detail"] if isinstance(out.get("detail"), dict) else __import__("json").loads(out["detail"])
+    assert out["passed"] is True and d["basis"] == "state" and d["n_violations"] == 0
+    assert [v["joint"] for v in d["command_velocity_violations"]] == [1]
+    s2 = s.copy(); s2[60:, 1] += 12.0                         # the follower really did move that fast
+    out2 = check(a, "so101", 30.0, "joint", "absolute", s2, "joint")
+    d2 = out2["detail"] if isinstance(out2.get("detail"), dict) else __import__("json").loads(out2["detail"])
+    # so101's velocity limit is an observed envelope (quality approximate): the violation is recorded, the gate stays open
+    assert out2["passed"] is True and d2["violations"][0]["type"] == "velocity_limit" and d2["quality"] == "approximate"
+    s3 = s.copy(); s3[60:, 0] = 200.0                         # a position beyond the joint limit still fails
+    out4 = check(a, "so101", 30.0, "joint", "absolute", s3, "joint")
+    assert out4["passed"] is False
+    out3 = check(a, "so101", 30.0, "joint", "absolute", None, "unknown")   # no state: a command's speed only informs
+    d3 = out3["detail"] if isinstance(out3.get("detail"), dict) else __import__("json").loads(out3["detail"])
+    assert out3["passed"] is True and d3["basis"] == "command" and d3["n_command_velocity"] == 1
+
