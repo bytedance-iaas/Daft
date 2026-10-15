@@ -108,6 +108,7 @@ def motion_quality(
     translation_dims: tuple | None = None,  # 平移列(给了则路径效率只在平移列上算)
     velocity_dims: tuple | None = None,   # 速度型指令列(底盘 vx/vy/vyaw 这类摇杆信号,不是轨迹):
                                           #   不进平滑度与尖刺(2026-10-14 HIW-500)
+    nonjoint_dims: tuple | None = None,   # 名为关节、实为归一化开合量的列(2026-10-15 G1 右臂六列):同上不进
 ) -> CheckResult:
     """action: [T,dim] 指令;proprio: [T,dim'] 实际(可空);fps 来自 M1。"""
     a = np.asarray(action, dtype=np.float64)
@@ -199,11 +200,14 @@ def motion_quality(
     discrete = [c for c in arm_cols
                 if T >= 8 and len(np.unique(np.round(a[:, c], 6))) <= DISCRETE_LEVELS]
     velocity = [c for c in (velocity_dims or ()) if c in arm_cols]
-    kin_cols = [c for c in arm_cols if c not in discrete and c not in velocity]
+    nonjoint = [c for c in (nonjoint_dims or ()) if c in arm_cols]
+    kin_cols = [c for c in arm_cols if c not in discrete and c not in velocity and c not in nonjoint]
     if discrete:
         detail["discrete_cols"] = discrete
     if velocity:
         detail["velocity_cols"] = velocity
+    if nonjoint:
+        detail["nonjoint_cols"] = nonjoint
 
     # ① smoothness:逐列算加速度 RMS 相对该列自己的步长尺度(4×步长/dt²),再取各列均值。
     # 合在一起算时一列的单位或表示法(夹爪 0–95、四元数翻转)就能污染全体;逐列算,一列坏只坏一列,

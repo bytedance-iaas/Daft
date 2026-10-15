@@ -490,6 +490,20 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
                     sem.gripper_dims = tuple(lay["gripper_dims"])
                 sem.extras = dict(sem.extras or {}, layout=dict(layout_for_extras(lay), names_only=True))
     pf.pop("gripper_dims", None)
+    # 列名说关节、数值说开合量(2026-10-15,G1 右臂六列):关节空间且有列名时在样本上核一遍,中招的列写进布局,
+    # 同步的速度代理与平滑度不看它们,数据集级出一条发现(它们对应的关节其实没有读数)
+    if str(sem.proprio_space) == "joint" or str(sem.action_space) == "joint":
+        from .dataset_semantics import layout_for_extras, nonjoint_columns
+        names_ = _action_names_list(info)
+        have = (sem.extras or {}).get("layout")
+        lay_ = have if isinstance(have, dict) else {}
+        arrays = [np.concatenate([np.asarray(r[k]) for r in sample_rows if np.asarray(r.get(k)).ndim == 2])
+                  for k in ("action", "proprio_state") if any(np.asarray(r.get(k)).ndim == 2 for r in sample_rows)]
+        bad = nonjoint_columns(arrays, names_, lay_) if names_ else []
+        if bad:
+            base = lay_ or {"source": "numeric"}
+            sem.extras = dict(sem.extras or {}, layout=layout_for_extras(
+                dict(base, nonjoint_dims=bad, nonjoint_names=[names_[c] for c in bad])))
     extras["semantics_preflight"] = pf
     if sem.profile_name:
         extras["profile_name"] = sem.profile_name

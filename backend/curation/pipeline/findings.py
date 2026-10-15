@@ -540,7 +540,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
                 "idle_mid_count", "idle_mid_total_s",
                 # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
-                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols"):
+                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols", "nonjoint_cols"):
         if d.get(key) is not None:
             out.readings[key] = _r(d.get(key))
     _sub_score(out, m, "smoothness_low", d.get("smoothness"), p["smoothness_min"], "动作不平滑，平滑度分",
@@ -968,6 +968,12 @@ def dataset_level(module: str, records: dict[int, dict], params: dict | None = N
                 found.append(finding(module, "action_semantics_undetermined",
                                      f"判断不了动作数据的含义（{len(unsure)} / {len(sem)} 条）：运动学极限与依赖动作语义的子项没有评估",
                                      unit="dataset", readings={"episodes": len(unsure)}))
+            bad = next((s["nonjoint_columns"] for s in sem if s.get("nonjoint_columns")), None)
+            if bad:
+                found.append(finding(module, "columns_not_joints",
+                                     f"{len(bad)} 列名字是关节，数值却是 0～1 的开合量（{'、'.join(bad)}）。"
+                                     "这几列不进平滑度与同步检查，它们名下的关节在记录里没有读数",
+                                     unit="dataset", readings={"columns": list(bad)}))
     elif module == "eef_video_consistency":
         from ..extensions.eef_consistency import calibration
 

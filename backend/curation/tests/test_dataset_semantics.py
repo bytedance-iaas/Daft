@@ -232,3 +232,58 @@ def test_a_bad_limb_declaration_fails_loudly():
     import pytest
     with pytest.raises(ValueError):
         DS.limbs_declared({"left": ["a", "b"]})
+
+
+# ---- 2026-10-15:列名说关节、数值说开合量(G1 右臂六列) --------------------------------------------------
+
+G1_NAMES = ["kLeftShoulderPitch", "kLeftShoulderRoll", "kLeftShoulderYaw", "kLeftElbow", "kLeftWristRoll", "kLeftWristPitch",
+            "kLeftWristYaw", "kLeftHandPinky", "kLeftHandRing", "kLeftHandMiddle", "kLeftHandIndex", "kLeftHandThumbBend",
+            "kLeftHandThumbRotation", "kRightShoulderPitch", "kRightShoulderRoll", "kRightShoulderYaw", "kRightElbow",
+            "kRightWristRoll", "kRightWristPitch", "kRightWristYaw", "kRightHandPinky", "kRightHandRing", "kRightHandMiddle",
+            "kRightHandIndex", "kRightHandThumbBend", "kRightHandThumbRotation"]
+
+
+def _g1_like(n=400, seed=0):
+    """左臂七列 + 右肩 pitch 是弧度里的平滑关节角;右臂其余六列与十二根手指一样是 [0,1] 里顶到 1.0 的开合量。"""
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, 6.0, n)[:, None]
+    joints = 0.8 * np.sin(t * (1 + np.arange(8)) * 0.7) - 0.3
+    opening = np.clip(0.5 + 0.7 * np.sin(t * (1 + np.arange(18)) * 0.5) + rng.normal(0, 0.01, (n, 18)), 0.0, 1.0)
+    a = np.zeros((n, 26))
+    a[:, 0:7] = joints[:, :7]; a[:, 13] = joints[:, 7]
+    a[:, 7:13] = opening[:, 0:6]; a[:, 14:20] = opening[:, 6:12]; a[:, 20:26] = opening[:, 12:18]
+    return a
+
+
+def test_nonjoint_columns_catch_g1_right_arm_and_nothing_else():
+    from curation.ingest.dataset_semantics import detect_ee_layout, nonjoint_columns
+    a = _g1_like()
+    lay = detect_ee_layout(G1_NAMES, 26)               # 手指列已按名字认出,不在候选里
+    assert nonjoint_columns([a, a + 0.001], G1_NAMES, lay) == [14, 15, 16, 17, 18, 19]
+    # 恒定列(量程 0)、小角度关节(0–0.35 rad)都不算
+    b = a.copy(); b[:, 14:20] = 0.0; b[:, 3] = np.abs(a[:, 3]) * 0.2
+    assert nonjoint_columns([b], G1_NAMES, lay) == []
+    # 整库都归一化到 [0,1](候选的一半以上中招)是约定,不是列名错
+    c = np.clip((a + 1.5) / 3.0, 0.0, 1.0); c[:, 0] = np.clip(c[:, 0] * 1.4, 0, 1)
+    assert nonjoint_columns([c], G1_NAMES, lay) == []
+    assert nonjoint_columns([a], [], lay) == [] and nonjoint_columns([a[:4]], G1_NAMES, lay) == []
+
+
+def test_reader_marks_nonjoint_columns_in_the_layout_and_the_shell_reads_them():
+    """走读路:预检把这六列写进布局;同步的速度代理和运动质量都不看它们;条目读数带列名,数据集级出一条发现。"""
+    from curation.ingest.lerobot_reader import resolve_dataset_semantics
+    from curation.pipeline.episode_checks import sync_speed_groups
+    info = {"robot_type": "Unitree_G1_Inspire", "fps": 30,
+            "features": {"action": {"names": [G1_NAMES]}, "observation.state": {"names": [G1_NAMES]}}}
+    rows = [{"action": _g1_like(seed=i).astype(np.float32), "proprio_state": _g1_like(seed=i).astype(np.float32), "fps": 30.0}
+            for i in range(3)]
+    sem = resolve_dataset_semantics(info, rows)
+    lay = sem.extras["layout"]
+    assert lay["nonjoint_dims"] == [14, 15, 16, 17, 18, 19]
+    assert lay["nonjoint_names"] == ["kRightShoulderRoll", "kRightShoulderYaw", "kRightElbow", "kRightWristRoll",
+                                     "kRightWristPitch", "kRightWristYaw"]
+    assert sync_speed_groups(26, "joint", lay, ()) == {"left": list(range(0, 7)), "right": [13]}
+    res = motion_quality(rows[0]["action"].astype(float), rows[0]["proprio_state"].astype(float), 30.0,
+                         nonjoint_dims=tuple(lay["nonjoint_dims"]))
+    assert res.detail["nonjoint_cols"] == [14, 15, 16, 17, 18, 19]
+    assert not set(res.detail["smoothness_cols"]) & {"14", "15", "16", "17", "18", "19"}

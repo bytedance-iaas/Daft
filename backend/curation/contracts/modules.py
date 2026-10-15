@@ -136,6 +136,11 @@ make the camera undecidable; the limbs' summed motion must itself match the pict
 reading counts (sum_unexplained otherwise). ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` /
 ``groups`` / ``instability`` / ``sum``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
 one curve they bent the whole-episode correlation to -1.8 s while every window read 0.
+
+8.6 (2026-10-15): a dataset profile declares velocity, hand and limb columns (the column-name word lists are the
+fallback), and the reader checks a joint-space record for columns named as joints that carry a normalized opening
+instead (never outside [0, 1], saturating at a bound, spanning at least half of it - G1's right arm): they leave the
+sync proxies and the smoothness, and ``motion_quality`` reports them once per dataset as ``columns_not_joints``.
 """
 from __future__ import annotations
 
@@ -143,7 +148,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.5"
+REGISTRY_VERSION = "8.6"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -667,7 +672,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("idle_opening", "TASK-1", "开头空转"),
                _info("idle_closing", "TASK-1", "结尾空转"),
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
-                     scope_kind="dataset")),
+                     scope_kind="dataset"),
+               # 8.6 (2026-10-15): columns named as joints that carry a normalized opening (G1's right arm)
+               _info("columns_not_joints", None, "名为关节的列不是关节读数", "medium", scope_kind="dataset")),
         param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(

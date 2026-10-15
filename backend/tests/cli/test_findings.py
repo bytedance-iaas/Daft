@@ -546,6 +546,14 @@ def test_dataset_level_findings():
     recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
     found, readings = F.dataset_level("motion_quality", recs)
     assert [f["code"] for f in found] == ["action_semantics_undetermined"] and readings["active_ratio_mean"] == 1.0
+    # 8.6: columns named as joints that carry a normalized opening (G1's right arm) - once per dataset, by name
+    sem = {"source": "preflight", "action_space": "joint", "control_mode": "absolute", "undetermined": False,
+           "nonjoint_columns": ["kRightShoulderRoll", "kRightElbow"]}
+    recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
+    found, _ = F.dataset_level("motion_quality", recs)
+    assert [f["code"] for f in found] == ["columns_not_joints"] and found[0]["unit"] == "dataset"
+    assert found[0]["readings"]["columns"] == ["kRightShoulderRoll", "kRightElbow"] and "kRightElbow" in found[0]["message_zh"]
+    assert found[0]["item"] is None and found[0]["severity"] == "medium"
     integ = {"findings": [{"level": "dataset", "code": "orphan_files", "message": "2 个不属于任何 episode 的文件",
                            "args": {"count": 2}},
                           {"level": "dataset", "code": "dark_camera", "message": "wrist 近乎全黑"},
@@ -557,7 +565,7 @@ def test_dataset_level_findings():
     # the EEF cameras' calibration suspects (5.4): tests/eef/test_calibration_suspect.py
     assert every == {("data_integrity", "orphan_files"), ("data_integrity", "dark_camera"),
                      ("data_integrity", "table_overlap"), ("timestamp_check", "duration_outlier"),
-                     ("motion_quality", "action_semantics_undetermined"),
+                     ("motion_quality", "action_semantics_undetermined"), ("motion_quality", "columns_not_joints"),
                      ("eef_video_consistency", "calibration_suspect")}
     for f in found:
         assert schemas.errors("cli/common.schema.json#/$defs/finding", f) == []

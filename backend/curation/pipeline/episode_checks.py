@@ -245,6 +245,9 @@ def make_motion_check(cfg: dict, registry) -> Callable:
                     float(hi - lo) for lo, hi in _prof_m.joint_limits))
         except Exception:  # noqa: BLE001  未知 embodiment → 无夹爪约定,不猜
             pass
+        if isinstance(_layout, dict) and _layout.get("nonjoint_dims"):
+            # 名为关节、实为开合量的列(2026-10-15 G1 右臂六列):不进平滑度与尖刺,关节空间也要
+            kw.setdefault("nonjoint_dims", tuple(int(x) for x in _layout["nonjoint_dims"] if int(x) < a.shape[1]))
         kw.setdefault("control_mode", str(control_mode))
         kw.setdefault("stuck_strategy", str(stuck_strategy))   # 数据集语义层提供
         try:   # 数据集 profile extras(如 droid 的经验速度系数)→ 期望位移判据
@@ -308,6 +311,7 @@ def sync_speed_groups(n_cols: int, proprio_space, layout: dict | None, profile_g
         drop = {int(c) for c in (profile_gripper_dims or ())}
         drop |= {int(c) for c in (lay.get("gripper_dims") or ())}
         drop |= {int(c) for c in (lay.get("hand_dims") or ())}
+        drop |= {int(c) for c in (lay.get("nonjoint_dims") or ())}   # 名为关节、实为开合量的列(2026-10-15 G1)
         base, name = [j for j in range(n_cols) if j not in drop] or list(range(n_cols)), "arm"
     groups: dict = {}
     for side, cols in (lay.get("limbs") or []):
