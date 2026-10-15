@@ -76,7 +76,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   每档的运行区间只用于时间轴，任务总耗时仍是端到端墙钟时间。
   每条 episode 的模块结果和下一层位置写入 `.orchestr/episodes.sqlite3`，暂停或崩溃后按 episode 恢复。
   整体失败的模块不拦后面的段（那些条目待补跑）。两块都结束后做终判 → 报告 → 同步与核验。
-  缺源文件被剔除的 episode（D40）不进计划、不进进度总数；选了数据完整性的任务不剔除，完整性判废它们（D97，设计 29 §3）：生成计划时在 `run.json` 记 `missing_sources`（`judged` / `left_out`），条目范围（`RunBase.selection()`）据此决定，之前开跑的任务没有这个键、照旧剔除。
+  缺源文件被剔除的 episode（D40）不进计划、不进进度总数；选了数据完整性的任务不剔除，完整性判废它们（D97，设计 29 §3）：生成计划时在 `run.json` 记 `missing_sources`（`judged` / `left_out`），条目范围（`Run.selection()`）据此决定，之前开跑的任务没有这个键、照旧剔除。
   每个检查档做完就把 `checks/` 传到交付目录（随产随传），但 `_COMPLETE` 只在最后的核验通过后才写。
 - **模块与任务的状态**：模块状态看逐状态计数（有出错条目是 `completed_with_errors`，退出码 4 是 `failed`）；
   终态按 01 篇 §2.5 约束 3 与 D35：没有 `failed` 的模块、`held` 为空才是 `succeeded`。

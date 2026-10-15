@@ -393,3 +393,25 @@ def test_a_pause_lets_a_finished_stages_upload_finish_and_a_stop_cuts_it(tmp_pat
         with pytest.raises(Interrupt):
             run.sync_quietly("numeric", **kw)
         assert not (run.out / "r1").exists()
+
+
+def test_which_runs_judge_the_episodes_whose_source_files_are_missing(tmp_path):
+    """D97 (design doc 29 §3): run.json's ``missing_sources`` decides; before it is written, whether data integrity is
+    selected; a run.json from before D97 never says so and keeps D40."""
+    from types import SimpleNamespace
+
+    from daemon.orchestr.runbase import Run
+
+    run_json = tmp_path / "run.json"
+    modules = [SimpleNamespace(selected=True, module_id="timestamp_check")]
+    run = SimpleNamespace(wd=SimpleNamespace(run_json=run_json), task_id="t1",
+                          repo=SimpleNamespace(get_task_modules=lambda task_id: modules))
+    assert Run.judges_missing_sources(run) is False
+    modules.append(SimpleNamespace(selected=True, module_id="data_integrity"))
+    assert Run.judges_missing_sources(run) is True                  # the plan is being made
+    run_json.write_text(json.dumps({"schema": "curator.run/1", "missing_sources": "judged"}))
+    assert Run.judges_missing_sources(run) is True
+    run_json.write_text(json.dumps({"schema": "curator.run/1", "missing_sources": "left_out"}))
+    assert Run.judges_missing_sources(run) is False
+    run_json.write_text(json.dumps({"schema": "curator.run/1"}))       # started before D97
+    assert Run.judges_missing_sources(run) is False

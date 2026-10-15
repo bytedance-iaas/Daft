@@ -75,7 +75,7 @@ topic。某条 episode 没有其中一个（或只有 0 条消息），记可疑
 **谁怎么认**：
 
 - `snapshot` 不变：缺文件的 v2 条目仍记进源清单的 `skipped_episodes`（缺哪些键），这是事实，与选了哪些模块无关；它的其它文件也不进 `objects`。
-- Daemon 的条目范围（`RunBase.selection()`）：`missing_sources` 是 `judged`——`run.json` 还没写（生成计划时）就看是否勾选了完整性——不去掉这些条目，
+- Daemon 的条目范围（`Run.selection()`）：`missing_sources` 是 `judged`——`run.json` 还没写（生成计划时）就看是否勾选了完整性——不去掉这些条目，
   计划、各段、总数都含它们。
 - `check` 带源清单时（`runctx.leave_out_skipped`）：这次调用跑完整性，或 `run.json` 是 `judged`，或完整性在这个运行目录里已有这条的记录，就不去掉；
   否则照 D40 去掉。源清单守卫对这类条目只核对缺的文件仍然缺（补上了算源数据变了，退出码 6），它的其它文件不核对，也没有命令读。
@@ -145,7 +145,7 @@ topic。某条 episode 没有其中一个（或只有 0 条消息），记可疑
 - **映射写明的流**：读 `ingest.mcap_mapping` 的 `state` 与 `video_topics`（Daemon 对确认过映射的数据集用 `--set` 传进来）；没有摘要区的文件不比。
 - **D97 的落点**：快照不变；`check` 带清单时的去留在 `runctx.leave_out_skipped`（这次调用跑完整性、`run.json` 是 `judged`、或完整性已有这条的记录）；
   完整性段对缺源文件的条不读行（`IntegrityJudge.misses_source`）；`pipeline/skipped.all_skipped` 减去完整性有记录的条；Daemon 的
-  `RunBase.selection()` 看 `run.json` 的 `missing_sources`（还没写时看是否选了完整性），`planning.write_run_json` 写这个键。
+  `Run.selection()` 看 `run.json` 的 `missing_sources`（还没写时看是否选了完整性），`planning.write_run_json` 写这个键。
 - **实测**（对账夹具注入，命令与输出见完整性 README 第 8 步）：v2 的七种情形各得到对应细码的判废，没有一条执行出错；v3 的空值只判所在条目，
   同文件两条在完整性和数值段都照常评估；mcap 缺 `/action` 判废、缺一路相机存疑；Daemon 端到端：选了完整性的任务里删掉一路视频的条目进 reject、计入总数，
   `run.json` 是 `judged`；没选完整性的任务照旧剔除。
