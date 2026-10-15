@@ -84,6 +84,59 @@ SYNC_SUSPECT = {"verdict": "annotated", "per_camera": {
     "n_cameras": 1, "n_trusted": 0, "reason": "疑似"}
 SYNC_NONE = {"verdict": "undecidable", "per_camera": {}, "n_cameras": 0, "reason": "没有状态量,无法比对"}
 
+
+def _curve(center: float, width: float, amp: float, floor: float = 0.1, step: float = 0.1):
+    """A correlation curve over ±2 s: a Gaussian bump of ``amp`` at ``center`` over ``floor``."""
+    import math
+    lags = [round(-2.0 + i * step, 4) for i in range(int(4.0 / step) + 1)]
+    return {"lags_s": lags, "corr": [round(floor + (amp - floor) * math.exp(-0.5 * ((x - center) / width) ** 2), 4)
+                                     for x in lags]}
+
+
+# the borrowed-peak test (MV-3): wrist is trusted and misaligned by -0.97 s; front cannot place its own peak
+# (ambiguous) but its curve is clearly higher around 0 than at -0.97 s -> the two cameras disagree
+SYNC_BORROW = {"verdict": "annotated", "per_camera": {
+    "front": {"lag_s": 0.07, "corr_peak": 0.59, "corr_at_zero": 0.556, "trusted": False, "code": "ambiguous_peak",
+              "xc_curve": _curve(0.07, 0.35, 0.59)},
+    "wrist": {"lag_s": -0.97, "corr_peak": 0.5632, "trusted": True, "code": "misaligned"}},
+    "flagged_cameras": ["wrist"], "suspect_cameras": [], "noisy_cameras": [], "abstained_cameras": ["front"],
+    "consensus_lag_s": None, "n_cameras": 2, "n_trusted": 1, "reason": "仅 1 路可信"}
+# the same, but front's curve is flat: -0.97 s fits it as well as anything -> cannot be verified, no MV-3
+SYNC_BORROW_FLAT = {**SYNC_BORROW, "per_camera": {
+    **SYNC_BORROW["per_camera"],
+    "front": {**SYNC_BORROW["per_camera"]["front"], "xc_curve": _curve(0.07, 3.0, 0.59, floor=0.5)}}}
+# the same, but front has no signal at all (low_corr): its curve is noise and takes no part
+SYNC_BORROW_WEAK = {**SYNC_BORROW, "per_camera": {
+    **SYNC_BORROW["per_camera"],
+    "front": {**SYNC_BORROW["per_camera"]["front"], "corr_peak": 0.15, "code": "low_corr",
+              "xc_curve": _curve(0.07, 0.35, 0.15)}}}
+# the windowed medians (second estimator): neither camera's whole-curve reading is trusted, but both are solid
+# window-wise and 0.2 s apart -> MV-3 by the windows; with a wobbly camera (IQR) or a small spread -> nothing
+def _lw(lag, n_trusted=9, iqr=0.03, dt=1 / 30):
+    return {"win_s": 2.0, "hop_s": 1.0, "dt_s": round(dt, 4), "n_windows": 11, "n_trusted": n_trusted, "lag_s": lag,
+            "iqr_s": iqr, "windows": []}
+
+
+SYNC_WINDOWED = {"verdict": "annotated", "per_camera": {
+    "front": {"lag_s": -0.73, "corr_peak": 0.65, "trusted": False, "code": "ambiguous_peak", "lag_windows": _lw(-0.13)},
+    "wrist": {"lag_s": 0.07, "corr_peak": 0.61, "trusted": False, "code": "ambiguous_peak", "lag_windows": _lw(0.07)}},
+    "flagged_cameras": [], "suspect_cameras": [], "noisy_cameras": [], "abstained_cameras": ["front", "wrist"],
+    "consensus_lag_s": None, "n_cameras": 2, "n_trusted": 0, "reason": "2 路相机均未给出可信读数"}
+SYNC_WINDOWED_WOBBLY = {**SYNC_WINDOWED, "per_camera": {**SYNC_WINDOWED["per_camera"],
+    "front": {**SYNC_WINDOWED["per_camera"]["front"], "lag_windows": _lw(-0.13, iqr=0.5)}}}
+SYNC_WINDOWED_FEW = {**SYNC_WINDOWED, "per_camera": {**SYNC_WINDOWED["per_camera"],
+    "front": {**SYNC_WINDOWED["per_camera"]["front"], "lag_windows": _lw(-0.13, n_trusted=2)}}}
+SYNC_WINDOWED_CLOSE = {**SYNC_WINDOWED, "per_camera": {**SYNC_WINDOWED["per_camera"],
+    "front": {**SYNC_WINDOWED["per_camera"]["front"], "lag_windows": _lw(0.0)}}}
+# at 15 fps three frames are 0.2 s: the same 0.2 s spread is within tolerance
+SYNC_WINDOWED_15FPS = {**SYNC_WINDOWED, "per_camera": {
+    "front": {**SYNC_WINDOWED["per_camera"]["front"], "lag_windows": _lw(-0.13, dt=1 / 15)},
+    "wrist": {**SYNC_WINDOWED["per_camera"]["wrist"], "lag_windows": _lw(0.07, dt=1 / 15)}}}
+# the same, but front's curve prefers the very lag wrist found -> the whole episode may be shifted, not MV-3
+SYNC_BORROW_SAME = {**SYNC_BORROW, "per_camera": {
+    **SYNC_BORROW["per_camera"],
+    "front": {**SYNC_BORROW["per_camera"]["front"], "lag_s": -0.9, "xc_curve": _curve(-0.95, 0.6, 0.55)}}}
+
 TASK_FAIL = {"verdict": "failure", "init_verdict": "failure", "review": "no", "cam_votes": {"front": "no"},
              "rules": ["video_double_signed_failure"], "video_completion": 0.2, "input_mode": "video",
              "protocol": "video-task/1", "task_desc_source": "原始标注", "reason": "杯子没有放进水槽",
@@ -107,6 +160,30 @@ CAM_SHAKE = {"protocol": "camera-check/1", "reason": "", "items": {"glitch": "no
              "per_camera": {"observation.images.a": {"answered": True, "glitch": {"level": "none"},
                                                      "shake": {"level": "severe", "times": [[2.0, 3.0]]},
                                                      "contamination": {"level": "none"}}}}
+# registry 8.1: occlusion per camera with its share, place and length, and the camera's own identity
+CAM_VIEW = {"protocol": "camera-check/5", "reason": "", "identity": "inconsistent",
+            "items": {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "severe"},
+            "per_camera": {
+                "observation.images.wrist": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "severe", "source": "person", "times": [[1.0, 4.0]],
+                                                           "share": 0.3, "coverage": 0.45, "region": "center", "duration_s": 3.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "no", "same_as": "",
+                                                      "note": "scene never moves with the arm"}},
+                "observation.images.front": {"answered": True, "glitch": {"level": "none"}, "shake": {"level": "none"},
+                                             "contamination": {"level": "none", "kind": "none"},
+                                             "occlusion": {"level": "none", "source": "none", "times": [], "share": 0.0},
+                                             "view": {"kind": "fixed", "arm": "single", "matches_name": "yes", "same_as": "",
+                                                      "note": ""}}}}
+# registry 8.1: the arms are crossed BETWEEN cameras - every camera agrees with its own mount, and
+# only the measured pairing shows that the one called left rides the right arm
+CAM_ARMS = {"protocol": "camera-check/10", "reason": "", "identity": "inconsistent",
+            "items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+            "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+                     "basis": "motion_pairing", "readings": {"margin": 1.4},
+                     "note": "画面运动跟的是另一条臂"},
+            "per_camera": {"observation.images.left_wrist": {"answered": True},
+                           "observation.images.right_wrist": {"answered": True}}}
 
 #: registry 5.0 (design doc 25 §7): the merged cells - a conflict between the CPU and the model's review ...
 _CPU_ISSUE = {"verdict": "issue", "p": 0.9, "confidence": 0.8}
@@ -167,6 +244,14 @@ INTEG_CASES = [
     ({"level": "reject", "code": "zero_filled", "tier": "L1", "message": "零填充", "file": "v.mp4", "span_s": [1.0, 2.0]}, "zero_filled"),
     ({"level": "reject", "code": "structure_invalid", "tier": "L1", "message": "找不到完整的 moov"}, "structure_invalid"),
     ({"level": "reject", "code": "crc_mismatch", "tier": "L2", "message": "CRC 不符"}, "crc_mismatch"),
+    # the MV-3 record layer (2026-10-13): one camera's container timing against the window, the cameras against each other
+    ({"level": "suspect", "code": "camera_start_offset", "tier": "L1", "message": "front 相机的视频起点比时间轴晚 0.200 秒（6.0 帧）",
+      "file": "videos/front/f.mp4", "camera": "front", "args": {"start_offset_s": 0.2, "edit_offset_s": 0.2}}, "camera_start_offset"),
+    ({"level": "suspect", "code": "camera_timing_mismatch", "tier": "L1",
+      "message": "各相机的视频时间轴彼此对不上：起点偏移 front +0.200 秒、wrist +0.000 秒",
+      "args": {"start_offset_s": {"front": 0.2, "wrist": 0.0}}}, "camera_timing_mismatch"),
+    ({"level": "suspect", "code": "camera_rate_mismatch", "tier": "L1", "message": "front 相机的帧间隔中位数 35.03 毫秒，按 30 fps 应为 33.33 毫秒（比例 1.051）",
+      "file": "videos/front/f.mp4", "camera": "front", "args": {"rate_ratio": 1.0508}}, "camera_rate_mismatch"),
     ({"level": "reject", "code": "decode_failed", "tier": "L3", "message": "第 3.2 秒起解码失败"}, "decode_failed"),
     ({"level": "suspect", "code": "decode_concealed", "tier": "L3", "message": "解码器掩盖了错误"}, "decode_concealed"),
     ({"level": "suspect", "code": "count_mismatch", "tier": "L1", "message": "帧数 280，记录 300"}, "count_mismatch"),
@@ -219,6 +304,15 @@ CASES = [
     ("visual_quality", None, None, {}, set(), {"IMG-1", "IMG-2", "IMG-3", "IMG-4", "STRM-1", "FILE-4"}),
     ("video_action_sync", False, None, SYNC_ALL, {"misaligned_all"}, set()),
     ("video_action_sync", True, None, SYNC_ONE, {"camera_misaligned", "lag_inconsistent"}, set()),
+    ("video_action_sync", True, None, SYNC_BORROW, {"camera_misaligned", "lag_inconsistent"}, set()),
+    ("video_action_sync", True, None, SYNC_BORROW_FLAT, {"camera_misaligned"}, set()),
+    ("video_action_sync", True, None, SYNC_BORROW_WEAK, {"camera_misaligned", "undecidable"}, set()),
+    ("video_action_sync", True, None, SYNC_BORROW_SAME, {"camera_misaligned"}, set()),
+    ("video_action_sync", True, None, SYNC_WINDOWED, {"lag_inconsistent"}, set()),
+    ("video_action_sync", True, None, SYNC_WINDOWED_WOBBLY, set(), set()),
+    ("video_action_sync", True, None, SYNC_WINDOWED_FEW, set(), set()),
+    ("video_action_sync", True, None, SYNC_WINDOWED_CLOSE, set(), set()),
+    ("video_action_sync", True, None, SYNC_WINDOWED_15FPS, set(), set()),
     ("video_action_sync", True, None, SYNC_WEAK, {"undecidable"}, set()),
     ("video_action_sync", True, None, SYNC_SUSPECT, {"suspect"}, set()),
     ("video_action_sync", True, None, SYNC_NONE, set(), {"AV-1", "AV-3", "MV-3", "FILE-4"}),
@@ -226,9 +320,23 @@ CASES = [
     ("task_success", None, None, TASK_UNSURE, {"uncertain"}, set()),
     ("task_success", None, None, TASK_SKIPPED, {"task_text_missing"}, {"TASK-4"}),
     ("task_success", True, None, {"verdict": "success", "task_desc_source": "原始标注"}, set(), set()),
-    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6"}),
-    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, set()),
-    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(), {"IMG-5", "IMG-6", "IMG-7"}),
+    ("camera_defects", None, None, CAM, {"glitch", "contamination"}, {"IMG-6", "IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_SHAKE, {"shake"}, {"IMG-8", "MV-2"}),
+    ("camera_defects", None, None, CAM_VIEW, {"occlusion", "identity"}, set()),
+    ("camera_defects", None, None, CAM_ARMS, {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    ("camera_defects", None, None, {"reason": "任务成败判定没有产生结果，无法读取逐机位复核"}, set(),
+     {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
+    # the pairing is measured, so a crossing stands even when the request brought no picture answers
+    ("camera_defects", None, None, {"reason": "判定请求没有按相机作答", "identity": "inconsistent",
+      "arms": {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+               "basis": "motion_pairing", "note": "left_wrist 的画面跟着 right 动（余量 1.0）"}},
+     {"identity"}, {"IMG-5", "IMG-6", "IMG-7", "IMG-8"}),
+    # and an unknown says which half was missing: measured but inconclusive, never "the model did not answer"
+    ("camera_defects", None, None, {"items": {k: "unknown" for k in ("glitch", "shake", "contamination", "occlusion")},
+      "per_camera": {"observation.images.left_wrist": {"answered": True}},
+      "arms": {"identity": "unknown", "reason": "measurement_inconclusive",
+               "note": "几种对应关系的证据一样强"}},
+     set(), {"IMG-5", "IMG-6", "IMG-7", "IMG-8", "MV-2"}),
     # AV-1 since 4.1: only a wrist camera's own motion reads the episode's timing
     ("eef_video_consistency", True, None, EEF_EGO, {"ego_motion_suspect"}, set()),
     ("eef_video_consistency", True, None, EEF_RECORD, {"inconsistent", "record_mismatch"}, {"AV-1"}),
@@ -238,8 +346,23 @@ CASES = [
     ("duplicate_check", False, None, {"same_as": [43, 50], "group_id": 12}, {"duplicate"}, set()),
     ("duplicate_check", True, None, {"action_hash": "abc"}, set(), set()),
 
-] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code}, set())
-     for f, code in INTEG_CASES]
+] + [("data_integrity", None if f["level"] == "suspect" else False, None, _integ(f), {code},
+      {"FILE-7"})            # these fixtures measured no camera's size: FILE-7 is unassessed
+     for f, code in INTEG_CASES] + [
+    # the sizes measured are a reading, so FILE-7 is assessed - and one that disagrees is a finding
+    ("data_integrity", None, None,
+     {"outcome": "suspect", "reason": "x", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96]}, "findings": [
+          {"level": "suspect", "code": "resolution_mismatch", "tier": "L1", "camera": "wrist",
+           "message": "wrist 相机实际是 128×96，元数据声明 64×48，对不上",
+           "args": {"mismatches": [{"kind": "declared", "expected": [64, 48], "actual": [128, 96],
+                                    "measured_from": "frame"}], "size_wh": [128, 96]}}]},
+     {"resolution_mismatch"}, set()),
+    ("data_integrity", True, None,
+     {"outcome": "pass", "reason": "", "tiers": {"L1": True, "L2": False, "L3": False},
+      "files": [], "resolution": {"wrist": [128, 96], "exterior": [128, 96]}, "findings": []},
+     set(), set()),
+]
 
 
 def _record(module, passed, score, details, **kw):
@@ -261,7 +384,8 @@ def test_each_answer_gives_its_findings(module, passed, score, details, codes, u
         assert f["item"] == spec.item and f["message_zh"]
     # the default policy keeps today's gates: a failed episode has a blocking finding, nothing else has - but the
     # EEF module rejects nothing (D81) and the duplicate check only reports (D87)
-    assert (legacy_verdict(rec) == "fail") == (passed is False and module != "duplicate_check")
+    # a failed sync record is asked, not rejected (7.5), like a duplicate
+    assert (legacy_verdict(rec) == "fail") == (passed is False and module not in ("duplicate_check", "video_action_sync"))
 
 
 #: codes no answer can raise yet; every module's codes have a fixture since the skill profile left
@@ -443,3 +567,70 @@ def test_p20_items_have_fixtures():
     items.add("ACT-6")                                # dataset level, test_dataset_level_findings
     assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "ACT-6"} <= items
     assert "LABEL-1" not in items
+
+
+def test_borrowed_peak_readings():
+    """MV-3 by the borrowed peak: the finding names both cameras and carries the two correlations it compared;
+    a flat curve is recorded as unverified instead."""
+    rec = _record("video_action_sync", True, None, SYNC_BORROW)
+    (f,) = [x for x in rec["findings"] if x["code"] == "lag_inconsistent"]
+    assert f["scope"] == {"cameras": ["front", "wrist"]}
+    r = f["readings"]
+    assert r["ref_camera"] == "wrist" and r["camera"] == "front" and r["lag_ref_s"] == -0.97
+    assert r["corr_max"] > 0.5 and r["corr_at_ref_lag"] < 0.2 and r["ratio"] >= 1.25
+    assert "front" in f["message_zh"] and "0.97" in f["message_zh"]
+    flat = _record("video_action_sync", True, None, SYNC_BORROW_FLAT)
+    assert not [x for x in flat["findings"] if x["code"] == "lag_inconsistent"]
+    assert flat["readings"]["mv3_unverified_cameras"] == ["front"]
+    same = _record("video_action_sync", True, None, SYNC_BORROW_SAME)
+    assert same["readings"]["mv3_unverified_cameras"] == ["front"]
+    weak = _record("video_action_sync", True, None, SYNC_BORROW_WEAK)
+    assert "mv3_unverified_cameras" not in weak["readings"]
+
+
+def test_windowed_median_spread_readings():
+    """MV-3 by the windowed medians carries both lags, the spread and the tolerance it beat; the whole-curve
+    readings keep their own window summary."""
+    rec = _record("video_action_sync", True, None, SYNC_WINDOWED)
+    (f,) = [x for x in rec["findings"] if x["code"] == "lag_inconsistent"]
+    r = f["readings"]
+    assert r["basis"] == "windowed_median" and r["lag_front_s"] == -0.13 and r["lag_wrist_s"] == 0.07
+    assert abs(r["spread_s"] - 0.2) < 1e-6 and abs(r["tol_s"] - 0.1) < 1e-6
+    assert rec["readings"]["per_camera"]["front"]["lag_windows"]["n_trusted"] == 9
+
+
+def test_a_single_camera_is_reported_from_its_steady_windows_too():
+    """7.5: AV-1 from the camera's best reading - a camera whose whole-episode reading is not trusted but whose
+    windows are steady beyond the tolerance is reported, with the basis in the readings; within it, nothing."""
+    off = {**SYNC_WINDOWED, "per_camera": {**SYNC_WINDOWED["per_camera"],
+           "front": {**SYNC_WINDOWED["per_camera"]["front"], "lag_windows": _lw(-0.4)}}}
+    rec = _record("video_action_sync", True, None, off)
+    (f,) = [x for x in rec["findings"] if x["code"] == "camera_misaligned"]
+    assert f["message_zh"] == "front 比动作早 0.40 秒" and f["readings"]["basis"] == "windowed_median"
+    rec = _record("video_action_sync", True, None, SYNC_WINDOWED)                       # -0.13: within 0.25 s
+    assert not [x for x in rec["findings"] if x["code"] == "camera_misaligned"]
+
+
+def test_windowed_stability_is_the_reading_s_word_and_the_task_s_lines(monkeypatch):
+    """Registry 7.4: every camera's ``lag_windows`` reading says whether it is ``stable`` by the task's
+    ``window_min_trusted`` / ``window_max_iqr_s``; the same lines decide which cameras the windowed comparison
+    uses, and ``window_spread_tol_s`` what it reports (never below three frames)."""
+    rec = _record("video_action_sync", True, None, SYNC_WINDOWED_WOBBLY)
+    per = rec["readings"]["per_camera"]
+    assert per["front"]["lag_windows"]["stable"] is False and per["wrist"]["lag_windows"]["stable"] is True
+    assert not [x for x in rec["findings"] if x["code"] == "lag_inconsistent"]
+    # a task that tolerates the wobble: front is stable, the 0.2 s spread is reported
+    loose = _record("video_action_sync", True, None, SYNC_WINDOWED_WOBBLY, params={"window_max_iqr_s": 0.6})
+    assert loose["readings"]["per_camera"]["front"]["lag_windows"]["stable"] is True
+    assert [x for x in loose["findings"] if x["code"] == "lag_inconsistent"]
+    # a task that wants more trusted windows than there are: nothing is stable, nothing is compared
+    strict = _record("video_action_sync", True, None, SYNC_WINDOWED, params={"window_min_trusted": 12})
+    assert all(c["lag_windows"]["stable"] is False for c in strict["readings"]["per_camera"].values())
+    assert not [x for x in strict["findings"] if x["code"] == "lag_inconsistent"]
+    # a wider spread line swallows the 0.2 s; a narrower one cannot go below three frames (0.1 s at 30 fps)
+    wide = _record("video_action_sync", True, None, SYNC_WINDOWED, params={"window_spread_tol_s": 0.25})
+    assert not [x for x in wide["findings"] if x["code"] == "lag_inconsistent"]
+    narrow = _record("video_action_sync", True, None, SYNC_WINDOWED, params={"window_spread_tol_s": 0.02})
+    (f,) = [x for x in narrow["findings"] if x["code"] == "lag_inconsistent"]
+    assert abs(f["readings"]["tol_s"] - 0.1) < 1e-3                          # 3 × the rounded 0.0333 s frame
+

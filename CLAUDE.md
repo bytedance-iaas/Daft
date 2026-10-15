@@ -25,7 +25,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → check（一次跑一段）→ aggregate → report → verify`，另有 `adjudicate-apply`、REST 薄客户端 `curation task …`、把 UMI 原始会话转成 LeRobot 的离线工具 `stage-umi` 和运维命令 `ls`、`prune`、`fetch`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分段、并发、VLM 闸门（`episode`、`probe`）；请求合并与自适应降并发的框架在这里，现有模块都不合并；`curation plan` 与 Daemon 共用 |
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/`、`streams/`、`declaration/`、`viz/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、机器人规格库、读取器、报告生成（`export/`）、编排壳、VLM 客户端与视频输入、按块读 TOS 与块缓存（`streams/`，设计 23）、数据集声明的校验与起草（`declaration/`，C7）；`viz/` 是可视化的格式解析（曲线分组与抽稀、标注识别、mcap 探测 / 映射 / 扫描、Annex-B 与转封装、Lance 布局、转码） |
-| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12、25）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，骑在 task_success 那一次判定请求上作答，设计 13） |
+| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12、25）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷与机位身份，骑在 task_success 那一次判定请求上作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
 | 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（按检测项的 precision / recall、与基线比较） |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
@@ -109,7 +109,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 26 | 重复检测取代精确去重；进度按三组显示（`26-duplicate-check-and-progress-groups.md`，D87–D88；首节是开工指引：不留兼容，注册表 6.0、C4 6.0.0） |
 | 27 | 删掉 v1 与旧格式（`27-remove-v1-and-old-formats.md`，D89–D91）：v1 代码删掉、`ls` / `prune` / `fetch` 留作运维命令；C2 只有 2.0，漏斗、`relabel_rerun`、旧任务兼容都删；对账与回归打分只认 2.0（注册表 7.0、C4 7.0.0） |
 | 28 | 完整性拦截与坏视频（`28-integrity-gate-and-broken-video.md`，D92–D94）：完整性判废的条目其它模块只写跳过记录、VLM 块等完整性结论；解码器认定损坏的视频是判废发现 `decode_failed`；跳过单独记账（注册表 7.1、C4 7.1.0） |
-| 29 | 声明了却缺的数据（`29-declared-but-missing.md`，D95–D97）：读不了的数据按声明诊断成判废发现（`action_missing`、`column_missing`、`values_invalid`、`length_mismatch`……），维度与 info.json 不符判废，确认过的 mcap 映射写明的流缺了存疑；选了数据完整性时缺源文件的条目判废、不再剔除（`data_missing` / `video_missing`，修订 D40）；v3 数据文件一条坏了不连累同文件的其它条（注册表 8.1） |
+| 29 | 声明了却缺的数据（`29-declared-but-missing.md`，D95–D97）：读不了的数据按声明诊断成判废发现（`action_missing`、`column_missing`、`values_invalid`、`length_mismatch`……），维度与 info.json 不符判废，确认过的 mcap 映射写明的流缺了存疑；选了数据完整性时缺源文件的条目判废、不再剔除（`data_missing` / `video_missing`，修订 D40）；v3 数据文件一条坏了不连累同文件的其它条（注册表 8.4） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

@@ -141,6 +141,8 @@ describe('质检报告 (07 §5)', () => {
     expect(figures('video_action_sync')).toContain('已标注异常2不判废');
     expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 44'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
     expect(within(screen.getByTestId('sync-cameras')).getByText('wrist_image_left')).toBeInTheDocument();
+    expect(figures('video_action_sync')).toContain('分窗可比对26/50');                      // registry 8.1: the windowed rule's coverage
+    expect(within(screen.getByTestId('sync-cameras')).getByText('分窗稳')).toBeInTheDocument();
     expect(screen.getByTestId('sync-advice')).toHaveTextContent('数据集结论：全库逐相机中位滞后均在容差内');
     expect(figures('task_success')).toContain('任务文本来源原始标注 48');
     expect(charts('task_success')).toEqual([
@@ -231,7 +233,7 @@ describe('质检报告 (07 §5)', () => {
     expect(task).toHaveTextContent('判定用的任务文本来自原始标注 · 持久任务');
     expect(within(screen.getByTestId('episode-module-motion_quality')).getByTestId('episode-motion')).toHaveTextContent('执行器饱和不适用—速度型指令和位置读数含义不同');
     expect(within(screen.getByTestId('episode-module-visual_quality')).getByTestId('episode-visual')).toHaveTextContent('wrist_image_left');
-    expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('sync-badge')).toHaveTextContent('同步正常');
+    expect(within(screen.getByTestId('episode-module-video_action_sync')).getByTestId('episode-sync')).toHaveTextContent('对齐（');
     expect(within(screen.getByTestId('episode-module-duplicate_check')).getByText('无发现')).toBeInTheDocument();
     const frame = await screen.findByAltText(/任务成败判定 · ep000029_0\.jpg/);
     expect(frame).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
@@ -424,19 +426,28 @@ describe('质检报告 (07 §5)', () => {
     const cam = (level: string, times: [number, number][] = [], extra: Record<string, unknown> = {}) => ({ level, times, note: '', ...extra });
     const record: ResultRecord = {
       episode_index: 12, module: 'camera_defects', status: 'ok', evidence: [], elapsed_s: 0.02, error: null, readings: {},
-      findings: [], assessed: ['IMG-5', 'IMG-6', 'IMG-7'], unassessable: [],
+      findings: [], assessed: ['IMG-5', 'IMG-6', 'IMG-7', 'IMG-8', 'MV-2'], unassessable: [],
       details: {
-        protocol: 'camera-check/1', source: 'task_success.video_reviews', reason: '',
-        cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 6, clean_ratio: 0.67,
-        items: { glitch: 'none', shake: 'minor', contamination: 'minor' },
+        protocol: 'camera-check/5', source: 'task_success.cameras', reason: '', identity: 'inconsistent',
+        arms: { identity: 'crossed', crossed: ['robot0_sensor_camera0'], note: '只有右臂在 4–6 秒动' },
+        cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 8, clean_ratio: 0.67,
+        items: { glitch: 'none', shake: 'minor', contamination: 'minor', occlusion: 'severe' },
         per_camera: {
-          robot0_sensor_camera0: { answered: true, error: null, problems: [], glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }) },
+          robot0_sensor_camera0: {
+            answered: true, error: null, problems: [],
+            glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }),
+            occlusion: cam('none', [], { source: 'none', share: 0, coverage: 0, region: 'none', duration_s: 0 }),
+            // registry 8.2: the picture contradicts what the dataset declares for the camera
+            view: { kind: 'fixed', arm: 'single', matches_name: 'no', same_as: '', note: 'scene never moves with the arm' },
+          },
           robot1_sensor_camera0: {
             answered: true, error: null, problems: [],
             glitch: cam('none'),
             shake: cam('minor', [[1.5, 4.5], [13.5, 15]]),
             // the other camera says the whole clip: no span, one word
             contamination: cam('minor', [[0, 49.7]], { kind: 'smudge' }),
+            occlusion: cam('severe', [[20, 30]], { source: 'person', share: 0.2, coverage: 0.45, region: 'center', duration_s: 10 }),
+            view: { kind: 'fixed', arm: 'single', matches_name: 'yes', same_as: '', note: '' },
           },
         },
       },
@@ -445,11 +456,16 @@ describe('质检报告 (07 §5)', () => {
     renderApp(`${REPORT}?ep=12#episodes`);
     const block = await screen.findByTestId('episode-module-camera_defects');
     const body = within(block).getByTestId('episode-camera-defects');
-    expect(body).toHaveTextContent('花屏 无 · 抖动 轻微 · 镜头污染 轻微');
-    expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒');
-    expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
+    expect(body).toHaveTextContent('花屏 无 · 相机抖动 轻微 · 镜头污染 轻微 · 视觉遮挡 严重');
+    // occlusion answers three things of its own: how much of the picture, where, how long
+    expect(body).toHaveTextContent('robot1_sensor_camera0：相机抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒 · 视觉遮挡 严重（人）20–30 秒 遮住 45% 画面 · 画面中央 · 共 10 秒');
+    expect(body).toHaveTextContent('robot0_sensor_camera0：相机抖动 轻微 全程');
+    expect(body).toHaveTextContent('机位身份与数据集的说明不符');
+    // the crossing no single camera can show, measured from the recorded motion (registry 8.2)
+    expect(body).toHaveTextContent('左右臂、机位身份串线：只有右臂在 4–6 秒动');
+    expect(body).toHaveTextContent('robot0_sensor_camera0：画面与数据集的说明不符（画面是固定机位、单臂）：scene never moves with the arm');
     expect(body).toHaveTextContent('建议项，不影响判决');
-    expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check/);
+    expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check|matches_name/);
     expect(body.textContent).not.toMatch(/机位数|条数|状态/);          // the old generic rendering
   });
 
@@ -499,12 +515,14 @@ describe('质检报告 (07 §5)', () => {
     await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '12');
     await user.click(await screen.findByRole('option', { name: /^ep 12/ }, { timeout: 4000 }));
     const sync = await screen.findByTestId('episode-module-video_action_sync', {}, { timeout: 4000 });
-    expect(within(sync).getByTestId('sync-badge')).toHaveTextContent('已标注异常（不判废）');
-    expect(within(sync).getByTestId('episode-sync')).toHaveTextContent('错位：这一路可靠地测出画面与动作错开了 +0.38s');
+    expect(within(sync).getByTestId('episode-sync')).toHaveTextContent('比动作晚 0.38 秒');
     const curves = await within(sync).findByTestId('sync-curves', {}, { timeout: 4000 });
     const labels = within(curves).getAllByTestId('chart').map((c) => c.getAttribute('aria-label'));
-    expect(labels).toHaveLength(4);
+    expect(labels).toHaveLength(5);
     expect(labels[3]).toContain('互相关：exterior_image_1_left 峰');
+    // registry 8.1: the lag window by window, one line per camera
+    expect(within(curves).getByTestId('sync-windows')).toHaveTextContent('分窗滞后');
+    expect(labels[4]).toMatch(/^分窗滞后：exterior_image_1_left 中位 [+-]\d/);
   }, 40_000); // many steps, each rendering the whole report: room for a busy CI machine
 
   it('Episode 明细: an episode that kept no sync curves says why', async () => {

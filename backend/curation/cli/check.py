@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-from . import modparams, runctx
+from . import lerobot_meta, modparams, runctx
 from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
 
@@ -193,6 +193,7 @@ def _cpu_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
         if "kinematic_limits" in modules:
             _check_embodiment(args, info)
         cfg = runctx.stage_config(ctx, modules)
+        runctx.apply_evidence_params(cfg, modparams.parse(getattr(args, "param", None)))   # the sync curves' 全画 / 不画
         registry = EmbodimentRegistry()
         if cache is not None:
             cache["cpu"] = (cfg, registry)
@@ -272,6 +273,37 @@ def _merge_strategy(ctx, plan_stage, cfg, modules):
     return strategy
 
 
+def _dataset_claim(args, src, modules: list[str]) -> dict | None:
+    """What the dataset says about its arms and cameras, for the camera identity (MV-2): its frozen
+    declaration (``--declaration``) and its own channel names.
+
+    Only task_success reads it, and only a LeRobot dataset keeps its channel names in ``meta/info.json``
+    - the stage must not pay a read for a module that will not use it, nor fetch a whole object out of
+    a dataset the other modules stream by range. A dataset that says nothing simply makes no claim,
+    and the request then asks for nothing about the identity.
+    """
+    from ..pipeline import dataset_claim
+
+    if "task_success" not in modules:
+        return None
+    decl = info = None
+    path = getattr(args, "declaration", None)
+    if path:
+        from .. import declaration as DCL
+
+        try:
+            decl = DCL.load(os.path.expanduser(path))
+        except (OSError, ValueError):
+            decl = None
+    if getattr(src, "kind", "") == "lerobot":
+        try:
+            info = lerobot_meta.load_info(src.storage)
+        except Exception:                # noqa: BLE001 - its absence only costs the claim
+            info = None
+    claim = dataset_claim.build(decl, info)
+    return claim if (claim["arms"] or claim["cameras"]) else None
+
+
 def _vlm_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
     from ..pipeline.rows import index_of
@@ -294,6 +326,7 @@ def _vlm_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
         _merge_strategy(ctx, plan_stage, cfg, modules)
     else:
         gates, cfg = prepared["gates"], prepared["cfg"]
+    runctx.apply_evidence_params(cfg, modparams.parse(getattr(args, "param", None)))   # 全画 / 不画 reach the stage
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
     instructions: dict[int, str] = {}
@@ -354,6 +387,7 @@ def _vlm_stage(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
                         concurrency=int(gates["episode"]),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
                         task_clients=clients, task_text=task_text,
+                        dataset_claim=_dataset_claim(args, src, modules),
                         evidence_mode=str(cfg.get("pipeline", {})
                                           .get("evidence_frames", "flagged")),
                         verify_source=guard, pipeline_state=args.pipeline_state,

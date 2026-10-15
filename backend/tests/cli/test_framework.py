@@ -295,3 +295,14 @@ def test_signals_end_with_their_exit_codes(signum, rc, code):
         assert doc["error"]["code"] == code
         for line in err.splitlines():
             assert schemas.errors("progress.schema.json", json.loads(line)) == [], line
+
+
+def test_a_task_s_evidence_choices_reach_the_stage_config():
+    """A task's 同步曲线证据图 / 证据帧 are module parameters; the stages read ``pipeline.sync_plots`` /
+    ``pipeline.evidence_frames`` - the bridge copies them, and leaves the config alone when a task says nothing."""
+    from curation.cli.runctx import apply_evidence_params
+
+    cfg = {"pipeline": {"sync_plots": "flagged", "evidence_frames": "flagged"}}
+    assert apply_evidence_params(cfg, {"video_action_sync": {"sync_plots": "all"}})["pipeline"] == {"sync_plots": "all", "evidence_frames": "flagged"}
+    assert apply_evidence_params(cfg, {"task_success": {"evidence_frames": "off"}, "video_action_sync": {}})["pipeline"] == {"sync_plots": "all", "evidence_frames": "off"}
+    assert apply_evidence_params({}, None) == {}

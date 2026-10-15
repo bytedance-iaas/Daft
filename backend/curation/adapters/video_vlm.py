@@ -17,12 +17,43 @@ PROTOCOL = "video-task/2"
 #: the per-camera picture-defect report answered inside that same request (camera_defects module).
 #: Bump it whenever the wording below changes: it is what makes records judged with the old prompt
 #: stale, so ``check --resume`` judges them again. ``camera-check/1`` and ``1.1`` were the two-pass
-#: review's; ``2`` is the single-pass block's.
-CAMERA_CHECK_PROTOCOL = "camera-check/2"
-CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination")
+#: review's; ``2`` is the single-pass block's; ``3`` adds occlusion and the camera's view (what the
+#: camera physically is, against its name); ``4`` tells occlusion from the manipulation itself and
+#: from glitch, and has the kind read from the picture before the name; ``5`` names what occlusion
+#: is NOT (lighting, the scene's own content, a view pointed elsewhere), gives it its own share,
+#: place and length, and asks the cameras whether they agree on which arm is which; ``6`` holds the
+#: picture against what the DATASET says (its declaration and its channel names) instead of against
+#: a camera's name, so the identity question is a comparison rather than a guess; ``7`` says where in
+#: a wrist camera's picture the OTHER hand's gripper shows and refuses an identity answered without
+#: having seen it (the first run on crossed FastUMI files answered "consistent" 12 times out of 14,
+#: from the camera's name and its own gripper being in view); ``8`` takes the arm question out of the
+#: request altogether. On a handheld rig the only picture evidence is some twenty pixels of the other
+#: gripper at the rim of a fisheye circle, and asking for it found 1 of 14 crossings while abstaining
+#: 20 times out of 24, so which arm a wrist camera rides is now MEASURED from the recording
+#: (:mod:`curation.pipeline.arm_pairing`: 12 of the 14) and the model is asked only what a picture
+#: can actually show; ``9`` makes shake and occlusion fit a HANDHELD rig, where the camera is in a
+#: human hand: its travel and reframing with that hand is the rig working, not shake, and the hand
+#: holding the gripper is the arm, not a person passing in front of the lens. On 24 FastUMI episodes
+#: with no defect in them, ``8`` reported shake on 6 and occlusion on 3, every note describing
+#: exactly those two things; ``10`` keeps each item inside the taxonomy item it reports (C6 2.0,
+#: frozen): glitch is damage to the recording, not a soft picture (a focus problem) and not a
+#: still one (the frozen check); contamination carries the item's own discriminator - it sits ON
+#: the lens, so it travels with the camera while the scene moves behind it; a view knocked to a new
+#: angle for good is not shake (a camera that moved for good is its own item); and the view no
+#: longer answers whether two cameras are one recording, which no item asks for.
+CAMERA_CHECK_PROTOCOL = "camera-check/10"
+CAMERA_CHECK_ITEMS = ("glitch", "shake", "contamination", "occlusion")
 CAMERA_CHECK_LEVELS = ("none", "minor", "severe")
 CONTAMINATION_KINDS = ("none", "dirt", "smudge", "water", "obstruction", "other")
+OCCLUSION_SOURCES = ("none", "arm", "body", "person", "object", "cable", "other")
+#: where in the picture the occluding thing sits at its worst moment
+OCCLUSION_REGIONS = ("none", "left", "right", "top", "bottom", "center", "whole")
 CAMERA_CHECK_MAX_TIMES = 8
+#: the camera's view, read from the picture alone and held against what the dataset declares (MV-2)
+VIEW_KINDS = ("wrist", "fixed")
+VIEW_ARMS = ("left", "right", "single")
+VIEW_MATCHES = ("yes", "no")
+VIEW_FIELDS = ("kind", "arm", "matches_name", "note")
 #: How long one video request may take grows with what it carries (2026-10-08): the model's
 #: latency is close to proportional to the frames it is sent (cameras x seconds x fps - DROID's
 #: three cameras over 18 s at 5 fps, about 270 frames, take some 80 s), so a timeout fixed for
@@ -62,21 +93,98 @@ objects or the relevant action cannot be observed, return uncertain.
 """
 #: what the three picture-defect items mean. Shared word for word by the two requests below (the
 #: judgement's per-camera block and the defects-only request), so both ask exactly the same question.
-CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn, blocky, smeared or
-garbled frames, wrong colours in patches, or a frozen picture with artifacts. shake: the WHOLE
+CAMERA_CHECK_DEFS = """glitch: the picture CONTENT is damaged - corrupted, torn, blocky or garbled
+frames, blocks and stripes of wrong colour, a row of the picture displaced. It is damage to the
+recording itself, so it appears and goes with the frames and no object explains it. A soft, dragging
+or out-of-focus picture is not glitch (that is a focus or motion problem), and neither is a picture
+that merely stands still with nothing broken in it (that is a frozen picture); report glitch only
+when something in the picture is actually damaged. shake: the WHOLE
 picture moves as one while the scene itself stays intact - the view jolts, drifts or wobbles, the
 framing jumps, and the edges may show black bars or a changed field of view; the camera body is
-moving, not the robot or the objects. A wrist camera moving with the arm is normal, report only
-jitter beyond that. Decide between the two by asking whether the scene is still whole: a whole
+moving, not the robot or the objects. A camera that RIDES the arm or the hand - a wrist camera, and
+every camera of a handheld gripper - is meant to travel, swing, tilt and reframe as the hand works,
+however fast, however far, and for however much of the clip: that is the rig doing its job and stays
+at "none". Never report it because the view "tilts", "drifts", "reframes" or "swings with the arm"
+during the manipulation. On such a camera report shake only for motion the hand's own work does not
+explain: a knock or jolt no arm motion accounts for, a high-frequency judder or buzz, a picture that
+keeps wobbling while the gripper stands still, or a mount so loose the picture trembles on its own.
+A view that moves once and then stays at its new angle for the rest of the clip is not shake: the
+camera was knocked or re-aimed, which is not this item - leave shake at "none" for it.
+On a camera that should stand still - a fixed third-person view - any sustained movement of the whole
+picture is shake. Say in the note why the motion is not the hand's own; if you cannot say, it is
+"none". Decide between the two by asking whether the scene is still whole: a whole
 scene that jumps is shake, a broken-looking scene is glitch; report both only when both are really
-there. contamination: dirt, smudges, water drops or an object stuck to or covering the lens.
-"minor" is visible but leaves the scene readable; "severe" hides or distorts the scene for part of
-the episode. times are episode-relative seconds within that camera's own window, like evidence;
+there. contamination: dirt, grease, dust, water drops or a mark on the lens itself. What tells it
+apart from occlusion: it is ON the lens, so it travels with the camera - it stays over the same part
+of the picture while the scene moves behind it, and it is there wherever the camera is pointed.
+Something that drifts with the scene, comes and goes, or passes in front of the lens is occlusion,
+not contamination. "minor" is visible but leaves the scene readable; "severe" hides or distorts the
+scene for part of the episode. occlusion: for part of this clip something BETWEEN the lens and the scene hides the
+working area - the gripper, the object being handled, or the place it goes. What that looks like: a
+patch of the picture is taken over by something much nearer the lens (out of focus, over-large,
+running off the frame edge) while the rest of the picture carries on unchanged behind it. Report it
+only when all three hold: the thing is no part of the manipulation, it hides the WORK rather than
+empty background, and it lasts long enough that the action cannot be followed. The following are
+NOT occlusion and stay at "none", however much of the picture they take or however dark they are:
+(a) any change of LIGHT - a lamp switched on or off, a shadow, auto-exposure, the room dimming.
+    The whole picture changes together and nothing is in front of the lens. If the other cameras
+    change at the same moment, it is the light; a real occlusion shows on ONE camera.
+(b) the robot's own arm, gripper or the object it carries, even filling the frame - that is the
+    task being done; a wrist camera filled by what the gripper holds is normal, and a held object
+    leaving the frame is not occlusion either. On a handheld rig the HAND, forearm, glove or sleeve
+    of the person working the gripper IS that arm: it is never "a person" for this item, and what
+    they hold taking over the near field is the manipulation itself.
+(c) a person, a hand or an object simply BEING in the scene at working distance, an operator at the
+    bench included; a person counts only when someone who is not working the gripper passes between
+    the lens and the work.
+(d) a view that is dark, empty, far from the work or pointed elsewhere - nothing is covering it.
+Tell occlusion from glitch by the picture around it: a shape covering part of a picture that is
+otherwise whole and sharp is occlusion (something in front of the lens), however straight its
+edges; a glitch is damage INSIDE the picture - blocks of wrong pixels, tearing, smearing, garbled
+colours. Never report the same stretch as both. "minor" hides the work briefly or in part, "severe"
+hides it for a stretch long enough that the action cannot be followed. Three numbers go with it,
+all about the worst moment: source says what hides the work; coverage is the fraction of the
+picture that thing takes up then, 0 to 1; region says where it sits - left, right, top, bottom,
+center, or whole when it covers nearly everything. duration_s is how many seconds of this clip are
+hidden in all. Say in the note what the thing is. times are episode-relative seconds within that camera's own window, like evidence;
 leave times empty for "none". Give up to four intervals; when the defect recurs in short bursts
 across the clip, give the span that encloses them rather than one burst, and say "intermittent" in
 the note. When the defect is there for the whole clip, leave times empty and write "persistent" in
-the note. Keep every note under twelve words. Use "unknown" when you cannot judge an item. These
-items never change verdict, completion or evidence."""
+the note. view: what THIS camera physically is, read from the picture and then held against what
+the dataset says it is. Decide kind from the picture FIRST and never from the camera's name: when
+the whole room swings and turns as the arm moves while the gripper fingers stay in the same place
+in the frame, it is "wrist", whatever it is called; when the room stays still and the arm travels
+through it, it is "fixed", whatever it is called. Say in the note what you saw. arm: for a FIXED
+camera, the arm it mainly looks at, named as the dataset names its arms, when the dataset names
+more than one and the picture plainly shows which; "single" when the dataset says the robot has one
+arm. For a WRIST camera answer "unknown": which arm a wrist camera rides is not readable from its
+own picture - its own gripper looks the same on either hand - and it is measured from the recorded
+motion instead, so do not guess it here. matches_name compares the MOUNT you saw with the dataset's
+own words above: "no" when they contradict - a camera the dataset declares a wrist camera whose room
+stays still, or one it declares fixed whose picture swings and turns with the arm; "yes" when what
+you saw is the mount the dataset declared; "unknown" when the dataset says nothing about this camera
+or you could not tell, and never "yes" from the camera's name. Do not answer "no" over which ARM you
+think the camera is on - that question is not yours here. Keep every note under twelve
+words. Use "unknown" when you cannot judge an item. These items never change verdict, completion or
+evidence."""
+
+#: where the dataset's own words are spliced into either request (empty when it says nothing). The
+#: request still carries them: whether a camera is the wrist camera the dataset declares is a
+#: comparison, and the mount half of it IS readable from the picture.
+DATASET_SAYS = "{dataset_says}"
+
+#: the members of one camera's ``camera_check``: the four picture-defect items and the view
+CAMERA_CHECK_SHAPE = """"glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
+     "contamination":{"level":"none|minor|severe|unknown",
+                      "kind":"none|dirt|smudge|water|obstruction|other",
+                      "times":[[start_s,end_s]],"note":"..."},
+     "occlusion":{"level":"none|minor|severe|unknown",
+                  "source":"none|arm|body|person|object|cable|other",
+                  "coverage":0.0,"region":"none|left|right|top|bottom|center|whole",
+                  "duration_s":0.0,"times":[[start_s,end_s]],"note":"..."},
+     "view":{"kind":"wrist|fixed|unknown","arm":"left|right|single|unknown",
+             "matches_name":"yes|no|unknown","note":"..."}"""
 
 #: the single-pass shape: ONE request judges the episode and every camera. The five core fields keep
 #: their meaning - they are the episode's verdict - and each camera says what it alone shows, so a
@@ -88,33 +196,25 @@ five exactly as specified). Give one entry for EVERY camera supplied above, unde
    "verdict":"success|failure|uncertain",
    "reason":"what THIS camera alone shows, under fifteen words",
    "camera_check":{
-     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "contamination":{"level":"none|minor|severe|unknown",
-                      "kind":"none|dirt|smudge|water|obstruction|other",
-                      "times":[[start_s,end_s]],"note":"..."}}}}}
+     """ + CAMERA_CHECK_SHAPE + """}}}}
 Judge each camera on what THAT camera shows and nothing else: a camera that cannot see the objects
 or the relevant action is "uncertain" for that camera, even when another camera settles the episode.
 Do not copy the episode verdict into every camera. The episode's own verdict stays in the five
 fields above and is yours to decide from all the cameras together.
-""" + CAMERA_CHECK_DEFS + """
+""" + DATASET_SAYS + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
-#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same three defect
-#: items, no verdict - there is no task to judge, so nothing is asked about success or failure.
+#: the request an episode WITHOUT a task text gets (D73): the same cameras and the same defect
+#: items and view, no verdict - there is no task to judge, so nothing is asked about success or failure.
 CAMERAS_ONLY_PROMPT = """Inspect the supplied continuous videos for picture defects only. This episode
 has no task description, so there is no task to judge: do not assess success or failure, do not
 describe what the robot does. All cameras show the same episode.
 Return one JSON object with exactly one field "cameras", with one entry for EVERY camera supplied
-above, under its exact name:
+above under its exact name:
 {"cameras":{"<exact supplied camera name>":{
    "camera_check":{
-     "glitch":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "shake":{"level":"none|minor|severe|unknown","times":[[start_s,end_s]],"note":"..."},
-     "contamination":{"level":"none|minor|severe|unknown",
-                      "kind":"none|dirt|smudge|water|obstruction|other",
-                      "times":[[start_s,end_s]],"note":"..."}}}}}
-""" + CAMERA_CHECK_DEFS + """
+     """ + CAMERA_CHECK_SHAPE + """}}}}
+""" + DATASET_SAYS + CAMERA_CHECK_DEFS + """
 The whole answer must be one valid JSON object."""
 
 
@@ -312,22 +412,49 @@ def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
 
 
+def empty_view() -> dict:
+    """A camera's ``view`` when the model said nothing about it."""
+    return {"kind": "unknown", "arm": "unknown", "matches_name": "unknown", "note": ""}
+
+
+def parse_view(raw, problems: list[str]) -> dict:
+    """The ``view`` member of a camera's ``camera_check``, normalised; never raises. Enum values the
+    model got wrong read ``unknown`` and are named in ``problems``."""
+    out = empty_view()
+    if not isinstance(raw, dict):
+        problems.append("view: missing or not an object")
+        return out
+    for field, allowed in (("kind", VIEW_KINDS), ("arm", VIEW_ARMS), ("matches_name", VIEW_MATCHES)):
+        value = str(raw.get(field, "")).strip().lower()
+        if value in allowed:
+            out[field] = value
+        elif value != "unknown":
+            problems.append(f"view: {field} {raw.get(field)!r} is not one of {'/'.join(allowed)}/unknown")
+    note = raw.get("note")
+    if isinstance(note, str):
+        out["note"] = note.strip()[:200]
+    return out
+
+
 def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
     """The optional ``camera_check`` field, normalised; never raises.
 
-    The three items are always present with ``level`` in none / minor / severe / unknown;
-    anything the model got wrong is downgraded to ``unknown`` (or dropped, for a bad time
-    interval) and named in ``problems``. A defect report must never cost a repair round
+    The four items are always present with ``level`` in none / minor / severe / unknown, and so
+    is ``view``; anything the model got wrong is downgraded to ``unknown`` (or dropped, for a bad
+    time interval) and named in ``problems``. A defect report must never cost a repair round
     trip or fail the review it rides on - the task verdict is the review's job.
     """
     out: dict = {item: {"level": "unknown", "times": [], "note": ""} for item in CAMERA_CHECK_ITEMS}
     out["contamination"]["kind"] = "none"
+    out["occlusion"].update(source="none", region="unknown", coverage=None, duration_s=None, share=None)
+    out["view"] = empty_view()
     problems: list[str] = []
     if not isinstance(raw, dict):
         out["problems"] = ["camera_check is not an object"]
         return out
     lo = min((c.start_s for c in clips), default=0.0) - 0.05
     hi = max((c.end_s for c in clips), default=float("inf")) + 0.05
+    window = hi - lo - 0.1                      # the clip's own length, without the tolerance
     for item in CAMERA_CHECK_ITEMS:
         got = raw.get(item)
         if not isinstance(got, dict):
@@ -367,6 +494,48 @@ def parse_camera_check(raw, clips: list[VideoClip]) -> dict:
                 out[item]["kind"] = "none" if out[item]["level"] == "none" else "other"
                 if kind:
                     problems.append(f"contamination: kind {got.get('kind')!r} is not known")
+        if item == "occlusion":
+            source = str(got.get("source", "")).strip().lower()
+            if source in OCCLUSION_SOURCES:
+                out[item]["source"] = source
+            else:
+                out[item]["source"] = "none" if out[item]["level"] == "none" else "other"
+                if source:
+                    problems.append(f"occlusion: source {got.get('source')!r} is not known")
+            region = str(got.get("region", "")).strip().lower()
+            if region in OCCLUSION_REGIONS:
+                out[item]["region"] = region
+            else:
+                out[item]["region"] = "none" if out[item]["level"] == "none" else "unknown"
+                if region:
+                    problems.append(f"occlusion: region {got.get('region')!r} is not known")
+            # How much of the picture it takes at its worst (the model's own estimate) and how long
+            # it lasts: both are asked for, both are repaired from what else is known, so the
+            # report always has a number to quote.
+            coverage = _num(got.get("coverage"))
+            if coverage is not None and 0.0 <= coverage <= 1.0:
+                out[item]["coverage"] = round(coverage, 3)
+            else:
+                out[item]["coverage"] = 0.0 if out[item]["level"] == "none" else None
+                if got.get("coverage") is not None:
+                    problems.append(f"occlusion: coverage {got.get('coverage')!r} is not between 0 and 1")
+            duration = _num(got.get("duration_s"))
+            if duration is None or duration < 0 or (window > 0 and duration > window + 0.05):
+                if got.get("duration_s") is not None:
+                    problems.append(f"occlusion: duration_s {got.get('duration_s')!r} dropped")
+                duration = None
+            if duration is None:                   # fall back on the stretches the model did name
+                if out[item]["level"] == "none":
+                    duration = 0.0
+                elif out[item].get("whole") or not out[item]["times"]:
+                    duration = round(window, 3) if window > 0 else None
+                else:
+                    duration = round(sum(b - a for a, b in out[item]["times"]), 3)
+            out[item]["duration_s"] = duration
+            # the share of the clip it hides, for the console's one-line reading
+            out[item]["share"] = (round(min(1.0, duration / window), 3)
+                                  if duration is not None and window > 0 else None)
+    out["view"] = parse_view(raw.get("view"), problems)
     out["problems"] = problems
     return out
 
@@ -386,13 +555,20 @@ def make_video_assessor(endpoint: str, model: str, *, timeout_s: float = 60, api
     url = endpoint.rstrip("/") + "/chat/completions"
     constrained = {"json": bool(json_mode)}      # flipped off if the backend refuses the field
 
-    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "") -> dict:
+    def assess(clips: list[VideoClip], instruction: str = "", *, hints: str = "",
+               claim: dict | None = None) -> dict:
         from . import vlm_client
+        from ..pipeline.dataset_claim import text as claim_text
 
+        # what the DATASET says about its arms and these cameras: the camera identity is a
+        # comparison against it, not a guess from a camera's name (MV-2, camera-check/6)
+        said = claim_text(claim, [c.camera for c in clips])
+        said = f"\nWhat the dataset says about itself: {said}\n" if said else ""
         if cameras_only:
-            prompt = CAMERAS_ONLY_PROMPT
+            prompt = CAMERAS_ONLY_PROMPT.replace(DATASET_SAYS, said)
         else:                                   # one request answers the episode and every camera
-            prompt = TASK_PROMPT.format(instruction=instruction, hints=hints or "none") + CAMERAS_PROMPT
+            prompt = (TASK_PROMPT.format(instruction=instruction, hints=hints or "none")
+                      + CAMERAS_PROMPT.replace(DATASET_SAYS, said))
         content = [{"type": "text", "text": prompt}] + video_content(clips, fps=fps)
         messages = [{"role": "user", "content": content}]
         budget_s = request_timeout(clips, fps, timeout_s)   # grows with the video sent

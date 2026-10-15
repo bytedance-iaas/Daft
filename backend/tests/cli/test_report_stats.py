@@ -190,6 +190,38 @@ def test_sync_verdicts_and_the_dataset_health():
     assert cams["front"]["n_suspect"] == 1 and cams["front"]["n_flagged"] == 2
     assert "**" not in out["sync_advice"] and out["sync_advice"]
     assert out["negative_lag_episodes"] == 0
+    # registry 7.4: the windowed comparison's coverage - none of these readings carries windows
+    assert out["window_comparable_episodes"] == 0 and out["episodes_with_readings"] == 5
+    assert all(c["n_window_stable"] == 0 for c in out["cameras"])
+    assert "分窗规则可比对 0/5 条" in out["sync_advice"]
+    no_episode_lists(out)
+
+
+def test_sync_window_coverage_counts_the_episodes_both_cameras_are_steady_on():
+    """Registry 7.4: a report says on how many episodes the windowed comparison could speak (two or more cameras
+    with steady windows) and, per camera, how often it was steady - by the task's own lines."""
+    def lw(lag, n_trusted=8, iqr=0.03):
+        return {"win_s": 2.0, "hop_s": 1.0, "dt_s": 0.0333, "n_windows": 12, "n_trusted": n_trusted,
+                "lag_s": lag, "iqr_s": iqr, "windows": []}
+    both = {"verdict": "aligned", "flagged_cameras": [], "per_camera": {
+        "wrist": {**_reading(0.02, 0.9, "aligned", True), "lag_windows": lw(0.03)},
+        "front": {**_reading(-0.01, 0.8, "aligned", True), "lag_windows": lw(0.0)}}}
+    one = {"verdict": "aligned", "flagged_cameras": [], "per_camera": {
+        "wrist": {**_reading(0.02, 0.9, "aligned", True), "lag_windows": lw(0.03)},
+        "front": {**_reading(-0.01, 0.8, "aligned", True), "lag_windows": lw(0.0, iqr=0.4)}}}
+    none = {"verdict": "aligned", "flagged_cameras": [], "per_camera": {
+        "wrist": {**_reading(0.02, 0.9, "aligned", True), "lag_windows": lw(0.03, n_trusted=2)},
+        "front": _reading(-0.01, 0.8, "aligned", True)}}
+    records = [rec_sync(0, "pass", both), rec_sync(1, "pass", one), rec_sync(2, "pass", none)]
+    out = S.sync_stats(records, 0.25)
+    cams = {c["camera"]: c for c in out["cameras"]}
+    assert out["window_comparable_episodes"] == 1 and out["episodes_with_readings"] == 3
+    assert cams["wrist"]["n_window_stable"] == 2 and cams["front"]["n_window_stable"] == 1
+    assert "分窗规则可比对 1/3 条" in out["sync_advice"] and "front 只有 1 条稳" in out["sync_advice"]
+    # the task's lines: tolerate the wobble and two trusted windows, and every episode is comparable
+    loose = S.sync_stats(records, 0.25, {"window_max_iqr_s": 0.5, "window_min_trusted": 2})
+    assert loose["window_comparable_episodes"] == 2                       # ep2's front has no windows at all
+    assert "只有" not in loose["sync_advice"].split("分窗规则可比对")[1]
     no_episode_lists(out)
 
 

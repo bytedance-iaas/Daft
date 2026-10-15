@@ -94,7 +94,30 @@ that could never help - and so cover FILE-4 as far as the frames they read; two 
 8.0 binds taxonomy 2.0 as frozen on 2026-10-14 (the sample set v2's 67 items): data integrity's ``table_inconsistent``
 and ``table_overlap`` name FILE-9 (the index and reference item, FILE-10 before), the control for rare but legal
 encodings is gone and privacy is IMG-15, judged per episode. From now on an item id keeps its meaning.
-8.1 (design doc 29, D95-D97): data the dataset declares but an episode lacks or cannot be read is a finding of data
+8.1 (2026-10-13, requester): the sync module (AV-1 / MV-3) asks a person instead of deciding alone. ``camera_misaligned``
+(AV-1), ``lag_inconsistent`` (MV-3) and ``misaligned_all`` (AV-1, a machine reject before - usually a whole-episode
+timestamp shift, the easiest kind to correct) are review on the new ``sync_check`` line (usable / misaligned / shifted /
+unsure; ``shifted`` keeps the episode, recorded for a correction to come). The windowed estimator's lines are parameters
+(``window_min_trusted``, ``window_max_iqr_s``, ``window_spread_tol_s``); every camera's ``lag_windows`` reading says
+whether it is ``stable`` by them; the dataset's sync health counts the episodes the windowed comparison could speak on
+(``window_comparable_episodes``, per camera ``n_window_stable``). ``camera_misaligned`` is raised from the camera's best
+reading (its trusted whole-episode lag, else its steady windowed median), ``spread_tol_s`` is 0.2 and the every-camera
+offset asks at 0.25 s either way - on the 17-dataset benchmark none of it moves a control episode.
+8.3 (design doc 14 §4.2.1): data integrity reports FILE-7 - the picture size the video actually has,
+against the size ``meta/info.json`` declares for that camera and the size the container header
+claims (``resolution_mismatch``, review on the integrity line). It is measured in L1, on every task:
+one frame costs what opening the file costs (1.1 ms a camera on 1280x720), so the item does not wait
+for the frame-by-frame tier, which costs thirty times as much. A dataset whose episodes are not all
+one size shows up as the episodes that differ from the declared one. Nobody covered FILE-7 before.
+8.2 (design doc 13): ``camera_defects`` reports two more of the sample set's items - ``occlusion`` (IMG-8, the work
+hidden by something between the lens and the scene, with the share of the picture it takes, where it sits and how long
+it lasts) and ``identity`` (MV-2, a camera whose picture contradicts the mount the dataset declares for it, duplicates
+another camera, or measurably rides the other arm) - and its table carries their columns. Each finding code's name is
+now its taxonomy item's name: ``shake`` is 相机抖动 and ``contamination`` 镜头污染, which IMG-7 is, now that the
+occlusion it used to be lumped with is IMG-8 of its own. One more reason an item goes unassessed:
+``measurement_inconclusive`` (it was measured and the evidence did not settle it - MV-2's arm pairing is a
+measurement, so "the model did not answer" would be untrue of it).
+8.4 (design doc 29, D95-D97): data the dataset declares but an episode lacks or cannot be read is a finding of data
 integrity, not an execution error: ``data_missing`` (FILE-1, a data parquet that is not there - with data integrity
 selected such an episode is judged, not left out) and ``column_missing`` (STRM-1, a column info.json declares that the
 parquet does not have), both blocking.
@@ -105,7 +128,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.1"
+REGISTRY_VERSION = "8.4"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -151,6 +174,7 @@ UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
     ("no_action", "没有动作"),
     ("format_unsupported_by_module", "本模块不支持这种数据格式"),
     ("model_no_answer", "模型没有回答这一项"),
+    ("measurement_inconclusive", "量过了，但证据不够下结论"),
     ("single_description", "只有一份描述，无从比较"),
     ("not_applicable", "对本数据集不适用"),
     ("no_task_text", "没有任务标注，没有做任务成败判定"),
@@ -209,6 +233,12 @@ REVIEW_LINES: tuple[ReviewLine, ...] = (
     # and says whether the files are fine; like every line on passed episodes it counts as pending
     ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", True,
                (("intact", "数据无误，保留"), ("broken", "确有问题，判废"), ("unsure", "拿不准"))),
+    # 7.3 (2026-10-13): the sync module's cameras that disagree - one camera off against the action while the
+    # others are not (camera_misaligned), or cameras whose lags differ (lag_inconsistent, MV-3). The module
+    # cannot say which camera is right; a person compares the cameras side by side (the mini player, with
+    # the measured lags applied) and says whether the episode is usable. "misaligned" rejects it.
+    ReviewLine("sync_check", "sync_suspect", "同步存疑", "passed", True,
+               (("usable", "可用，保留"), ("misaligned", "确有错位，判废"), ("shifted", "整条平移，可校正"), ("unsure", "拿不准"))),
 )
 
 
@@ -421,7 +451,22 @@ def _sync_params() -> dict:
         "为哪些条目画画面运动与关节速度的对照曲线")
     out["properties"]["spread_tol_s"] = _line(
         "相机滞后允许极差（秒）", "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；"
-                                 "判废与否不受它影响", 0.3, 0.05, 2.0)
+                                 "2026-10-13 从 0.3 降到 0.2：17 个数据集的基准上 0.3 / 0.25 / 0.2 的对照命中相同，注入命中不变",
+        0.2, 0.05, 2.0)
+    # 7.4: the windowed estimator's judgement lines. The windows themselves (length, frame floor) are the site's
+    # measurement settings (default.yaml window_s / window_min_frames), not a task's.
+    out["properties"]["window_min_trusted"] = _line(
+        "分窗读数最少可信窗", "一路相机逐窗测得的滞后要有这么多个可信窗才算「稳」，稳的相机才参与分窗比对；"
+                             "2026-10-13 在 12 个数据集 82 条上扫定：3 与 5 命中相同，5 把能比的对照条目砍掉四成",
+        3, 1, 30)
+    out["properties"]["window_max_iqr_s"] = _line(
+        "分窗读数允许波动（秒）", "一路相机可信窗滞后的四分位距超过这个值就不算「稳」，不参与分窗比对；"
+                                 "同一次扫描：0.15 以内对照零误报，放到 0.3 出误报",
+        0.15, 0.02, 1.0)
+    out["properties"]["window_spread_tol_s"] = _line(
+        "分窗滞后允许极差（秒）", "稳的相机之间分窗中位滞后相差超过这个值（不低于 3 帧），报「各相机的滞后不一致」（MV-3）；"
+                                 "同一次扫描：对照条目之差的九成分位 0.07 秒",
+        0.1, 0.02, 1.0)
     return out
 
 
@@ -538,6 +583,14 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
+               # 8.3: the picture size the frames actually have, against what the dataset and the
+               # container header say it is (the decode for FILE-4 measures it on the way past)
+               _review("resolution_mismatch", "FILE-7", "分辨率与声明不符", "integrity_check"),
+               # 8.1 (2026-10-13): the MV-3 record layer - each camera's container timing (sample
+               # tables + edit list) against the episode's window, and the cameras against each other
+               _review("camera_start_offset", "AV-1", "某路相机的视频起点与时间轴错开", "integrity_check"),
+               _review("camera_timing_mismatch", "MV-3", "各相机的视频时间轴彼此对不上", "integrity_check"),
+               _review("camera_rate_mismatch", "STRM-9", "某路相机的帧间隔与帧率不符", "integrity_check"),
                _blocking("timestamps_invalid", "STRM-4", "时间戳不合规"),
                _blocking("action_missing", "STRM-1", "缺少动作数据"),
                _blocking("column_missing", "STRM-1", "缺少声明了的数据列"),
@@ -615,11 +668,11 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="video_action_sync", name_zh="视频-动作同步",
         summary_zh="逐机位比对画面运动与关节速度，找出画面与动作的时间错位",
         level="episode", needs=frozenset({"video", "action"}), block="cpu", stage="frame", depends_on=(),
-        codes=(_blocking("misaligned_all", "AV-1", "画面与动作错位（全部可信相机）"),
-               _info("camera_misaligned", "AV-1", "单路相机与动作错位", "medium", scope_kind="camera"),
+        codes=(_review("misaligned_all", "AV-1", "画面与动作错位（全部可信相机）", "sync_check"),
+               _review("camera_misaligned", "AV-1", "单路相机与动作错位", "sync_check", scope_kind="camera"),
                _info("suspect", "AV-1", "疑似错位"),
                _info("undecidable", "AV-3", "测不准：有动作但画面运动对不上"),
-               _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium"),
+               _review("lag_inconsistent", "MV-3", "各相机的滞后不一致", "sync_check"),
                _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
         param_schema=_sync_params(),
         tables=(TableSpec("video_action_sync", "逐机位同步读数",
@@ -675,16 +728,22 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="camera_defects", name_zh="镜头画面缺陷",
-        summary_zh="借任务成败判定的那一次模型请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+        summary_zh="借任务成败判定的那一次模型请求，由模型顺带按机位报告花屏、抖动、镜头污染与视觉遮挡"
+                   "（遮挡另给比例、位置与时长），并对照各路相机的画面、命名与左右臂身份；只出结果，不影响判决",
         level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
         depends_on=(),
-        # minor -> low, severe -> medium
+        # minor -> low, severe -> medium; identity: the picture contradicts the camera's name
         codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
-               _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),
-               _info("contamination", "IMG-7", "镜头污染或遮挡", scope_kind="camera")),
+               _info("shake", "IMG-6", "相机抖动", scope_kind="camera"),
+               _info("contamination", "IMG-7", "镜头污染", scope_kind="camera"),
+               _info("occlusion", "IMG-8", "视觉遮挡", scope_kind="camera"),
+               _info("identity", "MV-2", "机位身份与数据集的说明不符，或左右臂在相机之间串线",
+                     severity="medium", scope_kind="camera")),
         param_schema=_no_params(),
         tables=(TableSpec("camera_defects", "逐机位画面缺陷",
-                          ("episode_index", "camera", "glitch", "shake", "contamination")),),
+                          ("episode_index", "camera", "glitch", "shake", "contamination", "occlusion",
+                           "occlusion_coverage", "occlusion_region", "occlusion_duration_s",
+                           "view_matches_name", "identity")),),
         rides_on="task_success"),
     ModuleSpec(
         id="duplicate_check", name_zh="重复检测",

@@ -303,7 +303,7 @@ def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> di
     elif m == "visual_quality":
         out.update(S.visual_stats(records))
     elif m == "video_action_sync":
-        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir)))
+        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir), rev.module_params(m)))
     elif m == "task_success":
         out.update(S.task_stats(records))
     elif m == "duplicate_check":
@@ -675,7 +675,7 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append("")
             continue
         if spec is not None and sec["id"] == "camera_defects":
-            from ..extensions.camera_defects import LEVEL_ZH, NAME_ZH
+            from ..extensions.camera_defects import IDENTITY_ZH, LEVEL_ZH, NAME_ZH
 
             s = sec["summary"]
             lines.append("- 建议项,不影响判决;借任务成败判定的那一次请求顺带回答,没有新增模型调用")
@@ -683,6 +683,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                 c = s.get(item) or {}
                 lines.append(f"- {name}:" + " · ".join(f"{LEVEL_ZH[lv]} {c.get(lv, 0)}"
                                                        for lv in ("severe", "minor", "none", "unknown")))
+            ident = s.get("identity") or {}
+            lines.append("- 机位身份:" + " · ".join(f"{IDENTITY_ZH[k]} {ident.get(k, 0)}"
+                                                        for k in ("inconsistent", "consistent", "unknown")))
             lines.append(f"- 未答机位 {s.get('cameras_unanswered', 0)} / {s.get('cameras', 0)} · 出错 {cnt['error']}")
             lines.append("")
             continue

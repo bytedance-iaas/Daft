@@ -222,8 +222,10 @@
    "origin": "需",
    "samples": "「不符」要合成；「不一」有真实的（A4 两种工位）",
    "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.resolution_mismatch"
+   ],
    "kind": "defect",
    "level": "dataset",
    "description": "分辨率：声明与实际不符；数据集内不一",
@@ -525,8 +527,10 @@
    "origin": "具",
    "samples": "真实：Pantheon 第二批标注里 MolmoAct2 294 条 `sped_up_recording`（第二批）",
    "platform": "没有",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.camera_rate_mismatch"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "录制的时间轴与真实时间不成比例：画面按时间戳播放比实际快或慢（跳帧、时间戳压缩）；不同流各自采样率不同不算",
@@ -756,9 +760,11 @@
    "name": "视觉遮挡",
    "origin": "需；文",
    "samples": "真实：G11；S6 的两条 DROID（第二批）",
-   "platform": "**没有（实测）**：G11 放行；注入盖住 70% 画面 5 秒的方块放行，分 1.0",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform": "有读数（要模型，注册表 4.1 起）：画面缺陷模块的 `occlusion` 细码按机位报出遮挡来源、时间段与占比；此前 G11 放行、注入盖住 70% 画面 5 秒的方块放行，新口径未实测",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.occlusion"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "视觉遮挡：该看见的操作区域被物体、衣物、手挡住；没拍到是 IMG-13，脱敏模糊是 IMG-14",
@@ -1009,9 +1015,11 @@
    "name": "左右手、机位身份一致",
    "origin": "需",
    "samples": "真实：S4，前视与腕部相机标反，有修正版成对，共 60 条；左右手对调要合成",
-   "platform": "**没有（实测）**：标反与修正两版的结果除了机位名对调，完全相同",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform": "有读数（要模型，注册表 4.1 起）：画面缺陷模块的 `identity` 细码按机位报出画面与命名不符、两路同一画面；此前标反与修正两版的结果除了机位名对调完全相同，新口径未实测",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.identity"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "身份一致：左右手、机位的标注和画面对得上",
@@ -1044,8 +1052,9 @@
    "origin": "需",
    "samples": "合成；标记",
    "platform": "部分：同步检查逐路测时间差，各路不一致时只标注",
-   "platform_status": "有读数",
+   "platform_status": "能判",
    "platform_codes": [
+    "data_integrity.camera_timing_mismatch",
     "video_action_sync.lag_inconsistent"
    ],
    "kind": "defect",
@@ -1375,6 +1384,7 @@
    "platform": "**部分（实测）**：单路相机提前 0.6 秒，同步模块量出 −0.53 s 并标为错位，但另两路对齐 → 「证据不一致不定罪」放行；0.2 秒在容差内。所有可信相机一致偏移才拒",
    "platform_status": "能判",
    "platform_codes": [
+    "data_integrity.camera_start_offset",
     "video_action_sync.misaligned_all",
     "video_action_sync.camera_misaligned",
     "video_action_sync.suspect"

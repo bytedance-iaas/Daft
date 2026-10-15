@@ -62,7 +62,7 @@ def test_lerobot_v2_what_was_an_execution_error_is_a_finding(cli, dataset, tmp_p
     assert reasons[5].startswith("数据文件不存在：data/chunk-000/episode_000005.parquet")
     assert reasons[6].startswith("observation.state 每帧 6 维，info.json 声明 7 维")
     assert reasons[7].startswith("数据有 60 帧，episode 表记 70 帧")
-    # the registry's codes and items (8.1)
+    # the registry's codes and items (8.4)
     assert c2(recs[0]) == [("video_missing", "FILE-1", "high")]
     assert c2(recs[1]) == [("action_missing", "STRM-1", "high")]
     assert c2(recs[2]) == [("column_missing", "STRM-1", "high")]

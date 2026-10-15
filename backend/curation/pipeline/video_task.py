@@ -45,7 +45,8 @@ def prepare_clips(cfg, video) -> list:
                                     getattr(exc, "curation_camera", None)) from exc
 
 
-def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标注", hints="") -> CheckResult:
+def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标注", hints="",
+                        claim=None) -> CheckResult:
     """One request, one answer: the verdict, with every camera's own answer and defect report."""
     detail = {"input_mode": "video", "protocol": PROTOCOL,
               "task_desc": str(instruction),
@@ -55,7 +56,7 @@ def judge_video_episode(cfg, video, instruction, scorer, *, task_src="原始标�
     detail["video_inputs"] = [c.metadata() for c in clips]
     detail["cams"] = [c.camera for c in clips]
     try:
-        primary = scorer(clips, str(instruction), hints=hints)
+        primary = scorer(clips, str(instruction), hints=hints, claim=claim)
     except Exception as exc:
         detail.update(reason=f"视频打分失败: {type(exc).__name__}: {exc}",
                       rules=["video_score_failed"])

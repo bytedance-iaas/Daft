@@ -140,8 +140,8 @@ def test_machine_verdicts_gates_errors_and_d35(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0, 6)
     # 1: a finding blocks; every other module judged it too (D57)
     rd.good(1).replace("timestamp_check", 1, "fail", details={"reason": "丢帧"})
-    # 2: a frame module's finding blocks while the other frame module failed to run
-    rd.good(2).replace("visual_quality", 2, "error").replace("video_action_sync", 2, "fail")
+    # 2: a module's finding blocks while a frame module failed to run (7.5: the sync check no longer rejects, kinematic_limits stands in)
+    rd.good(2).replace("visual_quality", 2, "error").replace("kinematic_limits", 2, "fail")
     # 3: task_success failed to run; low scores are readings and reject nothing (P18): held back
     rd.good(3).replace("task_success", 3, "error")
     rd.replace("motion_quality", 3, "scored", score=0.1)
@@ -165,7 +165,7 @@ def test_machine_verdicts_gates_errors_and_d35(tmp_path):
     assert lines[1]["verdict"] == "drop" and lines[1]["blocking"] == [
         {"module": "timestamp_check", "code": "gap", "item": "STRM-3"}]
     assert lines[1]["error_modules"] == []
-    assert lines[2]["verdict"] == "drop" and modules_of(lines[2]["blocking"]) == ["video_action_sync"]
+    assert lines[2]["verdict"] == "drop" and modules_of(lines[2]["blocking"]) == ["kinematic_limits"]
     assert lines[2]["error_modules"] == ["visual_quality"]
     assert "执行出错，不影响结论" in lines[2]["reason"]
     assert lines[3]["verdict"] == "held" and lines[3]["error_modules"] == ["task_success"]
@@ -331,7 +331,7 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
     rd.replace("task_success", 3, "abstain")
     rd.replace("duplicate_check", 3, "fail", details={"same_as": [0], "group_id": 0})   # a copy of 0
     _gate_reject(rd, 4, "timestamp_check")                              # final
-    rd.good(5).replace("video_action_sync", 5, "fail")                  # final besides an
+    rd.good(5).replace("kinematic_limits", 5, "fail")                   # final besides an
     rd.replace("task_success", 5, "fail")                               # appealable one
     rd.replace("task_success", 6, "error")                              # held: waits
     for ep in (7, 8, 9):
@@ -352,7 +352,7 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
     assert copy["current_list"] == "passed" and not copy.get("reasons")
     assert copy["review"][0]["codes"] == ["uncertain"]
     assert [(r["module"], r["appealable"]) for r in lists["reject"][5]["reasons"]] == \
-        [("video_action_sync", False), ("task_success", True)]        # every reason, in order
+        [("kinematic_limits", False), ("task_success", True)]         # every reason, in order
     assert lists["review"][7]["review"][0]["reason"].endswith("（复议拿不准，待定）")
 
 
@@ -381,7 +381,7 @@ def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
     rd = RunDir(str(tmp_path / "run")).good(0, 2, 9)
     rd.replace("task_success", 2, "fail").replace("task_success", 9, "fail")
     _gate_reject(rd, 4, "timestamp_check")
-    rd.good(5).replace("video_action_sync", 5, "fail").replace("task_success", 5, "fail")
+    rd.good(5).replace("kinematic_limits", 5, "fail").replace("task_success", 5, "fail")
     rd.good(3).replace("motion_quality", 3, "scored", score=0.1)
     rd.replace("visual_quality", 3, "scored", score=0.1)
     run_dir = rd.write()
@@ -399,15 +399,15 @@ def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
 
 
 def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
-    """C1 2.x ``appealable`` on a finding code decides (task_success's failure alone here): made appealable, a reject by video_action_sync's misaligned_all gets an
-    appeal item, admits an appeal and a restore overturns it; nothing else names the codes."""
+    """C1 2.x ``appealable`` on a finding code decides (task_success's failure alone here): made appealable, a reject by kinematic_limits's data_invalid gets an
+    appeal item, admits an appeal and a restore overturns it; nothing else names the codes (7.5: the sync check no longer rejects by machine)."""
     from dataclasses import replace
 
     from curation.contracts import modules as registry
 
     assert [(m, c.code) for m in ALL for c in registry.get(m).codes if c.appealable] == \
         [("task_success", "failure")]
-    rd = _gate_reject(RunDir(str(tmp_path / "run")).good(0), 1, "video_action_sync")
+    rd = _gate_reject(RunDir(str(tmp_path / "run")).good(0), 1, "kinematic_limits")
     run_dir = rd.write()
     assert _kinds(final(run_dir, "0,1")) == {}
     refused = run("adjudicate-apply", "--run-dir", run_dir, "--decisions",
@@ -417,11 +417,11 @@ def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
 
     def finding_code(module, code):
         spec = real(module, code)
-        return replace(spec, appealable=True) if (module, code) == ("video_action_sync", "misaligned_all") \
+        return replace(spec, appealable=True) if (module, code) == ("kinematic_limits", "data_invalid") \
             else spec
 
     monkeypatch.setattr(registry, "finding_code", finding_code)
-    assert _kinds(final(run_dir, "0,1")) == {1: [("reject_appeal", "video_action_sync")]}
+    assert _kinds(final(run_dir, "0,1")) == {1: [("reject_appeal", "kinematic_limits")]}
     apply(run_dir, decisions(str(tmp_path / "d1.json"), (1, "reject_appeal", "restore", None)))
     assert sorted(final(run_dir, "0,1", revision=2)["passed"]) == [0, 1]
 

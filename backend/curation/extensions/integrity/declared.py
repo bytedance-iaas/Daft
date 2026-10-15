@@ -5,7 +5,7 @@ v1's readers stop at the first thing they cannot read: a column info.json declar
 slice whose length is not the episode table's (``ValueError`` / ``AssertionError``), an mcap without the topics its
 mapping requires (``NotADatasetError``). Those were execution errors, held for a retry that never helps. Here the same
 data is looked at against the declaration and what is wrong is said as problems - plain dicts (``code``, ``message``,
-``args``) that data integrity reports as its findings; the codes are the registry's (8.1).
+``args``) that data integrity reports as its findings; the codes are the registry's (8.4).
 """
 from __future__ import annotations
 

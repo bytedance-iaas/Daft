@@ -27,9 +27,11 @@ from .records import is_error
 HUMAN_LINES: dict[str, tuple[str, dict[str, bool]]] = {
     "integrity_check": ("data_integrity", {"intact": False, "broken": True}),
     "eef_check": ("eef_video_consistency", {"consistent": False, "inconsistent": True}),
+    "sync_check": ("video_action_sync", {"usable": False, "misaligned": True, "shifted": False}),
 }
 #: the human conclusions written as a reason
 HUMAN_TEXT = {"broken": "人工裁决判为数据确有问题", "inconsistent": "人工裁决判为 EEF 与视频不一致",
+              "misaligned": "人工裁决判为相机与动作确有错位",
               "failure": "人工裁决判失败（任务未完成）"}
 
 

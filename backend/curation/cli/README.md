@@ -225,7 +225,8 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
   同样的三项缺陷定义，不问成败），写一条 `status: ok` 的记录：`details.skipped = "no_task_text"`，发现只有 LABEL-2 的 `task_text_missing`（仅报告），
   TASK-4 记为无法评估（`no_task_text`）；不转人工、不 held，`--resume` 不重做；请求失败按执行错误记，held 等重试。这条的去留由其余模块决定。
 - `camera_defects`（镜头画面缺陷）跟着 `task_success` 走：`--modules task_success` 自动带上它，不必列出、也不能单独跑。判定请求里每路相机的回答多一个
-  `camera_check` 字段（花屏 / 抖动 / 镜头污染），没有额外的模型调用；它的发现都只报告。详见设计 13「逐机位画面缺陷」。
+  `camera_check` 字段（花屏 / 抖动 / 镜头污染 / 视觉遮挡，遮挡另给比例、位置与时长），没有额外的模型调用；记录里的 `arms` 块
+  （各路相机骑的是不是数据集给它的那条臂）由 CPU 实测画面运动与各臂速度得出，也不发请求；它的发现都只报告。详见设计 13「逐机位画面缺陷」。
 - **重复检测**（`duplicate_check`，D87，设计 26）只报告，逐条走：一条进来只哈希动作数据，动作哈希撞了才读这几条的画面算内容指纹（A 类
   `episode_fingerprint`：动作字节加每路相机的内容身份与时间窗），没有重复的数据集不额外读视频。一组完全相同的条目里每一条都得到一条 `duplicate`
   发现（SET-1，info），`readings.same_as` 是同组的其他条，`readings.group_id` 是组里最小的编号；不判废、不留第一条、不转人工、不能复议。

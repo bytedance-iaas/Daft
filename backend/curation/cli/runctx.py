@@ -173,6 +173,21 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
     return cfg
 
 
+#: a task's evidence choices are module parameters (C1: ``video_action_sync.sync_plots``, ``task_success.evidence_frames``)
+#: but the stages read them as v1 config keys under ``pipeline``; this is the bridge (2026-10-13: before it, 全画 in the
+#: task form changed nothing)
+EVIDENCE_PARAMS = {("video_action_sync", "sync_plots"): "sync_plots", ("task_success", "evidence_frames"): "evidence_frames"}
+
+
+def apply_evidence_params(cfg: dict, params: dict | None) -> dict:
+    """The task's evidence choices into ``cfg["pipeline"]``; a module not in ``params`` keeps the config's value."""
+    for (module, key), target in EVIDENCE_PARAMS.items():
+        value = ((params or {}).get(module) or {}).get(key)
+        if value is not None:
+            cfg.setdefault("pipeline", {})[target] = str(value)
+    return cfg
+
+
 def apply_vlm_args(cfg: dict, args) -> None:
     from ..pipeline.config import ConfigError, apply_vlm_backend, apply_vlm_direct
 

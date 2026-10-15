@@ -180,6 +180,46 @@ def test_the_decode_test_finds_what_the_structure_cannot(cli, dataset, tmp_path)
     assert verdicts(recs)[0] == "pass" and verdicts(recs)[4] in ("fail", "abstain")
 
 
+def test_a_declared_resolution_the_frames_do_not_have(cli, dataset, tmp_path):
+    """FILE-7 (registry 8.3): the frames are 128x96, the metadata says 64x48 - every camera of
+    every episode says so, in the default configuration, without the frame-by-frame decode."""
+    info_path = os.path.join(dataset, "meta", "info.json")
+    with open(info_path, encoding="utf-8") as fh:
+        info = json.load(fh)
+    for key, feature in info["features"].items():
+        if feature.get("dtype") == "video":
+            feature["shape"] = [48, 64, 3]
+    with open(info_path, "w", encoding="utf-8") as fh:
+        json.dump(info, fh)
+
+    rd = str(tmp_path / "run")
+    check(cli, dataset, rd, "0-3")
+    recs = results(rd)
+    assert not any(r["details"]["tiers"]["L3"] for r in recs.values())     # no decode tier asked for
+    assert all([c for c in codes(r) if c == ("suspect", "resolution_mismatch")] for r in recs.values())
+    found = [f for f in recs[0]["details"]["findings"] if f["code"] == "resolution_mismatch"]
+    assert {f["camera"] for f in found} == {"exterior", "wrist"}
+    assert found[0]["args"]["mismatches"] == [{"kind": "declared", "expected": [64, 48],
+                                               "actual": [128, 96], "measured_from": "frame"}]
+    assert found[0]["args"]["size_wh"] == [128, 96]
+    assert "实际是 128×96" in found[0]["message"] and "元数据声明 64×48" in found[0]["message"]
+    # the item is assessed, its measured sizes are a reading, and a review finding holds the episode
+    assert not [u for u in recs[0]["unassessable"] if u["item"] == "FILE-7"]
+    assert recs[0]["readings"]["resolution"] == {"exterior": [128, 96], "wrist": [128, 96]}
+    assert verdicts(recs)[0] == "abstain"
+
+
+def test_a_clean_dataset_says_nothing_about_its_resolution(cli, dataset, tmp_path):
+    """The declared size is the frames' size, so FILE-7 is assessed and silent - no false finding
+    from the axis order ([h, w, c] here, labelled by the feature's own names)."""
+    rd = str(tmp_path / "run")
+    check(cli, dataset, rd, "0-3")
+    recs = results(rd)
+    assert not [c for r in recs.values() for c in codes(r) if c[1] == "resolution_mismatch"]
+    assert "FILE-7" in recs[0]["assessed"]
+    assert verdicts(recs)[0] == "pass"
+
+
 # ---------------------------------------------------------------- LeRobot v3
 
 
@@ -204,6 +244,106 @@ def test_v3_clean_and_a_shared_video_cut_in_the_middle(cli, v3, tmp_path):
     assert verdicts(recs) == {0: "pass", 1: "pass", 2: "fail", 3: "fail", 4: "pass", 5: "pass"}
     assert codes(recs[2])[0] == ("reject", "file_truncated") and codes(recs[3])[0] == ("reject", "file_truncated")
     assert all(truth[e] == "pass" for e in (0, 1, 4, 5))
+
+
+# ---------------------------------------------------------------- camera timing (MV-3 record layer)
+
+
+def _remux(path: str, *, pts_fn=None, drop_head: int = 0) -> None:
+    """Rewrite a video's packets without re-encoding: shift or rescale their timestamps, or drop
+    the first few. What a recorder that started late, or a converter that shifted a track, leaves."""
+    import av
+
+    tmp = path + ".remux.mp4"
+    with av.open(path) as inp, av.open(tmp, "w") as out:
+        ist = inp.streams.video[0]
+        ost = out.add_stream_from_template(ist)
+        i = 0
+        for pk in inp.demux(ist):
+            if pk.pts is None:
+                continue
+            i += 1
+            if i <= drop_head:
+                continue
+            if pts_fn is not None:
+                pts, dts = pk.pts, pk.dts if pk.dts is not None else pk.pts
+                pk.pts, pk.dts = pts_fn(pts), pts_fn(dts)
+            pk.stream = ost
+            out.mux(pk)
+    os.replace(tmp, path)
+
+
+def _timing_codes(rec: dict, cam: str) -> set[str]:
+    return {c for _, c in codes(rec) if c.startswith("camera_")}
+
+
+def test_v3_a_camera_whose_presentation_is_shifted(cli, v3, tmp_path):
+    """One camera's shared file remuxed with its presentation 3 frames (0.2 s at 15 fps) late: the shift
+    lives in the edit list, which the parser reads; the first window starts late and the cameras disagree
+    there, the file's last window has frames past the timeline, the untouched file is clean."""
+    path = os.path.join(v3, "videos", S.CAM_V3, "chunk-000", "file-000.mp4")
+    before = S.samples_of(path)
+    assert abs(before.presentation()[0]) < 1e-3                  # the encoder's own edit list cancels its delay
+    tick = round(before.timescale / 15)                     # ticks per frame
+    _remux(path, pts_fn=lambda p: p + 3 * tick)
+    after = S.samples_of(path)
+    assert len(after) == len(before)
+    assert abs(after.presentation()[0] - 0.2) < 1e-3
+    assert abs((after.presentation()[1] - after.presentation()[0]) - 1 / 15) < 1e-3
+    rd = str(tmp_path / "shift")
+    check(cli, v3, rd, "0-5")
+    recs = results(rd)
+    t0 = recs[0]["details"]["camera_timing"]
+    cam = next(c for c in t0 if c in S.CAM_V3 or S.CAM_V3.endswith(c))
+    # the edit list carries the encoder's own decode-delay skip too, so only the window reading is 0.2
+    assert abs(t0[cam]["start_offset_s"] - 0.2) < 1e-3
+    assert {"camera_start_offset", "camera_timing_mismatch"} <= _timing_codes(recs[0], cam)
+    assert ("suspect", "camera_start_offset") in codes(recs[0])
+    # the later windows of the shifted file sit on the shifted grid: no start offset, but the last one
+    # (episode 3) has 3 frames beyond the timeline, which the cameras disagree about
+    assert not {"camera_start_offset"} & _timing_codes(recs[1], cam)
+    assert "camera_timing_mismatch" in _timing_codes(recs[3], cam)
+    assert recs[3]["details"]["camera_timing"][cam]["tail_frames"] == 3
+    # the untouched second file: nothing
+    for e in (4, 5):
+        assert not _timing_codes(recs[e], cam), codes(recs[e])
+    assert verdicts(recs)[4] == "pass"
+
+
+def test_v3_a_camera_running_at_the_wrong_rate(cli, v3, tmp_path):
+    """One camera's packets spaced 5 % wider than the frame rate says: every episode in that file reports
+    the rate and the cameras disagree; the other file is clean."""
+    path = os.path.join(v3, "videos", S.CAM_V3, "chunk-000", "file-000.mp4")
+    _remux(path, pts_fn=lambda p: int(round(p * 1.05)))
+    rd = str(tmp_path / "rate")
+    check(cli, v3, rd, "0-5")
+    recs = results(rd)
+    cam = next(iter(recs[0]["details"]["camera_timing"]))
+    for e in range(4):
+        t = recs[e]["details"]["camera_timing"]
+        c = next(c for c in t if c in S.CAM_V3 or S.CAM_V3.endswith(c))
+        assert abs(t[c]["rate_ratio"] - 1.05) < 0.01, t[c]
+        assert {"camera_rate_mismatch", "camera_timing_mismatch"} <= _timing_codes(recs[e], c)
+    for e in (4, 5):
+        assert not _timing_codes(recs[e], cam)
+
+
+def test_v3_a_camera_that_started_late(cli, v3, tmp_path):
+    """The first 3 frames of one camera's file dropped, timestamps kept (an empty edit of 0.2 s): the
+    first window starts 0.2 s late and the two cameras disagree; the count of the file's last window is
+    the existing FILE-5 finding's business."""
+    path = os.path.join(v3, "videos", S.CAM_V3, "chunk-000", "file-000.mp4")
+    n = len(S.samples_of(path))
+    _remux(path, drop_head=3)
+    assert len(S.samples_of(path)) == n - 3
+    rd = str(tmp_path / "late")
+    check(cli, v3, rd, "0-5")
+    recs = results(rd)
+    t0 = recs[0]["details"]["camera_timing"]
+    cam = next(c for c in t0 if c in S.CAM_V3 or S.CAM_V3.endswith(c))
+    assert abs(t0[cam]["start_offset_s"] - 0.2) < 1e-3
+    assert {"camera_start_offset", "camera_timing_mismatch"} <= _timing_codes(recs[0], cam)
+    assert not _timing_codes(recs[4], cam)
 
 
 # ---------------------------------------------------------------- mcap

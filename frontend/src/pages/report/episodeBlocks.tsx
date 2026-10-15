@@ -12,10 +12,11 @@ import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { OneLine } from '../../components/OneLine';
 import { EefDatasetRecord, EefEgoMotion, EefOpinion, EefCpuEvidence, EefCpuTable, EefOutput, EefTrajectorySource, EefWindows } from '../../features/eef/EefRecord';
-import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
+import { judgementName, motionFacts, motionRows, syncCameraPhrases, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact } from '../../lib/episodeReadings';
 import { eefCalibrationSuspects } from '../../lib/eefReadings';
 import type { LegacyRecord } from '../../lib/records';
 import { fieldLabel, readable } from '../../lib/reportView';
+import { SyncWindowsChart } from './SyncWindows';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
 import { zh } from '../../locales/zh';
 
@@ -240,12 +241,14 @@ function SyncCurvesView({ curves }: { curves: SyncCurves }) {
       <div>
         <div className="section-sub">{S.xcorr}</div>
         <Chart height={260} summary={`${S.xcorr}：${curves.cameras.map((c) => (c.peak ? S.peak(c.camera, signed(c.peak.lag_s), fmt(c.peak.corr)) : c.camera)).join('；')}`} option={xcorr} />
+        <SyncWindowsChart curves={curves} />
       </div>
     </div>
   );
 }
 
-function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep: number }) {
+/** The sync curves of one episode, fetched when shown (the Episode tab's block and the sync review's card). */
+export function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep: number }) {
   const q = useQuery({
     queryKey: qk.syncCurves(taskId, ep, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}/sync-curves', { params: { path: { id: taskId, index: ep }, query: { rev } } })),
@@ -264,46 +267,12 @@ function SyncCurvesPanel({ taskId, rev, ep }: { taskId: string; rev: number; ep:
 }
 
 function SyncBlock({ taskId, rev, ep, record }: BlockProps) {
-  const d = details(record);
-  const badge = syncBadge(d);
-  const rows = syncRows(d);
-  const C = E().sync.cols;
+  // the same four things as the adjudication card (2026-10-13), without the decision: the findings are listed at
+  // the top of the episode; here one phrase per camera, then the curves and the lag window by window
+  const phrases = syncCameraPhrases(details(record));
   return (
     <>
-      <Space wrap>
-        <Tag color={badge.color} data-testid="sync-badge">
-          {badge.text}
-        </Tag>
-        {num(d.consensus_lag_s) !== null ? <span>{E().sync.consensus(signed(num(d.consensus_lag_s)))}</span> : null}
-      </Space>
-      <Reason text={str(d.reason)} />
-      {rows.length ? (
-        <Table
-          rowKey="key"
-          size="small"
-          pagination={false}
-          data={rows}
-          data-testid="episode-sync"
-          rowClassName={(r: SyncCameraRow) => (r.flagged ? 'row-warn' : '')}
-          columns={[
-            { title: C.camera, dataIndex: 'camera', width: 210, render: (v: string) => <span className="mono nowrap">{v}</span> },
-            { title: C.lag, dataIndex: 'lag', width: 90, align: 'right' },
-            { title: C.peak, dataIndex: 'peak', width: 90, align: 'right' },
-            { title: C.zero, dataIndex: 'zero', width: 90, align: 'right' },
-            { title: C.trusted, dataIndex: 'trusted', width: 64 },
-            {
-              title: C.diagnosis,
-              dataIndex: 'label',
-              render: (_: unknown, r: SyncCameraRow) => (
-                <span>
-                  {r.label ? <b>{r.label}：</b> : null}
-                  {r.text}
-                </span>
-              ),
-            },
-          ]}
-        />
-      ) : null}
+      {phrases.length ? <div data-testid="episode-sync">{phrases.join(' · ')}</div> : null}
       <LazyVisible placeholder={<div style={{ height: 160 }} />}>
         <SyncCurvesPanel taskId={taskId} rev={rev} ep={ep} />
       </LazyVisible>
@@ -485,17 +454,32 @@ export function GenericBlock({ record }: BlockProps) {
   );
 }
 
-// camera_defects (registry 1.14): the model's own reading of this episode's picture, per camera.
-// One line for the three items, then only the cameras that reported something, so a clean episode
-// is one line and a dirty one says which camera, how bad, and when.
-const CD_ITEMS = ['glitch', 'shake', 'contamination'] as const;
+// camera_defects (registry 1.14; 7.2 gives occlusion its own share, place and length and adds the
+// camera identity): the model's reading of this episode's picture, per camera, next to the arm
+// pairing measured from the recording. One line for the four items, then only the cameras that
+// reported something, so a clean episode is one line and a dirty one says which camera, how bad,
+// and when; a camera whose picture contradicts its declared mount, or a pair of cameras measured
+// on the wrong arms, gets its own line.
+const CD_ITEMS = ['glitch', 'shake', 'contamination', 'occlusion'] as const;
 
 interface CdItem {
   level?: string;
   times?: [number, number][];
   whole?: boolean;                       // the model said it lasts the whole clip
   note?: string;
+  kind?: string;                         // contamination: what is on the lens
+  source?: string;                       // occlusion: what hides the scene
+  region?: string;                       // occlusion: where in the picture it sits
+  coverage?: number | null;              // occlusion: the share of the picture it takes
+  duration_s?: number | null;            // occlusion: how long the work is hidden
+  share?: number | null;                 // occlusion: the share of the clip it covers
+}
+
+interface CdView {
   kind?: string;
+  arm?: string;
+  matches_name?: string;
+  note?: string;
 }
 
 interface CdCamera {
@@ -504,6 +488,8 @@ interface CdCamera {
   glitch?: CdItem;
   shake?: CdItem;
   contamination?: CdItem;
+  occlusion?: CdItem;
+  view?: CdView;
 }
 
 function cdSpans(item: CdItem | undefined): string {
@@ -515,22 +501,55 @@ function cdSpans(item: CdItem | undefined): string {
 function cdPhrase(name: string, item: CdItem | undefined): string {
   const K = E().cameraDefects;
   const level = K.level[str(item?.level) ?? ''] ?? K.level.unknown;
-  const kind = item?.kind && item.kind !== 'none' ? `（${K.kind[item.kind] ?? item.kind}）` : '';
+  const what = item?.kind && item.kind !== 'none' ? item.kind : item?.source && item.source !== 'none' ? item.source : '';
+  const kind = what ? `（${K.kind[what] ?? what}）` : '';
   const spans = cdSpans(item);
+  // occlusion answers three things of its own: how much of the picture, where, and how long
+  const parts: string[] = [];
+  if (typeof item?.coverage === 'number' && item.coverage > 0) parts.push(K.coverage(Math.round(item.coverage * 100)));
+  if (item?.region && K.region[item.region]) parts.push(K.region[item.region]);
+  if (typeof item?.duration_s === 'number' && item.duration_s > 0) parts.push(K.duration(fmt(item.duration_s, 1)));
+  const extra = parts.length ? ` ${parts.join(' · ')}` : '';
   // the full-width bracket already separates, so a space goes in only without a kind
-  return `${name} ${level}${kind}${spans ? `${kind ? '' : ' '}${spans}` : ''}`;
+  return `${name} ${level}${kind}${spans ? `${kind ? '' : ' '}${spans}` : ''}${extra}`;
+}
+
+interface CdArms {
+  identity?: string;
+  crossed?: string[];
+  note?: string;
+}
+
+function cdArmsLine(arms: CdArms | undefined): string {
+  const K = E().cameraDefects;
+  if (arms?.identity !== 'crossed') return '';
+  // the measurement's own words name each camera and the arm it rides, which is more than the list
+  // of crossed cameras; the list stands in only when there are no words
+  const crossed = (arms.crossed ?? []).map((c) => c.split('.').pop() ?? c);
+  return arms.note ? `${K.armsCrossed('')}：${arms.note}` : K.armsCrossed(crossed.join('、'));
+}
+
+function cdIdentityLine(view: CdView | undefined): string {
+  const K = E().cameraDefects;
+  if (!view) return '';
+  if (view.matches_name !== 'no') return '';
+  const what = [K.viewKind[str(view.kind) ?? ''] ?? '', K.viewArm[str(view.arm) ?? ''] ?? ''].filter(Boolean).join('、');
+  return K.mismatch(what) + (view.note ? `：${view.note}` : '');
 }
 
 function CameraDefectsBlock({ record }: BlockProps) {
   const d = details(record);
   const K = E().cameraDefects;
   const status = (d.items ?? {}) as Record<string, string>;
+  const identity = str(d.identity) ?? 'unknown';
   const perCamera = (d.per_camera ?? {}) as Record<string, CdCamera>;
   const cams = Object.keys(perCamera);
   const reported = cams.filter((cam) => CD_ITEMS.some((i) => {
     const level = str(perCamera[cam][i]?.level);
     return level === 'minor' || level === 'severe';
   }));
+  const misnamed = cams.filter((cam) => cdIdentityLine(perCamera[cam].view));
+  const armsLine = cdArmsLine(d.arms as CdArms | undefined);
   const unanswered = cams.filter((cam) => !perCamera[cam].answered);
   const worst = CD_ITEMS.map((i) => cdPhrase(K.items[i], { level: status[i] })).join(' · ');
   return (
@@ -545,6 +564,19 @@ function CameraDefectsBlock({ record }: BlockProps) {
             .join(' · ')}
         </div>
       ))}
+      {identity === 'inconsistent' ? (
+        <div className="episode-line warn">
+          {K.identity.inconsistent}
+          {armsLine ? <div>{armsLine}</div> : null}
+          {misnamed.map((cam) => (
+            <div key={cam}>
+              <b>{cam}</b>
+              {'：'}
+              {cdIdentityLine(perCamera[cam].view)}
+            </div>
+          ))}
+        </div>
+      ) : identity === 'consistent' ? <div className="muted">{K.identity.consistent}</div> : null}
       {!reported.length && !unanswered.length ? <div className="muted">{K.clean}</div> : null}
       {unanswered.length ? <div className="episode-line muted">{K.unanswered(unanswered.length)}{str(d.reason) ? `：${str(d.reason)}` : ''}</div> : null}
       {reported.length && cams.length > reported.length + unanswered.length ? (

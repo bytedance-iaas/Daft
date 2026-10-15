@@ -1,5 +1,5 @@
 {
- "registry_version": "8.1",
+ "registry_version": "8.4",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -73,6 +73,10 @@
   {
    "id": "model_no_answer",
    "title_zh": "模型没有回答这一项"
+  },
+  {
+   "id": "measurement_inconclusive",
+   "title_zh": "量过了，但证据不够下结论"
   },
   {
    "id": "single_description",
@@ -177,6 +181,31 @@
     {
      "const": "broken",
      "title": "确有问题，判废"
+    },
+    {
+     "const": "unsure",
+     "title": "拿不准"
+    }
+   ]
+  },
+  {
+   "id": "sync_check",
+   "review_kind": "sync_suspect",
+   "title_zh": "同步存疑",
+   "applies_to": "passed",
+   "counts_as_pending": true,
+   "decisions": [
+    {
+     "const": "usable",
+     "title": "可用，保留"
+    },
+    {
+     "const": "misaligned",
+     "title": "确有错位，判废"
+    },
+    {
+     "const": "shifted",
+     "title": "整条平移，可校正"
     },
     {
      "const": "unsure",
@@ -925,6 +954,46 @@
      "review_line": "integrity_check"
     },
     {
+     "code": "resolution_mismatch",
+     "item": "FILE-7",
+     "name_zh": "分辨率与声明不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "camera_start_offset",
+     "item": "AV-1",
+     "name_zh": "某路相机的视频起点与时间轴错开",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "camera_timing_mismatch",
+     "item": "MV-3",
+     "name_zh": "各相机的视频时间轴彼此对不上",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "camera_rate_mismatch",
+     "item": "STRM-9",
+     "name_zh": "某路相机的帧间隔与帧率不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
      "code": "timestamps_invalid",
      "item": "STRM-4",
      "name_zh": "时间戳不合规",
@@ -1008,6 +1077,10 @@
     "FILE-6",
     "FILE-8",
     "FILE-9",
+    "FILE-7",
+    "AV-1",
+    "MV-3",
+    "STRM-9",
     "STRM-4",
     "STRM-1",
     "STRM-3"
@@ -1572,19 +1645,21 @@
      "code": "misaligned_all",
      "item": "AV-1",
      "name_zh": "画面与动作错位（全部可信相机）",
-     "severity": "high",
-     "level": "blocking",
+     "severity": "medium",
+     "level": "review",
      "scope_kind": "episode",
-     "appealable": false
+     "appealable": false,
+     "review_line": "sync_check"
     },
     {
      "code": "camera_misaligned",
      "item": "AV-1",
      "name_zh": "单路相机与动作错位",
      "severity": "medium",
-     "level": "info",
+     "level": "review",
      "scope_kind": "camera",
-     "appealable": false
+     "appealable": false,
+     "review_line": "sync_check"
     },
     {
      "code": "suspect",
@@ -1609,9 +1684,10 @@
      "item": "MV-3",
      "name_zh": "各相机的滞后不一致",
      "severity": "medium",
-     "level": "info",
+     "level": "review",
      "scope_kind": "episode",
-     "appealable": false
+     "appealable": false,
+     "review_line": "sync_check"
     },
     {
      "code": "decode_failed",
@@ -1655,10 +1731,37 @@
      "spread_tol_s": {
       "type": "number",
       "title": "相机滞后允许极差（秒）",
-      "description": "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；判废与否不受它影响",
-      "default": 0.3,
+      "description": "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；2026-10-13 从 0.3 降到 0.2：17 个数据集的基准上 0.3 / 0.25 / 0.2 的对照命中相同，注入命中不变",
+      "default": 0.2,
       "minimum": 0.05,
       "maximum": 2.0,
+      "x-advanced": true
+     },
+     "window_min_trusted": {
+      "type": "number",
+      "title": "分窗读数最少可信窗",
+      "description": "一路相机逐窗测得的滞后要有这么多个可信窗才算「稳」，稳的相机才参与分窗比对；2026-10-13 在 12 个数据集 82 条上扫定：3 与 5 命中相同，5 把能比的对照条目砍掉四成",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 30,
+      "x-advanced": true
+     },
+     "window_max_iqr_s": {
+      "type": "number",
+      "title": "分窗读数允许波动（秒）",
+      "description": "一路相机可信窗滞后的四分位距超过这个值就不算「稳」，不参与分窗比对；同一次扫描：0.15 以内对照零误报，放到 0.3 出误报",
+      "default": 0.15,
+      "minimum": 0.02,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "window_spread_tol_s": {
+      "type": "number",
+      "title": "分窗滞后允许极差（秒）",
+      "description": "稳的相机之间分窗中位滞后相差超过这个值（不低于 3 帧），报「各相机的滞后不一致」（MV-3）；同一次扫描：对照条目之差的九成分位 0.07 秒",
+      "default": 0.1,
+      "minimum": 0.02,
+      "maximum": 1.0,
       "x-advanced": true
      }
     }
@@ -2080,7 +2183,7 @@
   {
    "id": "camera_defects",
    "name_zh": "镜头画面缺陷",
-   "summary_zh": "借任务成败判定的那一次模型请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+   "summary_zh": "借任务成败判定的那一次模型请求，由模型顺带按机位报告花屏、抖动、镜头污染与视觉遮挡（遮挡另给比例、位置与时长），并对照各路相机的画面、命名与左右臂身份；只出结果，不影响判决",
    "level": "episode",
    "needs": [
     "video",
@@ -2102,7 +2205,7 @@
     {
      "code": "shake",
      "item": "IMG-6",
-     "name_zh": "画面抖动",
+     "name_zh": "相机抖动",
      "severity": "low",
      "level": "info",
      "scope_kind": "camera",
@@ -2111,8 +2214,26 @@
     {
      "code": "contamination",
      "item": "IMG-7",
-     "name_zh": "镜头污染或遮挡",
+     "name_zh": "镜头污染",
      "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "occlusion",
+     "item": "IMG-8",
+     "name_zh": "视觉遮挡",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "identity",
+     "item": "MV-2",
+     "name_zh": "机位身份与数据集的说明不符，或左右臂在相机之间串线",
+     "severity": "medium",
      "level": "info",
      "scope_kind": "camera",
      "appealable": false
@@ -2121,7 +2242,9 @@
    "covers": [
     "IMG-5",
     "IMG-6",
-    "IMG-7"
+    "IMG-7",
+    "IMG-8",
+    "MV-2"
    ],
    "param_schema": {
     "type": "object",
@@ -2137,7 +2260,13 @@
       "camera",
       "glitch",
       "shake",
-      "contamination"
+      "contamination",
+      "occlusion",
+      "occlusion_coverage",
+      "occlusion_region",
+      "occlusion_duration_s",
+      "view_matches_name",
+      "identity"
      ],
      "default_sort": "episode_index"
     }

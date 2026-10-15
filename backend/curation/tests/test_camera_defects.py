@@ -6,6 +6,8 @@ import json
 from curation.adapters.video_vlm import CAMERA_CHECK_PROTOCOL
 from curation.extensions import camera_defects as CD
 
+CLEAN = {"glitch": "none", "shake": "none", "contamination": "none", "occlusion": "none"}
+
 
 def _review(check=None, error=None):
     if error:
@@ -16,15 +18,24 @@ def _review(check=None, error=None):
     return out
 
 
-def _check(glitch="none", shake="none", contamination="none", kind="none", times=None):
+def _view(kind="fixed", arm="single", matches="yes"):
+    return {"kind": kind, "arm": arm, "matches_name": matches, "note": ""}
+
+
+def _check(glitch="none", shake="none", contamination="none", kind="none", times=None,
+           occlusion="none", source="none", share=0.0, region="none", coverage=0.0,
+           duration_s=0.0, view=None):
     return {"glitch": {"level": glitch, "times": times or [], "note": ""},
             "shake": {"level": shake, "times": [], "note": ""},
-            "contamination": {"level": contamination, "kind": kind, "times": [], "note": ""}, "problems": []}
+            "contamination": {"level": contamination, "kind": kind, "times": [], "note": ""},
+            "occlusion": {"level": occlusion, "source": source, "times": [], "note": "", "share": share,
+                          "region": region, "coverage": coverage, "duration_s": duration_s},
+            "view": view or _view(), "problems": []}
 
 
 def _task(reviews, cams=None):
-    return {"passed": None, "score": None,
-            "detail": json.dumps({"cams": cams or sorted(reviews), "cameras": reviews})}
+    detail = {"cams": cams or sorted(reviews), "cameras": reviews}
+    return {"passed": None, "score": None, "detail": json.dumps(detail)}
 
 
 def test_all_cameras_clean():
@@ -32,23 +43,47 @@ def test_all_cameras_clean():
     assert s["passed"] is None and s["score"] is None
     d = json.loads(s["detail"])
     assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["reason"] == "" and d["clean_ratio"] == 1.0
-    assert d["items"] == {"glitch": "none", "shake": "none", "contamination": "none"}
+    assert d["items"] == CLEAN and d["identity"] == "consistent"
     assert d["per_camera"]["a"]["answered"] is True
+    assert d["per_camera"]["a"]["view"] == _view()
 
 
 def test_worst_camera_wins_and_kinds_are_kept():
     s = CD.struct_from_task(_task({
-        "a": _review(_check(glitch="minor", times=[[1.0, 1.5]])),
+        "a": _review(_check(glitch="minor", times=[[1.0, 1.5]], occlusion="minor", source="arm", share=0.2,
+                            region="left", coverage=0.25, duration_s=3.0)),
         "b": _review(_check(glitch="severe", contamination="minor", kind="dirt"))}))
     d = json.loads(s["detail"])
     assert d["items"]["glitch"] == "severe" and d["per_camera"]["a"]["glitch"]["times"] == [[1.0, 1.5]]
-    assert d["items"]["contamination"] == "minor"
+    assert d["items"]["contamination"] == "minor" and d["items"]["occlusion"] == "minor"
     assert {c: e["contamination"]["kind"] for c, e in d["per_camera"].items()} == {"a": "none", "b": "dirt"}
+    assert d["per_camera"]["a"]["occlusion"] == {"level": "minor", "times": [], "note": "", "source": "arm",
+                                                "share": 0.2, "region": "left", "coverage": 0.25, "duration_s": 3.0}
+
+
+def test_identity_follows_the_cameras_views():
+    """A camera whose picture contradicts the mount the dataset declares for it makes the episode
+    inconsistent; a camera that agrees, and no measured crossing, makes it consistent."""
+    d = json.loads(CD.struct_from_task(_task({
+        "observation.images.wrist": _review(_check(view=_view(kind="fixed", matches="no"))),
+        "observation.images.front": _review(_check())}))["detail"])
+    assert d["identity"] == "inconsistent"
+    assert d["per_camera"]["observation.images.wrist"]["view"]["matches_name"] == "no"
+    assert set(d["per_camera"]["observation.images.wrist"]["view"]) == {"kind", "arm", "matches_name", "note"}
+    d = json.loads(CD.struct_from_task(_task({
+        "a": _review(_check(view=_view())), "b": _review(_check(view=_view(matches="unknown")))}))["detail"])
+    assert d["identity"] == "consistent"
+    d = json.loads(CD.struct_from_task(_task({"a": _review(_check(view=_view(matches="unknown")))}))["detail"])
+    assert d["identity"] == "unknown"
+    # a record from before the view existed: unknown, never an error
+    old = {k: v for k, v in _check().items() if k != "view"}
+    d = json.loads(CD.struct_from_task(_task({"a": _review(old)}))["detail"])
+    assert d["identity"] == "unknown" and d["per_camera"]["a"]["view"]["kind"] == "unknown"
 
 
 def test_unknown_when_the_review_failed_or_the_model_did_not_answer():
     d = json.loads(CD.struct_from_task(_task({"a": _review(error="boom"), "b": _review()}))["detail"])
-    assert d["items"] == {k: "unknown" for k in CD.CAMERA_CHECK_ITEMS}
+    assert d["items"] == {k: "unknown" for k in CD.CAMERA_CHECK_ITEMS} and d["identity"] == "unknown"
     assert d["per_camera"]["a"]["error"] == "boom" and d["per_camera"]["b"]["answered"] is False
     assert d["reason"] == "模型未回答 camera_check" and d["clean_ratio"] is None
     d = json.loads(CD.struct_from_task({"passed": None, "score": None, "detail": json.dumps({"cams": ["a"]})})["detail"])
@@ -59,10 +94,60 @@ def test_unknown_when_the_review_failed_or_the_model_did_not_answer():
 
 def test_summary_and_table_rows():
     recs = {0: {"verdict": "abstain", "details": json.loads(CD.struct_from_task(_task(
-                {"a": _review(_check(glitch="severe")), "b": _review()}))["detail"])},
+                {"a": _review(_check(glitch="severe", view=_view(matches="no"))), "b": _review()}))["detail"])},
             1: {"verdict": "abstain", "details": json.loads(CD.struct_from_task(None)["detail"])}}
     s = CD.summary(recs)
     assert s["glitch"] == {"none": 0, "minor": 0, "severe": 1, "unknown": 1}
+    assert s["occlusion"] == {"none": 1, "minor": 0, "severe": 0, "unknown": 1}
+    assert s["identity"] == {"consistent": 0, "inconsistent": 1, "unknown": 1}
     assert s["episodes_with_severe"] == 1 and s["cameras"] == 2 and s["cameras_unanswered"] == 1
     rows = CD.table_rows(recs)
-    assert [(r["episode_index"], r["camera"], r["glitch"]) for r in rows] == [(0, "a", "severe"), (0, "b", "unknown"), (1, "", "unknown")]
+    assert [(r["episode_index"], r["camera"], r["glitch"], r["occlusion"], r["identity"], r["view_matches_name"]) for r in rows] == \
+        [(0, "a", "severe", "none", "inconsistent", "no"), (0, "b", "unknown", "unknown", "inconsistent", "unknown"),
+         (1, "", "unknown", "unknown", "unknown", "")]
+
+
+def test_crossed_arms_are_the_episodes_identity():
+    """The reading no single camera can give: this camera's picture moves with the arm the other
+    one is named for. Measured on the CPU (``pipeline.arm_pairing``) and handed to the record, it
+    makes the episode inconsistent even when every camera agrees with its own name."""
+    reviews = {"observation.images.left_wrist": _review(_check(view=_view(arm="left"))),
+               "observation.images.right_wrist": _review(_check(view=_view(arm="right")))}
+    crossed = {"identity": "crossed", "crossed": ["observation.images.left_wrist"],
+               "note": "画面运动跟的是另一条臂", "basis": "motion_pairing",
+               "readings": {"margin": 1.2}}
+    d = json.loads(CD.struct_from_task(_task(reviews), arms=crossed)["detail"])
+    assert d["identity"] == "inconsistent"
+    assert d["arms"]["identity"] == "crossed" and d["arms"]["crossed"] == ["observation.images.left_wrist"]
+    assert d["arms"]["basis"] == "motion_pairing" and d["arms"]["readings"]["margin"] == 1.2
+    # a measured match settles it the other way, and an episode with nothing to measure against
+    # leaves the arms unknown without disturbing what the cameras said about their own mounts
+    d = json.loads(CD.struct_from_task(_task(reviews), arms={"identity": "consistent"})["detail"])
+    assert d["identity"] == "consistent" and d["arms"]["identity"] == "consistent"
+    d = json.loads(CD.struct_from_task(_task({"a": _review(_check(view=_view(matches="unknown")))}))["detail"])
+    assert d["identity"] == "unknown"
+    assert d["arms"] == {"identity": "unknown", "crossed": [], "note": "", "basis": "",
+                         "reason": "", "readings": {}}
+
+
+def test_the_dataset_says_how_many_arms_it_has():
+    """MV-2 is a comparison, so the claim comes from the dataset, never from a camera's name: the
+    channel names give the arms (FastUMI leaves robot_type null) and the declaration gives each
+    camera's mount and owner. A dataset that says nothing makes no claim, and the request then asks
+    nothing about the identity."""
+    from curation.pipeline import dataset_claim as DC
+
+    two = {"features": {"action": {"names": {"motors": ["left_x", "left_gripper", "right_x", "right_gripper"]}}}}
+    one = {"features": {"action": {"names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}}}
+    assert DC.arms_of(two) == ["left", "right"] and DC.arms_of(one) == [] and DC.arms_of(None) == []
+    assert DC.arms_of({"features": {"action": {"names": ["robot0_x", "robot1_x"]}}}) == ["robot0", "robot1"]
+    decl = {"calibration": {"cameras": {"observation.images.left_camera": {"mount": "wrist", "owner": "left"},
+                                        "observation.images.top": {"mount": "fixed_external"},
+                                        "observation.images.odd": {"mount": "moving"}}}}
+    said = DC.cameras_of(decl)
+    assert said["observation.images.left_camera"] == {"mount": "wrist", "owner": "left"}
+    assert said["observation.images.top"] == {"mount": "fixed_external"} and "observation.images.odd" not in said
+    text = DC.text(DC.build(decl, two), ["observation.images.left_camera", "observation.images.top"])
+    assert "2 arms" in text and "left and right" in text
+    assert "left_camera is declared a wrist camera on left" in text and "top is declared a fixed third-person camera" in text
+    assert DC.text(DC.build(None, one), ["cam"]) == ""           # nothing to compare against

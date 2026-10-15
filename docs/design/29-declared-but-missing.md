@@ -89,7 +89,7 @@ topic。某条 episode 没有其中一个（或只有 0 条消息），记可疑
 
 | 位置 | 改什么 |
 |---|---|
-| C1 注册表 8.1 | 数据完整性加 `data_missing`（FILE-1）、`column_missing`（STRM-1），都是 blocking；`modules.json`、`CONTRACTS.lock` |
+| C1 注册表 8.4（远端同日已到 8.3） | 数据完整性加 `data_missing`（FILE-1）、`column_missing`（STRM-1），都是 blocking；`modules.json`、`CONTRACTS.lock` |
 | C2 | 不变：`check` 输出的 `skipped_missing_source`、报告的 `integrity.skipped_episodes` 仍是「被剔除的」，勾选完整性的新任务里不再出现 |
 | C4 | 不变 |
 | `run.json` | 多 `missing_sources`（设计 06 §1） |

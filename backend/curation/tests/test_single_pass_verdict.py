@@ -97,7 +97,7 @@ class _Scorer:
     def __init__(self, text: str, clips):
         self.text, self.clips, self.calls = text, clips, 0
 
-    def __call__(self, clips, instruction, *, hints=""):
+    def __call__(self, clips, instruction, *, hints="", claim=None):
         self.calls += 1
         return parse_assessment(self.text, self.clips)
 
