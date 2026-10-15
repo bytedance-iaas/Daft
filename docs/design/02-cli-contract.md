@@ -162,6 +162,8 @@ mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，
 （读取器整表读）；这两种格式没有缺文件剔除的规则。
 所选 episode 里缺 parquet 或某路视频的，照 v1 剔除（D40）：记进清单的 `skipped_episodes`（每条缺哪些键），
 带这份清单的命令都不读它们，它们不进任何清单、不计入总数，报告的完整性一节列出来。
+选了数据完整性的任务例外（D97，设计 29 §3）：清单照样记（快照不知道选了哪些模块），带清单的命令不去掉它们，完整性按缺的文件判废，
+别的模块照 D92 写跳过记录；守卫对这类条只核对缺的文件仍然缺。
 之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
 
 **对象清单只列一次**（2026-10-08）：远端数据集的对象清单列起来不便宜（DROID 一万个对象 11.6 秒，十万条的数据集要按分钟算），
@@ -268,6 +270,8 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 没带 `--source-manifest` 时，读到才发现缺源文件的 episode 同样剔除（D40）：不写结果行，
 列在输出的 `skipped_missing_source` 里；带了清单的，清单的 `skipped_episodes` 已经把它们排除在外。
+数据完整性从不剔除：缺文件的条它判废（`data_missing` / `video_missing`）。这次调用跑完整性、运行目录的 `run.json` 写着
+`missing_sources: judged`、或完整性已有这条的记录时，带清单也不排除它（D97）；完整性有记录的条也不算进「跳过」。
 
 ### 3.6 `curation aggregate` — 聚合判决
 

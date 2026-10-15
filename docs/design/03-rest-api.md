@@ -247,7 +247,8 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
      "episodes_total": 49, "episodes_error": 2, "elapsed_s": 408}
   ],
   "summary": {"total": 50, "passed": 41, "rejected": 7, "held": 2, "review": 10, "pass_rate": 0.82},
-                                    // 有缺源文件被剔除的条目时另带 "skipped": N（D40），不计入 total
+                                    // 有缺源文件被剔除的条目时另带 "skipped": N（D40），不计入 total；
+                                    // 选了数据完整性的任务不剔除，它们判废、计入 total（D97）
   "usage": {"prompt_tokens": 1820000, "completion_tokens": 64000,
             "reasoning_tokens": 41000, "cached_tokens": 903000, "requests": 742},
   "pending_adjudication": 10,
