@@ -215,3 +215,9 @@ def test_no_names_and_no_verdict_still_has_no_layout():
     info = {"robot_type": "unitree_g1", "fps": 30, "features": {"action": {"shape": [23]}, "observation.state": {"shape": [29]}}}
     sem = resolve_dataset_semantics(info, [{"action": a, "proprio_state": s, "fps": 30.0}] * 2, "hiw_like")
     assert sem.action_space == "unknown" and not (sem.extras or {}).get("layout")
+
+
+def test_names_layout_marks_hand_joints():
+    names = ["kLeftShoulderPitch", "kLeftElbow", "kLeftHandPinky", "kLeftHandThumbBend", "gripper"]
+    lay = detect_ee_layout(names, 5)
+    assert lay["hand_dims"] == (2, 3) and lay["gripper_dims"] == (4,)

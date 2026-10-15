@@ -271,6 +271,29 @@ def frame_modes(cfg: dict) -> tuple[bool, bool, str]:
             str(cfg.get("pipeline", {}).get("sync_plots", "flagged")))
 
 
+def sync_speed_columns(n_cols: int, proprio_space, layout: dict | None, profile_gripper_dims=()) -> list[int]:
+    """The state columns the sync check turns into its speed proxy (one place, shared with the benchmark).
+
+    ee: the layout's translation columns (both arms' xyz when there are two; RH20T's numeric fingerprint and
+    FastUMI's names both give them); without a layout the first three columns, but only when the column count
+    looks like a pose (3..8) - a 26-joint humanoid misread as ee would otherwise have its left shoulder taken for
+    xyz (2026-10-14 G1 ep26). joint: every column but the gripper (profile or layout) and the fingers of a
+    dexterous hand (layout hand_dims) - their flutter is not arm motion."""
+    lay = layout if isinstance(layout, dict) else {}
+    if str(proprio_space) == "ee":
+        tr = [int(c) for c in (lay.get("translation_dims") or ()) if 0 <= int(c) < n_cols]
+        if tr:
+            return tr
+        if 3 <= n_cols <= 8:
+            return [0, 1, 2]
+        return list(range(n_cols))
+    drop = {int(c) for c in (profile_gripper_dims or ())}
+    drop |= {int(c) for c in (lay.get("gripper_dims") or ())}
+    drop |= {int(c) for c in (lay.get("hand_dims") or ())}
+    keep = [j for j in range(n_cols) if j not in drop]
+    return keep or list(range(n_cols))
+
+
 def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) -> Callable:
     """``frame_checks(video, proprio_state, timestamps, fps, proprio_space, embodiment_id)
     -> {"visual": struct, "sync": struct, "curves": str}``: one decode per camera serves
@@ -298,7 +321,7 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
     decode_window = decode or _default_decode
 
     def frame_checks(video, proprio_state, timestamps, fps,
-                     proprio_space, embodiment_id):
+                     proprio_space, embodiment_id, semantics_extras=None):
         # ── 逐相机一次解码,视觉质量与同步检查共用(2026-08-07 改造)──────────
         # 改造前同步只算 sorted 的第一路,而视觉质量本来就已经逐相机解码了——
         # 也就是说"多相机同步"缺的从来不是解码,只是没在同一批帧上多算一次光流。
@@ -323,16 +346,16 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
             # M4b 同款病);②夹爪列 0-100 大摆(so101 corr 0.19~0.28,视觉上几乎
             # 不可见)。EE → 只用平移三维;关节 → 剔除夹爪列。
             p_sync = np.asarray(proprio_state)
-            if str(proprio_space) == "ee" and p_sync.shape[1] >= 3:
-                p_sync = p_sync[:, :3]
-            else:
-                try:
-                    _gd = set(registry.get(str(embodiment_id)).gripper_dims)
-                    keep = [j for j in range(p_sync.shape[1]) if j not in _gd]
-                    if keep:
-                        p_sync = p_sync[:, keep]
-                except Exception:  # noqa: BLE001  未知 embodiment → 不剔,保持原样
-                    pass
+            _lay = None
+            try:
+                _lay = (json.loads(str(semantics_extras) or "{}") or {}).get("layout")
+            except Exception:  # noqa: BLE001
+                _lay = None
+            try:
+                _gd = tuple(registry.get(str(embodiment_id)).gripper_dims)
+            except Exception:  # noqa: BLE001  未知 embodiment → 没有夹爪约定
+                _gd = ()
+            p_sync = p_sync[:, sync_speed_columns(p_sync.shape[1], proprio_space, _lay, _gd)]
             speed = joint_speed(p_sync, fps)
 
         # 短名(去 observation.images. 前缀):UI/报告/交付里逐相机都用它;

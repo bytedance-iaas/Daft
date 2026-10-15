@@ -58,13 +58,16 @@ _GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw",
                 "trigger", "squeeze")   # 手柄扳机 / 握力 = 手部指令(2026-10-14 HIW-500 left_trigger / left_squeeze)
 #: 速度型指令列(2026-10-14 HIW-500:pivot_vx / pivot_vy / pivot_vyaw 是底盘速度,91–94% 的帧步长为零、
 #: 偶尔一跳的摇杆信号,不是轨迹):平滑度与尖刺不算它们
+#: 手指关节列(灵巧手):同步的速度代理不看它们——12 根手指的碎动会盖过手臂(2026-10-14 G1 ep26)
+_HAND_TOKENS = frozenset({"hand", "finger", "thumb", "pinky", "index", "middle", "ring"})
 _VEL_TOKENS = ("vx", "vy", "vz", "vyaw", "vroll", "vpitch", "vel", "velocity", "speed", "omega")
 
 
 def _name_kind(name: str) -> str:
     """一列的名字 → pos / rot / grip / other。按下划线/点/空格切成词元后逐词判,
     夹爪最先(robot0_gripper_width 里也有 x 之类的短词元不能抢)。"""
-    toks = [t for t in str(name).lower().replace(".", "_").replace(" ", "_").split("_") if t]
+    from .semantics_preflight import name_tokens
+    toks = name_tokens(name)                       # 拆驼峰(kLeftHandPinky)、下划线、点
     if any(t in _GRIP_TOKENS for t in toks):
         return "grip"
     if any(t in _VEL_TOKENS for t in toks):
@@ -151,9 +154,11 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
         grip = tuple(i for i, k in enumerate(kinds) if k == "grip")
         trans = tuple(i for i, k in enumerate(kinds) if k == "pos")
         vel = tuple(i for i, k in enumerate(kinds) if k == "vel")
+        from .semantics_preflight import name_tokens
+        hand = tuple(i for i, n in enumerate(names) if set(name_tokens(n)) & _HAND_TOKENS and kinds[i] != "grip")
         return {"angle_dims": tuple(rot_idx), "rotation_blocks": blocks,
                 "euler_triplet": bool(blocks) and all(b[2] == "rpy" for b in blocks),
-                "gripper_dims": grip, "translation_dims": trans, "velocity_dims": vel, "source": "names",
+                "gripper_dims": grip, "translation_dims": trans, "velocity_dims": vel, "hand_dims": hand, "source": "names",
                 "gripper_closed": gripper_closed_from_names(names, grip),
                 # 名字认出了至少一个位姿块:预检对整列空间没把握时,布局本身就够运动质量按块算(F8)
                 "informative": bool(blocks or trans)}
@@ -216,6 +221,7 @@ def layout_for_extras(layout: dict) -> dict:
             "gripper_dims": list(layout.get("gripper_dims") or ()),
             "translation_dims": list(layout.get("translation_dims") or ()),
             "velocity_dims": list(layout.get("velocity_dims") or ()),
+            "hand_dims": list(layout.get("hand_dims") or ()),
             "source": str(layout.get("source") or ""),
             "gripper_closed": str(layout.get("gripper_closed") or "high"),
             "informative": bool(layout.get("informative"))}

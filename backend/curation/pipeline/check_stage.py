@@ -343,7 +343,8 @@ class StageRun:
         body = episode_checks.make_frame_checks(self.o.cfg, self.registry, decode=decode)
         try:
             out = body(row["video"], row["proprio_state"], row["timestamps"], row["fps"],
-                       column(row, "proprio_space", "joint"), row["embodiment_id"])
+                       column(row, "proprio_space", "joint"), row["embodiment_id"],
+                       column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001
             shared.add("internal", cause=f"{type(e).__name__}: {e}")
             out = {}
