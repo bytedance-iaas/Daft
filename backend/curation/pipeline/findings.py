@@ -516,7 +516,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
                 "idle_mid_count", "idle_mid_total_s",
                 # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
-                "smoothness_cols", "smoothness_min_col", "discrete_cols"):
+                "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols"):
         if d.get(key) is not None:
             out.readings[key] = _r(d.get(key))
     _sub_score(out, m, "smoothness_low", d.get("smoothness"), p["smoothness_min"], "动作不平滑，平滑度分",

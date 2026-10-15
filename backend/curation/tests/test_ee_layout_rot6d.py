@@ -169,3 +169,49 @@ def test_reader_layout_without_names_uses_the_numeric_fingerprint_and_keeps_the_
     lay = sem.extras.get("layout") or {}
     assert lay.get("rotation_blocks") == [[3, 4, "quat"]] and lay.get("source") == "numeric"
     assert tuple(lay.get("gripper_dims") or ()) == (7,) and sem.gripper_dims == (7,)
+
+
+# ---- F8 (2026-10-14 HIW-500):预检判不出整列空间,列名能分块就按块算 ------------------------------
+
+HIW_NAMES = ["pivot_vx", "pivot_vy", "pivot_vyaw", "pivot_roll", "pivot_pitch", "pivot_yaw", "pivot_height",
+             "left_ee_x", "left_ee_y", "left_ee_z", "left_ee_roll", "left_ee_pitch", "left_ee_yaw",
+             "right_ee_x", "right_ee_y", "right_ee_z", "right_ee_roll", "right_ee_pitch", "right_ee_yaw",
+             "left_trigger", "left_squeeze", "right_trigger", "right_squeeze"]
+
+
+def _hiw_like(t: int = 240, seed: int = 0):
+    rng = np.random.default_rng(seed); tt = np.linspace(0, 4 * np.pi, t)
+    a = np.zeros((t, 23))
+    a[:, 0:3] = np.where(rng.random((t, 3)) < 0.08, rng.normal(0, 0.3, (t, 3)), 0.0)       # joystick velocities
+    a[:, 3:7] = 0.1 * np.sin(tt[:, None] + np.arange(4))                                   # torso rpy + height
+    for base in (7, 13):
+        a[:, base:base + 3] = 0.2 * np.sin(tt[:, None] + np.arange(3) + base)              # ee xyz
+        a[:, base + 3:base + 6] = 0.3 * np.sin(0.5 * tt[:, None] + np.arange(3))           # ee rpy
+    a[:, 19:23] = np.where(np.arange(t)[:, None] < t // 2, [10.0, 1.0, 10.0, 1.0], [0.0, 0.0, 0.0, 0.0])
+    return a
+
+
+def test_names_layout_classifies_velocities_pose_blocks_and_is_informative():
+    lay = detect_ee_layout(HIW_NAMES, 23)
+    assert lay["velocity_dims"] == (0, 1, 2) and lay["informative"] is True
+    assert lay["rotation_blocks"] == [(3, 3, "rpy"), (10, 3, "rpy"), (16, 3, "rpy")]
+    assert lay["translation_dims"] == (7, 8, 9, 13, 14, 15) and lay["gripper_dims"] == (19, 20, 21, 22)
+
+
+def test_reader_keeps_a_names_only_layout_when_the_preflight_has_no_verdict():
+    from curation.ingest.lerobot_reader import resolve_dataset_semantics
+    a = _hiw_like(); s = np.cumsum(np.random.default_rng(1).normal(size=(len(a), 29)) * 0.01, axis=0)  # 29 joints
+    info = {"robot_type": "unitree_g1", "fps": 30,
+            "features": {"action": {"shape": [23], "names": HIW_NAMES}, "observation.state": {"shape": [29]}}}
+    sem = resolve_dataset_semantics(info, [{"action": a, "proprio_state": s, "fps": 30.0}] * 2, "hiw_like")
+    assert sem.action_space == "unknown" and sem.source == "preflight_unknown"
+    lay = sem.extras["layout"]
+    assert lay["names_only"] is True and lay["informative"] is True and lay["velocity_dims"] == [0, 1, 2]
+
+
+def test_no_names_and_no_verdict_still_has_no_layout():
+    from curation.ingest.lerobot_reader import resolve_dataset_semantics
+    a = _hiw_like(); s = np.cumsum(np.random.default_rng(1).normal(size=(len(a), 29)) * 0.01, axis=0)
+    info = {"robot_type": "unitree_g1", "fps": 30, "features": {"action": {"shape": [23]}, "observation.state": {"shape": [29]}}}
+    sem = resolve_dataset_semantics(info, [{"action": a, "proprio_state": s, "fps": 30.0}] * 2, "hiw_like")
+    assert sem.action_space == "unknown" and not (sem.extras or {}).get("layout")

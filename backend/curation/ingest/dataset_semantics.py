@@ -54,7 +54,11 @@ _ROT_TOKENS = ("rot6d", "rot_6d", "6d", "quat", "qx", "qy", "qz", "qw", "roll", 
                "rx", "ry", "rz", "rotvec", "axis_angle", "axisangle", "rot", "orient", "euler",
                "wx", "wy", "wz")
 _POS_TOKENS = ("pos_x", "pos_y", "pos_z", "x", "y", "z", "pos", "position", "trans", "tx", "ty", "tz")
-_GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw")
+_GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw",
+                "trigger", "squeeze")   # 手柄扳机 / 握力 = 手部指令(2026-10-14 HIW-500 left_trigger / left_squeeze)
+#: 速度型指令列(2026-10-14 HIW-500:pivot_vx / pivot_vy / pivot_vyaw 是底盘速度,91–94% 的帧步长为零、
+#: 偶尔一跳的摇杆信号,不是轨迹):平滑度与尖刺不算它们
+_VEL_TOKENS = ("vx", "vy", "vz", "vyaw", "vroll", "vpitch", "vel", "velocity", "speed", "omega")
 
 
 def _name_kind(name: str) -> str:
@@ -63,6 +67,8 @@ def _name_kind(name: str) -> str:
     toks = [t for t in str(name).lower().replace(".", "_").replace(" ", "_").split("_") if t]
     if any(t in _GRIP_TOKENS for t in toks):
         return "grip"
+    if any(t in _VEL_TOKENS for t in toks):
+        return "vel"
     if any(t in _ROT_TOKENS for t in toks) or any(t.startswith("rot6d") for t in toks):
         return "rot"
     if any(t in _POS_TOKENS for t in toks):
@@ -144,10 +150,13 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
             i = j + 1
         grip = tuple(i for i, k in enumerate(kinds) if k == "grip")
         trans = tuple(i for i, k in enumerate(kinds) if k == "pos")
+        vel = tuple(i for i, k in enumerate(kinds) if k == "vel")
         return {"angle_dims": tuple(rot_idx), "rotation_blocks": blocks,
                 "euler_triplet": bool(blocks) and all(b[2] == "rpy" for b in blocks),
-                "gripper_dims": grip, "translation_dims": trans, "source": "names",
-                "gripper_closed": gripper_closed_from_names(names, grip)}
+                "gripper_dims": grip, "translation_dims": trans, "velocity_dims": vel, "source": "names",
+                "gripper_closed": gripper_closed_from_names(names, grip),
+                # 名字认出了至少一个位姿块:预检对整列空间没把握时,布局本身就够运动质量按块算(F8)
+                "informative": bool(blocks or trans)}
     if dim in (6, 7):                                   # 经典 xyz+rpy(+夹爪):老规则原样
         return {"angle_dims": (3, 4, 5), "rotation_blocks": [(3, 3, "rpy")],
                 "euler_triplet": True, "gripper_dims": (6,) if dim == 7 else (),
@@ -206,8 +215,10 @@ def layout_for_extras(layout: dict) -> dict:
             "euler_triplet": bool(layout.get("euler_triplet")),
             "gripper_dims": list(layout.get("gripper_dims") or ()),
             "translation_dims": list(layout.get("translation_dims") or ()),
+            "velocity_dims": list(layout.get("velocity_dims") or ()),
             "source": str(layout.get("source") or ""),
-            "gripper_closed": str(layout.get("gripper_closed") or "high")}
+            "gripper_closed": str(layout.get("gripper_closed") or "high"),
+            "informative": bool(layout.get("informative"))}
 
 
 def _infer_control_mode(action: np.ndarray) -> str:

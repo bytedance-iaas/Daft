@@ -467,13 +467,26 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
     elif pf.get("status") in ("ambiguous", "none"):
         sem.action_space = sem.proprio_space = sem.control_mode = "unknown"
         sem.source = "preflight_unknown"
+        # F8 (2026-10-14 HIW-500):整列空间判不出(底盘速度 + 双臂位姿 + 手柄的混合布局,state 又是
+        # 关节角),但列名把每块都写清了 → 布局照样随行,运动质量按块算;认不出名字的数据集不受影响
+        from .dataset_semantics import detect_ee_layout, layout_for_extras
+        a0 = np.asarray(sample_rows[0]["action"])
+        have = (sem.extras or {}).get("layout")
+        if isinstance(have, dict) and have.get("source") == "names" and have.get("informative"):
+            sem.extras = dict(sem.extras or {}, layout=dict(have, names_only=True))   # 推断阶段已按名字分好块
+        elif a0.ndim == 2:
+            lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+            if lay["source"] == "names" and lay.get("informative"):
+                if not sem.gripper_dims and lay["gripper_dims"]:
+                    sem.gripper_dims = tuple(lay["gripper_dims"])
+                sem.extras = dict(sem.extras or {}, layout=dict(layout_for_extras(lay), names_only=True))
     pf.pop("gripper_dims", None)
     extras["semantics_preflight"] = pf
     if sem.profile_name:
         extras["profile_name"] = sem.profile_name
     # 布局是上面刚写进 sem.extras 的,这里合并而不是覆盖(2026-10-14:覆盖把 layout 丢了,
     # 运动质量从来没收到过预检认出的布局与夹爪列)
-    sem.extras = dict(sem.extras or {}, **extras)
+    sem.extras = dict(sem.extras or {}, **{k: v for k, v in extras.items() if k != "layout"})  # 布局以本函数写的为准
     return sem
 
 

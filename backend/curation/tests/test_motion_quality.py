@@ -306,3 +306,28 @@ def test_jitter_still_separates_from_clean_at_every_rate():
         clean = motion_quality(_same_motion_at(fps), None, fps, control_mode="absolute").detail["smoothness"]
         noisy = motion_quality(_same_motion_at(fps, jitter=0.01), None, fps, control_mode="absolute").detail["smoothness"]
         assert clean - noisy > 0.25, (fps, clean, noisy)
+
+
+# ---- F8 (2026-10-14):列名分块优先于预检的整列假设,只在预检没把握时启用 ------------------------
+
+def test_names_layout_lets_motion_quality_run_on_unknown_semantics_without_velocity_columns():
+    from curation.pipeline.episode_checks import make_motion_check
+    from curation.tests.test_ee_layout_rot6d import HIW_NAMES, _hiw_like
+    from curation.ingest.dataset_semantics import detect_ee_layout, layout_for_extras
+
+    class _Reg:
+        def get(self, _id):
+            raise KeyError(_id)
+    check = make_motion_check({"checks": {"motion_quality": {"params": {}}}}, _Reg())
+    a = _hiw_like(); s = np.cumsum(np.random.default_rng(1).normal(size=(len(a), 29)) * 0.01, axis=0)
+    extras = json.dumps({"layout": dict(layout_for_extras(detect_ee_layout(HIW_NAMES, 23)), names_only=True)})
+    out = check(a, s, 30.0, "unknown", "unknown", "unknown", "unitree_g1", "auto", extras)
+    d = json.loads(out["detail"]) if isinstance(out.get("detail"), str) else out["detail"]
+    assert d.get("semantics_undetermined") is None and d["smoothness"] > 0.9
+    assert d["velocity_cols"] == [0, 1, 2] and not ({"0", "1", "2"} & set(d["smoothness_cols"]))
+    assert d["gripper_jitter"] is not None and not ({"19", "20", "21", "22"} & set(d["smoothness_cols"]))  # hand controls are grippers
+    assert d["actuator_saturation"] is None                      # 23 commands vs 29 joints: no same-space comparison
+    # the same episode without a names layout still abstains (F1 unchanged)
+    out2 = check(a, s, 30.0, "unknown", "unknown", "unknown", "unitree_g1", "auto", "{}")
+    d2 = json.loads(out2["detail"]) if isinstance(out2.get("detail"), str) else out2["detail"]
+    assert d2["semantics_undetermined"] is True
