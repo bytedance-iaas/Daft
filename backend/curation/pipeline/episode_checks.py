@@ -314,8 +314,16 @@ def sync_speed_groups(n_cols: int, proprio_space, layout: dict | None, profile_g
         drop |= {int(c) for c in (lay.get("nonjoint_dims") or ())}   # 名为关节、实为开合量的列(2026-10-15 G1)
         base, name = [j for j in range(n_cols) if j not in drop] or list(range(n_cols)), "arm"
     groups: dict = {}
+    nonjoint = {int(c) for c in (lay.get("nonjoint_dims") or ())}
     for side, cols in (lay.get("limbs") or []):
         got = [int(c) for c in cols if int(c) in base]
+        if got and len([c for c in cols if int(c) in nonjoint]) >= len(got):
+            # A limb whose columns are mostly not joint readings (G1's right arm: six of seven) has no usable
+            # record of its motion; the one joint left is not the arm. Reading it as a limb put a shoulder-pitch
+            # curve against the picture (2026-10-15 bench: ep18 flagged inconsistent on it), so the limb is left
+            # out entirely - the dataset-level columns_not_joints finding says why.
+            base = [c for c in base if c not in got]
+            continue
         if got:
             groups[str(side) or name] = got
     placed = {c for g in groups.values() for c in g}

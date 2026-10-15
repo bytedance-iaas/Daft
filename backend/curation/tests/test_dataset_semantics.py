@@ -282,7 +282,8 @@ def test_reader_marks_nonjoint_columns_in_the_layout_and_the_shell_reads_them():
     assert lay["nonjoint_dims"] == [14, 15, 16, 17, 18, 19]
     assert lay["nonjoint_names"] == ["kRightShoulderRoll", "kRightShoulderYaw", "kRightElbow", "kRightWristRoll",
                                      "kRightWristPitch", "kRightWristYaw"]
-    assert sync_speed_groups(26, "joint", lay, ()) == {"left": list(range(0, 7)), "right": [13]}
+    # the right arm has one joint left of seven: not a limb proxy at all (its shoulder pitch alone is not the arm)
+    assert sync_speed_groups(26, "joint", lay, ()) == {"left": list(range(0, 7))}
     res = motion_quality(rows[0]["action"].astype(float), rows[0]["proprio_state"].astype(float), 30.0,
                          nonjoint_dims=tuple(lay["nonjoint_dims"]))
     assert res.detail["nonjoint_cols"] == [14, 15, 16, 17, 18, 19]
