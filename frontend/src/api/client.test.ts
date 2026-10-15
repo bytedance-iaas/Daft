@@ -39,7 +39,7 @@ describe('unwrap and the one Error body (doc 03 §1)', () => {
   it('returns data for 2xx', async () => {
     const reg = await unwrap(api().GET('/modules'));
     expect(reg.modules.length).toBe(10);                                                        // + data_integrity (design doc 14), camera_defects (registry 1.14), - the skill profile
-    expect(reg.registry_version).toBe('8.7');                                                   // 8.0 taxonomy 2.0 final; 8.1 the sync check asks a person; 8.2 occlusion (IMG-8) and the camera identity (MV-2); 8.3 the resolution against what the dataset declares (FILE-7); 8.4 declared but missing data (D95-D97); 8.5 kinematic limits read the state (ACT-4), motion quality per column, sync reads the limbs and their estimators' stability
+    expect(reg.registry_version).toBe('8.6');                                                   // 8.0 taxonomy 2.0 final; 8.1 the sync check asks a person; 8.2 occlusion (IMG-8) and the camera identity (MV-2); 8.3 the resolution against what the dataset declares (FILE-7); 8.4 declared but missing data (D95-D97); 8.5 kinematic limits read the state (ACT-4), motion quality per column, sync reads the limbs and their estimators' stability
     expect(reg.modules.filter((m) => m.codes.some((c) => c.level === 'blocking')).map((m) => m.id)).not.toContain('eef_video_consistency'); // D81: EEF gives opinions, rejects nothing
     expect(reg.modules.find((m) => m.id === 'camera_defects')?.rides_on).toBe('task_success');
   });
