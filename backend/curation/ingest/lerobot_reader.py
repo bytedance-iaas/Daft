@@ -497,9 +497,17 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
         names_ = _action_names_list(info)
         have = (sem.extras or {}).get("layout")
         lay_ = have if isinstance(have, dict) else {}
-        arrays = [np.concatenate([np.asarray(r[k]) for r in sample_rows if np.asarray(r.get(k)).ndim == 2])
-                  for k in ("action", "proprio_state") if any(np.asarray(r.get(k)).ndim == 2 for r in sample_rows)]
-        bad = nonjoint_columns(arrays, names_, lay_) if names_ else []
+        arrays = []
+        for k in ("action", "proprio_state"):
+            mats = [np.asarray(r.get(k)) for r in sample_rows]
+            mats = [m for m in mats if m.ndim == 2 and m.shape[0] > 0]
+            if mats:   # 样本条目列数不齐(声明了的列缺失、坏条目)时只看与第一条同宽的
+                width = mats[0].shape[1]
+                arrays.append(np.concatenate([m for m in mats if m.shape[1] == width]))
+        try:
+            bad = nonjoint_columns(arrays, names_, lay_) if names_ else []
+        except Exception:  # noqa: BLE001  这道核查不能拖垮摄入
+            bad = []
         if bad:
             base = lay_ or {"source": "numeric"}
             sem.extras = dict(sem.extras or {}, layout=layout_for_extras(
