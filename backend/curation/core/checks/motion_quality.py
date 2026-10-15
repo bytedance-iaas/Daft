@@ -408,6 +408,8 @@ def motion_quality(
         elif euler_triplet and angle_dims:
             adset = set(angle_dims)
             stuck_cols = [c for c in arm_cols if c not in adset] or arm_cols
+        if nonjoint:   # 名为关节、实为开合量的列(G1 右臂):读数钉在 1.0 而指令在变,不是执行器卡死
+            stuck_cols = [c for c in stuck_cols if c not in nonjoint] or stuck_cols
         arm_s = a[:, stuck_cols]
         p_arm = np.asarray(proprio, dtype=np.float64)[:, stuck_cols]
         ach_step = np.abs(np.diff(p_arm, axis=0))

@@ -288,3 +288,8 @@ def test_reader_marks_nonjoint_columns_in_the_layout_and_the_shell_reads_them():
                          nonjoint_dims=tuple(lay["nonjoint_dims"]))
     assert res.detail["nonjoint_cols"] == [14, 15, 16, 17, 18, 19]
     assert not set(res.detail["smoothness_cols"]) & {"14", "15", "16", "17", "18", "19"}
+    # stuck: a command that varies over a reading parked at 1.0 is what those columns look like all day; not a stuck joint
+    pr = rows[0]["proprio_state"].astype(float).copy(); pr[:, 14:20] = 1.0
+    res2 = motion_quality(rows[0]["action"].astype(float), pr, 30.0, nonjoint_dims=tuple(lay["nonjoint_dims"]),
+                          control_mode="absolute", stuck_strategy="cmd_delta_vs_pos", same_space=True)
+    assert not {int(s["joint"]) for s in (res2.detail.get("stuck_joints") or [])} & {14, 15, 16, 17, 18, 19}
