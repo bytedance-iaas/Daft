@@ -182,6 +182,21 @@ INTEG_CASES = [
     ({"level": "reject", "code": "row_invalid", "tier": "L2", "message": "数据不合规：fps 非法: 0"}, "metadata_invalid"),
     ({"level": "reject", "code": "file_truncated", "tier": "L2", "message": "录制中断，且读不出数据（RecordLengthLimitExceeded）",
       "args": {"error": "RecordLengthLimitExceeded"}}, "cut_unreadable"),
+    # design doc 29 (D95-D97): the module says these itself, with the registry's codes
+    ({"level": "reject", "code": "data_missing", "tier": "L1", "message": "数据文件不存在：data/chunk-000/episode_000005.parquet",
+      "file": "data/chunk-000/episode_000005.parquet"}, "data_missing"),
+    ({"level": "reject", "code": "video_missing", "tier": "L1", "message": "wrist 相机的视频文件不存在：videos/w/ep0.mp4",
+      "file": "videos/w/ep0.mp4", "camera": "wrist"}, "video_missing"),
+    ({"level": "reject", "code": "column_missing", "tier": "L1", "message": "ep2.parquet 里没有 observation.state 列（info.json 声明了）",
+      "file": "ep2.parquet", "args": {"column": "observation.state"}}, "column_missing"),
+    ({"level": "reject", "code": "action_missing", "tier": "L1", "message": "缺动作 topic /action（这条 mcap 里没有它）",
+      "args": {"topic": "/action"}}, "action_missing"),
+    ({"level": "reject", "code": "length_mismatch", "tier": "L1", "message": "数据有 69 帧，episode 表记 79 帧",
+      "args": {"rows": 69, "length": 79}}, "length_mismatch"),
+    ({"level": "reject", "code": "values_invalid", "tier": "L1", "message": "observation.state 每帧 6 维，info.json 声明 7 维",
+      "args": {"column": "observation.state", "width": 6, "declared": 7}}, "values_invalid"),
+    ({"level": "reject", "code": "timestamps_invalid", "tier": "L1", "message": "timestamp 有 3 帧为空（帧 4、9、17）"},
+     "timestamps_invalid"),
 ]
 
 # (module, passed, score, details) -> expected codes; unassessable items

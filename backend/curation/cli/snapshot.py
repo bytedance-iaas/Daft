@@ -6,7 +6,9 @@ parquet of the dataset's first 100 episodes, from which v1 resolves the dataset
 semantics whatever the selection - with its size and ETag (TOS) or
 modification time (local). A selected LeRobot v2 episode whose parquet or any
 camera's video is not in the listing is left out, as v1 does (D40): it goes to
-``skipped_episodes`` with the keys it lacks, and no command reads it. The document is written to
+``skipped_episodes`` with the keys it lacks, and no command reads it - unless the task
+selected data integrity, which judges it on those keys (D97, design doc 29 §3; the
+manifest says the same either way: it does not know the modules). The document is written to
 ``--out`` atomically and printed with ``--json``
 (``docs/contracts/cli/source-manifest.schema.json``). Later commands given it
 as ``--source-manifest`` refuse to read anything that changed (exit 6, D27).
@@ -106,7 +108,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if skipped:
         ctx.log("warn", f"{len(skipped)} selected episodes miss their parquet or a camera's "
                         f"video ({episode_sel.preview([s['episode_index'] for s in skipped])})"
-                        f"; they are left out: not checked, in no list, listed in the report")
+                        f"; data integrity rejects them, without it they are left out: not checked, "
+                        f"in no list, listed in the report")
     if incomplete:
         ctx.log("warn", f"{len(incomplete)} selected episodes miss data or video files "
                         f"({episode_sel.preview(incomplete)}); LeRobot v3 episodes are not "

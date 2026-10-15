@@ -11,8 +11,10 @@ timestamps, the video pointers, the semantics columns - is what v1's UDFs saw
 
 Differences on purpose, all about isolating one bad episode (D24): a failed
 validation or an unreadable parquet is an error of that episode, not an
-exception that ends the whole run. An episode whose source files are missing
-is left out, as v1 does (D40): :class:`EpisodeMissingSource`.
+exception that ends the whole run; one bad episode of a LeRobot v3 data file no
+longer makes the file's other episodes unreadable (:func:`v3_group_rows`, design
+doc 29 §1). An episode whose source files are missing is left out, as v1 does
+(D40): :class:`EpisodeMissingSource` - unless data integrity judges it (D97).
 
 mcap and lance (D44, v1's PR #155) are read by v1's readers for those formats,
 chosen by v1's own sniffing (``run.py``: lance, then mcap, else LeRobot) and with
@@ -98,6 +100,61 @@ class EpisodeMissingSource(EpisodeReadError):
     def __init__(self, missing: list[str]):
         super().__init__(f"missing source file(s): {missing[:3]}")
         self.missing = list(missing)
+
+
+class DataProblem(EpisodeReadError):
+    """What v1's reader stopped at, found in the episode's data against the dataset's declaration (design doc 29 §1,
+    D95): a declared column missing, a frame without a value or of another width, a length that is not the episode
+    table's, an mcap topic the mapping requires. Data integrity reports ``problems`` (``code``, ``message``, ``args``)
+    as its findings; any other stage records the read error as before."""
+
+    def __init__(self, problems: list[dict]):
+        super().__init__("; ".join(str(p.get("message")) for p in problems)[:300])
+        self.problems = list(problems)
+
+
+def _read_error(e: BaseException) -> EpisodeReadError:
+    err = EpisodeReadError(f"{type(e).__name__}: {e}")
+    err.__cause__ = e
+    return err
+
+
+def v3_group_rows(input_dir: str, info: dict, grp) -> dict[int, dict | EpisodeReadError]:
+    """v1's rows of the episodes of one LeRobot v3 data file, one episode's bad data its own (design doc 29 §1).
+
+    ``_rows_v3_group`` reads the file and builds every episode's row in one pass, so one episode it cannot read - a
+    declared column missing, a frame without a value, a slice of the wrong length - fails them all. When it does, each
+    episode's slice is looked at against the declaration; the ones that show a problem are left out of a second pass
+    (a :class:`DataProblem` each) and v1 builds the rows of the rest: the very values the first pass would have given
+    them. A failure no slice explains stays every episode's error. Returns episode -> row, or the error to raise."""
+    def by_index(rows: list[dict]) -> dict:
+        return {int(str(r["episode_id"])[2:]): r for r in rows}
+
+    try:
+        return by_index(lr._rows_v3_group(input_dir, info, grp))
+    except Exception as e:  # noqa: BLE001 - which episode it was is looked for below
+        first = e
+    from ..extensions.integrity.declared import v3_episode_problems
+
+    chunk, file = int(grp["data/chunk_index"].iloc[0]), int(grp["data/file_index"].iloc[0])
+    try:
+        df = lr.dsfs.read_parquet(lr.dsfs.join(input_dir, info["data_path"].format(chunk_index=chunk,
+                                                                                   file_index=file)))
+    except Exception:  # noqa: BLE001 - the file itself: every episode's error
+        return {int(i): _read_error(first) for i in grp["episode_index"]}
+    bad: dict[int, dict | EpisodeReadError] = {}
+    for _, ep in grp.iterrows():
+        found = v3_episode_problems(df, ep, info)
+        if found:
+            bad[int(ep["episode_index"])] = DataProblem(found)
+    if not bad:
+        return {int(i): _read_error(first) for i in grp["episode_index"]}
+    rest = grp[~grp["episode_index"].isin(list(bad))]
+    try:
+        rows: dict[int, dict | EpisodeReadError] = by_index(lr._rows_v3_group(input_dir, info, rest)) if len(rest) else {}
+    except Exception as e:  # noqa: BLE001 - something else as well
+        rows = {int(i): _read_error(e) for i in rest["episode_index"]}
+    return {**rows, **bad}
 
 
 def _tolerant_source():
@@ -209,16 +266,18 @@ class RowSource:
             if rows is not None:
                 self._groups.move_to_end(key)
         if rows is None:
-            rows = self._finish(lr._rows_v3_group(self.input_dir, self.info,
-                                                  self._group_meta[key]))
+            rows = v3_group_rows(self.input_dir, self.info, self._group_meta[key])
+            self._finish([r for r in rows.values() if isinstance(r, dict)])
             with self._lock:
                 self._groups[key] = rows
                 while len(self._groups) > 2:           # a couple of data files in memory
                     self._groups.popitem(last=False)
-        for r in rows:
-            if r["episode_id"] == f"ep{idx:06d}":
-                return r
-        raise EpisodeReadError(f"episode {idx} missing from its data file")
+        got = rows.get(idx)
+        if got is None:
+            raise EpisodeReadError(f"episode {idx} missing from its data file")
+        if isinstance(got, EpisodeReadError):
+            raise got
+        return got
 
 
 #: the dataset-level values v1's readers attach to every row of one read

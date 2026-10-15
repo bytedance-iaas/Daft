@@ -7,7 +7,11 @@ source builds each episode's row with the same v1 readers and helpers, without t
 semantics, so one broken episode stays that episode's finding.
 
 The row keeps its reader's exception as ``__cause__`` of :class:`EpisodeReadError`: the
-judge tells v1's validation errors (a finding, D51) from everything else.
+judge tells v1's validation errors (a finding, D51) from everything else. When v1's reader
+stops before its validation, the episode's data is looked at against the dataset's
+declaration (:mod:`declared`, design doc 29 §1, D95): what it finds comes as a
+:class:`DataProblem` - findings, not an execution error. A LeRobot v3 data file is read the
+way the other stages read it (:func:`v3_group_rows`): one bad episode is that episode's.
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ import os
 import threading
 from collections import OrderedDict
 
-from ...pipeline.rows import EpisodeMissingSource, EpisodeReadError, _readers
+from ...pipeline.rows import DataProblem, EpisodeMissingSource, EpisodeReadError, _readers, v3_group_rows
 
 
 class IntegrityRows:
@@ -72,32 +76,59 @@ class IntegrityRows:
                     relative_key(self.input_dir, p)
                     for p in [data_path] + [v["path"] for v in videos.values()]
                     if not lr.dsfs.exists(p)])
-            return lr._row_v2(self.input_dir, self.info, ep)
+            try:
+                return lr._row_v2(self.input_dir, self.info, ep)
+            except Exception as e:  # noqa: BLE001 - what in the data stopped it, if anything
+                found = self._v2_problems(data_path, ep)
+                if found:
+                    raise DataProblem(found) from e
+                raise
         key = self._group_of.get(idx)
         if key is None:
             raise EpisodeReadError(f"episode {idx} is not in the episode table")
         with self._lock:
             rows = self._groups.get(key)
             if rows is None:
-                rows = lr._rows_v3_group(self.input_dir, self.info, self._group_meta[key])
+                rows = v3_group_rows(self.input_dir, self.info, self._group_meta[key])
                 self._groups[key] = rows
                 while len(self._groups) > 2:            # a couple of data files in memory
                     self._groups.popitem(last=False)
             else:
                 self._groups.move_to_end(key)
-        for r in rows:
-            if r["episode_id"] == f"ep{idx:06d}":
-                return r
-        raise EpisodeReadError(f"episode {idx} missing from its data file")
+        got = rows.get(idx)
+        if got is None:
+            raise EpisodeReadError(f"episode {idx} missing from its data file")
+        if isinstance(got, EpisodeReadError):
+            raise got
+        return got
+
+    def _v2_problems(self, data_path: str, ep: dict) -> list[dict]:
+        """The parquet v1's ``_row_v2`` could not turn into a row, against the declaration (D95)."""
+        from ...ingest import lerobot_reader as lr
+        from .declared import frame_problems
+
+        try:
+            df = lr.dsfs.read_parquet(data_path)
+        except Exception:  # noqa: BLE001 - the file itself: L1 says what (or the storage failed)
+            return []
+        return frame_problems(df, self.info, int(ep["length"]))
 
     def _container(self, idx: int) -> dict:
         self.src.fetch([idx])
         kw = dict(episode_indices={idx}, embodiment_id=None, validate=False)
-        if self._serial is None:
-            got = self._read(self.input_dir, **kw)
-        else:
-            with self._serial:
+        try:
+            if self._serial is None:
                 got = self._read(self.input_dir, **kw)
+            else:
+                with self._serial:
+                    got = self._read(self.input_dir, **kw)
+        except Exception as e:  # noqa: BLE001 - an mcap without the topics its mapping requires (D95)
+            from .declared import mcap_problems
+
+            found = mcap_problems(e) if self.fmt == "mcap" else []
+            if found:
+                raise DataProblem(found) from e
+            raise
         if not got:
             raise EpisodeReadError(f"episode {idx} is not in the dataset")
         return got[0]

@@ -1,5 +1,5 @@
 {
- "registry_version": "8.0",
+ "registry_version": "8.1",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -795,6 +795,15 @@
      "appealable": false
     },
     {
+     "code": "data_missing",
+     "item": "FILE-1",
+     "name_zh": "数据文件不存在",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
      "code": "file_truncated",
      "item": "FILE-2",
      "name_zh": "文件被截断",
@@ -934,9 +943,18 @@
      "appealable": false
     },
     {
+     "code": "column_missing",
+     "item": "STRM-1",
+     "name_zh": "缺少声明了的数据列",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
      "code": "stream_missing",
      "item": "STRM-1",
-     "name_zh": "缺一路其他条都有的流",
+     "name_zh": "缺一路应有的流",
      "severity": "medium",
      "level": "review",
      "scope_kind": "episode",

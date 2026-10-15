@@ -94,6 +94,10 @@ that could never help - and so cover FILE-4 as far as the frames they read; two 
 8.0 binds taxonomy 2.0 as frozen on 2026-10-14 (the sample set v2's 67 items): data integrity's ``table_inconsistent``
 and ``table_overlap`` name FILE-9 (the index and reference item, FILE-10 before), the control for rare but legal
 encodings is gone and privacy is IMG-15, judged per episode. From now on an item id keeps its meaning.
+8.1 (design doc 29, D95-D97): data the dataset declares but an episode lacks or cannot be read is a finding of data
+integrity, not an execution error: ``data_missing`` (FILE-1, a data parquet that is not there - with data integrity
+selected such an episode is judged, not left out) and ``column_missing`` (STRM-1, a column info.json declares that the
+parquet does not have), both blocking.
 """
 from __future__ import annotations
 
@@ -101,7 +105,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.0"
+REGISTRY_VERSION = "8.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -520,6 +524,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         # design doc 14 §4.2's codes; v1's row_invalid is split by its cause (design doc 17 §2.2)
         codes=(_blocking("file_empty", "FILE-1", "文件为空或过小"),
                _blocking("video_missing", "FILE-1", "视频文件不存在"),
+               _blocking("data_missing", "FILE-1", "数据文件不存在"),
                _blocking("file_truncated", "FILE-2", "文件被截断"),
                _blocking("zero_filled", "FILE-2", "文件里有成块的零填充"),
                _blocking("structure_invalid", "FILE-3", "文件结构损坏"),
@@ -535,7 +540,8 @@ MODULES: tuple[ModuleSpec, ...] = (
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
                _blocking("timestamps_invalid", "STRM-4", "时间戳不合规"),
                _blocking("action_missing", "STRM-1", "缺少动作数据"),
-               _review("stream_missing", "STRM-1", "缺一路其他条都有的流", "integrity_check"),
+               _blocking("column_missing", "STRM-1", "缺少声明了的数据列"),
+               _review("stream_missing", "STRM-1", "缺一路应有的流", "integrity_check"),
                _review("rate_outlier", "STRM-3", "某路流的频率明显偏低", "integrity_check"),
                _info("orphan_files", None, "不属于任何 episode 的文件", scope_kind="dataset"),
                _info("dark_camera", "STRM-1", "近乎全黑的相机", scope_kind="dataset"),

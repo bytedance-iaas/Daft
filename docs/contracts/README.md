@@ -84,7 +84,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
 - 注册表与分类表（C6）：本机起 Daemon（`.claude/launch.json` 的 `curator-daemon-dev`）后
   `curl -s localhost:8080/curation/api/v1/modules | jq '.registry_version, .taxonomy_version, [.blocks[].stages], (.modules[] | {id, block, stage, covers})'`
-  应得到 `"8.0"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
+  应得到 `"8.1"`、`"2.0"`、两块的段（CPU 块 `integrity`、`numeric`、`frame`、`duplicate`、`vlm_prep`，VLM 块 `vlm`），每个模块的块、段与覆盖；
   不起 Daemon 时对 `docs/contracts/modules.json` 跑同样的 `jq`。`jq '.modules[] | select(.id=="task_success") | .codes'` 列出它的三个细码
   （`failure` 是 blocking 且可复议，`uncertain` 是 review、裁决线 `task_verdict`，`task_text_missing` 是 info）。改了细码或覆盖要重新生成回归样本分类表的平台注记
   （`PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry`）。

@@ -106,6 +106,8 @@ def write_run_json(run, plan: dict) -> None:
                      "region": task.input_region},
            "output": {"uri": task.output_uri, "region": task.output_region},
            "episodes": task.episode_selector, "modules": modules, "params": task.params,
+           # D97 (design doc 29 §3): with data integrity an episode whose source files are missing is judged
+           "missing_sources": "judged" if any(m["id"] == "data_integrity" for m in modules) else "left_out",
            "preflight": {"format": pf.get("format"), "dataset": pf.get("dataset"),
                          "meta_fingerprint": pf.get("meta_fingerprint")},
            "source": task.source_fingerprint, "planned_modules": run.plan_modules(plan),

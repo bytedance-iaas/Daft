@@ -1,6 +1,7 @@
 # 数据完整性（`data_integrity`）
 
-设计：[`docs/design/14-data-integrity.md`](../../../../docs/design/14-data-integrity.md)，决策 D50–D52。
+设计：[`docs/design/14-data-integrity.md`](../../../../docs/design/14-data-integrity.md)，决策 D50–D52；声明了却缺的数据见
+[`docs/design/29-declared-but-missing.md`](../../../../docs/design/29-declared-but-missing.md)（D95–D97）。
 
 CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文件是不是完整、可读。新建任务时默认勾选（「完整」「快速」两个预设都有），可以取消。
 它和别的模块一样只报发现，判决由 `aggregate` 按任务策略定（设计 17）：默认策略下判废的细码是 blocking，可疑的是 review。
@@ -10,9 +11,9 @@ CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文�
 
 | 结论 | 什么时候 | 去向 |
 |---|---|---|
-| 判废 | 文件为空或过小、被截断、有成块的零填充、结构读不出、mcap CRC 不符、逐条结构校验（`validate_episode_row`）不过（NaN/Inf、时间戳不是严格递增……）、开了逐帧解码时解码失败 | reject，**不可复议** |
-| 可疑 | 帧数或行数与 episode 表对不上、mcap 录制中断但读得出、mcap 某 topic 缺失或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 留在 passed；人工裁决「完整性存疑」（`integrity_check`）计入待裁 |
-| 出错 | 存储读失败（超时、5xx、源缓存下载失败） | held，重试补跑（D33） |
+| 判废 | 文件为空或过小、被截断、有成块的零填充、结构读不出、mcap CRC 不符、逐条结构校验（`validate_episode_row`）不过（NaN/Inf、时间戳不是严格递增……）、开了逐帧解码时解码失败；**声明了却缺或读不了的数据**（设计 29）：缺数据 parquet 或某一路视频（`data_missing` / `video_missing`，勾选本模块时不再照 D40 剔除）、info.json 声明的列不在（`action_missing` / `column_missing`）、action / state 有空值、各帧维度不一或与声明的维度不符（`values_invalid`）、parquet 行数与 episode 表不符（`length_mismatch`）、mcap 缺映射要求的动作 topic（`action_missing`）或一路相机都没有（`video_missing`） | reject，**不可复议** |
+| 可疑 | 视频帧数与 episode 表对不上、mcap 录制中断但读得出、mcap 某 topic 缺失（其他条都有，或确认过的映射写明了它）或频率明显偏低、episode 表前后不一致、解码器掩盖了错误 | 留在 passed；人工裁决「完整性存疑」（`integrity_check`）计入待裁 |
+| 出错 | 存储读失败（超时、5xx、源缓存下载失败）；读行失败而按声明诊断不出原因 | held，重试补跑（D33） |
 
 数据集级的发现（多余文件、近乎全黑的相机、episode 表的区间重叠）写在 `checks/data_integrity/dataset.json` 与报告里，不影响任何条目。
 与另一条完全相同的条目不归这里：原来按存储校验和比对整个视频 / mcap 文件的 `duplicate_content` 已删掉，D87 起由重复检测（`duplicate_check`，SET-1，只报告）给出（设计 26）。
@@ -24,7 +25,8 @@ CPU 块的第一段 `integrity`，只有这一个模块：每条 episode 的文�
 | `judge.py` | `IntegrityJudge`：一次调用做一次数据集级检查（文件清单、v3 episode 表、多余文件、v1 的近黑相机先验、mcap 与多数条目比较），再逐条判定 |
 | `files.py` | 单个文件的 L1 结构与 L2 整读（parquet、mp4、mcap）；`Blob` 把存储读失败变成 `ReadFailure` |
 | `mp4.py` | 不解码读 mp4：顶层 box、moov、视频轨样本表 → 每帧的时间、字节位置与大小 |
-| `rows.py` | 逐条读行（v1 的读取函数，不先解析数据集语义），跑 `validate_episode_row` |
+| `rows.py` | 逐条读行（v1 的读取函数，不先解析数据集语义），跑 `validate_episode_row`；v1 读不下去时按声明诊断（`DataProblem`），v3 的数据文件一条坏了不连累同文件的其它条（`pipeline/rows.v3_group_rows`） |
+| `declared.py` | 声明对照（设计 29）：声明的列、空值、各帧维度、与声明的维度、长度；v1 的 mcap 读取器说缺了哪个 topic |
 | `decode.py` | L3 逐帧解码（模块参数 `decode_test`，默认关）；FFmpeg 错误日志按线程捕获 |
 | `findings.py` | 原因码、级别与结论 |
 | `report.py` | 报告小节的统计、report.md 的几行、`integrity_findings` 明细表 |
@@ -110,6 +112,34 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
 
 7. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
 
-样本集：`PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"` 生成 `lerobot_v2/`、`lerobot_v3/`、`mcap/` 三份损坏样本，每份的 `damage.json` 写明每条动了什么、应得什么结论；测试用的就是这几个函数。
+8. 声明了却缺的数据（设计 29，D95–D97）：样本集里另有三份「声明了却缺」的样本，每条一种，`damage.json` 写明了动了什么：
 
-自动化测试：`$PY -m pytest -q tests/cli/test_integrity.py tests/cli/test_integrity_adjudication.py tests/cli/test_preflight_integrity.py`（约半分钟）；Daemon 端到端（完整性段排在 CPU 块最前、实时面板、裁决队列）是 `tests/orchestr/test_pipeline_batches.py::test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`。
+   ```bash
+   PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"
+   $C check --modules data_integrity --input "$D/samples/lerobot_v2_declared" --run-dir "$D/run_decl" --episodes 0-7 --json
+   ```
+
+   应看到 `ok 8, error 0`（没有一条执行出错）、`findings: action_missing 1, column_missing 1, count_mismatch 1, data_missing 1, length_mismatch 1, values_invalid 2, video_missing 1`：
+   0 缺 wrist 视频、5 缺数据 parquet（这两条的其它文件一个不读，`details.files` 为空），1 没有 action 列，2 没有 observation.state 列，
+   4 的 state 有 10 帧为空（「帧 71–80」），6 的 state 每帧 6 维（info.json 声明 7 维），7 的 episode 表多记了 10 帧（另有两路视频帧数不符，转人工）。
+   以前 1、2、4、6、7 是执行出错（待补跑）或直接通过，0、5 被剔除。
+
+   v3 与 mcap：
+
+   ```bash
+   $C check --modules data_integrity --input "$D/samples/lerobot_v3_declared" --run-dir "$D/run_decl3" --episodes 0-5
+   $C check --modules timestamp_check,kinematic_limits,motion_quality --input "$D/samples/lerobot_v3_declared" --run-dir "$D/run_decl3" --episodes 0-5
+   $C check --modules data_integrity --input "$D/samples/mcap_declared" --run-dir "$D/run_declm" --episodes 0-7
+   ```
+
+   v3：`findings: column_missing 1, values_invalid 1, video_missing 2`——1 的 state 有空值判废，0、2 和它共用数据文件，照样通过；数值段三个模块都是
+   `ok 6, error 0; skipped: integrity_rejected 4`（0、2 照常评估：以前一条坏了，同文件的三条全读不了）。mcap：`findings: action_missing 1, stream_missing 1`
+   ——4 缺 `/action` 判废，2 缺 wrist 相机的 topic 转人工。
+
+   缺源文件与源清单（D97）：`snapshot` 照旧把缺视频的条目记进 `skipped_episodes`；带着清单跑完整性，它被判废、计入总数（aggregate 的 `skipped` 是 0）；
+   不跑完整性只跑别的模块，照 D40 剔除（`… 1 left out for missing source files`）。用例：`tests/cli/test_integrity_declared.py`。
+
+样本集：`PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"` 生成 `lerobot_v2/`、`lerobot_v3/`、`mcap/` 三份损坏样本，以及第 8 步的三份
+`*_declared/`，每份的 `damage.json` 写明每条动了什么、应得什么结论；测试用的就是这几个函数。
+
+自动化测试：`$PY -m pytest -q tests/cli/test_integrity.py tests/cli/test_integrity_declared.py tests/cli/test_integrity_adjudication.py tests/cli/test_preflight_integrity.py`（约半分钟）；Daemon 端到端（完整性段排在 CPU 块最前、实时面板、裁决队列）是 `tests/orchestr/test_pipeline_batches.py::test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`。

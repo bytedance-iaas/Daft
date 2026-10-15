@@ -7,7 +7,9 @@ module against). The same functions serve the tests (``test_integrity.py``) and 
     cd backend
     PYTHONPATH=../tools ../.venv/bin/python -m tests.cli.integrity_samples --out /tmp/integrity-samples
 
-writes ``lerobot_v2/``, ``lerobot_v3/`` and ``mcap/`` (each with its ``damage.json``); point
+writes ``lerobot_v2/``, ``lerobot_v3/`` and ``mcap/`` (each with its ``damage.json``), and
+``lerobot_v2_declared/``, ``lerobot_v3_declared/``, ``mcap_declared/``: data the dataset declares but
+an episode lacks or cannot be read (design doc 29); point
 ``curation check --modules data_integrity --input <sample>`` or the console at them.
 """
 from __future__ import annotations
@@ -100,8 +102,42 @@ def reversed_time(df) -> None:
     df["timestamp"] = df["timestamp"].to_numpy()[::-1].copy()
 
 
-def thin_topic(path: str, topic: str) -> None:
-    """Rewrite an mcap episode without every second message of ``topic`` (a camera at half rate)."""
+def drop_topic(path: str, topic: str) -> None:
+    """Rewrite an mcap episode without ``topic`` (a sensor that never recorded)."""
+    thin_topic(path, topic, keep=lambda n: False)
+
+
+def null_rows(column: str, rows) -> callable:
+    """Frames without a value in ``column`` (``rows``: their positions)."""
+    def fn(df) -> None:
+        wanted = set(rows)
+        df[column] = [None if i in wanted else v for i, v in enumerate(df[column])]
+    return fn
+
+
+def narrow(column: str, width: int) -> callable:
+    """Every frame of ``column`` cut to ``width`` values."""
+    def fn(df) -> None:
+        df[column] = [np.asarray(v, dtype=np.float32)[:width] for v in df[column]]
+    return fn
+
+
+def set_length(root: str, ep: int, delta: int) -> None:
+    """The v2 episode table says ``delta`` frames more than the episode has."""
+    path = os.path.join(root, "meta", "episodes.jsonl")
+    with open(path, encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh if line.strip()]
+    for r in rows:
+        if r["episode_index"] == ep:
+            r["length"] += delta
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(r) + "\n" for r in rows)
+
+
+def thin_topic(path: str, topic: str, keep=None) -> None:
+    """Rewrite an mcap episode without every second message of ``topic`` (a camera at half rate); ``keep(n)``
+    says instead whether its ``n``-th message stays."""
+    keep = keep or (lambda n: n % 2 == 1)
     from mcap.reader import make_reader
     from mcap.writer import Writer
 
@@ -121,7 +157,7 @@ def thin_topic(path: str, topic: str) -> None:
                                                           schemas[schema.id], channel.metadata)
             if channel.topic == topic:
                 seen += 1
-                if seen % 2 == 0:
+                if not keep(seen):
                     continue
             w.add_message(channels[channel.id], message.log_time, message.data, message.publish_time,
                           message.sequence)
@@ -195,6 +231,60 @@ def damage_mcap(root: str) -> dict[int, str]:
     return damage
 
 
+def declare_lerobot_v2(root: str) -> dict[int, str]:
+    """Data the 8-episode v2 fixture declares but an episode lacks or cannot be read (design doc 29; 3 stays as it is)."""
+    os.remove(video(root, "wrist", 0))
+    rewrite_parquet(parquet(root, 1), lambda df: df.drop(columns=["action"], inplace=True))
+    rewrite_parquet(parquet(root, 2), lambda df: df.drop(columns=["observation.state"], inplace=True))
+    rewrite_parquet(parquet(root, 4), null_rows("observation.state", range(71, 81)))
+    os.remove(parquet(root, 5))
+    rewrite_parquet(parquet(root, 6), narrow("observation.state", 6))
+    set_length(root, 7, 10)
+    damage = {0: "reject video_missing (wrist video removed; nothing else of it is read)",
+              1: "reject action_missing (no action column)",
+              2: "reject column_missing (no observation.state column, info.json declares it)",
+              3: "pass",
+              4: "reject values_invalid (observation.state empty in frames 71-80)",
+              5: "reject data_missing (data parquet removed)",
+              6: "reject values_invalid (observation.state 6 wide, info.json says 7)",
+              7: "reject length_mismatch (the episode table says 10 frames more), suspect count_mismatch (videos)"}
+    _write_truth(root, damage)
+    return damage
+
+
+def declare_lerobot_v3(root: str) -> dict[int, str]:
+    """The v3 fixture: episode 1's state empty in a few frames (file-000 holds 0-2), file-001 (3-5) without the
+    state column, the wrist camera's file-001.mp4 (4-5) gone."""
+    data = os.path.join(root, "data", "chunk-000")
+    rewrite_parquet(os.path.join(data, "file-000.parquet"), _v3_null_state(1))
+    rewrite_parquet(os.path.join(data, "file-001.parquet"),
+                    lambda df: df.drop(columns=["observation.state"], inplace=True))
+    os.remove(os.path.join(root, "videos", "observation.images.wrist", "chunk-000", "file-001.mp4"))
+    damage = {0: "pass", 1: "reject values_invalid (state empty in 6 frames; 0 and 2 share its file and pass)",
+              2: "pass", 3: "reject column_missing (its data file has no observation.state)",
+              4: "reject video_missing (the wrist camera's file-001.mp4 is gone)",
+              5: "reject video_missing (the wrist camera's file-001.mp4 is gone)"}
+    _write_truth(root, damage)
+    return damage
+
+
+def _v3_null_state(ep: int):
+    def fn(df) -> None:
+        mine = [i for i, e in enumerate(df["episode_index"]) if int(e) == ep]
+        null_rows("observation.state", mine[3:9])(df)
+    return fn
+
+
+def declare_mcap(root: str) -> dict[int, str]:
+    """The 8-episode mcap fixture: episode 4 without its action topic, 2 without the wrist camera."""
+    drop_topic(os.path.join(root, "episode_4.mcap"), "/action")
+    drop_topic(os.path.join(root, "episode_2.mcap"), "/observation.images.wrist")
+    damage = {0: "pass", 1: "pass", 2: "suspect stream_missing (the wrist camera's topic: the others have it)",
+              3: "pass", 4: "reject action_missing (no /action topic)", 5: "pass", 6: "pass", 7: "pass"}
+    _write_truth(root, damage)
+    return damage
+
+
 def main(argv: list[str] | None = None) -> int:
     from parity.fixtures import make_mini_lerobot, make_mini_mcap
     from tests.cli.v3_fixture import make_mini_lerobot_v3
@@ -205,7 +295,10 @@ def main(argv: list[str] | None = None) -> int:
     os.makedirs(args.out, exist_ok=True)
     for name, make, damage in (("lerobot_v2", make_mini_lerobot, damage_lerobot_v2),
                                ("lerobot_v3", make_mini_lerobot_v3, damage_lerobot_v3),
-                               ("mcap", make_mini_mcap, damage_mcap)):
+                               ("mcap", make_mini_mcap, damage_mcap),
+                               ("lerobot_v2_declared", make_mini_lerobot, declare_lerobot_v2),
+                               ("lerobot_v3_declared", make_mini_lerobot_v3, declare_lerobot_v3),
+                               ("mcap_declared", make_mini_mcap, declare_mcap)):
         root = os.path.join(args.out, name)
         if os.path.exists(root):
             shutil.rmtree(root)

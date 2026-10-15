@@ -118,7 +118,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
         ctx.log("warn", warning)
-    episodes = runctx.leave_out_skipped(ctx, args, episodes)
+    episodes = runctx.leave_out_skipped(ctx, args, episodes, modules=modules, run_dir=run_dir)
     part = args.part or records.next_part(run_dir, modules)
     guard = runctx.source_guard(ctx, args, src)
     ctx.log("info", f"check {','.join(modules)}: {len(episodes)} episode(s), part {part}")

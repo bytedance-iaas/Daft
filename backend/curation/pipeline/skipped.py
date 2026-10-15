@@ -11,6 +11,11 @@ without a manifest, ``check`` finds them when it reads and lists them in its
 output. Both end up here, per run directory: aggregate leaves them out of the
 lists and the totals, the report lists them under ``integrity.skipped_episodes``.
 The shape is ``common.schema.json#/$defs/skipped_episodes``.
+
+Unless data integrity judges them (D97, design doc 29 §3): a run with data
+integrity selected (``run.json``'s ``missing_sources`` is ``judged``) keeps them,
+data integrity rejects each on the files it lacks, and an episode it has a record
+of is never left out - whatever the manifest says.
 """
 from __future__ import annotations
 
@@ -70,11 +75,32 @@ def record(run_dir: str, found: dict[int, list[str]]) -> None:
 
 
 def all_skipped(run_dir: str) -> dict[int, list[str]]:
-    """The manifest's list and the read-time finds together."""
+    """The manifest's list and the read-time finds together, without the episodes data integrity judged (D97)."""
     out = by_manifest(run_dir)
     for e, keys in at_read_time(run_dir).items():
         out[e] = sorted(set(out.get(e, [])) | set(keys))
+    if out:
+        judged = judged_by_integrity(run_dir)
+        out = {e: keys for e, keys in out.items() if e not in judged}
     return out
+
+
+#: run.json's word for what a run does with the episodes whose source files are missing (D97)
+JUDGED, LEFT_OUT = "judged", "left_out"
+
+
+def judges_missing(run_dir: str) -> bool | None:
+    """D97: whether this run judges the episodes whose source files are missing (data integrity selected), from
+    ``run.json``'s ``missing_sources``; None without a run.json (a run by hand) or with one from before D97."""
+    doc = _read(os.path.join(run_dir, "run.json"))
+    return {JUDGED: True, LEFT_OUT: False}.get(doc.get("missing_sources"))
+
+
+def judged_by_integrity(run_dir: str) -> set[int]:
+    """The episodes data integrity has a record of in this run directory (an error included): not left out."""
+    from .records import latest_results
+
+    return set(latest_results(run_dir, "data_integrity"))
 
 
 def relative_key(input_dir: str, path: str) -> str:

@@ -644,17 +644,15 @@ class StageRun:
         return [f"details/evidence/{r}".replace(os.sep, "/") for r in written.get(eid, [])]
 
     def _integrity(self, source, ep: int, t0: float, logs) -> dict[str, dict] | None:
-        """The data integrity module: its files, v1's row validation (D51), the rest."""
+        """The data integrity module: its files, v1's row validation (D51), the rest. An episode whose source files
+        are missing is judged on that (D97, design doc 29 §3), not left out: nothing else of it is read."""
         m = self.o.modules[0]
         row = row_error = None
-        try:
-            row = source.get(ep)
-        except EpisodeMissingSource as e:          # D40 as everywhere: no result line
-            with self._lock:
-                self.missing[int(ep)] = list(e.missing)
-            return None
-        except EpisodeReadError as e:
-            row_error = e
+        if not self.o.integrity.misses_source(ep):
+            try:
+                row = source.get(ep)
+            except EpisodeReadError as e:          # a missing file too: the judge says which (D97)
+                row_error = e
         try:
             struct = self.o.integrity.judge(ep, row, row_error, logs[m])
         except Exception as e:  # noqa: BLE001 - one episode's failure stays its own

@@ -101,3 +101,23 @@ def test_episodes_the_listing_skips_are_left_out_of_the_plan_and_the_totals(daem
     assert (numeric["done"], numeric["total"]) == (7, 7)
     assert 5 not in results(d.run_dir(task["id"]), "timestamp_check")
     assert {m["id"]: m for m in task["modules"]}["timestamp_check"]["episodes_total"] == 7
+
+
+def test_with_data_integrity_an_episode_without_its_video_is_judged(daemon):
+    """D97 (design doc 29 §3): with data integrity selected the episode whose wrist video is gone is not left out -
+    data integrity rejects it, the other modules skip it, it is in the reject list and in the total."""
+    d = daemon()
+    os.remove(os.path.join(d.dataset, "videos", "chunk-000", "observation.images.wrist", "episode_000005.mp4"))
+    task = d.wait(d.create(modules=["data_integrity", "timestamp_check"])["id"])
+    assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:2000]
+    assert task["summary"]["total"] == 8
+    rd = d.run_dir(task["id"])
+    with open(os.path.join(rd, "run.json"), encoding="utf-8") as fh:
+        assert json.load(fh)["missing_sources"] == "judged"
+    with open(os.path.join(rd, "source_manifest.json"), encoding="utf-8") as fh:
+        assert [s["episode_index"] for s in json.load(fh)["skipped_episodes"]] == [5]     # the fact, as before
+    assert [f["code"] for f in results(rd, "data_integrity")[5]["findings"]] == ["video_missing"]
+    assert results(rd, "timestamp_check")[5]["details"]["skipped"] == "integrity_rejected"
+    with open(os.path.join(rd, "revisions", "r0001", "reject.json"), encoding="utf-8") as fh:
+        assert 5 in {e["episode_index"] for e in json.load(fh)["episodes"]}
+    assert {m["id"]: m for m in task["modules"]}["timestamp_check"]["episodes_total"] == 8

@@ -474,9 +474,16 @@ def source_guard(ctx: Context, args, storage):
         keys = set(state.pop("first", ()))
         for e in episodes:
             ep = state["episodes"].get(int(e))
-            if ep is not None:
-                keys.update(ep.data_keys)
-                keys.update(ep.video_keys.values())
+            if ep is None:
+                continue
+            if int(e) in manifest.skipped:
+                # D97: judged on the files it lacks, nothing of it is read - they must still be missing
+                back = sorted(k for k in manifest.skipped[int(e)] if k in state["listing"])
+                if back:
+                    raise manifest._changed(back[0], "added", None, state["listing"][back[0]])
+                continue
+            keys.update(ep.data_keys)
+            keys.update(ep.video_keys.values())
         # a file missing at snapshot time and still missing is unchanged (that episode is
         # an error at run time); one that appeared since is a change
         keys = {k for k in keys - state["verified"]
@@ -534,16 +541,27 @@ def _container_guard(ctx: Context, args, src: Source, manifest):
     return check
 
 
-def leave_out_skipped(ctx: Context, args, episodes: list[int]) -> list[int]:
+def leave_out_skipped(ctx: Context, args, episodes: list[int], *, modules=(),
+                      run_dir: str | None = None) -> list[int]:
     """``episodes`` without the ones ``--source-manifest`` left out for missing source
-    files (D40): no command given the manifest reads them."""
+    files (D40): no command given the manifest reads them. Unless data integrity judges
+    them (D97, design doc 29 §3): this call runs it, the run's ``run.json`` says
+    ``missing_sources: judged``, or it already has a record of the episode - then the
+    episode stays; data integrity rejects it and the other modules skip it (D92)."""
     from . import source_manifest
 
     path = getattr(args, "source_manifest", None)
     if not path:
         return list(episodes)
     skipped = source_manifest.SourceManifest.load(path).skipped
-    kept = [e for e in episodes if e not in skipped]
+    if not skipped:
+        return list(episodes)
+    from ..pipeline.skipped import judged_by_integrity, judges_missing
+
+    if "data_integrity" in modules or (run_dir and judges_missing(run_dir)):
+        return list(episodes)
+    judged = judged_by_integrity(run_dir) if run_dir else set()
+    kept = [e for e in episodes if e not in skipped or e in judged]
     if len(kept) < len(episodes):
         ctx.log("info", f"{len(episodes) - len(kept)} episode(s) the source manifest left out "
                         f"for missing source files are not read")

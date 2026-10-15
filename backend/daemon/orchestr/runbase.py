@@ -433,10 +433,21 @@ class Run:
             return list(range(self.episode_count()))
 
     def selection(self) -> list[int]:
-        """The task's episodes, without the ones whose source files are missing (D40)."""
+        """The task's episodes, without the ones whose source files are missing (D40) - unless data integrity
+        judges them (D97, design doc 29 §3)."""
         chosen = rules.selected_episodes(self.task.episode_selector, self.episode_indices())
         skipped = self.skipped_episodes()
-        return [e for e in chosen if e not in skipped] if skipped else chosen
+        if not skipped or self.judges_missing_sources():
+            return chosen
+        return [e for e in chosen if e not in skipped]
+
+    def judges_missing_sources(self) -> bool:
+        """D97: ``run.json``'s ``missing_sources`` (frozen when the plan was made); before it is written, whether the
+        task selected data integrity. A run.json from before D97 never says so: such a run keeps D40."""
+        doc = read_json(self.wd.run_json, None)
+        if isinstance(doc, dict):
+            return doc.get("missing_sources") == "judged"
+        return any(m.selected and m.module_id == "data_integrity" for m in self.repo.get_task_modules(self.task_id))
 
     def skipped_episodes(self) -> set[int]:
         """``skipped_episodes`` of the source manifest: missing parquet or video (C2 1.4)."""

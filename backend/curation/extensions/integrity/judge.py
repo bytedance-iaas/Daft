@@ -8,6 +8,12 @@ writes ``checks/data_integrity/dataset.json``. :meth:`judge` then gives one epis
 ``{passed, score, detail}``: its files' structure (L1), v1's row validation (D51, counted as L1 since
 design doc 23 §3.1), with ``full_read`` the whole read (L2) and with ``decode_test`` every frame decoded (L3).
 
+What the dataset declares is held against what an episode has (design doc 29, D95-D97): a source file that is not
+there (``data_missing`` / ``video_missing``: the episode is judged on it and nothing else of it is read), a declared
+column the parquet's footer lacks, a v2 parquet whose rows are not the episode table's length, a vector whose width is
+not info.json's, a row v1's reader could not build (:class:`~curation.pipeline.rows.DataProblem`), and for an mcap
+dataset with a confirmed mapping the state and camera topics it names.
+
 A file shared by several episodes (LeRobot v3) is analysed once and remembered; a
 finding with a position concerns only the episodes whose window it overlaps.
 """
@@ -67,6 +73,9 @@ class IntegrityJudge:
         self.max_episodes = max_episodes
         self.plan: dict[int, list[FileRef]] = {}
         self.lengths: dict[int, int] = {}
+        self.features: dict = {}                     # info.json's, for the declaration (LeRobot)
+        #: episodes whose source files are missing (D97): judged on that, nothing else of them read
+        self.missing_source: dict[int, list[str]] = {}
         self.fps: float | None = None
         self.dataset_findings: list[Finding] = []
         self.episode_findings: dict[int, list[Finding]] = {}
@@ -130,6 +139,7 @@ class IntegrityJudge:
         meta = lm.read_dataset(storage, listing, info, fmt)
         fps = info.get("fps")
         self.fps = float(fps) if isinstance(fps, (int, float)) and fps > 0 else None
+        self.features = dict(info.get("features") or {})
         wanted = set(scope)
         v3 = fmt.version == "v3"
         windows: dict[int, dict[str, tuple[float, float]]] = {}
@@ -138,6 +148,17 @@ class IntegrityJudge:
         for ep in meta.episodes:
             self.lengths[ep.index] = int(ep.length)
             if ep.index not in wanted:
+                continue
+            missing = [Finding("data_missing", f"数据文件不存在：{k}", "L1", file=k)
+                       for k in ep.data_keys if k not in listing]
+            missing += [Finding("video_missing", f"{_short(cam)} 相机的视频文件不存在：{key}", "L1", file=key,
+                                camera=_short(cam))
+                        for cam, key in ep.video_keys.items() if key not in listing]
+            if missing:                     # D97: judged on what it lacks; the files it has are not read
+                self.missing_source[ep.index] = [f.file for f in missing]
+                for f in missing:
+                    self._add(ep.index, f)
+                self.plan[ep.index] = []
                 continue
             refs = [FileRef(k, "parquet", shared=v3) for k in ep.data_keys if k in listing]
             for cam, key in ep.video_keys.items():
@@ -214,6 +235,7 @@ class IntegrityJudge:
                 self.plan[ep] = [FileRef(num[ep], "mcap")]
         keys = [num[e] for e in scope if e in num]
         summaries = containers.mcap_summaries(self.src.storage, self.src.listing, keys)
+        flagged = self._declared_topics(scope, num, summaries)
         facts = {}
         for ep in scope:
             s = summaries.get(num.get(ep, ""))
@@ -235,6 +257,8 @@ class IntegrityJudge:
             stream = statistics.median(facts[ep][t][0] for ep in having) >= STREAM_MIN_MESSAGES
             for ep, rates in facts.items():
                 count, rate = rates.get(t, (0, 0.0))
+                if count <= 0 and (ep, t) in flagged:
+                    continue                    # the mapping names it: already said
                 if count <= 0:
                     self._add(ep, Finding("stream_missing",
                                           f"缺 topic {t}（其他 {len(facts) - 1} 条里有 {len(having)} 条都有）",
@@ -245,6 +269,31 @@ class IntegrityJudge:
                                           "peers", file=num[ep],
                                           args={"topic": t, "rate_hz": round(rate, 3),
                                                 "median_hz": round(median, 3)}))
+
+    def _declared_topics(self, scope: list[int], num: dict, summaries: dict) -> set[tuple[int, str]]:
+        """D96: the state and camera topics a confirmed mapping names (``ingest.mcap_mapping``, C7's first layer) that
+        an episode's summary does not have - suspect whatever the other episodes have; the naming convention the
+        reader falls back on without a mapping is no declaration. Returns the (episode, topic) pairs said."""
+        from ...pipeline.rows import _INGEST
+
+        mapping = _INGEST.get("mcap_mapping")
+        if not isinstance(mapping, dict):
+            return set()
+        state = mapping.get("state")
+        named = [state] if isinstance(state, str) else [str(s.get("topic")) for s in state or []
+                                                         if isinstance(s, dict) and s.get("topic")]
+        named += [str(t) for t in mapping.get("video_topics") or [] if t]
+        said: set[tuple[int, str]] = set()
+        for ep in scope:
+            s = summaries.get(num.get(ep, ""))
+            if s is None or not s.topics:
+                continue                        # no summary to tell from: nothing is said
+            for t in dict.fromkeys(named):
+                if not (s.topics.get(t) or 0) > 0:
+                    self._add(ep, Finding("stream_missing", f"缺映射里写明的 topic {t}", "peers",
+                                          file=num[ep], args={"topic": t, "declared": True}))
+                    said.add((ep, t))
+        return said
 
     def _write_dataset_file(self, scope: list[int]) -> None:
         from ...pipeline.records import module_dir, write_json_atomic
@@ -312,8 +361,44 @@ class IntegrityJudge:
                     self._reports[ref.key] = rep
             return rep
 
+    def misses_source(self, ep: int) -> bool:
+        """D97: the episode lacks a source file - judged on that alone, none of its rows or other files read."""
+        return int(ep) in self.missing_source
+
+    def _declared_columns(self, ref: FileRef, rep: F.FileReport) -> list[Finding]:
+        """D96: the columns info.json declares (and v1's reader reads) that the parquet's footer does not list."""
+        if rep.columns is None or not self.features:
+            return []
+        from .declared import missing_columns
+
+        return [Finding(p["code"], p["message"], "L1", file=ref.key, args=p["args"])
+                for p in missing_columns(rep.columns, {"features": self.features}, f"{ref.key} ")]
+
+    def _rows_against_table(self, ep: int, ref: FileRef, rep: F.FileReport) -> list[Finding]:
+        """D95: a LeRobot v2 parquet (one episode) whose rows are not the episode table's length - v1's reader
+        refuses it. A v3 file holds several: its slices are the episode table's business (``table_inconsistent``)."""
+        length = self.lengths.get(ep)
+        if ref.shared or rep.num_rows is None or length is None or rep.num_rows == length:
+            return []
+        return [Finding("length_mismatch", f"数据有 {rep.num_rows} 帧，episode 表记 {length} 帧", "L1",
+                        file=ref.key, args={"rows": rep.num_rows, "length": length})]
+
+    def _missing_files(self, keys: list[str]) -> list[Finding]:
+        """v1's reader found these source files missing (an episode outside the plan): ``data_missing`` /
+        ``video_missing``, as the plan would have said (D97)."""
+        out = []
+        for key in keys:
+            if key.endswith(".parquet"):
+                out.append(Finding("data_missing", f"数据文件不存在：{key}", "L1", file=key))
+            else:
+                cam = next((part for part in key.split("/") if part.startswith("observation.")), None)
+                out.append(Finding("video_missing", f"{_short(cam) or '某路'} 相机的视频文件不存在：{key}", "L1",
+                                   file=key, camera=_short(cam)))
+        return out
+
     def judge(self, ep: int, row: dict | None, row_error: Exception | None, log) -> dict:
         from ...ingest.validate import IngestValidationError
+        from ...pipeline.rows import DataProblem, EpisodeMissingSource
 
         ep = int(ep)
         findings = list(self.episode_findings.get(ep, []))
@@ -333,6 +418,8 @@ class IntegrityJudge:
                 summary["window_s"] = [round(ref.window[0], 3), round(ref.window[1], 3)]
             files.append(summary)
             mine = [f for f in rep.findings if affects(f, ref.window)]
+            if rep.kind == "parquet":
+                mine += self._declared_columns(ref, rep) + self._rows_against_table(ep, ref, rep)
             findings += mine
             cut_off |= rep.cut_off
             if rep.kind == "mp4" and rep.samples is not None \
@@ -357,11 +444,21 @@ class IntegrityJudge:
                                         args={"error": str(cause)[:300]}))
             elif rejected:
                 pass                            # the files already say why it cannot be read
-            elif cut_off:
+            elif cut_off:                       # what a cut recording lacks is the cut's doing
                 findings = [f for f in findings if f.code != "cut_off"]
                 why = type(row_error.__cause__ or row_error).__name__
                 findings.append(Finding("file_truncated", f"录制中断，且读不出数据（{why}）", "L1",
                                         file=self.plan[ep][0].key, args={"error": str(row_error)[:300]}))
+            elif isinstance(row_error, EpisodeMissingSource):
+                findings += self._missing_files(row_error.missing)
+            elif isinstance(row_error, DataProblem):    # D95: what in the data stopped v1's reader
+                where = next((r.key for r in self.plan.get(ep, []) if r.kind in ("parquet", "mcap")), None)
+                said = {str((p.get("args") or {}).get("topic")) for p in row_error.problems
+                        if (p.get("args") or {}).get("topic")}
+                findings = [f for f in findings              # a topic the reader missed is not also a suspect
+                            if not (f.code == "stream_missing" and str(f.args.get("topic")) in said)]
+                findings += [Finding(p["code"], str(p["message"]), "L1", file=where, args=dict(p.get("args") or {}))
+                             for p in row_error.problems]
             else:
                 infra.append(f"read: {row_error}")
         elif row is not None:
@@ -390,6 +487,15 @@ class IntegrityJudge:
         if length is not None and abs(n - length) > self.tolerance:
             findings.append(Finding("count_mismatch", f"数据有 {n} 帧，episode 表记 {length} 帧", "L1",
                                     args={"rows": n, "length": length}))
+        if self.src.kind == "lerobot" and self.features:      # D96: each frame as wide as info.json says
+            from .declared import width_problem
+
+            info = {"features": self.features}
+            for column, arr in (("action", row.get("action")), ("observation.state", row.get("proprio_state"))):
+                shape = getattr(arr, "shape", None)
+                p = width_problem(column, int(shape[1]), info) if shape is not None and len(shape) == 2 else None
+                if p is not None:
+                    findings.append(Finding(p["code"], p["message"], "L1", args=p["args"]))
 
     def _decode(self, ep: int, row: dict, findings: list, video_counts: dict, infra: list) -> None:
         from .decode import decode

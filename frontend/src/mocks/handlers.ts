@@ -1143,7 +1143,7 @@ function genericReport(t: Task, revision: number): Report {
     integrity: {
       format: { kind: 'lerobot', version: 'v2', supported: true, detail: 'LeRobot v2.1' },
       validation: [],
-      warnings: t.id === SO101_TASK ? ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out: not checked, in no list, listed in the report"] : [],
+      warnings: t.id === SO101_TASK ? ["3 episodes miss their parquet or a camera's video (212, 587, 901); data integrity rejects them, without it they are left out: not checked, in no list, listed in the report"] : [],
       labels: { with_task: s.total, without_task: 0 },
       profile: null,
       robot_type: t.embodiment_id,

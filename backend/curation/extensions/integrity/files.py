@@ -70,6 +70,7 @@ class FileReport:
     tiers: list[str] = field(default_factory=list)
     samples: mp4.Samples | None = None
     num_rows: int | None = None
+    columns: list[str] | None = None        # a parquet's column names (its footer), for the declaration (D96)
     crc: str | None = None                  # what checked the content: mcap_chunk
     cut_off: bool = False                   # mcap without its end marker
     read_error: str | None = None           # ReadFailure: an execution error, not a finding
@@ -139,7 +140,9 @@ def parquet_l1(blob: Blob, rep: FileReport) -> None:
     try:
         import pyarrow.parquet as pq
 
-        rep.num_rows = int(pq.ParquetFile(io.BytesIO(PARQUET_MAGIC + footer + tail)).metadata.num_rows)
+        pf = pq.ParquetFile(io.BytesIO(PARQUET_MAGIC + footer + tail))
+        rep.num_rows = int(pf.metadata.num_rows)
+        rep.columns = list(pf.schema_arrow.names)
     except Exception as e:  # noqa: BLE001 - pyarrow raises several kinds
         rep.add("structure_invalid", f"尾部元数据读不出：{type(e).__name__}", "L1",
                 args={"error": str(e)[:200]})

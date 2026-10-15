@@ -18,16 +18,24 @@ REJECT, SUSPECT, DATASET = "reject", "suspect", "dataset"
 
 #: code -> (level, 中文名); the order is the report's
 CODES: dict[str, tuple[str, str]] = {
+    "data_missing": (REJECT, "数据文件不存在"),          # D97 (design doc 29 §3): judged, not left out
+    "video_missing": (REJECT, "视频文件不存在"),
     "file_empty": (REJECT, "文件为空或过小"),
     "file_truncated": (REJECT, "文件被截断"),
     "zero_filled": (REJECT, "文件里有成块的零填充"),
     "structure_invalid": (REJECT, "文件结构损坏"),
     "crc_mismatch": (REJECT, "CRC 校验不符"),
+    # D95-D96 (design doc 29 §1-§2): what the declaration says the data has and it has not
+    "action_missing": (REJECT, "缺少动作数据"),
+    "column_missing": (REJECT, "缺少声明了的数据列"),
+    "length_mismatch": (REJECT, "数据长度与帧数对不上"),
+    "values_invalid": (REJECT, "数值不合规"),
+    "timestamps_invalid": (REJECT, "时间戳不合规"),
     "row_invalid": (REJECT, "数据不合规"),
     "decode_failed": (REJECT, "视频解码失败"),
     "count_mismatch": (SUSPECT, "帧数与记录的长度对不上"),
     "cut_off": (SUSPECT, "录制中断"),
-    "stream_missing": (SUSPECT, "缺一路其他条都有的流"),
+    "stream_missing": (SUSPECT, "缺一路应有的流（其他条都有，或映射写明了）"),
     "rate_outlier": (SUSPECT, "某路流的频率明显偏低"),
     "decode_concealed": (SUSPECT, "解码器掩盖了错误"),
     "table_inconsistent": (SUSPECT, "episode 表前后不一致"),

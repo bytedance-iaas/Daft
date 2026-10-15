@@ -51,7 +51,8 @@
    "platform_status": "能判",
    "platform_codes": [
     "data_integrity.file_empty",
-    "data_integrity.video_missing"
+    "data_integrity.video_missing",
+    "data_integrity.data_missing"
    ],
    "kind": "defect",
    "level": "episode",
@@ -299,6 +300,7 @@
    "platform_status": "能判",
    "platform_codes": [
     "data_integrity.action_missing",
+    "data_integrity.column_missing",
     "data_integrity.stream_missing",
     "data_integrity.dark_camera",
     "visual_quality.dead_or_padded"

@@ -194,8 +194,9 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
   快照时就缺、现在仍缺的文件不算变化。
 - 远端数据集的对象清单只列一次：`snapshot` 把清单存在 `--out` 旁边的 `.source_listing.json`（隐藏，不交付），带 `--source-manifest` 的命令读它，
   不再向 TOS 列（`cli/listing_cache.py`）。一小时过期；用之前 HEAD 一下 `meta/` 下的对象，变了就重新列；Daemon 续跑、重试前删掉它。
-- LeRobot v2 的某条缺数据 parquet 或任一机位的视频时，这条跳过（D40）：记进 `skipped_episodes`（写明缺了哪些文件），不进任何清单、不计入总数，
-  报告的完整性一块列出。v3 数据集不跳，缺文件的条在检查时读不了，记为出错。mcap / Lance 记的对象不同，见下文。
+- LeRobot v2 的某条缺数据 parquet 或任一机位的视频时，这条记进 `skipped_episodes`（写明缺了哪些文件）。没选数据完整性的任务里它被跳过（D40）：
+  不进任何清单、不计入总数，报告的完整性一块列出；选了数据完整性的，完整性判废它（`data_missing` / `video_missing`，D97，设计 29 §3），计入总数。
+  快照不知道选了哪些模块，两种情况写的一样。v3 数据集不跳，缺文件的条由完整性判废，没选完整性时在检查时读不了、记为出错。mcap / Lance 记的对象不同，见下文。
 
 **check**：`curation check --modules <一段的模块> --input … --run-dir … --episodes 表达式 [--source-manifest …] [--declaration …] [--selection …] [--part NNNN] [--resume] [--plan-stage …] [--done-out 文件] [--prep | --prepared] [--param 模块.键=值] [--max-episodes N] [VLM 参数] [行为开关] --json`
 
@@ -213,7 +214,10 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
 - VLM 段熔断（P15）：开头连续 20 条都因为基础设施原因出错（连不上、超时、5xx、限流），整个模块以退出码 4 结束，不再烧配额。
 - 不带 `--source-manifest` 时，读到才发现缺源文件的条（规则同 snapshot，只对 v2）不写结果行，列在 `--json` 的 `skipped_missing_source` 里并记进
   `skipped_episodes.json`，不计入总数；别的读失败照旧记为出错（聚合时 held）。
-- `data_integrity`（D50、D51）：文件结构、整读（mcap CRC、零填充、parquet 数据页）、逐条结构校验，`--param data_integrity.decode_test=true` 时逐帧解码；
+- 缺源文件与数据完整性（D97）：这次调用跑完整性、或运行目录的 `run.json` 写着 `missing_sources: judged`（Daemon 开跑时冻结，选了完整性的任务）、或完整性
+  已有这条的记录，带清单也不去掉它：完整性按缺的文件判废，别的模块照 D92 写跳过记录。源清单守卫对这类条只核对缺的文件仍然缺（补上了就是源数据变了，退出码 6）。
+- `data_integrity`（D50、D51、D95–D97）：文件结构、整读（mcap CRC、零填充、parquet 数据页）、逐条结构校验，声明了却缺或读不了的数据（设计 29），
+  `--param data_integrity.decode_test=true` 时逐帧解码；
   坏了判废，可疑的留给人（`integrity_check`），存储读失败算出错。数据集级发现写 `checks/data_integrity/dataset.json`。详见[模块 README](../extensions/integrity/README.md)。
 - **任务成败判定**每条恰好一次模型请求（D71）：多机位连续视频一起看，判失败就是判废（可复议），拿不准转人工；没有复核、仲裁和判废护栏。
   改了标的条（`adjudication/labels.json`）按新标注重判，同样一次请求，记录的 `details` 写明 `task_desc`（新标注）和 `task_desc_source`（`人工改标`）。
@@ -248,7 +252,7 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
   （`eef_check`，设计 25 §7.3）只问在 passed 里、EEF 两个渠道结论相反的条；数据完整性存疑（`integrity_check`）同理；被拒的条没有这些问题，
   拒绝可复议时给一项 `reject_appeal`；held 的条什么都不问。每一项都写明注册表的 `line`。
 - 重复检测和别的模块一样只报发现（D87）：清单与复核项里没有 `duplicate_of`，拒绝原因里也没有 `kind: duplicate`；它只在主流程跑，人工裁决之后不重跑。
-- 缺源文件被跳过的条（D40）不进任何清单、不计入总数（`counts.skipped`）。某个模块整体失败（退出码 4，没写出结果）时，它本该判的每一条都 held（D41）。
+- 缺源文件被跳过的条（D40）不进任何清单、不计入总数（`counts.skipped`）；数据完整性有记录的条不算跳过（D97）。某个模块整体失败（退出码 4，没写出结果）时，它本该判的每一条都 held（D41）。
 - `--input` 给了才在 passed 里写出交付用的任务描述（原始标注要从数据集的元数据里读）。已有 `commit.json` 的版本拒绝改写。
 
 **adjudicate-apply**：`curation adjudicate-apply --run-dir … --decisions decisions.json --json`

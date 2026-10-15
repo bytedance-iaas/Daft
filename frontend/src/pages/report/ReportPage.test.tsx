@@ -412,7 +412,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(block).getByTestId('episode-integrity')).toHaveTextContent('文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失');
     const findings = within(block).getByTestId('integrity-findings');
     expect(findings).toHaveTextContent('判废文件被截断wrist');
-    expect(findings).toHaveTextContent('可疑缺一路流exterior');
+    expect(findings).toHaveTextContent('可疑缺一路应有的流exterior');
     const files = within(block).getByTestId('integrity-files');
     expect(files).toHaveTextContent('data/chunk-000/episode_000012.parquet');
     expect(files).toHaveTextContent('1.2 MB');
