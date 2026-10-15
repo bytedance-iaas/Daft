@@ -132,8 +132,9 @@ and authoritative velocity limits still reject.
 and only trusts a camera when the limbs agree; each reading is trusted only when its whole-episode peak survives
 leaving any 2 s span out (a peak carried by one burst is not a stream offset) and, when the 2 s windows are steady,
 agrees with them - steady windows take over an unreliable whole-episode peak, two steady estimators that disagree
-make the camera undecidable. ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` / ``groups`` /
-``instability``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
+make the camera undecidable; the limbs' summed motion must itself match the picture before a single limb's
+reading counts (sum_unexplained otherwise). ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` /
+``groups`` / ``instability`` / ``sum``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
 one curve they bent the whole-episode correlation to -1.8 s while every window read 0.
 """
 from __future__ import annotations

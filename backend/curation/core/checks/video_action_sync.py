@@ -655,6 +655,22 @@ def grouped_lag(flow_energy: np.ndarray, flow_t: np.ndarray, speeds: dict, speed
             passed = False
         if len(trusted) > 1:
             d["reason"] = f"{len(trusted)} 个肢体的读数一致({words}),取中位数 {lag:+.2f}s"
+        # 总和闸门(2026-10-15,用户定):画面光流是所有在动的东西之和,记录的总和(各肢体速度相加)必须先能
+        # 解释画面,单条肢体的读数才算数。总和曲线对不上画面(在动却不可信)= 画面里有记录解释不了的运动
+        # (G1 ep26/49:干活的右臂六列不是关节角,左臂小动作对着整幅画面读出 −0.33),这一路测不准。
+        # 只有一组时总和就是它自己,不另算;总和没动(no_motion)不算对不上。
+        tot = np.sum([np.asarray(sp, dtype=np.float64) for sp in speeds.values()], axis=0)
+        u = global_lag(flow_energy, flow_t, tot, speed_t, lag_tol_s=lag_tol_s, **kw).detail
+        d["sum"] = {"lag_s": u.get("lag_s"), "trusted": bool(u.get("trusted")), "code": u.get("code"),
+                    "corr_peak": u.get("corr_peak"), "basis": u.get("basis", "whole")}
+        if not u.get("trusted") and u.get("code") not in ("no_motion", "short_signal", "short_sequence"):
+            d["trusted"] = False
+            d["instability"] = "sum_unexplained"
+            d["peak_issue"] = "ambiguous_peak"
+            d["code"] = "ambiguous_peak"
+            d["reason"] = (f"各肢体相加的总运动对不上画面(相似度 {float(u.get('corr_peak') or 0.0):.2f}),"
+                           f"画面里有记录解释不了的运动;单条肢体的读数({words})不作数,本路测不准")
+            return CheckResult(name="video_action_sync", passed=None, detail=d)
         return CheckResult(name="video_action_sync", passed=passed, detail=d)
     d["trusted"] = False
     d["instability"] = "limb_conflict"
@@ -831,6 +847,10 @@ def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
         elif kind == "estimators_disagree":
             text = (f"整条合算读出 {lag:+.2f}s,逐段读出 {float(lw.get('lag_s') or 0.0):+.2f}s"
                     f"({int(lw.get('n_trusted') or 0)} 段),两种算法各自稳定却不一致。")
+        elif kind == "sum_unexplained":
+            sm = r.get("sum") if isinstance(r.get("sum"), dict) else {}
+            text = (f"各肢体相加的总运动对不上画面(相似度 {float(sm.get('corr_peak') or 0.0):.2f}):画面里有记录"
+                    f"解释不了的运动,单条肢体读出的 {lag:+.2f}s 不作数。")
         else:
             gs = r.get("groups") if isinstance(r.get("groups"), dict) else {}
             words = "、".join(f"{_LIMB_WORDS.get(n, n)} {float(g.get('lag_s') or 0.0):+.2f}s"
@@ -964,7 +984,7 @@ def camera_reading(res: CheckResult) -> dict:
     if isinstance(d.get("lag_windows"), dict):
         out["lag_windows"] = d["lag_windows"]
     # 读数的来历(2026-10-14 新增,可选键):整段还是分窗、整段稳不稳、按肢体分组的明细与不可信的原因
-    for k in ("basis", "whole_stable", "whole_lag_s", "instability", "jackknife", "groups", "group", "group_agreement"):
+    for k in ("basis", "whole_stable", "whole_lag_s", "instability", "jackknife", "groups", "group", "group_agreement", "sum"):
         if d.get(k) is not None:
             out[k] = d[k]
     # 病因诊断随读数一起落盘:UI 的逐图诊断框直接读它,不在界面层重新推理

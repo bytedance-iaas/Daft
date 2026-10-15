@@ -116,3 +116,19 @@ def test_steady_windows_take_over_an_unstable_whole_peak():
     assert abs(r.detail["whole_lag_s"] - 1.5) <= 0.1
     rd = camera_reading(r)
     assert rd["basis"] == "windowed_median" and rd["diagnosis"]["cause"] == "aligned"
+
+
+def test_the_summed_motion_must_explain_the_picture_before_a_limb_reading_counts():
+    """总和闸门(2026-10-15):两组之一是和画面无关的噪声列(G1 的右臂六列),左臂自己对得上,但各肢体相加的
+    总运动对不上画面 → 这一路测不准(sum_unexplained);两组都是真运动时总和对得上,读数照常可信。"""
+    flow, ft, left, st = _pair(3)
+    rng = np.random.default_rng(7)
+    garbage = np.clip(np.convolve(rng.normal(0, 1, len(st)), np.ones(3) / 3, "same"), 0, None) * 6.0
+    r = grouped_lag(flow, ft, {"left": left, "right": garbage}, st)
+    assert r.detail["trusted"] is False and r.detail["instability"] == "sum_unexplained"
+    assert r.detail["sum"]["trusted"] is False and r.detail["groups"]["left"]["trusted"] is True
+    rd = camera_reading(r)
+    assert rd["code"] == "ambiguous_peak" and rd["diagnosis"]["cause"] == "unstable_estimate" and "总运动" in rd["diagnosis"]["text"]
+    right = np.interp(st, st + 0.03, left)
+    ok = grouped_lag(flow, ft, {"left": left, "right": right}, st)
+    assert ok.detail["trusted"] is True and ok.detail["sum"]["trusted"] is True
