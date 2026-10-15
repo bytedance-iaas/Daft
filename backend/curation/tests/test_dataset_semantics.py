@@ -197,3 +197,99 @@ def test_gripper_polarity_third_layer_from_start_state():
              "features": {"action": {"names": names}}}
     s2 = resolve_semantics(info2, np.zeros((30, 7)))
     assert s2.extras["gripper"]["closed_source"] == "default"      # 档案没写极性:缺省,来源留痕
+
+
+# ---- 2026-10-15:列种类的正门是档案声明,列名词表只是缺省 --------------------------------------------
+
+def test_profile_declares_velocity_hand_and_limb_columns():
+    """档案 action 段的 velocity_dims / hand_dims / limbs 写进 layout(映射或列表两种写法都认);
+    没声明任何布局项的档案不写 layout(老档案 extras 一字不变)。"""
+    prof = {"action": {"space": "joint", "gripper_dims": [6], "velocity_dims": [7, 8],
+                       "hand_dims": [9, 10], "limbs": {"left": [0, 1, 2], "right": [3, 4, 5]}}}
+    lay = DS._profile_extras_with_layout(prof)["layout"]
+    assert lay["source"] == "profile" and lay["velocity_dims"] == [7, 8] and lay["hand_dims"] == [9, 10]
+    assert lay["limbs"] == [["left", [0, 1, 2]], ["right", [3, 4, 5]]] and lay["gripper_dims"] == [6]
+    assert lay["rotation_blocks"] == [] and lay["informative"] is False
+    as_list = {"action": {"limbs": [["left", [0, 1]], ["right", [2, 3]]]}}
+    assert DS._profile_extras_with_layout(as_list)["layout"]["limbs"] == [["left", [0, 1]], ["right", [2, 3]]]
+    assert "layout" not in DS._profile_extras_with_layout({"action": {"space": "joint", "gripper_dims": [6]}})
+
+
+def test_declared_limbs_reach_the_sync_groups_for_aloha():
+    """aloha 档案声明了双臂分组:同步检查的速度代理按左右臂各成一组,夹爪列不进任何组。"""
+    from curation.pipeline.episode_checks import sync_speed_groups
+    names = ["left_waist", "left_shoulder", "left_elbow", "left_forearm_roll", "left_wrist_angle", "left_wrist_rotate",
+             "left_gripper", "right_waist", "right_shoulder", "right_elbow", "right_forearm_roll", "right_wrist_angle",
+             "right_wrist_rotate", "right_gripper"]
+    info = {"robot_type": "aloha", "features": {"action": {"names": names}}}
+    s = resolve_semantics(info, np.zeros((30, 14)))
+    assert s.source == "profile" and s.extras["layout"]["limbs"] == [["left", [0, 1, 2, 3, 4, 5]], ["right", [7, 8, 9, 10, 11, 12]]]
+    assert sync_speed_groups(14, "joint", s.extras["layout"], s.gripper_dims) == {"left": [0, 1, 2, 3, 4, 5], "right": [7, 8, 9, 10, 11, 12]}
+
+
+def test_a_bad_limb_declaration_fails_loudly():
+    """列号写成字符串这种档案错误要在加载时抛出,不能静默变成没声明。"""
+    import pytest
+    with pytest.raises(ValueError):
+        DS.limbs_declared({"left": ["a", "b"]})
+
+
+# ---- 2026-10-15:列名说关节、数值说开合量(G1 右臂六列) --------------------------------------------------
+
+G1_NAMES = ["kLeftShoulderPitch", "kLeftShoulderRoll", "kLeftShoulderYaw", "kLeftElbow", "kLeftWristRoll", "kLeftWristPitch",
+            "kLeftWristYaw", "kLeftHandPinky", "kLeftHandRing", "kLeftHandMiddle", "kLeftHandIndex", "kLeftHandThumbBend",
+            "kLeftHandThumbRotation", "kRightShoulderPitch", "kRightShoulderRoll", "kRightShoulderYaw", "kRightElbow",
+            "kRightWristRoll", "kRightWristPitch", "kRightWristYaw", "kRightHandPinky", "kRightHandRing", "kRightHandMiddle",
+            "kRightHandIndex", "kRightHandThumbBend", "kRightHandThumbRotation"]
+
+
+def _g1_like(n=400, seed=0):
+    """左臂七列 + 右肩 pitch 是弧度里的平滑关节角;右臂其余六列与十二根手指一样是 [0,1] 里顶到 1.0 的开合量。"""
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, 6.0, n)[:, None]
+    joints = 0.8 * np.sin(t * (1 + np.arange(8)) * 0.7) - 0.3
+    opening = np.clip(0.5 + 0.7 * np.sin(t * (1 + np.arange(18)) * 0.5) + rng.normal(0, 0.01, (n, 18)), 0.0, 1.0)
+    a = np.zeros((n, 26))
+    a[:, 0:7] = joints[:, :7]; a[:, 13] = joints[:, 7]
+    a[:, 7:13] = opening[:, 0:6]; a[:, 14:20] = opening[:, 6:12]; a[:, 20:26] = opening[:, 12:18]
+    return a
+
+
+def test_nonjoint_columns_catch_g1_right_arm_and_nothing_else():
+    from curation.ingest.dataset_semantics import detect_ee_layout, nonjoint_columns
+    a = _g1_like()
+    lay = detect_ee_layout(G1_NAMES, 26)               # 手指列已按名字认出,不在候选里
+    assert nonjoint_columns([a, a + 0.001], G1_NAMES, lay) == [14, 15, 16, 17, 18, 19]
+    # 恒定列(量程 0)、小角度关节(0–0.35 rad)都不算
+    b = a.copy(); b[:, 14:20] = 0.0; b[:, 3] = np.abs(a[:, 3]) * 0.2
+    assert nonjoint_columns([b], G1_NAMES, lay) == []
+    # 整库都归一化到 [0,1](候选的一半以上中招)是约定,不是列名错
+    c = np.clip((a + 1.5) / 3.0, 0.0, 1.0); c[:, 0] = np.clip(c[:, 0] * 1.4, 0, 1)
+    assert nonjoint_columns([c], G1_NAMES, lay) == []
+    assert nonjoint_columns([a], [], lay) == [] and nonjoint_columns([a[:4]], G1_NAMES, lay) == []
+
+
+def test_reader_marks_nonjoint_columns_in_the_layout_and_the_shell_reads_them():
+    """走读路:预检把这六列写进布局;同步的速度代理和运动质量都不看它们;条目读数带列名,数据集级出一条发现。"""
+    from curation.ingest.lerobot_reader import resolve_dataset_semantics
+    from curation.pipeline.episode_checks import sync_speed_groups
+    info = {"robot_type": "Unitree_G1_Inspire", "fps": 30,
+            "features": {"action": {"names": [G1_NAMES]}, "observation.state": {"names": [G1_NAMES]}}}
+    rows = [{"action": _g1_like(seed=i).astype(np.float32), "proprio_state": _g1_like(seed=i).astype(np.float32), "fps": 30.0}
+            for i in range(3)]
+    sem = resolve_dataset_semantics(info, rows)
+    lay = sem.extras["layout"]
+    assert lay["nonjoint_dims"] == [14, 15, 16, 17, 18, 19]
+    assert lay["nonjoint_names"] == ["kRightShoulderRoll", "kRightShoulderYaw", "kRightElbow", "kRightWristRoll",
+                                     "kRightWristPitch", "kRightWristYaw"]
+    # the right arm has one joint left of seven: not a limb proxy at all (its shoulder pitch alone is not the arm)
+    assert sync_speed_groups(26, "joint", lay, ()) == {"left": list(range(0, 7))}
+    res = motion_quality(rows[0]["action"].astype(float), rows[0]["proprio_state"].astype(float), 30.0,
+                         nonjoint_dims=tuple(lay["nonjoint_dims"]))
+    assert res.detail["nonjoint_cols"] == [14, 15, 16, 17, 18, 19]
+    assert not set(res.detail["smoothness_cols"]) & {"14", "15", "16", "17", "18", "19"}
+    # stuck: a command that varies over a reading parked at 1.0 is what those columns look like all day; not a stuck joint
+    pr = rows[0]["proprio_state"].astype(float).copy(); pr[:, 14:20] = 1.0
+    res2 = motion_quality(rows[0]["action"].astype(float), pr, 30.0, nonjoint_dims=tuple(lay["nonjoint_dims"]),
+                          control_mode="absolute", stuck_strategy="cmd_delta_vs_pos", same_space=True)
+    assert not {int(s["joint"]) for s in (res2.detail.get("stuck_joints") or [])} & {14, 15, 16, 17, 18, 19}

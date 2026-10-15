@@ -75,6 +75,9 @@ def action_semantics(row: dict) -> dict:
     if isinstance(pre, dict) and pre.get("status"):
         out["preflight"] = str(pre["status"])
     out["undetermined"] = out["action_space"] in ("", "unknown") or out["source"] == "preflight_unknown"
+    lay = (extras or {}).get("layout") if isinstance(extras, dict) else None
+    if isinstance(lay, dict) and lay.get("nonjoint_dims"):
+        out["nonjoint_columns"] = [str(n) for n in (lay.get("nonjoint_names") or lay["nonjoint_dims"])]
     return out
 
 
