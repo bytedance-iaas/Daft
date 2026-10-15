@@ -65,7 +65,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`）；播放器在 `src/features/visualizer/`（完整版与迷你版共用），「可视化」页在 `src/pages/visualize/` |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考；可视化的三页由 `viz-src/` 生成：改 `viz-src/`，再在该目录跑 `python3 viz-src/build.py .`） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
-| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`register.py` 把子集登记成质检台的数据集（清单在 `console_picks.json`），`score.py` 给平台结果打分（只读 C2 2.0 的发现；`finding_map.json` 只剩对照项与预检项），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
+| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`register.py` 把子集登记成质检台的数据集（清单在 `console_picks.json`（v1 挑的 20 个）与 `console_picks_v2.json`（v2 全部 99 个）），`score.py` 给平台结果打分（只读 C2 2.0 的发现；`finding_map.json` 只剩对照项与预检项），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
 | `data/umi-test/` | UMI 本手轨迹预览的两个小脚本（渲染标记视频、生成静态页） |
 | `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |

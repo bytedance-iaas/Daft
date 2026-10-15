@@ -14,6 +14,7 @@
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 | `register.py` | 把样本集的子集登记成质检台的数据集（REST，`POST /datasets`）：TOS 地址加访问密钥名，mcap 的映射按探测起草的原样确认；重跑不重复登记 |
 | `console_picks.json` | 登记到质检台的 20 个子集（设计 16 §7.9）：地址、名字（`anchor-v1/<子集>`）、备注（格式、机器人、正例、期望值在哪） |
+| `console_picks_v2.json` | 样本集 v2 的全部 99 个子集（anchor 63、anchor-nc 25、crafted 11，设计 16 §7.9）：名字 `<样本集>-v2/<子集>`，备注由 v2 的期望值生成（正例、对照、有反例的项数、期望值在哪、许可） |
 
 ## `coverage_from_registry.py`
 
@@ -120,9 +121,12 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
 # 登记 console_picks.json 里的 20 个子集，每个一行结果；--out 另存一份 JSON Lines
 .venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 \
     --picks tools/regression_samples/console_picks.json [--credential <访问密钥名>] [--out registered.jsonl]
+# 样本集 v2 的全部 99 个子集
+.venv/bin/python tools/regression_samples/register.py --kube dataverse/dataverse-curation-0 \
+    --picks tools/regression_samples/console_picks_v2.json --out registered_v2.jsonl
 ```
 
-每行是 `[i/20] 新登记|已登记 <ds-id> <名字> | <格式> <条数> 条 | 预检通过|预检有问题：… | 映射 …`；同一地址再登记返回原来那条（名字、备注变了就改过来）。
+每行是 `[i/N] 新登记|已登记 <ds-id> <名字> | <格式> <条数> 条 | 预检通过|预检有问题：… | 映射 …`；同一地址再登记返回原来那条（名字、备注变了就改过来）。
 退出码：0 全部登记；1 有失败的（其余照常登记）；2 登录被拒、钥匙不对、输入有误或连不上（中途断开时前面的已登记，重跑即可）。
 
 ## 手动验证步骤
@@ -171,4 +175,5 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
    `register.py --api http://127.0.0.1:<端口>/curation/api/v1 --no-auth <三个目录>`：三行都是「新登记」，LeRobot「预检通过」，GenRobot「映射 已确认（UMI 手持夹爪（内置），第 1 版）」，
    ABC-130k「预检有问题：mcap 里找不到必需的动作 topic（/action）…」且映射已确认（只能可视化，不能质检）；再跑一遍三行都是「已登记」。
 3. 集群：`--kube dataverse/dataverse-curation-0 --list-credentials` 列出钥匙；带 `--picks console_picks.json` 跑完，控制台「数据集」里搜 `anchor` 能看到 20 条，
-   名字、备注、条数与 `console_picks.json` 一致。
+   名字、备注、条数与 `console_picks.json` 一致。带 `--picks console_picks_v2.json` 跑完，搜 `-v2/` 能看到 99 条（`anchor-v2/`、`anchor-nc-v2/`、
+   `crafted-v2/` 各 63、25、11），条数与 v2 的 `index.json` 一致。
