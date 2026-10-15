@@ -24,6 +24,18 @@ from ..contract import CheckResult
 DISCRETE_LEVELS = 4
 
 
+def _moving_step_scale(x: np.ndarray) -> float:
+    """一列的步长尺度,只数**在动的帧**:|Δ| 超过自身非零 |Δ| 的 p95 的一成(与尖刺段「运动占空比」同一口径)。
+    走走停停的遥操作(RH20T 2026-10-14:中途空转 10.9 s / 31 s)大量近零步长会把全程平均步长压得很小,
+    几次起步的加速度就把比值顶过白噪声,把间歇运动当成抖动;在动的帧不足 5 帧时退回全程平均。"""
+    step = np.abs(np.diff(np.asarray(x, dtype=np.float64)))
+    pos = step[step > 0]
+    if len(pos) == 0:
+        return 0.0
+    moving = step[step > 0.1 * np.percentile(pos, 95)]
+    return float(moving.mean()) if len(moving) >= 5 else float(step.mean())
+
+
 def _rotation_sequence(block: np.ndarray, repr_: str):
     """一段姿态分量序列 → scipy Rotation 序列;表示法认不出/数值退化返回 None。"""
     from scipy.spatial.transform import Rotation
@@ -197,10 +209,10 @@ def motion_quality(
     if T >= 3:
         for c in kin_cols:
             st = float(np.abs(np.diff(a[:, c])).mean())
-            if st < 1e-12:
+            if st < 1e-12:                             # 恒定列(没动过)不计
                 continue
             rms_c = float(np.sqrt((np.diff(a[:, c], n=2) ** 2).mean())) / dt**2
-            ref_c = smooth_ref if smooth_ref is not None else 4.0 * st / dt**2
+            ref_c = smooth_ref if smooth_ref is not None else 4.0 * _moving_step_scale(a[:, c]) / dt**2
             cols_s.append(float(np.exp(-rms_c / (ref_c + 1e-12))))
             cols_used.append(int(c))
             rms_cols.append(rms_c)

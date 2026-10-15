@@ -241,11 +241,11 @@ def test_switch_column_stays_out_of_smoothness_and_spike():
 def test_quaternion_block_sign_flips_are_not_motion():
     a = _rh20t_like(flips=True)
     bare = motion_quality(a, None, 10.0, control_mode="absolute")
-    assert bare.detail["smoothness"] < 0.6                            # the flips still count without a layout
     lay = motion_quality(a, None, 10.0, control_mode="absolute", rotation_blocks=[(3, 4, "quat")],
                          angle_dims=(3, 4, 5, 6), angle_mode="absolute", gripper_dims=(7,),
                          translation_dims=(0, 1, 2))
     assert lay.detail["smoothness"] > 0.95 and lay.detail["spike"] > 0.95
+    assert lay.detail["smoothness"] - bare.detail["smoothness"] > 0.2     # the flips still cost without a layout
     assert set(lay.detail["smoothness_cols"]) == {"0", "1", "2", "3"}   # xyz + the rotation odometer
 
 
@@ -272,3 +272,37 @@ def test_unknown_semantics_abstain_instead_of_scoring():
     assert out["passed"] is None and out.get("score") is None
     assert d["semantics_undetermined"] is True and "smoothness" not in d
     assert "不算" in d["smoothness_reason"] and d["reason"] == d["spike_reason"]
+
+
+# ---- F7b (2026-10-14):走走停停不是抖动 -------------------------------------------------------
+
+def _same_motion_at(fps: float, jitter: float = 0.0, seed: int = 0, seconds: float = 20.0):
+    """一段 20 s 的平滑动作(几条正弦叠加)按 fps 采样;jitter 是每帧叠加的白噪声幅度(米)。"""
+    rng = np.random.default_rng(seed)
+    t = np.arange(0.0, seconds, 1.0 / fps)
+    base = np.stack([0.2 * np.sin(0.6 * t + k) + 0.05 * np.sin(1.7 * t + 2 * k) for k in range(6)], 1)
+    return (base + rng.normal(0, jitter, base.shape)).astype(np.float64)
+
+
+def _with_pauses(a: np.ndarray, every: int = 40, hold: int = 30) -> np.ndarray:
+    """每 every 帧插入 hold 帧的停顿(值不变):同一段动作,只是走走停停。"""
+    chunks = []
+    for i in range(0, len(a), every):
+        chunks.append(a[i:i + every])
+        chunks.append(np.repeat(a[min(i + every, len(a)) - 1:min(i + every, len(a))], hold, axis=0))
+    return np.concatenate(chunks)
+
+
+def test_pauses_do_not_make_a_smooth_motion_jagged():
+    for fps in (10.0, 30.0):
+        a = _same_motion_at(fps)
+        cont = motion_quality(a, None, fps, control_mode="absolute").detail["smoothness"]
+        paused = motion_quality(_with_pauses(a), None, fps, control_mode="absolute").detail["smoothness"]
+        assert abs(cont - paused) < 0.08, (fps, cont, paused)
+
+
+def test_jitter_still_separates_from_clean_at_every_rate():
+    for fps in (10.0, 30.0, 50.0):
+        clean = motion_quality(_same_motion_at(fps), None, fps, control_mode="absolute").detail["smoothness"]
+        noisy = motion_quality(_same_motion_at(fps, jitter=0.01), None, fps, control_mode="absolute").detail["smoothness"]
+        assert clean - noisy > 0.25, (fps, clean, noisy)
