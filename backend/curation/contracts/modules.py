@@ -154,6 +154,12 @@ noise's -0.5 and a pure alternation's -1) with an alternating amplitude of at le
 (half the answer key's borderline injection), on the command or on the reading, is reported as ``jagged`` with its
 frames. The smoothness score could not see the injected sawtooth (0.54 / 0.73 against a clean 0.8-0.95 spread)
 and stays what it was.
+8.9 (2026-10-16) binds taxonomy 2.1: TASK-11 (idle edges - the arm resting before the task starts or after it
+ends, a recording that was not trimmed) is appended to the TASK dimension, and ``motion_quality``'s
+``idle_opening`` / ``idle_closing`` move there from TASK-1. The full run's benchmark showed the two were never
+the same thing: TASK-1 is where each step starts and ends (the sample set's pedal-marked steps and task-end
+marks), which nothing in the platform measures yet, so TASK-1 is left without a producer rather than kept
+covered by a reading that happens to share a word with it.
 """
 from __future__ import annotations
 
@@ -161,9 +167,9 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.8"
+REGISTRY_VERSION = "8.9"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
-TAXONOMY_VERSION = "2.0"
+TAXONOMY_VERSION = "2.1"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]
@@ -462,7 +468,7 @@ def _motion_params() -> dict:
             "saturation_min": _line("执行器饱和判定线", "执行响应分低于这个值，报「执行器饱和」（ACT-4）", 0.5, 0.0, 1.0),
             "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-7）", 0.5, 0.0, 1.0),
             "severe_below": _line("严重判定线", "平滑度、尖刺分低于这个值时，发现的严重度记为高", 0.2, 0.0, 1.0),
-            "idle_edge_min_s": _line("起止空转判定线（秒）", "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
+            "idle_edge_min_s": _line("起止空转判定线（秒）", "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-11）",
                                      1.0, 0.0, 60.0),
         }}
 
@@ -689,8 +695,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),
                _info("stuck", "ACT-8", "执行器卡死", "medium", scope_kind="channel"),
                _info("fluency_low", "TASK-7", "操作不流畅"),
-               _info("idle_opening", "TASK-1", "开头空转"),
-               _info("idle_closing", "TASK-1", "结尾空转"),
+               # 8.9 (2026-10-16): the idle edges are TASK-11, not the step boundaries (TASK-1)
+               _info("idle_opening", "TASK-11", "开头空转"),
+               _info("idle_closing", "TASK-11", "结尾空转"),
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
                      scope_kind="dataset"),
                # 8.8 (2026-10-16): columns named as joints that carry a normalized opening (G1's right arm)

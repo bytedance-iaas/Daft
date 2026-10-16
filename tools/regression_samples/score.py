@@ -109,8 +109,14 @@ def upgrade_expectation(exp, tax, current):
     have, want = expectation_taxonomy(exp, tax), current.get("taxonomy_version")
     if not have or have == want:
         return exp, tax
+    if _version_key(have) > _version_key(want):
+        raise InputError(f"the expectation is for taxonomy {have}, newer than this tool's {want}")
     ren = current.get("renumbered") or {}
-    if not ren or _version_key(have) > _version_key(ren.get("from_version", "0")):
+    if ren and _version_key(have) > _version_key(ren.get("from_version", "0")):
+        # 2.1 (2026-10-16): since 2.0 the ids are frozen and a release only appends items, so an expectation
+        # exported with 2.0 (the sample set v2 as published) scores as it is, against the current taxonomy
+        return exp, current
+    if not ren:
         raise InputError(f"the expectation is for taxonomy {have}; taxonomy {want} has no table to map it")
     ids = ren["ids"]
 

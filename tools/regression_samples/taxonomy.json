@@ -1523,14 +1523,8 @@
    "origin": "需",
    "samples": "真实：C1 的逐帧模式标签、B8 的分步起止时间（都仅内部）",
    "platform": "有读数：运动质量给出开头和结尾的空闲秒数、活动占比，只报不罚",
-   "platform_status": "部分",
-   "platform_codes": [
-    "motion_quality.idle_opening",
-    "motion_quality.idle_closing"
-   ],
-   "platform_conditions": [
-    "数据集要有状态量"
-   ],
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "episode",
    "description": "动作起止点",
@@ -1876,6 +1870,45 @@
    }
   },
   {
+   "id": "TASK-11",
+   "dimension": "TASK",
+   "dimension_name": "任务与步骤",
+   "name": "首尾空闲",
+   "origin": "审",
+   "samples": "待补：crafted 的 so101-mini 补冻结帧子集与 HABIT 重打包子集（2026-10 立项）",
+   "platform": "有读数：运动质量给出开头和结尾的空闲秒数（idle_opening / idle_closing，判定线 1 s），只报不罚；2.1 之前这两个发现挂在 TASK-1 名下",
+   "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.idle_opening",
+    "motion_quality.idle_closing"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
+   "kind": "defect",
+   "level": "episode",
+   "description": "任务前后录多出来的机械臂不动的空白（开录早了、停录晚了），可修剪；与 TASK-7 的区别是 TASK-7 发生在任务进行中",
+   "aliases": {
+    "astra6_v1": [
+     "—"
+    ],
+    "pantheon": [
+     "—"
+    ],
+    "argus": [
+     "—"
+    ]
+   },
+   "explain_zh": "任务开始前或结束后，录制里多出一段机械臂不动的空白（开录早了、停录晚了），任一端不短于 1 s 就算。不影响任务本身，剪掉即可。和 TASK-7 的区别：TASK-7 是任务进行中的停顿或拖沓，这里是任务之外。期望可带 head_s / tail_s 读数。",
+   "origin_codes": [
+    "audit"
+   ],
+   "attributes": {
+    "head_s": "开头空闲的秒数（独立量尺量出，见样本集 README）",
+    "tail_s": "结尾空闲的秒数"
+   }
+  },
+  {
    "id": "LABEL-1",
    "dimension": "LABEL",
    "dimension_name": "标注与描述",
@@ -2066,7 +2099,7 @@
   "subtypes": "某一项下的细分种类（目前只有 TASK-10）：期望值里写在 value 或区间的 subtype 上，打分仍按检测项计",
   "attributes": "期望值可以带的属性（TASK-10 的 subtype / recovered，LABEL-4 的 relation）：说明是哪一种，不改变该报不该报"
  },
- "taxonomy_version": "2.0",
+ "taxonomy_version": "2.1",
  "rules": [
   "2.0 起编号冻结（2026-10-14，需求方）：已有编号的名称、类型、级别、维度与所守的项不再改，解释只做不改意思的补充；新检测项接在本维度最后、拿新编号；删掉的编号不复用。1.x 的编号按 renumbered 换算，不能直接比",
   "同一现象用最具体的一项；有独立证据的不同问题可以多标",
@@ -2107,6 +2140,16 @@
   "note": "2.0 numbers the items of every dimension again without gaps; ids not listed are unchanged. Ids of different versions are not comparable: map 1.x ids through this table."
  },
  "changelog": [
+  {
+   "version": "2.1",
+   "date": "2026-10-16",
+   "why": "全检基准（PR #168/#169 版）暴露：平台挂在 TASK-1 名下的「开头空转 / 结尾空转」量的是录制两头有没有掐好，不是步骤起止；两件事分开各算各的召回",
+   "changes": [
+    "TASK 维度末尾加 TASK-11「首尾空闲」（defect，episode 级）：任务前后机械臂不动的空白，任一端 ≥ 1 s；可修剪",
+    "运动质量的 idle_opening / idle_closing 从 TASK-1 挪到 TASK-11；TASK-1 平台侧不再有任何发现（状态「没有」），步骤起止检测另立项",
+    "已有编号一个不动，老期望直接可算（2.0 → 2.1 不需要换算）"
+   ]
+  },
   {
    "version": "2.0",
    "date": "2026-10-07",

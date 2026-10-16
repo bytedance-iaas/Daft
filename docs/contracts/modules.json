@@ -1,6 +1,6 @@
 {
- "registry_version": "8.8",
- "taxonomy_version": "2.0",
+ "registry_version": "8.9",
+ "taxonomy_version": "2.1",
  "blocks": [
   {
    "id": "cpu",
@@ -743,6 +743,14 @@
     "level": "episode"
    },
    {
+    "id": "TASK-11",
+    "dimension": "TASK",
+    "name_zh": "首尾空闲",
+    "explain_zh": "任务开始前或结束后，录制里多出一段机械臂不动的空白（开录早了、停录晚了），任一端不短于 1 s 就算。不影响任务本身，剪掉即可。和 TASK-7 的区别：TASK-7 是任务进行中的停顿或拖沓，这里是任务之外。期望可带 head_s / tail_s 读数。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
     "id": "LABEL-1",
     "dimension": "LABEL",
     "name_zh": "一条有多份描述，彼此不一致",
@@ -1424,7 +1432,7 @@
     },
     {
      "code": "idle_opening",
-     "item": "TASK-1",
+     "item": "TASK-11",
      "name_zh": "开头空转",
      "severity": "low",
      "level": "info",
@@ -1433,7 +1441,7 @@
     },
     {
      "code": "idle_closing",
-     "item": "TASK-1",
+     "item": "TASK-11",
      "name_zh": "结尾空转",
      "severity": "low",
      "level": "info",
@@ -1466,7 +1474,7 @@
     "ACT-5",
     "ACT-8",
     "TASK-7",
-    "TASK-1",
+    "TASK-11",
     "ACT-6"
    ],
    "param_schema": {
@@ -1530,7 +1538,7 @@
      "idle_edge_min_s": {
       "type": "number",
       "title": "起止空转判定线（秒）",
-      "description": "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
+      "description": "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-11）",
       "default": 1.0,
       "minimum": 0.0,
       "maximum": 60.0,
