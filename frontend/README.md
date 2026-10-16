@@ -236,7 +236,7 @@ ep 4、9、13、16、22、29、33、36、40、47，其中 ep 4、9、13、16 已
     「导出 JSON」下载当前映射；「从 JSON 导入」一份坏的（如把某组的 role 写成 both）不导入、逐条列出问题（`series.0.role：只能是 state、action 或 other`），好的填进表格并写「已从 … 导入」。
     页脚写「保存时一并确认这份映射（第 1 版），可视化立即可用」；保存后详情的「可视化配置」写「UMI 手持夹爪 · 第 1 版」，列表里格式下面写「映射：UMI 手持夹爪」。
     换成 `tos://pai-kit-datasets/raw/abc130k_arrange_flowers`（ABC-130k 一类自定义 schema）：预检说不支持（找不到 /action），下面蓝色提示「按站点缺省的 topic，质检读不了这个数据集…保存时按下面确认的映射重新预检」；
-    映射写「没有模版对得上这些 topic，按「Foxglove 通用」起草」，`-state` / `-action` 两两叠画，摘要下面一条橙字是质检读取器的已知差距（读不了 H.265；repeated 字段 D100 起读得了）；`/left-arm-state` 的字段下拉列出
+    映射写「没有模版对得上这些 topic，按「Foxglove 通用」起草」，`-state` / `-action` 两两叠画，摘要下面没有质检读取器的差距提示（repeated 字段与 H.265 相机都读得了，设计 30）；`/left-arm-state` 的字段下拉列出
     `position ×6`、`velocity ×6`、`torque ×6`，勾上 velocity 后 JSON 跟着变；「任务描述来源」可以从 /instruction 改成「metadata 键：task_name（arrange the flowers…）」，/instruction 随之变「忽略」。
     换成 `tos://pai-kit-datasets/raw/robomind_ur`（RoboMIND 一类 RGB-D，设计 21 §5.4）：摘要写「相机 1 路 · 深度图 1 路 · 曲线 3 组…」，`/top-depth` 的用途是「深度图」
     （下拉里「相机」置灰；`/top-camera` 反过来「深度图」置灰），字段 / 说明写「png16 · 640×480」，下面「叠放的相机」是 `/top-camera`；清掉再选回、改显示名，

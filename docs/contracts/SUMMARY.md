@@ -1,8 +1,8 @@
 # 契约要点与冻结时的取舍（2026-09-22，1.5.2 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
-第一节的表按现状写（2026-10-15：注册表 8.6、C2 只有 2.0、C4 7.6.0、分类表 2.0 定稿）；第二节起按时间记各次修订，后来的修订常常改掉前面的做法，
-读历史小节时以最后一节（第二十八节）和契约文件为准。
+第一节的表按现状写（2026-10-15：注册表 8.6、C2 只有 2.0、C4 7.6.1、分类表 2.0 定稿）；第二节起按时间记各次修订，后来的修订常常改掉前面的做法，
+读历史小节时以最后一节（第三十节）和契约文件为准。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
 
 ## 一、五份契约
@@ -12,7 +12,7 @@
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一段跑、能报哪些细码、覆盖哪些检测项、有哪些参数 | 注册表 8.4（2026-10-14：8.4 是 D95–D97，声明了却缺的数据给判决；8.3 是完整性的分辨率 FILE-7；8.2 是画面缺陷多视觉遮挡与机位身份；8.1 是同步检查转人工；8.0 是分类表 2.0 定稿冻结）：6 项逐条检查 + 数据集级的重复检测（只报告），另有完整性、EEF、画面缺陷（随任务成败判定的请求作答）；细码与覆盖指向分类表 2.0；两块：CPU 块 integrity → numeric → frame → duplicate（另有第二个起点 vlm_prep），VLM 块 vlm，全部逐条交接，没有全量段和补描述段（无标注条目不判成败，无法评估原因 `no_task_text`）；每个细码有缺省级别 blocking / review / info，review 级写明裁决线（`task_verdict`、`reject_appeal`、`eef_check`、`integrity_check`、`sync_check`），blocking 级写明可否复议；`depends_on` 3.2 起为空；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（17 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；记录只有 2.0（D90）：`status` 是 `ok / error`（`error` 必须带出错明细），加发现、评估过与评估不了的检测项；判决由 `aggregate` 按任务策略算：`keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，7.5.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，7.6.1） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 78 个路径、95 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 C6 分类表、C7 数据集声明是后来加的，见第十五、十六节与 `README.md` 的契约表。
@@ -599,3 +599,14 @@ changelog 两边的条目按版本号排在一起）。这之前跑的任务，�
   （这一路视频比窗口早结束，D102）；视觉质量的 `details` 在有开头解不出时多 `undecodable_head`。`aggregate` 读不了某条的元数据时那一条不写任务描述，
   不再让整个命令失败（D100）。Schema 不变；C3、C4 不变。
 - A 类：`ingest/mcap_reader.py` 的 repeated 字段取数（D100）登记在 `tools/parity/a_class_declared.json`，黄金基线回放不变。
+
+## 三十、重跑后的两处修补与并发缺省（2026-10-15，设计 30 §8，D103–D104）
+
+- **C1 不变**（8.6）。
+- **C2 行为**：mcap / Lance 的读取源开跑前读语义样本，整批读不了时逐条读、读不了的留在样本外（D103），一个坏文件不再让后面几段的每一条都没有记录；
+  mcap 读取器读得了 H.265 相机：Annex-B 按 `hevc` 读、只复制流封进 mp4（标 `hvc1`），不转码（D104，不加开关）。Schema 不变；C3 不变。
+- **C4 → 7.6.1（只改文案）**：中英变更记录补上 7.6.0 之后客户看得见的改动（设计 30 的 D98–D104）；映射接口的说明里 `checks_gap` 不再举 H.265 相机和
+  repeated 字段。路径、Schema 不变。
+- **C7 行为**：确认 mcap 映射时的 `warnings` 不再为 H.265 相机报 `checks_gap`（`viz/mcap_mapping.check_gaps`）。
+- 部署约定：`CURATOR_MAX_RUNNING_TASKS` 的缺省由 3 改为 8（P1 / D54 修订，设计 30 §8.3），dataverse chart 不用另设。
+- A 类：`ingest/mcap_reader.py` 的 H.265 分支登记在 `tools/parity/a_class_declared.json`，黄金基线回放不变。

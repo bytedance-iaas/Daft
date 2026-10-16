@@ -32,8 +32,10 @@ P1(2026-09-18):客户用 mcap 录制的演示数据(每 episode 一个 .mcap 文
 3. **视频不是 mp4 文件而是逐帧压缩消息**,两种编码:
    - JPEG(CompressedImage,format=jpeg/jpg)→ 封装进 mjpeg-mp4(**不重编码**);
    - H.264 Annex-B(foxglove CompressedVideo,format=h264)→ 重封装进 mp4(不重编码,
-     与 rrd VideoStream 同款做法)。
-   其它编码(raw Image / h265 / av1)响亮拒绝,别产出一个能打开但解不出帧的 mp4。
+     与 rrd VideoStream 同款做法);
+   - H.265 Annex-B(format=h265 / hevc)→ 同样重封装(hvc1,D104,设计 30 §8.2):镜像里的 PyAV 自带 hevc
+     解码器,不用转码。
+   其它编码(raw Image / av1)响亮拒绝,别产出一个能打开但解不出帧的 mp4。
 4. **机器人型号/任务文本**:mcap metadata 记录(record)里认 robot_type / task 等
    键(录制方 add_metadata 带上即全自动);没有则靠 --embodiment,分层与冲突留痕
    的规则与 rrd 一致(用户指定 > 文件内嵌)。
@@ -578,19 +580,25 @@ def mux_jpeg_frames(blobs: list[bytes], times_s: list[float], out_path,
 
 
 def _mux_annexb(samples: list[bytes], times_s: list[float], out_path,
-                fps: float) -> None:
-    """H.264 Annex-B 样本序列 → mp4 容器(只换封装;做法与 rrd_reader._remux_annexb
+                fps: float, codec: str = "h264") -> None:
+    """H.264 / H.265 Annex-B 样本序列 → mp4 容器(只换封装;做法与 rrd_reader._remux_annexb
     同款,pts 优先用真实相对时间 —— demux 出的包数与样本数一致时逐包对号,
-    不一致(SPS/PPS 单独成包等)退回均匀 1/fps)。"""
+    不一致(SPS/PPS 单独成包等)退回均匀 1/fps)。H.265 按 hevc 读、标 hvc1、只复制流
+    不开编码器(D104,与 viz/remux.py 同法);首个关键帧之前的包照留,D99 靠它们认出
+    「开头解不出」。"""
     import av
 
     time_base = Fraction(1, 90000)
     step = int(round((1 / fps) / time_base))
     tmp = out_path + ".part" if isinstance(out_path, str) else out_path
-    with av.open(io.BytesIO(b"".join(samples)), format="h264") as src:
+    with av.open(io.BytesIO(b"".join(samples)), format="hevc" if codec == "h265" else "h264") as src:
         in_stream = src.streams.video[0]
         with av.open(tmp, "w", format="mp4") as dst:
-            out_stream = dst.add_stream_from_template(in_stream)
+            if codec == "h265":
+                out_stream = dst.add_stream_from_template(in_stream, opaque=True)
+                out_stream.codec_tag = "hvc1"
+            else:
+                out_stream = dst.add_stream_from_template(in_stream)
             out_stream.time_base = time_base
             packets = [p for p in src.demux(in_stream) if p.size > 0]
             use_times = len(packets) == len(times_s)
@@ -614,6 +622,8 @@ def _codec_of(fmt: str, b: bytes) -> str:
     f = str(fmt or "").lower()
     if "jpeg" in f or "jpg" in f:
         return "jpeg"
+    if "h265" in f or "hevc" in f:
+        return "h265"
     if "h264" in f or "avc" in f:
         return "h264"
     if not f:
@@ -647,11 +657,13 @@ def _materialize_videos(scan: dict, episode_id: str, videos_dir: str,
                 mux_jpeg_frames([b for _, _, b in items], times, path, fps)
             elif codecs == {"h264"}:
                 _mux_annexb([b for _, _, b in items], times, path, fps)
+            elif codecs == {"h265"}:
+                _mux_annexb([b for _, _, b in items], times, path, fps, codec="h265")
             else:
                 raw = sorted({str(fmt or "") for _, fmt, _ in items})
                 raise NotADatasetError(
                     f"'{dataset_dir}' {cam}: 压缩帧编码认成 {sorted(codecs)}"
-                    f"(format 描述: {raw}),当前只支持 JPEG(封装)与 H.264 "
+                    f"(format 描述: {raw}),当前只支持 JPEG(封装)与 H.264 / H.265 "
                     "Annex-B(重封装);raw Image/其它编码需要真转码,尚未实现")
         videos[cam] = {"path": path, "from_ts": from_ts,
                        "to_ts": from_ts + duration}

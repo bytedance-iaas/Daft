@@ -351,6 +351,28 @@ def test_protobuf_repeated_field_reads_like_a_list():
     assert np.allclose(_extract_source({"position": np.array([1.0, 2.0])}, "position"), [1, 2])
 
 
+def test_an_h265_camera_is_remuxed_and_decodes(tmp_path):
+    """D104 (design doc 30 §8.2): an H.265 camera (ABC-130k's) is remuxed like H.264 - an hvc1 mp4, not a refusal -
+    and its frames decode with the hevc decoder PyAV ships; nothing is transcoded."""
+    pytest.importorskip("mcap_protobuf", reason="未装 mcap-protobuf-support")
+    pytest.importorskip("foxglove_schemas_protobuf", reason="未装 foxglove 消息类")
+    import av
+
+    from curation.adapters.decode import decode_window
+    from tests.viz.mcap_fixtures import make_abc
+
+    root = make_abc(str(tmp_path / "abc"), n=20)
+    mapping = {"action": [{"topic": "/left-arm-action", "fields": "q"}], "state": None,
+               "video_topics": ["/camera/top", "/camera/wrist"]}
+    row = read_mcap_rows(root, mapping=mapping)[0]
+    assert row["action"].shape[1] == 6                                # the repeated field q (D100)
+    top = next(v for k, v in row["video"].items() if k.endswith("top"))
+    with av.open(top["path"]) as container:
+        stream = container.streams.video[0]
+        assert stream.codec_context.name == "hevc" and stream.codec_tag == "hvc1"
+    frames, ts = decode_window(top["path"], top["from_ts"], top["to_ts"])
+    assert len(frames) == 20 and frames[0].shape[:2] == (48, 64)
+
 def test_builtin_umi_detection(tmp_path, capsys):
     """默认约定不命中但 topic 形如 /robotN/vio/eef_pose → 零配置自动识别,
     双设备按名序横拼(本合成文件无编码器 topic → 7 维/设备;编码器字段的

@@ -65,7 +65,7 @@ def test_the_daemon_accepts_the_deployment_environment(tmp_path, daemon_env_clea
     assert s.auth.htpasswd_file == rows["CURATOR_HTPASSWD_FILE"].literal
     assert (s.master_key.version, s.master_key.next_key) == (1, None)
     orch = OrchestratorConfig.from_env(env)
-    assert orch.max_running == 3                               # the chart leaves it to the Daemon
+    assert orch.max_running == 8                               # the chart leaves it to the Daemon
     # a site.yaml of a chart from before D54 still has concurrency.cpu / cpuMax: dropped, not fatal
     assert orch.site_config["concurrency"] == {"vlmParallelism": 64, "vlmParallelismMax": 128}
     # the one other mode the chart sets (web.basicAuth off)

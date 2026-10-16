@@ -80,7 +80,7 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 | `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`，按一刻钟取整），决定概览按天、周、月统计时每段从几点算起 |
 | `TOS_ENDPOINT` | 空 | W8：部署所在地域的 TOS 端点（v1 同名变量）。是内网端点（`*.ivolces.com`）时同地域的调用走内网，也原样交给 CLI |
 | `CURATOR_REASONING_EFFORT_TABLE` | 空 | W8：覆盖思考强度映射表，JSON 文件路径或 JSON 本身，写法见 [`secrets/README.md`](secrets/README.md) |
-| `CURATOR_MAX_RUNNING_TASKS`、`CURATOR_CPU_CORES` 等编排设置 | 3、容器的 CPU 配额 | 同时运行的任务数；核数减 2 是全部任务共用的 CPU 名额池（D54）。全表见 [`orchestr/README.md`](orchestr/README.md) 的「配置」 |
+| `CURATOR_MAX_RUNNING_TASKS`、`CURATOR_CPU_CORES` 等编排设置 | 8、容器的 CPU 配额 | 同时运行的任务数；核数减 2 是全部任务共用的 CPU 名额池（D54）。全表见 [`orchestr/README.md`](orchestr/README.md) 的「配置」 |
 | `CURATOR_VIZ_TRANSCODE`、`CURATOR_VIZ_CACHE_DIR`、`CURATOR_VIZ_CACHE_GB`、`CURATOR_VIZ_TRANSCODE_WORKERS` | `1`、临时卷下 `viz-cache`、20、2 | 数据可视化的平台转码开关与磁盘缓存（D60），见 [`viz/README.md`](viz/README.md) |
 | `CURATOR_VIZ_CLIENT_DECODE`、`CURATOR_VIZ_LANCE_S3_ENDPOINT` | `1`、空 | mcap H.264 / H.265 相机的浏览器内解码（样本包，按需才转封装）；读 TOS 上 Lance 表的 S3 兼容端点（空 = `tos-s3-<地区>`）。设计 19 |
 | `CURATOR_VIZ_SEGMENT` | `0` | `1`：LeRobot v3 / Lance 的相机（一个 mp4 装多条 episode）由 Daemon 出这条 episode 的切片，`moov` 在尾的单条 mp4 由 Daemon 出 `moov` 在头的版本；`0` 照旧由浏览器直接读。转码一律以切片为输入，与开关无关。设计 21 §4 |

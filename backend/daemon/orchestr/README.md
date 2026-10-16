@@ -17,7 +17,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `../exec/usage.py` | token 用量按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加，约 5 秒写一次库，SSE 推累计值 |
 | `config.py` | 编排的配置（环境变量，见下表） |
 | `service.py` | `Orchestrator`：路由调用的入口；生命周期钩子（就绪后收拾孤儿进程、启动 worker 池和清理线程；停机时系统暂停）；动作、子任务、D37 重新预检、清理交付产物、执行计划、预检 |
-| `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
+| `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 8），主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
 | `blocks.py` | 两块同时跑（设计 17 §3）：一块一个线程，块内是逐条交接的段（D70 起没有全量步骤）；一块失败另一块随之停下 |
@@ -123,7 +123,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `CURATOR_MAX_RUNNING_TASKS` | 3 | 同时运行的任务（主流程与子任务一起算，P1、D54） |
+| `CURATOR_MAX_RUNNING_TASKS` | 8 | 同时运行的任务（主流程与子任务一起算，P1、D54；2026-10-15 前是 3，设计 30 §8.3） |
 | `CURATOR_CLI` | 当前解释器 `-m curation.cli` | CLI 的命令行 |
 | `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency` 里的 VLM 并行度、`vlm` 段），缺省就是 Chart 写的 site.yaml；旧文件里的 `concurrency.cpu` / `cpuMax`（D54）和 `vlm.gates` 里 v1 的闸门名（`endstate`、`arbitration` 等，D89）忽略并告警 |
 | `CURATOR_CPU_CORES` | 容器的 CPU 配额（cgroup v2 / v1），没有配额时是本机核数 | 核数：减 2 是全局 CPU 名额池的大小，也是一个任务最多用的 CPU worker 数（P4、D54） |

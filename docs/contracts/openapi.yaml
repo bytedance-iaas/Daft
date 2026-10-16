@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.6.0
+  version: 7.6.1
   description: |
     ## Overview
 
@@ -281,6 +281,15 @@ info:
     (`window_comparable_episodes` of `episodes_with_readings`, per camera `n_window_stable`). A single camera's offset
     is read from the camera's best reading: its trusted whole-episode lag, else its steady windowed median.
 
+    **7.6.1** (2026-10-15): the checks read mcap cameras encoded as H.265 and numbers kept in protobuf repeated fields
+    (a custom message's `position`, say), as the visualizer already did, so a mapping's `warnings` no longer name them
+    as `checks_gap`. A video that starts between keyframes is decoded from its start: the frames before the first
+    keyframe are reported as `head_undecodable` (FILE-4, reported only, with the camera and the seconds) and the rest
+    is judged, where the episode waited for a retry before. A LeRobot v3 episode whose rows lie outside its data file's
+    index is rejected as `index_range_invalid` (FILE-9) instead of "0 frames". One file that cannot be read no longer
+    fails the whole task, and a video too long for the model's byte budget is sent at a lower resolution instead of
+    failing.
+
   x-description-zh: |
     ## 概览
 
@@ -456,6 +465,11 @@ info:
     （`window_min_trusted`、`window_max_iqr_s`、`window_spread_tol_s`），条目发现里每路的 `lag_windows` 多一个 `stable`，
     报告同步概览数出分窗比对能发言的条目数（`window_comparable_episodes` / `episodes_with_readings`，逐相机 `n_window_stable`）。
     单路错位按每路最好的读数判：整条可信用整条，否则用稳的分窗中位。
+
+    **7.6.1**（2026-10-15）：质检读得了 H.265 编码的 mcap 相机和 protobuf repeated 字段里的数值（比如自定义消息的 `position`），和可视化一样；
+    映射的 `warnings` 不再把它们列为 `checks_gap`。从两个关键帧之间开始的视频改为从头解码：第一个关键帧之前解不出的那几帧报 `head_undecodable`
+    （FILE-4，只报告，写明相机和起止秒数），其余照判，以前这一条会等待补跑。LeRobot v3 条目的行区间落在数据文件 `index` 之外的，按 `index_range_invalid`
+    （FILE-9）拒收，不再说「0 帧」。一个读不了的文件不再让整个任务失败；超过模型字节预算的长视频降低分辨率后照常送去判，不再出错。
 
 servers:
   - url: "{base}/api/v1"
@@ -1485,8 +1499,8 @@ paths:
         the dataset does not have, pairs series that are not of opposite roles or names a frame
         reference that is not a camera or series fails with `validation_failed` and
         `details.errors` per item. `warnings` say what the check reader will not read in it
-        (`checks_gap`: protobuf repeated fields picked by a path, ROS 2 nested messages, H.265
-        cameras; design doc 18 §6.2) and when the checks still cannot read the dataset
+        (`checks_gap`: numbers it cannot take from a source, such as ROS 2 nested
+        messages; design doc 18 §6.2) and when the checks still cannot read the dataset
         (`checks_unreadable`).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"

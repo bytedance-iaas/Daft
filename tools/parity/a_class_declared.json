@@ -62,9 +62,9 @@
       "why": "the listing a command already has is handed to the readers (seed): one listing of the bucket per task instead of three per stage worker; no read path changes - prefetch, exists, glob and the reads are as they were (tests/cli test_the_bucket_is_listed_once_per_task)"
     },
     "ingest/mcap_reader.py": {
-      "blob": "2281667ddcc890bb9b25101f7c9c2212315eead9",
+      "blob": "02c3b205b73a92c287ec0849e4bf59e4a5d96012",
       "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27); full-run fixes (design doc 30, 2026-10-15)",
-      "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes); 2026-10-15 (design doc 30 §3, D100): _flatten_numeric reads a protobuf repeated field (RepeatedScalarContainer / RepeatedCompositeContainer, a collections.abc.Sequence that is not a list) and a numpy array as a sequence - ABC-130k's RobotState.position (repeated double) read as nothing before; no other shape reads differently (golden baselines replay unchanged)"
+      "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes); 2026-10-15 (design doc 30 §3, D100): _flatten_numeric reads a protobuf repeated field (RepeatedScalarContainer / RepeatedCompositeContainer, a collections.abc.Sequence that is not a list) and a numpy array as a sequence - ABC-130k's RobotState.position (repeated double) read as nothing before; no other shape reads differently (golden baselines replay unchanged); 2026-10-15 (design doc 30 §8.2, D104): H.265 Annex-B cameras are remuxed like H.264 (read as hevc, stream copy, tagged hvc1, the packets before the first keyframe kept) instead of refused - the image's PyAV decodes hevc; the H.264 path is unchanged"
     },
     "ingest/schema.py": {
       "removed": true,

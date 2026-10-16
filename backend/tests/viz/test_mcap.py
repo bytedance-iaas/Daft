@@ -341,7 +341,7 @@ def test_a_dataset_the_checks_cannot_read_with_the_defaults(mc):
     """ABC-130k-like: the preflight finds mcap files but not the default topics, so the checks call
     it unsupported; the visualizer still takes it as mcap with its mapping pending, and saving the
     mapping takes the registration's preflight again with it. The check reader reads the repeated
-    protobuf field `q` since D100 (design doc 30 §3); only the H.265 camera is a gap the answer names."""
+    protobuf field `q` (D100) and the H.265 camera (D104) now, so the answers name no gap (design doc 30)."""
     import shutil
 
     shutil.copytree(mc.data / "abc", mc.data / "abc_raw")             # not registered by the fixture
@@ -352,15 +352,14 @@ def test_a_dataset_the_checks_cannot_read_with_the_defaults(mc):
     before = mc.get(f"{API}/datasets/{ds['id']}/mapping").json()
     assert [w["code"] for w in before["warnings"]] == ["checks_unreadable"]
     probe = mc.post(f"{API}/viz/mcap-probe", json={"input": {"dataset_id": ds["id"]}}).json()
-    assert [w["code"] for w in probe["warnings"]] == ["checks_gap"]
+    assert probe["warnings"] == []
     saved = mc.put(f"{API}/datasets/{ds['id']}/mapping", json={"mapping": probe["draft"]})
     assert saved.status_code == 200, saved.text
     # with the mapping the preflight finds every topic and the reader takes `q` (a repeated protobuf
-    # field picked by a path, D100), but not an H.265 camera: the answer says the checks cannot use it
+    # field picked by a path, D100) and the H.265 camera (D104): nothing to warn about
     assert saved.json()["state"] == "confirmed"
     gaps = [w["message"] for w in saved.json()["warnings"]]
-    assert [w["code"] for w in saved.json()["warnings"]] == ["checks_gap"], gaps
-    assert "/camera/top" in gaps[0] and "/left-arm-action" not in gaps[0]
+    assert saved.json()["warnings"] == [], gaps
     events = [e.action for e in mc.app.state.runtime.repo.list_events(resource=ds["id"], limit=50).items]
     assert "dataset.repreflight" in events
     assert mc.get(f"{API}/datasets/{ds['id']}").json()["viz"]["state"] == "ready"

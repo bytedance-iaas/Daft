@@ -83,8 +83,8 @@ describe('mcap 配置 in 添加数据集 (design doc 18 §6.4, F13.7)', () => {
     const { user, drawer, section } = await openAdd('tos://pai-kit-datasets/raw/abc130k_arrange_flowers');
     expect(drawer).toHaveTextContent(zh.mcap.defaultsUnreadable);
     expect(within(section).getByTestId('mcap-match')).toHaveTextContent('没有模版对得上这些 topic，按「Foxglove 通用」起草');
-    // the check reader's known gap is said before anything is saved: H.265 (repeated fields are read since D100)
-    expect(within(section).getAllByTestId('mcap-probe-warn-checks_gap')).toHaveLength(1);
+    // the check reader reads repeated fields (D100) and H.265 (D104): no gap to say before anything is saved
+    expect(within(section).queryAllByTestId('mcap-probe-warn-checks_gap')).toHaveLength(0);
     const arm = () => mappingIn(section).series.find((s) => s.topic === '/left-arm-state')!;
     expect(arm()).toMatchObject({ role: 'state', fields: ['position'], pair_with: '/left-arm-action' });
     // RobotState's candidate fields are offered; velocity is added to what is drawn

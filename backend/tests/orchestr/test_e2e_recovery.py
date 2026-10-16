@@ -110,7 +110,7 @@ class DaemonProcess:
             time.sleep(0.2)
         raise AssertionError(f"{task_id}: {json.dumps(self.task(task_id))[:1500]}")
 
-    def create(self, dataset: str) -> str:
+    def create(self, dataset: str, **params) -> str:
         pf = self.call("POST", "/preflight", json={"input": {"source": "local", "uri": dataset},
                                                    "vlm_backend": "fake"}).json()
         r = self.call("POST", "/tasks", json={
@@ -120,7 +120,7 @@ class DaemonProcess:
             "modules": ["timestamp_check", "kinematic_limits", "motion_quality",
                         "visual_quality", "video_action_sync", "task_success", "duplicate_check"],
             "vlm": {"backend": "fake", "model": "fake-vlm"},
-            "params": {"vlm_hedge": False}})
+            "params": {"vlm_hedge": False, **params}})
         assert r.status_code == 201, r.text
         return r.json()["id"]
 
@@ -138,6 +138,10 @@ class DaemonProcess:
                 self.proc.kill()
         self.http.close()
         self.log.close()
+
+
+#: the text of the task-success question (one an episode)
+JUDGE = "Assess the robot manipulation task"
 
 
 def _stage(task: dict, stage: str) -> dict:
@@ -159,29 +163,44 @@ def test_a_killed_daemon_recovers_its_task_and_keeps_user_intent(tmp_path, mini_
     shutil.copytree(mini_source, inputs / "mini")
     dataset = str(inputs / "mini")
     _prepare_volume(tmp_path / "data", fake_vlm.url)
+    held = []                                           # the model's held answers: let go however this ends
     first = DaemonProcess(tmp_path, inputs, "daemon-1.log")
     try:
-        fake_vlm.delay_s = 0.15
-        paused = first.create(dataset)
-        first.wait(paused, lambda t: t["state"] == "running")
-        assert first.call("POST", f"/tasks/{paused}/actions/pause").status_code == 200
-        first.wait(paused, lambda t: t["state"] == "paused")
-        stopped = first.create(dataset)
-        first.wait(stopped, lambda t: t["state"] == "running")
-        assert first.call("POST", f"/tasks/{stopped}/actions/stop").status_code == 200
-        first.wait(stopped, lambda t: t["state"] == "stopped")
-        victim = first.create(dataset)
-        run_dir = tmp_path / "data" / "runs" / victim
-        part = run_dir / "checks" / "task_success" / "parts" / "0001.jsonl"
-        first.wait(victim, lambda t: _stage(t, "vlm").get("state") == "running"
-                   and part.is_file() and part.read_text().count("\n") >= 1)
-        child = json.loads((run_dir / ".orchestr" / "proc.json").read_text())["pid"]
-    finally:
-        first.kill()                                    # no shutdown hooks, no transitions
-    assert _alive(child), "the CLI child should outlive a killed Daemon (its own session)"
+        try:
+            fake_vlm.delay_s = 0.15
+            paused = first.create(dataset)
+            first.wait(paused, lambda t: t["state"] == "running")
+            assert first.call("POST", f"/tasks/{paused}/actions/pause").status_code == 200
+            first.wait(paused, lambda t: t["state"] == "paused")
+            stopped = first.create(dataset)
+            first.wait(stopped, lambda t: t["state"] == "running")
+            assert first.call("POST", f"/tasks/{stopped}/actions/stop").status_code == 200
+            first.wait(stopped, lambda t: t["state"] == "stopped")
+            # Half way by construction, not by timing (a stage of eight quick episodes could finish
+            # between two polls on a loaded machine): the victim judges one episode at a time and the
+            # model answers its first question only, so the VLM stage has a result and still runs at
+            # the kill
+            asked = fake_vlm.count(JUDGE)
+            held.append(fake_vlm.hold(JUDGE))
+            victim = first.create(dataset, limits={"vlm_parallelism": 1})
+            run_dir = tmp_path / "data" / "runs" / victim
+            part = run_dir / "checks" / "task_success" / "parts" / "0001.jsonl"
+            first.wait(victim, lambda t: fake_vlm.count(JUDGE) > asked
+                       and _stage(t, "vlm").get("state") == "running")
+            held.append(fake_vlm.hold(JUDGE))           # the questions after the first one wait
+            held[0].set()
+            first.wait(victim, lambda t: _stage(t, "vlm").get("state") == "running"
+                       and part.is_file() and part.read_text().count("\n") >= 1)
+            child = json.loads((run_dir / ".orchestr" / "proc.json").read_text())["pid"]
+        finally:
+            first.kill()                                # no shutdown hooks, no transitions
+        assert _alive(child), "the CLI child should outlive a killed Daemon (its own session)"
 
-    fake_vlm.delay_s = 0.0
-    second = DaemonProcess(tmp_path, inputs, "daemon-2.log")
+        fake_vlm.delay_s = 0.0
+        second = DaemonProcess(tmp_path, inputs, "daemon-2.log")    # the child still waits for an answer
+    finally:
+        for gate in held:
+            gate.set()
     try:
         assert not _alive(child) or second.wait(victim, lambda t: not _alive(child), 60)
         done = second.wait(victim, lambda t: t["state"] in TERMINAL and not t["active_subtask"])
@@ -226,15 +245,24 @@ def test_a_graceful_shutdown_that_times_out_pauses_and_the_next_start_resumes(
                 json={"name": "fake", "kind": "custom", "endpoint": fake_vlm.url})
     assert r.status_code == 201
     d = Daemon(c1, str(inputs), str(tmp_path / "tos"), str(inputs / "mini"), fake_vlm.url)
-    fake_vlm.delay_s = 0.6
-    task_id = d.create()["id"]
-    part = pathlib.Path(d.run_dir(task_id)) / "checks" / "task_success" / "parts" / "0001.jsonl"
-    d.wait_for(lambda: _stage(d.get(task_id), "vlm").get("state") == "running"
-               and part.is_file() and part.read_text().count("\n") >= 1, timeout=180,
-               what="the VLM stage to write a result")
-    c1.__exit__(None, None, None)                       # SIGTERM -> 1 s -> SIGKILL
+    # as in the drill above: one episode at a time, the model answers the first question only, and the
+    # one after it is still unanswered when the grace period ends
+    asked, held = fake_vlm.count(JUDGE), [fake_vlm.hold(JUDGE)]
+    try:
+        task_id = d.create(params={"start_now": True, "vlm_hedge": False,
+                                   "limits": {"vlm_parallelism": 1}})["id"]
+        part = pathlib.Path(d.run_dir(task_id)) / "checks" / "task_success" / "parts" / "0001.jsonl"
+        d.wait_for(lambda: fake_vlm.count(JUDGE) > asked and _stage(d.get(task_id), "vlm").get("state") == "running",
+                   timeout=180, what="the VLM stage to ask about its first episode")
+        held.append(fake_vlm.hold(JUDGE))
+        held[0].set()
+        d.wait_for(lambda: part.is_file() and part.read_text().count("\n") >= 1, timeout=180,
+                   what="the VLM stage to write a result")
+        c1.__exit__(None, None, None)                   # SIGTERM -> 1 s -> SIGKILL
+    finally:
+        for gate in held:
+            gate.set()
 
-    fake_vlm.delay_s = 0.0
     c2 = TestClient(create_app(settings, clock=now_ms), raise_server_exceptions=False)
     c2.__enter__()
     try:

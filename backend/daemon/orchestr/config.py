@@ -2,7 +2,7 @@
 
 | Variable | Default | Meaning |
 |---|---|---|
-| ``CURATOR_MAX_RUNNING_TASKS`` | 3 | tasks (main runs and subtasks together) running at once (P1) |
+| ``CURATOR_MAX_RUNNING_TASKS`` | 8 | tasks (main runs and subtasks together) running at once (P1; 3 until 2026-10-15, design doc 30 §8.3) |
 | ``CURATOR_CLI`` | ``<python> -m curation.cli`` | the command line of the CLI (shell-split) |
 | ``CURATOR_SITE_CONFIG`` | ``$CURATION_CONFIG`` | planner site settings, YAML or JSON: the ``concurrency`` and ``vlm`` blocks of the site.yaml the chart writes (the CLI reads the same file through ``CURATION_CONFIG``); ``concurrency.cpu`` / ``cpuMax`` are ignored with a warning (D54) |
 | ``CURATOR_CPU_CORES`` | the container's CPU quota, else ``os.cpu_count()`` | cores of the node: all but two are CPU workers, one pool shared by every running task (P4, D54) |
@@ -116,7 +116,7 @@ def load_site_config(path: str | None) -> dict:
 @dataclass(frozen=True)
 class OrchestratorConfig:
     enabled: bool = True
-    max_running: int = 3
+    max_running: int = 8
     program: tuple[str, ...] = field(default_factory=lambda: tuple(default_program()))
     site_config: dict = field(default_factory=dict)
     cpu_cores: int | None = None
@@ -150,7 +150,7 @@ class OrchestratorConfig:
         enabled = str(env.get("CURATOR_ORCHESTRATOR", "on") or "on").strip().lower() \
             not in ("off", "0", "false", "no")
         cores = _number(env, "CURATOR_CPU_CORES", 0, minimum=0, integer=True)
-        max_running = _number(env, "CURATOR_MAX_RUNNING_TASKS", 3, minimum=1, integer=True)
+        max_running = _number(env, "CURATOR_MAX_RUNNING_TASKS", 8, minimum=1, integer=True)
         term = _number(env, "CURATOR_TERM_GRACE_S", 90.0)
         site = (str(env.get("CURATOR_SITE_CONFIG", "") or "").strip()
                 or str(env.get("CURATION_CONFIG", "") or "").strip())

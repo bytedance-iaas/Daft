@@ -198,7 +198,7 @@ def test_what_a_restore_brings_back():
 
 def test_settings_from_the_environment(tmp_path):
     cfg = OrchestratorConfig.from_env({})
-    assert cfg.max_running == 3 and cfg.term_grace_s == 90 and cfg.int_grace_s == 10   # P1
+    assert cfg.max_running == 8 and cfg.term_grace_s == 90 and cfg.int_grace_s == 10   # P1 (8 since 2026-10-15)
     assert cfg.local_delivery_root is None and cfg.enabled
     site = tmp_path / "site.yaml"
     site.write_text("concurrency: {vlmParallelism: 32}\nvlm: {merge: {enabled: false}}\nother: 1\n")

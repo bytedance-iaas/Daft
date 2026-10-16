@@ -724,9 +724,7 @@ function abcProbe(file: string, files: number, template: string | null): McapPro
     attachments: [],
     draft,
     matched: template ? { template_id: 'builtin:foxglove', name: 'Foxglove 通用（内置）', coverage: 1 } : null,
-    warnings: [
-      { code: 'checks_gap', message: '质检读取器只读 JPEG 与 H.264 相机，读不了 H.265（/left-wrist-camera、/top-left-camera）：质检用不了这份映射，可视化不受影响' },
-    ],
+    warnings: [],
   };
 }
 

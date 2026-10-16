@@ -111,8 +111,9 @@ def test_one_slot_first_in_first_out(pool):
         assert open_ <= 1
 
 
-def test_three_run_at_once_by_default_and_the_fourth_waits(pool):
-    """P1 (D54): three slots unless CURATOR_MAX_RUNNING_TASKS says otherwise."""
+def test_three_slots_run_three_at_once_and_the_fourth_waits(pool):
+    """P1 (D54): as many slots as CURATOR_MAX_RUNNING_TASKS says - three here (the default is 8 since
+    2026-10-15, design doc 30 §8.3)."""
     gate = threading.Barrier(3, timeout=5)
     release = threading.Event()
 
@@ -123,7 +124,7 @@ def test_three_run_at_once_by_default_and_the_fourth_waits(pool):
             release.wait(10)
         return "succeeded"
 
-    c, rt = pool(behaviour)
+    c, rt = pool(behaviour, CURATOR_MAX_RUNNING_TASKS=3)
     assert rt.orchestrator.cfg.max_running == 3
     ids = _prepared(rt, 4)
     for i in ids[:3]:

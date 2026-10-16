@@ -31,7 +31,7 @@
 mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准缺省是第一组 `role=action`（与质检的行同一口径），没有才用第一路相机；`check_clock` 是质检的锚
 （第一条 action 消息相对零点的秒数）与 action 的频率，迷你版用它把发现的帧号换成时刻。一条 episode 按文件顺序扫一遍，相机字节边读边落盘；H.264 / H.265 从第一个
 关键帧开始转封装（之前的 P 帧解不出来，相机的 `offset_s` 随之后移，警告 `leading_frames`）；footer 坏了的文件读到断点为止（警告 `truncated`）。
-预检只要找到 mcap 文件就算 mcap 数据集（可视化看映射，不看质检按缺省 topic 读不读得了）；质检读取器读不了的字段与 H.265 相机在探测与映射的应答里警告 `checks_gap`。映射确认后，预检与任务的每条 CLI 命令都带
+预检只要找到 mcap 文件就算 mcap 数据集（可视化看映射，不看质检按缺省 topic 读不读得了）；质检读取器读不了的字段（如 ROS 2 的嵌套消息）在探测与映射的应答里警告 `checks_gap`；protobuf 的 repeated 字段与 H.265 相机读得了（设计 30）。映射确认后，预检与任务的每条 CLI 命令都带
 `--set ingest.mcap_mapping=<派生的质检映射>`；任务开始时映射（版本、原文、派生结果）冻结进 `run.json` 的 `viz_mapping`，之后改映射只影响新任务。
 
 ## 配置
@@ -150,8 +150,8 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
 
 14. **H.265 / H.264 重封装**：同样登记 `viz_abc`。它没有 `/action`，质检按缺省读不了：登记的 `format` 是 `unsupported`，`viz.state` 仍是 `mapping_pending`，
     `GET /datasets/<id>/mapping` 的警告 `checks_unreadable`。探测出的草稿命中不了内置的 UMI，由 `builtin:foxglove` 起草（`/left-arm-state` 与 `/left-arm-action` 自动配对，
-    任务来自 `/instruction`，分段来自 `/subtask`），探测应答带一条 `checks_gap`（质检读不了 H.265；`q` 这个 repeated 字段 D100 起读得了）。确认草稿后登记按新映射重新预检，
-    `viz.state` 变成 `ready`，应答仍带这条 `checks_gap`。`episodes/0/viz` 的两路相机都是 `access: remux`，`camera_top` 的 `codec_string` 是 `hvc1.1.6.L120.90`；
+    任务来自 `/instruction`，分段来自 `/subtask`），探测应答不带 `checks_gap`（`q` 这个 repeated 字段与 H.265 的顶部相机质检都读得了，D100、D104）。确认草稿后登记按新映射重新预检，
+    `viz.state` 变成 `ready`，应答仍没有警告。`episodes/0/viz` 的两路相机都是 `access: remux`，`camera_top` 的 `codec_string` 是 `hvc1.1.6.L120.90`；
     `curl -s -o /tmp/top.mp4 $B/datasets/<id>/episodes/0/cameras/camera_top.mp4 && ffprobe -v error -show_entries stream=codec_name,codec_tag_string,nb_frames /tmp/top.mp4`
     → `hevc`、`hvc1`；带 `Range: bytes=0-31` 回 206。曲线组 `left-arm-state` 是状态与动作叠画的 12 条线，状态 40 点（相机两倍的频率）；分段轨一段 `reach`（0–1 s）。
 

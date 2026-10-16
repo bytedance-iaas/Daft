@@ -190,9 +190,10 @@ def test_publishing_into_one_delivery_is_serial(daemon, monkeypatch):
 
 
 def test_three_tasks_share_one_cpu_pool(daemon, monkeypatch):
-    """P1, P4, D54: three tasks run at once by default and the fourth waits for a slot; their CPU
-    episodes share one pool of cores - 2 slots, and every slot is back when they are done."""
+    """P1, P4, D54: three tasks run at once (three slots here; the default is 8) and the fourth waits for a
+    slot; their CPU episodes share one pool of cores - 2 slots, and every slot is back when they are done."""
     monkeypatch.setenv("CURATOR_CPU_CORES", "4")                # a pool of 2
+    monkeypatch.setenv("CURATOR_MAX_RUNNING_TASKS", "3")
     d = daemon()
     pool = d.orch.cpu_pool
     assert (pool.size, d.orch.cfg.max_running) == (2, 3)
