@@ -321,6 +321,9 @@ CASES = [
     ("kinematic_limits", False, None, KIN_DOF, {"data_invalid"}, set()),
     ("kinematic_limits", None, None, KIN_DRAFT, set(), {"ACT-4"}),
     ("motion_quality", None, 0.8177, MQ_STUCK, {"stuck"}, {"ACT-5"}),
+    # 8.7: a jagged stretch on the reading (the answer key's sawtooth) next to the stuck joint
+    ("motion_quality", None, 0.8177, {**MQ_STUCK, "jagged_amp": 0.12, "jagged": [
+        {"col": 0, "stream": "state", "start": 90, "end": 209, "amp_rel": 0.12, "step_corr": -0.98}]}, {"stuck", "jagged"}, {"ACT-5"}),
     ("motion_quality", None, 0.4914, MQ_IDLE, {"smoothness_low", "spike", "gripper_jitter", "actuator_saturation",
                                               "fluency_low", "idle_opening"}, set()),
     ("motion_quality", None, 0.9, MQ_NO_STATE, {"idle_closing"}, {"ACT-4", "ACT-5", "ACT-8"}),
@@ -569,6 +572,17 @@ def test_context_and_errors():
     assert legacy_verdict(err) == "error"
 
 
+def test_jagged_segments_become_findings_with_frames():
+    """8.7: each jagged segment of motion_quality is a finding of its own, on its column, with the frames."""
+    d = {**MQ_STUCK, "jagged_amp": 0.12,
+         "jagged": [{"col": 0, "stream": "state", "start": 90, "end": 209, "amp_rel": 0.12, "step_corr": -0.98}]}
+    got = F.derive("motion_quality", None, 0.9, d, None)
+    j = [f for f in got.findings if f["code"] == "jagged"]
+    assert len(j) == 1 and j[0]["item"] == "ACT-1" and j[0]["frames"] == [90, 209] and j[0]["scope"] == {"channel": "col 0"}
+    assert j[0]["readings"]["amp_rel"] == 0.12 and "读数" in j[0]["message_zh"] and got.readings["jagged_amp"] == 0.12
+    assert schemas.errors("cli/common.schema.json#/$defs/finding", j[0]) == []
+
+
 def test_dataset_level_findings():
     recs = {e: _record("timestamp_check", True, None, {**TS_PASS, "duration_s": 20.0 + e * 0.1}) for e in range(10)}
     recs[10] = _record("timestamp_check", True, None, {**TS_PASS, "duration_s": 95.0})
@@ -579,6 +593,14 @@ def test_dataset_level_findings():
     recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
     found, readings = F.dataset_level("motion_quality", recs)
     assert [f["code"] for f in found] == ["action_semantics_undetermined"] and readings["active_ratio_mean"] == 1.0
+    # 8.6: columns named as joints that carry a normalized opening (G1's right arm) - once per dataset, by name
+    sem = {"source": "preflight", "action_space": "joint", "control_mode": "absolute", "undetermined": False,
+           "nonjoint_columns": ["kRightShoulderRoll", "kRightElbow"]}
+    recs = {e: _record("motion_quality", None, 0.9, MQ_STUCK, context={"action_semantics": sem}) for e in range(3)}
+    found, _ = F.dataset_level("motion_quality", recs)
+    assert [f["code"] for f in found] == ["columns_not_joints"] and found[0]["unit"] == "dataset"
+    assert found[0]["readings"]["columns"] == ["kRightShoulderRoll", "kRightElbow"] and "kRightElbow" in found[0]["message_zh"]
+    assert found[0]["item"] is None and found[0]["severity"] == "medium"
     integ = {"findings": [{"level": "dataset", "code": "orphan_files", "message": "2 个不属于任何 episode 的文件",
                            "args": {"count": 2}},
                           {"level": "dataset", "code": "dark_camera", "message": "wrist 近乎全黑"},
@@ -590,7 +612,7 @@ def test_dataset_level_findings():
     # the EEF cameras' calibration suspects (5.4): tests/eef/test_calibration_suspect.py
     assert every == {("data_integrity", "orphan_files"), ("data_integrity", "dark_camera"),
                      ("data_integrity", "table_overlap"), ("timestamp_check", "duration_outlier"),
-                     ("motion_quality", "action_semantics_undetermined"),
+                     ("motion_quality", "action_semantics_undetermined"), ("motion_quality", "columns_not_joints"),
                      ("eef_video_consistency", "calibration_suspect")}
     for f in found:
         assert schemas.errors("cli/common.schema.json#/$defs/finding", f) == []

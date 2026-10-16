@@ -331,3 +331,48 @@ def test_names_layout_lets_motion_quality_run_on_unknown_semantics_without_veloc
     out2 = check(a, s, 30.0, "unknown", "unknown", "unknown", "unitree_g1", "auto", "{}")
     d2 = json.loads(out2["detail"]) if isinstance(out2.get("detail"), str) else out2["detail"]
     assert d2["semantics_undetermined"] is True
+
+
+# ---- 2026-10-15 jaggedness (ACT-1): the injector's per-frame sawtooth, read on its own ---------------------------
+
+def _smooth_traj(t: int, dim: int, fps: float, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    tt = np.arange(t)[:, None] / fps
+    return 0.6 * np.sin(tt * (0.5 + 0.3 * np.arange(dim))) + 0.02 * np.cumsum(rng.normal(0, 0.002, (t, dim)), 0)
+
+
+def _sawtooth(x: np.ndarray, fps: float, col: int = 0, frac: float = 0.05, start_s: float = 3.0, length_s: float = 4.0):
+    y = x.copy(); a = int(start_s * fps); z = a + int(length_s * fps) - 1
+    rng = float(y[:, col].max() - y[:, col].min()) or 1.0
+    y[a:z + 1, col] += frac * rng * np.where(np.arange(z - a + 1) % 2 == 0, 1.0, -1.0)
+    return y, a, z
+
+
+@pytest.mark.parametrize("fps", [10.0, 30.0])
+@pytest.mark.parametrize("frac", [0.05, 0.2])
+def test_sawtooth_on_the_reading_is_jagged_with_its_frames(fps, frac):
+    """The answer key's sawtooth (state column 0, 4 s, 5 % or 20 % of the range) is read as jagged on the state
+    stream, located within its frames, at 10 and 30 fps alike; the untouched command has no segment."""
+    t = int(12 * fps)
+    a_cmd = _smooth_traj(t, 7, fps); st, a, z = _sawtooth(_smooth_traj(t, 7, fps, seed=1), fps, frac=frac)
+    r = motion_quality(a_cmd, st, fps)
+    segs = r.detail.get("jagged") or []
+    state = [s for s in segs if s["stream"] == "state"]
+    assert state and all(s["col"] == 0 for s in state)
+    lo, hi = min(s["start"] for s in state), max(s["end"] for s in state)
+    assert a - 2 * int(fps) <= lo <= a + int(fps) and z - int(fps) <= hi <= z + 2 * int(fps)
+    assert max(s["amp_rel"] for s in state) >= (0.09 if frac == 0.05 else 0.25)
+    assert not [s for s in segs if s["stream"] == "action"]
+    assert r.detail["jagged_amp"] >= 0.09
+
+
+def test_smooth_motion_and_a_still_noisy_joint_are_not_jagged():
+    """A clean trajectory has no segment; a joint that sits still under white sensor noise reverses direction only
+    half the time (lag-1 correlation of the step -0.5), which is not jagged motion."""
+    fps = 30.0; t = 360
+    x = _smooth_traj(t, 7, fps)
+    assert not (motion_quality(x, x + 1e-4, fps).detail.get("jagged") or [])
+    rng = np.random.default_rng(3)
+    y = x.copy(); y[:, 2] = 0.3 + rng.normal(0, 0.01, t)            # still joint, white noise is its whole range
+    assert not (motion_quality(y, None, fps).detail.get("jagged") or [])
+    assert motion_quality(y, None, fps).detail["jagged_amp"] == 0.0
