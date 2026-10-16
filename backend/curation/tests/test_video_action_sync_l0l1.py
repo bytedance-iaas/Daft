@@ -10,6 +10,7 @@ import pytest
 from curation.core.checks.video_action_sync import (
     camera_reading,
     global_lag,
+    interval_zh,
     timestamp_check,
 )
 from curation.tests import corrupt
@@ -72,6 +73,39 @@ def test_l0_min_duration_configurable_and_boundary():
     assert r.passed is False and "不足 2 秒" in r.detail["reason"]
     # 放宽到 0.3s:连 8 帧碎片都放行(客户显式要短片段时不拦)
     assert timestamp_check(np.arange(8) / 15.0, 15.0, min_duration_s=0.3).passed is True
+
+
+def test_l0_intervals_under_a_second_read_in_milliseconds():
+    """D106(设计 30 §9.2):200 Hz 的流名义间隔 5 毫秒,按两位小数的秒写是"0.01 秒",看不出跳了多少。"""
+    assert [interval_zh(x) for x in (0.005002, 0.0095, 0.0333, 0.13336, 0.0999999, 0.9996, 1.104)] == [
+        "5 毫秒", "9.5 毫秒", "33.3 毫秒", "133 毫秒", "100 毫秒", "1.00 秒", "1.10 秒"]
+    ts = np.delete(np.arange(6000) * 0.005, [1000] + list(range(2000, 2040, 2)))    # 21 处各丢一个采样点
+    r = timestamp_check(ts, None)
+    assert r.detail["reason"] == "第 1000 帧后间隔突增至 10 毫秒(正常约 5 毫秒),疑似丢帧"
+    assert len(r.detail["gap_frames"]) == 10 and r.detail["n_gaps"] == 21     # 列前 10 处,数全部
+
+
+def test_l0_each_camera_against_its_own_median():
+    """D105(设计 30 §9.1):mcap 的相机自带时钟,丢帧只在这一路的时间上看得见;主时间轴照常时这一条
+    也不合格,timeline_passed 说明只是相机。不给相机时间时,输出一个键也不多。"""
+    ts = np.arange(200) / FPS
+    wrist = np.delete(np.arange(600) / 30.0, [300, 301, 302])            # 一次 133 毫秒
+    top = np.arange(-2, 600) / 30.0 + 0.004 * np.sin(np.arange(602))   # 抖 ±4 毫秒,不算丢帧
+    r = timestamp_check(ts, FPS, camera_times={"observation.images.wrist": wrist, "observation.images.top": top})
+    assert r.passed is False and r.detail["timeline_passed"] is True
+    (cam,) = r.detail["camera_gaps"]
+    g = r.detail["camera_gaps"][cam]
+    assert cam == "observation.images.wrist" and g["n_gaps"] == 1 and g["gaps"][0]["frame"] == 299
+    assert abs(g["gaps"][0]["t_s"] - 299 / 30.0) < 1e-3 and abs(g["dt_nominal"] - 1 / 30.0) < 1e-4
+    assert r.detail["reason"].startswith("相机 observation.images.wrist 在 9.97 秒后间隔突增至 133 毫秒")
+    # 主时间轴先坏:照旧报主时间轴,相机丢帧跟着
+    bad = np.delete(ts, [90, 91, 92])
+    r = timestamp_check(bad, FPS, camera_times={"w": wrist})
+    assert r.passed is False and "gap_frames" in r.detail and "w" in r.detail["camera_gaps"]
+    assert "timeline_passed" not in r.detail
+    assert timestamp_check(ts, FPS, camera_times={"top": top}).passed is True
+    assert timestamp_check(ts, FPS).detail == timestamp_check(ts, FPS, camera_times={}).detail == {
+        "n": 200, "duration_s": 19.9, "dt_nominal": 0.1, "max_dt": 0.1, "jitter_ratio": 0.0}
 
 
 # ---------- L1 符号锚定(合成,known shift) ----------

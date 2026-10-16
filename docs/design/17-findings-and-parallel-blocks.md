@@ -245,6 +245,7 @@ A 类算法不动，壳里读 `details` 生成。
 | `jitter` | STRM-3 | medium | blocking | `jitter_ratio` |
 | `out_of_order` | STRM-4 | high | blocking | `ts` / `frame` |
 | `fragment`、`single_stamp` | STRM-5 | high | blocking | 短于 `min_duration_s`、只有一个时间戳 |
+| `camera_gap`（按相机，注册表 8.7） | STRM-3 | medium | blocking | `camera_gaps`：mcap 每路相机自己的帧间隔超过这一路中位间隔的 `gap_mult` 倍；区间 = 跳变处的秒数（设计 30 §9.1，D105） |
 | `duration_outlier`（数据集级） | —（分类表 1.3 起不挂项） | low | info | 时长离群（P20） |
 
 **运动学极限**

@@ -173,7 +173,7 @@ function timestampModel(s: Summary): ViewModel {
   const byKind = Object.fromEntries(raw.map((i) => [i.name, i.value]));
   const stats: StatSpec[] = [];
   if (c) stats.push({ label: Z.failed, value: c.fail, tone: c.fail ? 'bad' : undefined });
-  for (const k of ['out_of_order', 'gap', 'fragment', 'jitter']) if (k in byKind) stats.push({ label: Z.kinds[k], value: byKind[k] });
+  for (const k of ['out_of_order', 'gap', 'fragment', 'jitter', 'camera_gap']) if (k in byKind) stats.push({ label: Z.kinds[k], value: byKind[k] });
   if (c) stats.push({ label: S().checked, value: checkedOf(c) });
   if (num(s.duration_total_s) !== null) stats.push({ label: Z.durationTotal, value: zh.time.duration(num(s.duration_total_s)) });
   if (num(s.duration_median_s) !== null) stats.push({ label: Z.durationMedian, value: Z.seconds(num(s.duration_median_s)!) });

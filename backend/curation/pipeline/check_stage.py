@@ -317,7 +317,8 @@ class StageRun:
         for m in self.o.modules:
             try:
                 if m == "timestamp_check":
-                    out[m] = episode_checks.make_timestamp_check(cfg)(row["timestamps"], row["fps"])
+                    out[m] = episode_checks.make_timestamp_check(cfg)(row["timestamps"], row["fps"],
+                                                                     row.get("camera_times"))
                 elif m == "kinematic_limits":
                     out[m] = episode_checks.make_kinematic_check(cfg, reg)(
                         row["action"], row["embodiment_id"], row["fps"],

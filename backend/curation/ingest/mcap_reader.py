@@ -670,6 +670,22 @@ def _materialize_videos(scan: dict, episode_id: str, videos_dir: str,
     return videos
 
 
+def _camera_times(scan: dict, t0_ns: int, span: float) -> dict:
+    """各路相机消息的 log_time → 相对 t0 的秒数(与封进 mp4 的 pts 同一来源),只留覆盖本条
+    时间窗 [0, span] 的那段:窗口开始前最后一帧到窗口结束后第一帧。时间戳检查拿它逐路查
+    丢帧(D105,设计 30 §9.1)——相机自带时钟,丢帧在主时间轴上看不见。"""
+    out: dict = {}
+    for cam in sorted(scan["video"]):
+        t = np.asarray(sorted(x[0] for x in scan["video"][cam]), dtype=np.int64)
+        if not len(t):
+            continue
+        s = (t - t0_ns).astype(np.float64) / _NS
+        lo = max(int(np.searchsorted(s, 0.0, side="right")) - 1, 0)
+        hi = min(int(np.searchsorted(s, span, side="left")) + 1, len(s))
+        out[cam] = s[lo:hi]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 一条 episode → 统一行
 # ---------------------------------------------------------------------------
@@ -810,6 +826,7 @@ def _payload(mcap_path: str, idx: int, mapping: dict, videos_dir: str,
         "proprio_state": state,
         "video": _materialize_videos(scan, episode_id, videos_dir, t0_ns, fps,
                                      duration, dataset_dir),
+        "camera_times": _camera_times(scan, t0_ns, span),
         "timestamps": timestamps,
         "fps": float(fps),
         "length": n,
@@ -938,6 +955,7 @@ def read_mcap_rows(
         "action": p["action"],
         "proprio_state": p["proprio_state"],
         "video": p["video"],
+        "camera_times": p["camera_times"],
         "timestamps": p["timestamps"],
         "fps": p["fps"],
     } for p in payloads]
@@ -1005,4 +1023,5 @@ def read_mcap_lazy(dataset_dir: str, max_episodes: int | None = None,
     if not rows:
         raise NotADatasetError(
             f"'{dataset_dir}': 按当前筛选没有读到任何 episode(--episodes 全部超界?)")
-    return rows_to_daft(rows)
+    # 各路相机的帧时间(D105)键随相机而变,进不了 DataFrame 的 schema
+    return rows_to_daft([{k: v for k, v in r.items() if k != "camera_times"} for r in rows])

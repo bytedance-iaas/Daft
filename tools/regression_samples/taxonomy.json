@@ -366,7 +366,8 @@
    "platform_codes": [
     "data_integrity.rate_outlier",
     "timestamp_check.gap",
-    "timestamp_check.jitter"
+    "timestamp_check.jitter",
+    "timestamp_check.camera_gap"
    ],
    "kind": "defect",
    "level": "episode",

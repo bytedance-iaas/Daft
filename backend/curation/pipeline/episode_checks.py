@@ -92,11 +92,13 @@ def _default_decode(path, from_ts, to_ts, **kw):
 # ---------- 第一段:纯数值检查(最便宜)· per-episode bodies ----------
 
 def make_timestamp_check(cfg: dict) -> Callable:
-    """``ts_check(timestamps, fps) -> result struct``."""
+    """``ts_check(timestamps, fps, camera_times=None) -> result struct``; ``camera_times`` are the
+    cameras' own frame times where the format has them (mcap, D105)."""
     p_ts = cfg["checks"]["timestamp_check"].get("params", {})
 
-    def ts_check(timestamps, fps):
-        return result_to_struct(timestamp_check(np.asarray(timestamps), fps, **p_ts))
+    def ts_check(timestamps, fps, camera_times=None):
+        return result_to_struct(timestamp_check(np.asarray(timestamps), fps,
+                                                camera_times=camera_times, **p_ts))
 
     return ts_check
 

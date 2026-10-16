@@ -335,6 +335,8 @@ Daemon 按任务参数传 `--hedge --retry 3 --plan-stage …`；直接用命令
   同一任务后面的命令复用，Daemon 在运行结束时删掉），没设就放在这条命令自己的临时目录里、命令结束就删。每个副本按列举时的大小和 ETag 核对，
   对不上以退出码 6 结束；只读源桶，凭证只从 `CURATION_INPUT_TOS_*` 环境变量读。
 - **临时视频**：读取器转出来的视频写在 `$TMPDIR`，命令结束时清掉。Daemon 把 `TMPDIR` 指到任务的缓存目录下，不占容器的 `/tmp`。
+- **各路相机的帧时间**（D105，设计 30 §9.1）：mcap 的相机自带时钟，读取器随行交出每路相机消息的 `log_time`（`camera_times`，相对动作时间轴零点、
+  只留覆盖本条时间窗的那段，就是封进 mp4 的 pts）；时间戳检查逐路查丢帧，报 `camera_gap`。Lance 的相机跟着数据表的时间戳走，不逐路查。
 - **`source_info.json`**：第一条读源数据的命令在运行目录里写下报告要用的信息（型号从哪来、时间轴从哪来、有没有任务文本；用到的机器人规格），
   `report` 据此写数据包体检（`report.json` 的 `integrity.container`、`report.md` 的「数据包」一节）。
 - **站点开关**：`ingest.mcap_enabled` / `ingest.lance_enabled`（默认开；环境变量 `CURATION_MCAP_ENABLED` / `CURATION_LANCE_ENABLED` 优先于配置）。
@@ -574,7 +576,8 @@ with FakeVlmServer(port=8766) as s:
     应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、
     2 路相机、`robot_type: franka`、6 条有标注；EEF 模块在 mcap 上是 `needs_input`（给了 trajectory.json 就能用，F5.13），在 Lance 上是 `unsupported`
     （`format_unsupported_by_module`），其余可用。终判与第 3 步的 LeRobot 数据集相同：`passed 5, reject 3, held 0; 4 to review`，重复检测 `findings: duplicate 2`。
-    （mcap 上第 2 条的画面尺寸不同，假模型对它答「失败」而不是「拿不准」；它本来就因时间戳跳变被拒，终判不变。）`report.md` 多一节「数据包(mcap)」/
+    （mcap 上第 2 条的画面尺寸不同，假模型对它答「失败」而不是「拿不准」；它本来就因时间戳跳变被拒，终判不变。mcap 的数值段还多两条 `camera_gap`：
+    第 2 条两路相机的帧时间带着同一处跳变，D105；Lance 没有。）`report.md` 多一节「数据包(mcap)」/
     「数据包(lance)」：型号、时间轴、任务文本三项体检。两边 `verify` 都是 `"failed": []`、`"complete_marker": true`。`ls $TMPDIR` 里不留读取器转出的视频。
     TOS 上的读法（本地副本、按范围读摘要、源对象变化退出码 6、只读源桶）由 `tests/cli/test_containers.py` 在假 TOS 上核对。
 

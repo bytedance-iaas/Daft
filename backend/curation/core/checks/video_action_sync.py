@@ -32,6 +32,44 @@ import numpy as np
 from ..contract import CheckResult
 
 
+def interval_zh(seconds: float) -> str:
+    """一段间隔的写法(D106,设计 30 §9.2):一秒以下写毫秒——200 Hz 的流名义间隔 5 毫秒,
+    按两位小数的秒写成"0.01 秒"就看不出跳了多少;一秒以上照旧写秒。"""
+    s = float(seconds)
+    ms = s * 1000.0
+    if round(ms) >= 1000:                 # 先取整再定写法:0.09999… 秒是"100 毫秒",不是"100.0 毫秒"
+        return f"{s:.2f} 秒"
+    if round(ms) >= 100:
+        return f"{ms:.0f} 毫秒"
+    if round(ms, 1) >= 10:
+        return f"{ms:.1f}".rstrip("0").rstrip(".") + " 毫秒"
+    return f"{ms:.2g} 毫秒"
+
+
+def camera_frame_gaps(camera_times, gap_mult: float = 1.8) -> dict:
+    """各路相机自己的帧间隔(D105,设计 30 §9.1):mcap 的每路相机带着自己的 log_time,丢帧
+    只在这一路的时间上看得见(ABC-130k 右腕相机一次 133 毫秒,主时间轴照常)。名义间隔取
+    这一路的中位数,超过 gap_mult 倍算丢帧;只返回有丢帧的相机。"""
+    out: dict = {}
+    for cam in sorted(camera_times or {}):
+        t = np.asarray(camera_times[cam], dtype=np.float64)
+        if len(t) < 3:
+            continue
+        dt = np.diff(t)
+        nominal = float(np.median(dt))
+        if not nominal > 0:
+            continue
+        gaps = np.where(dt > gap_mult * nominal)[0]
+        if not len(gaps):
+            continue
+        out[str(cam)] = {
+            "n": int(len(t)), "dt_nominal": round(nominal, 6), "max_dt": round(float(dt.max()), 6),
+            "n_gaps": int(len(gaps)),
+            "gaps": [{"frame": int(k), "t_s": round(float(t[k]), 4), "dt": round(float(dt[k]), 4)}
+                     for k in gaps[:10]]}
+    return out
+
+
 def timestamp_check(
     timestamps: np.ndarray,
     fps: float | None,
@@ -40,6 +78,7 @@ def timestamp_check(
     jitter_tol: float = 0.25,     # 间隔偏离名义 dt 超过 ±25% 记为抖动帧
     jitter_ratio_bad: float = 0.05,
     min_duration_s: float = 1.0,  # 短于此 = 残段(采集中断碎片),硬杀
+    camera_times=None,            # {相机: 帧时间(秒)},只有各路相机自带时钟的格式(mcap)才有
 ) -> CheckResult:
     """L0:时间戳单调/等间隔(几乎免费,纯数值)。硬门:乱序/大空洞/残段判废。"""
     ts = np.asarray(timestamps, dtype=np.float64)
@@ -49,6 +88,10 @@ def timestamp_check(
 
     dt = np.diff(ts)
     detail: dict = {"n": len(ts)}
+    # ⓪ 各路相机的帧间隔(D105):与主时间轴互不遮挡,哪一步判废都带着它
+    cam_gaps = camera_frame_gaps(camera_times, gap_mult) if camera_times else {}
+    if cam_gaps:
+        detail["camera_gaps"] = cam_gaps
 
     # ① 单调:倒退/重复直接判废
     if dt.min() <= 0:
@@ -78,17 +121,27 @@ def timestamp_check(
     detail["max_dt"] = round(float(dt.max()), 6)
     if len(gaps):
         _k = int(gaps[0])
-        detail["reason"] = (f"第 {_k + 1} 帧后间隔突增至 {float(dt[_k]):.2f} 秒"
-                            f"(正常约 {dt_nominal:.2f} 秒),疑似丢帧")
+        detail["reason"] = (f"第 {_k + 1} 帧后间隔突增至 {interval_zh(dt[_k])}"
+                            f"(正常约 {interval_zh(dt_nominal)}),疑似丢帧")
         detail["gap_frames"] = [
             {"frame": int(k), "dt": round(float(dt[k]), 4)} for k in gaps[:10]]
+        detail["n_gaps"] = int(len(gaps))     # gap_frames 只列前 10 处(D106)
         return CheckResult(name="timestamp_check", passed=False, detail=detail)
 
     # ③ 抖动率(软信息,不单独判废,记录进 detail)
     jitter_ratio = float((np.abs(dt - dt_nominal) > jitter_tol * dt_nominal).mean())
     detail["jitter_ratio"] = round(jitter_ratio, 4)
-    return CheckResult(name="timestamp_check",
-                       passed=jitter_ratio <= jitter_ratio_bad, detail=detail)
+    passed = jitter_ratio <= jitter_ratio_bad
+    if passed and cam_gaps:
+        # 主时间轴没问题、只是某路相机丢帧:这一条照样不合格;timeline_passed 让发现层只报
+        # 相机,不去推主时间轴的发现
+        cam, g = next(iter(cam_gaps.items()))
+        first = g["gaps"][0]
+        detail["timeline_passed"] = True
+        detail["reason"] = (f"相机 {cam} 在 {first['t_s']:.2f} 秒后间隔突增至 "
+                            f"{interval_zh(first['dt'])}(正常约 {interval_zh(g['dt_nominal'])}),疑似丢帧")
+        return CheckResult(name="timestamp_check", passed=False, detail=detail)
+    return CheckResult(name="timestamp_check", passed=passed, detail=detail)
 
 
 def optical_flow_energy(frames: list[np.ndarray], max_side: int = 128) -> np.ndarray:

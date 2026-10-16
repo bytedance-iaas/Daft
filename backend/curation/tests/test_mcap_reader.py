@@ -44,12 +44,13 @@ def _synth_action(n: int = N, dim: int = 3) -> np.ndarray:
 
 def _write_mcap(path: str, *, topics: dict | None = None, task: str | None = "pick cube",
                 state_rate_mult: int = 1, metadata: dict | None = None,
-                cam_lead_frames: int = 0) -> np.ndarray:
+                cam_lead_frames: int = 0, cam_skip: frozenset = frozenset()) -> np.ndarray:
     """写一个 cdr 编码的小 .mcap,返回写进去的 action(供 roundtrip 对账)。
 
     topics 可改 topic 命名(测 mapping 覆盖与"认不出"的报错);
     state_rate_mult: state 的频率倍数(>1 时读端要最近对齐);
-    cam_lead_frames: 相机比第一条 action 早开录几帧(读端要丢弃 t<0 的帧)。
+    cam_lead_frames: 相机比第一条 action 早开录几帧(读端要丢弃 t<0 的帧);
+    cam_skip: 相机丢掉的帧号(这几帧不写,D105 逐路查丢帧用)。
     """
     from mcap_ros2.writer import Writer as Ros2Writer
 
@@ -78,8 +79,9 @@ def _write_mcap(path: str, *, topics: dict | None = None, task: str | None = "pi
                 w.write_message(tp["state"], s_arr,
                                 {"data": (action[i] + 0.5).tolist()},
                                 log_time=t + k * dt_ns // state_rate_mult)
-            w.write_message(tp["cam"], s_img, {"format": "jpeg", "data": _jpeg(i)},
-                            log_time=t)
+            if i not in cam_skip:
+                w.write_message(tp["cam"], s_img, {"format": "jpeg", "data": _jpeg(i)},
+                                log_time=t)
         w.finish()
     return action
 
@@ -113,6 +115,24 @@ def test_sniff_and_switch(mcap_dir, tmp_path):
         assert not is_mcap_dataset(d)        # 开关关着 = 当它不存在
     finally:
         mcap_reader.set_enabled(True)
+
+
+def test_each_camera_hands_its_own_frame_times(tmp_path):
+    """D105(设计 30 §9.1):每路相机的 log_time 随行交出(相对动作时间轴零点),只留覆盖本条时间窗的
+    那段——开录早的帧只留窗口开始前最后一帧;时间戳检查拿它逐路查丢帧,主时间轴照常。"""
+    from curation.core.checks.video_action_sync import timestamp_check
+
+    d = tmp_path / "gap"
+    d.mkdir()
+    _write_mcap(str(d / "episode_0.mcap"), cam_lead_frames=2, cam_skip=frozenset({4, 5}))
+    (row,) = read_mcap_rows(str(d))
+    assert set(row["camera_times"]) == set(row["video"])
+    (times,) = row["camera_times"].values()
+    np.testing.assert_allclose(times, [0.0, 0.2, 0.4, 0.6, 1.2, 1.4], atol=1e-9)
+    r = timestamp_check(row["timestamps"], row["fps"], camera_times=row["camera_times"])
+    assert r.passed is False and r.detail["timeline_passed"] is True
+    (g,) = r.detail["camera_gaps"].values()
+    assert g["n_gaps"] == 1 and g["gaps"][0]["t_s"] == 0.6 and g["gaps"][0]["dt"] == 0.6
 
 
 def test_auto_mapping_roundtrip(mcap_dir):

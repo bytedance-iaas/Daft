@@ -1,5 +1,5 @@
 {
- "registry_version": "8.6",
+ "registry_version": "8.7",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1130,7 +1130,7 @@
   {
    "id": "timestamp_check",
    "name_zh": "时间戳检查",
-   "summary_zh": "时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
+   "summary_zh": "时间戳是否单调、有没有丢帧跳变（mcap 还逐路查相机自己的帧间隔）、是不是短于残段阈值的碎片",
    "level": "episode",
    "needs": [
     "timestamps"
@@ -1182,6 +1182,15 @@
      "severity": "high",
      "level": "blocking",
      "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "camera_gap",
+     "item": "STRM-3",
+     "name_zh": "相机丢帧",
+     "severity": "medium",
+     "level": "blocking",
+     "scope_kind": "camera",
      "appealable": false
     },
     {

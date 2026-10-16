@@ -182,6 +182,17 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(matrix).toHaveTextContent('可疑');
   });
 
+  it('timestamps: an mcap camera that dropped frames is its own reason (D105, design doc 30 §9.1)', async () => {
+    render('timestamp_check', {
+      counts: { pass: 3, fail: 2 },
+      fail_reasons: [{ name: 'out_of_order', count: 0 }, { name: 'gap', count: 1 }, { name: 'fragment', count: 0 }, { name: 'jitter', count: 0 }, { name: 'camera_gap', count: 1 }],
+    });
+    const figures = screen.getByTestId('summary-timestamp_check');
+    expect(figures).toHaveTextContent('跳变（丢帧）1');
+    expect(figures).toHaveTextContent('相机丢帧1');
+    expect(await within(screen.getByTestId('chart-fail')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('相机丢帧 1'));
+  });
+
   it('data integrity: outcomes, what was read and the findings by kind, in Chinese (design doc 14)', async () => {
     render('data_integrity', INTEGRITY, { adjudication: { pending: 2, appealable: 0 } });
     const figures = screen.getByTestId('summary-data_integrity');

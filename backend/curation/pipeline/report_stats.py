@@ -159,11 +159,14 @@ def generic(records: list[dict], scores: list[float]) -> dict:
 
 # ---------------------------------------------------------------- timestamp_check
 
-#: why a timestamp check failed, from the keys the check leaves in ``details``
+#: why a timestamp check failed, from the keys the check leaves in ``details`` (always listed; ``camera_gap``,
+#: D105, follows when some episode has it)
 TS_FAIL_KINDS = ("out_of_order", "gap", "fragment", "jitter")
 
 
 def timestamp_fail_kind(d: dict) -> str:
+    if d.get("timeline_passed") is True and d.get("camera_gaps"):
+        return "camera_gap"              # the timeline is fine, a camera dropped frames (D105)
     if d.get("gap_frames"):
         return "gap"                     # a jump: dropped frames
     if "jitter_ratio" in d:

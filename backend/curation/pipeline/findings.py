@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..contracts import modules as registry
+from ..core.checks.video_action_sync import interval_zh
 
 
 @dataclass
@@ -421,7 +422,9 @@ def _curve_at(curve, lag_s: float):
 def _timestamp_check(passed, score, d, p) -> Derived:
     """One kind per failed record (v1 returns at its first problem): a gap (the first jump's frames), jitter,
     timestamps going backwards, a fragment shorter than the minimum, a single timestamp. The duration is a
-    reading (the duration outliers are a dataset-level finding of the report, design doc 17 §1.2)."""
+    reading (the duration outliers are a dataset-level finding of the report, design doc 17 §1.2). Besides,
+    one ``camera_gap`` per camera whose own frame times jump (mcap, D105): the record failed for the cameras
+    alone when ``timeline_passed`` says so, and then there is nothing to say of the timeline."""
     out = Derived()
     m = "timestamp_check"
     for key in ("n", "duration_s", "dt_nominal", "max_dt", "jitter_ratio"):
@@ -431,11 +434,14 @@ def _timestamp_check(passed, score, d, p) -> Derived:
         return out
     reason = str(d.get("reason") or "")
     gaps = [g for g in d.get("gap_frames") or [] if isinstance(g, dict)]
-    if gaps:
+    if d.get("timeline_passed") is True:
+        pass                                     # only the cameras dropped frames (below)
+    elif gaps:
         first = gaps[0]
         k = int(first.get("frame", 0))
+        n = int(_num(d.get("n_gaps")) or len(gaps))     # gap_frames lists the first 10 (D106)
         out.add(m, "gap", (reason or f"第 {k + 1} 帧后间隔突增，疑似丢帧")
-                + (f"（共 {len(gaps)} 处）" if len(gaps) > 1 else ""),
+                + (f"（共 {n} 处）" if n > 1 else ""),
                 frames=(k, k + 1), readings={"gaps": [{"frame": int(g.get("frame", 0)), "dt_s": _r(g.get("dt"))}
                                                       for g in gaps], "max_dt": _r(d.get("max_dt"))})
     elif "ts" in d and "frame" in d:
@@ -451,6 +457,21 @@ def _timestamp_check(passed, score, d, p) -> Derived:
                 else "采样间隔抖动", readings={"jitter_ratio": _r(ratio)})
     elif "个时间戳" in reason:
         out.add(m, "single_stamp", reason)
+    # D105 (design doc 30 §9.1): a camera's own frame times, against its own median interval
+    for cam, g in sorted((d.get("camera_gaps") or {}).items()):
+        cg = [x for x in (g.get("gaps") or []) if isinstance(x, dict)] if isinstance(g, dict) else []
+        if not cg:
+            continue
+        name, first = short_camera(cam), cg[0]
+        n = int(_num(g.get("n_gaps")) or len(cg))
+        t, dt, nominal = _num(first.get("t_s")), _num(first.get("dt")), _num(g.get("dt_nominal"))
+        text = (f"{name} 在 {t:.2f} 秒后间隔突增至 {interval_zh(dt)}（正常约 {interval_zh(nominal)}），疑似丢帧"
+                if t is not None and dt is not None and nominal is not None else f"{name} 帧间隔突增，疑似丢帧")
+        out.add(m, "camera_gap", text + (f"（共 {n} 处）" if n > 1 else ""), scope={"camera": name},
+                time_s=(t, t + dt) if t is not None and dt is not None else None,
+                readings={"gaps": [{"frame": int(x.get("frame", 0)), "t_s": _r(x.get("t_s")),
+                                    "dt_s": _r(x.get("dt"))} for x in cg],
+                          "n_gaps": n, "dt_nominal": _r(nominal), "max_dt": _r(g.get("max_dt"))})
     return out
 
 

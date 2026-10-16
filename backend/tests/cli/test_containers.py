@@ -219,6 +219,9 @@ def test_chain_verdicts_are_the_lerobot_fixtures(chain):
     assert _list(chain.rd, "held") == []
     ts = results(chain.rd, "timestamp_check")
     assert sorted(e for e, r in ts.items() if verdict_of(r) == "fail") == [2, 5]
+    # D105: mcap cameras keep their own clocks - the jump of episode 2 is in both cameras' frame times too
+    cams = {e: sorted(f["scope"]["camera"] for f in r["findings"] if f["code"] == "camera_gap") for e, r in ts.items()}
+    assert {e: c for e, c in cams.items() if c} == ({2: ["exterior", "wrist"]} if chain.fmt == "mcap" else {})
     dup = results(chain.rd, "duplicate_check")
     assert {e: r["details"].get("same_as") for e, r in dup.items() if r["findings"]} == {3: [7], 7: [3]}
     task = results(chain.rd, "task_success")

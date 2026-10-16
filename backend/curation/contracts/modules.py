@@ -140,6 +140,10 @@ one curve they bent the whole-episode correlation to -1.8 s while every window r
 first packets are not a keyframe - decoded from its start now instead of failing the seek (D99); ``data_integrity``
 reports ``index_range_invalid`` (FILE-9, blocking) when a LeRobot v3 episode's table range misses the data file's
 index while the file holds the episode's rows (D101), where it said FILE-5 before.
+8.7 (2026-10-16, design doc 30 §9): ``timestamp_check`` reports ``camera_gap`` (STRM-3, medium, blocking, per camera)
+when an mcap camera's own frame times jump beyond ``gap_mult`` times that camera's median interval (D105): ABC-130k's
+right wrist camera skipped 133 ms at a 33 ms median while the action timeline ran on. Formats whose cameras follow the
+table's timestamps (LeRobot, Lance) are not checked camera by camera.
 """
 from __future__ import annotations
 
@@ -147,7 +151,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.6"
+REGISTRY_VERSION = "8.7"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -627,13 +631,15 @@ MODULES: tuple[ModuleSpec, ...] = (
         native=True),
     ModuleSpec(
         id="timestamp_check", name_zh="时间戳检查",
-        summary_zh="时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
+        summary_zh="时间戳是否单调、有没有丢帧跳变（mcap 还逐路查相机自己的帧间隔）、是不是短于残段阈值的碎片",
         level="episode", needs=frozenset({"timestamps"}), block="cpu", stage="numeric", depends_on=(),
         codes=(_blocking("gap", "STRM-3", "丢帧跳变"),
                _blocking("jitter", "STRM-3", "采样间隔抖动", "medium"),
                _blocking("out_of_order", "STRM-4", "时间戳倒序或重复"),
                _blocking("fragment", "STRM-5", "残段：短于最短时长"),
                _blocking("single_stamp", "STRM-5", "只有一个时间戳"),
+               # 8.7 (D105): an mcap camera's own frame times jump
+               _blocking("camera_gap", "STRM-3", "相机丢帧", "medium", scope_kind="camera"),
                _info("duration_outlier", None, "时长离群", scope_kind="dataset")),
         param_schema=_timestamp_params(),
         tables=(TableSpec("timestamp_check", "时间戳异常",

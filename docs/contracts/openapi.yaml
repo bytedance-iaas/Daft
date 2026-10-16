@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 7.6.1
+  version: 7.6.2
   description: |
     ## Overview
 
@@ -290,6 +290,14 @@ info:
     fails the whole task, and a video too long for the model's byte budget is sent at a lower resolution instead of
     failing.
 
+    **7.6.2** (2026-10-16): the timestamp check also reads each mcap camera's own frame times. An interval longer than
+    the same multiple of that camera's median interval as on the timeline (1.8 by default) is a dropped frame, reported
+    per camera as `camera_gap` (STRM-3; rejected under the default policy, reported only under report-only) with the
+    camera, the time and the readings, and the episode fails the check even when the timeline itself is regular.
+    LeRobot and Lance cameras follow the table's timestamps and are not checked one by one. Gap messages give intervals
+    under a second in milliseconds (a 200 Hz stream's 5 ms read "0.01 s") and the whole number of gaps, not only the
+    ten listed (`details.n_gaps`).
+
   x-description-zh: |
     ## 概览
 
@@ -470,6 +478,11 @@ info:
     映射的 `warnings` 不再把它们列为 `checks_gap`。从两个关键帧之间开始的视频改为从头解码：第一个关键帧之前解不出的那几帧报 `head_undecodable`
     （FILE-4，只报告，写明相机和起止秒数），其余照判，以前这一条会等待补跑。LeRobot v3 条目的行区间落在数据文件 `index` 之外的，按 `index_range_invalid`
     （FILE-9）拒收，不再说「0 帧」。一个读不了的文件不再让整个任务失败；超过模型字节预算的长视频降低分辨率后照常送去判，不再出错。
+
+    **7.6.2**（2026-10-16）：时间戳检查也逐路看 mcap 相机自己的帧时间：间隔超过这一路中位间隔的若干倍（与主时间轴同一倍数，缺省 1.8）算丢帧，
+    按相机报 `camera_gap`（STRM-3；缺省策略下拒收，只报不拒时只报），写明相机、时刻和读数；主时间轴本身规整，这一条也算不合格。LeRobot、Lance
+    的相机跟着数据表的时间戳走，不逐路查。断档提示里一秒以下的间隔写毫秒（200 Hz 的流以前把 5 毫秒写成「0.01 秒」），并写出全部处数，不只列出的
+    前 10 处（`details.n_gaps`）。
 
 servers:
   - url: "{base}/api/v1"

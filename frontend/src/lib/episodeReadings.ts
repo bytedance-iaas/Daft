@@ -21,12 +21,21 @@ export function timestampFacts(d: Details): { facts: Fact[]; gaps: string[] } {
   const facts: Fact[] = [];
   if (num(d.duration_s) !== null) facts.push({ label: Z.duration, value: zh.sections.timestamp.seconds(num(d.duration_s)!) });
   if (num(d.n) !== null) facts.push({ label: Z.frames, value: String(num(d.n)) });
-  if (num(d.dt_nominal) !== null) facts.push({ label: Z.dtNominal, value: zh.sections.timestamp.seconds(num(d.dt_nominal)!) });
-  if (num(d.max_dt) !== null) facts.push({ label: Z.maxDt, value: zh.sections.timestamp.seconds(num(d.max_dt)!), warn: Array.isArray(d.gap_frames) && d.gap_frames.length > 0 });
+  const interval = zh.sections.timestamp.interval;
+  if (num(d.dt_nominal) !== null) facts.push({ label: Z.dtNominal, value: interval(num(d.dt_nominal)!) });
+  if (num(d.max_dt) !== null) facts.push({ label: Z.maxDt, value: interval(num(d.max_dt)!), warn: Array.isArray(d.gap_frames) && d.gap_frames.length > 0 });
   if (num(d.jitter_ratio) !== null) facts.push({ label: Z.jitter, value: `${fmt(num(d.jitter_ratio)! * 100, 1)}%` });
   const gaps = (Array.isArray(d.gap_frames) ? d.gap_frames : [])
-    .filter((g): g is { frame: number; dt: number } => Boolean(g) && typeof g === 'object' && num((g as Details).frame) !== null)
-    .map((g) => Z.gap(g.frame, fmt(num(g.dt))));
+    .filter((g): g is { frame: number; dt: number } => Boolean(g) && typeof g === 'object' && num((g as Details).frame) !== null && num((g as Details).dt) !== null)
+    .map((g) => Z.gap(g.frame, interval(num(g.dt)!)));
+  // D105: an mcap camera's own frame times (camera -> its gaps, the first ten)
+  const cams = d.camera_gaps && typeof d.camera_gaps === 'object' ? (d.camera_gaps as Record<string, Details>) : {};
+  for (const cam of Object.keys(cams).sort()) {
+    const listed = Array.isArray(cams[cam]?.gaps) ? (cams[cam].gaps as Details[]) : [];
+    for (const g of listed) {
+      if (num(g?.t_s) !== null && num(g?.dt) !== null) gaps.push(Z.cameraGap(short(cam), fmt(num(g.t_s)), interval(num(g.dt)!)));
+    }
+  }
   return { facts, gaps };
 }
 

@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { zh } from '../locales/zh';
 import { judgementName, motionFacts, motionRows, syncCameraPhrases, taskTrail, timestampFacts, violationRows, visualRows } from './episodeReadings';
 
 describe("one episode's readings in Chinese (F6.2)", () => {
   it('timestamps: duration, frames, intervals, where it jumped', () => {
     const { facts, gaps } = timestampFacts({ n: 75, duration_s: 5.533, dt_nominal: 0.066667, max_dt: 0.666667, gap_frames: [{ frame: 36, dt: 0.6667 }], reason: '第 37 帧后间隔突增' });
-    expect(facts.map((f) => `${f.label}${f.value}`)).toEqual(['时长5.53 秒', '帧数75', '名义帧间隔0.07 秒', '最大帧间隔0.67 秒']);
+    expect(facts.map((f) => `${f.label}${f.value}`)).toEqual(['时长5.53 秒', '帧数75', '名义帧间隔66.7 毫秒', '最大帧间隔667 毫秒']);
     expect(facts[3].warn).toBe(true);
-    expect(gaps).toEqual(['第 37 帧后隔了 0.67 秒']);
+    expect(gaps).toEqual(['第 37 帧后隔了 667 毫秒']);
+  });
+
+  it('timestamps: intervals under a second in milliseconds (D106), the cameras\' own gaps listed too (D105)', () => {
+    const d = {
+      n: 23463, duration_s: 117.361, dt_nominal: 0.005002, max_dt: 0.0095, gap_frames: [{ frame: 5816, dt: 0.0095 }], n_gaps: 1,
+      camera_gaps: { 'observation.images.right-wrist-camera': { n: 3334, dt_nominal: 0.0333, max_dt: 0.1334, n_gaps: 1, gaps: [{ frame: 1210, t_s: 40.3333, dt: 0.1334 }] } },
+    };
+    const { facts, gaps } = timestampFacts(d);
+    expect(facts.map((f) => `${f.label}${f.value}`)).toEqual(['时长117.36 秒', '帧数23463', '名义帧间隔5 毫秒', '最大帧间隔9.5 毫秒']);
+    expect(gaps).toEqual(['第 5817 帧后隔了 9.5 毫秒', 'right-wrist-camera 在 40.33 秒后隔了 133 毫秒']);
+    expect([0.0999999, 0.9996, 1.104, 0.00999].map(zh.sections.timestamp.interval)).toEqual(['100 毫秒', '1 秒', '1.1 秒', '10 毫秒']);
   });
 
   it('kinematics: violations with Chinese types and joints, the rest counted', () => {

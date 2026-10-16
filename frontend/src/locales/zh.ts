@@ -1330,7 +1330,7 @@ export const zh = {
     step: { probe: '打分', decode: '解码', read: '读数据', internal: '内部错误', unknown: '未注明' } as Record<string, string>,
     timestamp: {
       failed: '不合格',
-      kinds: { out_of_order: '乱序', gap: '跳变（丢帧）', fragment: '残段', jitter: '间隔抖动', other: '其它' } as Record<string, string>,
+      kinds: { out_of_order: '乱序', gap: '跳变（丢帧）', fragment: '残段', jitter: '间隔抖动', camera_gap: '相机丢帧', other: '其它' } as Record<string, string>,
       failChart: '不合格原因',
       durationTotal: '总时长',
       durationMedian: '时长中位数',
@@ -1338,6 +1338,13 @@ export const zh = {
       durationChart: '时长分布',
       durationDesc: '横轴是秒数，纵轴是条数',
       seconds: (v: number) => `${Number(v.toFixed(2))} 秒`,
+      // an interval (D106): milliseconds under a second - a 200 Hz stream's 5 ms is not "0.01 秒"; the checks word it the same
+      interval: (v: number) => {
+        const ms = v * 1000;
+        if (Math.round(ms) >= 1000) return `${Number(v.toFixed(2))} 秒`;
+        if (Math.round(ms) >= 100) return `${ms.toFixed(0)} 毫秒`;
+        return `${Number(Math.round(ms * 10) / 10 >= 10 ? ms.toFixed(1) : ms.toPrecision(2))} 毫秒`;
+      },
     },
     kinematics: {
       episodes: '越限条数',
@@ -1797,7 +1804,7 @@ export const zh = {
     elapsed: '耗时',
     error: '执行出错',
     advisory: '建议性，不影响判决',
-    timestamp: { duration: '时长', frames: '帧数', dtNominal: '名义帧间隔', maxDt: '最大帧间隔', jitter: '间隔抖动占比', gaps: '异常位置', gap: (frame: number, dt: string) => `第 ${frame + 1} 帧后隔了 ${dt} 秒`, stable: '帧间隔稳定' },
+    timestamp: { duration: '时长', frames: '帧数', dtNominal: '名义帧间隔', maxDt: '最大帧间隔', jitter: '间隔抖动占比', gaps: '异常位置', gap: (frame: number, dt: string) => `第 ${frame + 1} 帧后隔了 ${dt}`, cameraGap: (camera: string, at: string, dt: string) => `${camera} 在 ${at} 秒后隔了 ${dt}`, stable: '帧间隔稳定' },
     kinematics: { none: '关节 / 末端全程在规格内', count: (n: number) => `${n} 处越限`, cols: { type: '类型', joint: '关节 / 轴', frame: '帧', value: '实测值', limit: '极限' }, more: (n: number) => `另有 ${n} 处未列出`, sustained: '持续在限外的关节', profile: '规格档' },
     motion: {
       cols: { name: '子项', value: '得分', role: '计分', note: '说明' },

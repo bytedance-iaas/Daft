@@ -20,6 +20,16 @@ TS_FRAGMENT = {"n": 8, "duration_s": 0.467, "reason": "全长只有 0.47 秒(不
 TS_JITTER = {"n": 200, "duration_s": 21.1, "dt_nominal": 0.1, "max_dt": 0.14, "jitter_ratio": 0.1508}
 TS_ORDER = {"n": 100, "reason": "时间戳出现倒退/重复(第 50 帧)", "frame": 49, "ts": [4.9, 4.9]}
 TS_SINGLE = {"reason": "只有 1 个时间戳,连时长都算不出"}
+# 8.7 (D105, design doc 30 §9.1): an mcap camera's own frame times jump while the timeline runs on; and twelve timeline
+# gaps of which gap_frames lists ten (D106), beside the same camera
+_CAM_GAPS = {"observation.images.wrist": {"n": 597, "dt_nominal": 0.0333, "max_dt": 0.1333, "n_gaps": 1,
+                                          "gaps": [{"frame": 299, "t_s": 9.9667, "dt": 0.1333}]}}
+TS_CAMERA_GAP = {"n": 200, "camera_gaps": _CAM_GAPS, "duration_s": 19.9, "dt_nominal": 0.1, "max_dt": 0.1,
+                 "jitter_ratio": 0.0, "timeline_passed": True,
+                 "reason": "相机 observation.images.wrist 在 9.97 秒后间隔突增至 133 毫秒(正常约 33.3 毫秒),疑似丢帧"}
+TS_GAPS_AND_CAMERA = {"n": 188, "camera_gaps": _CAM_GAPS, "duration_s": 19.9, "dt_nominal": 0.1, "max_dt": 0.2,
+                      "reason": "第 20 帧后间隔突增至 200 毫秒(正常约 100 毫秒),疑似丢帧",
+                      "gap_frames": [{"frame": f, "dt": 0.2} for f in range(19, 101, 9)], "n_gaps": 12}
 
 KIN_JOINT = {"n_violations": 3, "violations": [
     {"type": "joint_limit", "joint": 3, "frame": 40, "value": 0.4302, "limit": [-3.0718, -0.0698]},
@@ -303,6 +313,8 @@ CASES = [
     ("timestamp_check", False, None, TS_JITTER, {"jitter"}, set()),
     ("timestamp_check", False, None, TS_ORDER, {"out_of_order"}, set()),
     ("timestamp_check", False, None, TS_SINGLE, {"single_stamp"}, set()),
+    ("timestamp_check", False, None, TS_CAMERA_GAP, {"camera_gap"}, set()),
+    ("timestamp_check", False, None, TS_GAPS_AND_CAMERA, {"gap", "camera_gap"}, set()),
     ("kinematic_limits", False, None, KIN_JOINT, {"joint_limit", "velocity_limit"}, set()),
     ("kinematic_limits", True, None, KIN_SO101, {"velocity_limit_approx", "command_velocity_limit"}, set()),
     ("kinematic_limits", False, None, KIN_EE, {"ee_reach", "ee_translation_velocity", "ee_rotation_velocity"}, set()),
@@ -479,6 +491,21 @@ def test_a_record_mismatch_says_which_records_disagree():
                                          "sources": {"pose": {"status": "suspect", "reasons": ["record_deviation"]}}}}
     (f,) = [x for x in _record("eef_video_consistency", True, None, upload)["findings"] if x["code"] == "record_mismatch"]
     assert f["message_zh"].startswith("上传的轨迹与数据集自己记录的末端位姿不一致") and f["readings"]["source"] == "upload"
+
+
+def test_camera_gaps_and_the_whole_count():
+    """D105-D106 (design doc 30 §9): a camera that dropped frames is its own finding, with the camera and the time; a
+    record failed by the cameras alone says nothing of the timeline (its jitter reading is no jitter finding); the
+    timeline's count is the check's n_gaps, not the ten gap_frames it lists."""
+    (cam,) = _record("timestamp_check", False, None, TS_CAMERA_GAP)["findings"]
+    assert (cam["code"], cam["item"], cam["severity"], cam["scope"]) == ("camera_gap", "STRM-3", "medium",
+                                                                           {"camera": "wrist"})
+    assert cam["message_zh"] == "wrist 在 9.97 秒后间隔突增至 133 毫秒（正常约 33.3 毫秒），疑似丢帧"
+    assert cam["time_s"] == [9.967, 10.1] and cam["readings"]["gaps"] == [{"frame": 299, "t_s": 9.9667, "dt_s": 0.1333}]
+    assert registry.finding_code("timestamp_check", "camera_gap").level == "blocking"
+    gap, cam = _record("timestamp_check", False, None, TS_GAPS_AND_CAMERA)["findings"]
+    assert gap["message_zh"] == "第 20 帧后间隔突增至 200 毫秒(正常约 100 毫秒),疑似丢帧（共 12 处）"
+    assert len(gap["readings"]["gaps"]) == 10 and cam["code"] == "camera_gap"
 
 
 def test_intervals_scopes_and_readings():

@@ -100,6 +100,13 @@ def test_timestamp_failures_by_kind_and_durations():
     assert out["duration_total_s"] == 16.1 and out["duration_min_s"] == 0.33
     assert out["duration_max_s"] == 5.53 and sum(b["count"] for b in out["duration_hist"]) == 4
     assert S.timestamp_stats([rec_ts(0, "pass")])["fail_reasons"][0] == {"name": "out_of_order", "count": 0}
+    # D105: failed by a camera alone (the timeline passed, jitter_ratio is a reading) is its own reason, listed
+    # only when it happened
+    cam = {"n": 80, "duration_s": 5.3, "dt_nominal": 0.0667, "max_dt": 0.0667, "jitter_ratio": 0.0,
+           "timeline_passed": True, "camera_gaps": {"observation.images.wrist": {"n_gaps": 1, "gaps": []}}}
+    out = S.timestamp_stats([*records, rec_ts(6, "fail", cam)])
+    assert out["fail_reasons"][-2:] == [{"name": "camera_gap", "count": 1}, {"name": "other", "count": 1}]
+    assert "camera_gap" not in {r["name"] for r in S.timestamp_stats(records)["fail_reasons"]}
 
 
 def test_kinematic_violations_by_type_and_joint():
