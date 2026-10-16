@@ -430,10 +430,10 @@ describe('任务详情 (07 §4.2)', () => {
     expect(integrity).toHaveClass('pipeline-layer');
     expect(integrity).toHaveTextContent('640 / 640');
     expect(integrity).toHaveTextContent('平均每条 2.65 s');
-    // the groups' colours (2026-10-16): arcoblue-6, cyan-8, the model's orange
-    expect(integrity).toHaveStyle({ borderTopColor: '#165DFF' });
-    expect(integrity.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#165DFF' });
-    expect(screen.getByTestId('stage-cpu')).toHaveStyle({ borderTopColor: '#07828B' });
+    // the groups' colours (2026-10-16): the three layers' indigo, cyan and orange
+    expect(integrity).toHaveStyle({ borderTopColor: '#6366f1' });
+    expect(integrity.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#6366f1' });
+    expect(screen.getByTestId('stage-cpu')).toHaveStyle({ borderTopColor: '#0891b2' });
     expect(screen.getByTestId('stage-model')).toHaveStyle({ borderTopColor: '#e87925' });
     expect(screen.getByTestId('inflight-integrity')).toBeInTheDocument();
     const cards = screen.getByTestId('pipeline-activity').querySelector('.pipeline-layers') as HTMLElement;

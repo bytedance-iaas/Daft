@@ -7,11 +7,10 @@ import './pipelineActivity.css';
 
 const copy = zh.taskDetail.pipelineActivity;
 /**
- * A group's colour: its card's top edge, its bar, its timeline lane. 2026-10-16 (requester): back to the three
- * layers' first colours in order - 数值档 indigo #6366f1, 帧档 cyan #0891b2, VLM 档 orange - as the nearest Arco
- * palette colours (arcoblue-6, cyan-8; 数据完整性 was green from the sixth round); 模型检查 keeps its orange.
+ * A group's colour: its card's top edge, its bar, its timeline lane. 2026-10-16 (requester): the three layers'
+ * first colours in order - 数值档 indigo, 帧档 cyan, VLM 档 orange (数据完整性 was green from the sixth round).
  */
-const COLORS: Record<string, string> = { integrity: '#165DFF', cpu: '#07828B', model: '#e87925' };
+const COLORS: Record<string, string> = { integrity: '#6366f1', cpu: '#0891b2', model: '#e87925' };
 
 type Activity = NonNullable<StageProgress['pipeline']>;
 
