@@ -424,14 +424,17 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.getByTestId('inflight-model')).toHaveTextContent('32');
     // a group's time per episode adds up its stages' (0.06 + 13 + 0.02 s)
     expect(screen.getByTestId('stage-cpu')).toHaveTextContent('平均每条 13.08 s');
-    // 数据完整性 is a card beside the other two (2026-10-13; a low strip from the sixth round until then), green,
+    // 数据完整性 is a card beside the other two (2026-10-13; a low strip from the sixth round until then),
     // and has its timeline row; the timeline hatches the waits under the solid work
     const integrity = screen.getByTestId('stage-integrity');
     expect(integrity).toHaveClass('pipeline-layer');
     expect(integrity).toHaveTextContent('640 / 640');
     expect(integrity).toHaveTextContent('平均每条 2.65 s');
-    expect(integrity).toHaveStyle({ borderTopColor: '#00B42A' });
-    expect(integrity.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#00B42A' });   // green
+    // the groups' colours (2026-10-16): arcoblue-6, cyan-8, the model's orange
+    expect(integrity).toHaveStyle({ borderTopColor: '#165DFF' });
+    expect(integrity.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#165DFF' });
+    expect(screen.getByTestId('stage-cpu')).toHaveStyle({ borderTopColor: '#07828B' });
+    expect(screen.getByTestId('stage-model')).toHaveStyle({ borderTopColor: '#e87925' });
     expect(screen.getByTestId('inflight-integrity')).toBeInTheDocument();
     const cards = screen.getByTestId('pipeline-activity').querySelector('.pipeline-layers') as HTMLElement;
     expect([...cards.children].map((c) => c.getAttribute('data-testid'))).toEqual(['stage-integrity', 'stage-cpu', 'stage-model']);
