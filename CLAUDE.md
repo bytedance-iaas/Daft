@@ -110,6 +110,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | 27 | 删掉 v1 与旧格式（`27-remove-v1-and-old-formats.md`，D89–D91）：v1 代码删掉、`ls` / `prune` / `fetch` 留作运维命令；C2 只有 2.0，漏斗、`relabel_rerun`、旧任务兼容都删；对账与回归打分只认 2.0（注册表 7.0、C4 7.0.0） |
 | 28 | 完整性拦截与坏视频（`28-integrity-gate-and-broken-video.md`，D92–D94）：完整性判废的条目其它模块只写跳过记录、VLM 块等完整性结论；解码器认定损坏的视频是判废发现 `decode_failed`；跳过单独记账（注册表 7.1、C4 7.1.0） |
 | 29 | 声明了却缺的数据（`29-declared-but-missing.md`，D95–D97）：读不了的数据按声明诊断成判废发现（`action_missing`、`column_missing`、`values_invalid`、`length_mismatch`……），维度与 info.json 不符判废，确认过的 mcap 映射写明的流缺了存疑；选了数据完整性时缺源文件的条目判废、不再剔除（`data_missing` / `video_missing`，修订 D40）；v3 数据文件一条坏了不连累同文件的其它条（注册表 8.4） |
+| 30 | 全量实跑暴露的五个问题（`30-full-run-fixes.md`，D98–D102）：给模型的视频按预算降档重编；seek 不到关键帧时从头解、开头解不出报 FILE-4 info（`head_undecodable`）；汇总读不了元数据不再让任务失败、protobuf repeated 字段取数；v3 行区间落在 index 之外报 FILE-9（`index_range_invalid`）；相机视频比条目短时照样判（注册表 8.6） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

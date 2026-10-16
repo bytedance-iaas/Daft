@@ -1,0 +1,98 @@
+# 30 · 全量实跑暴露的五个问题
+
+> 状态：**实施中（2026-10-15）**。D98–D102 登记在 00 §7；账本阶段 28（F28.1–F28.6）；§7 是落地时的细化。
+> 来源：2026-10-15 样本集 v2 的 99 个子集全部登记到 dataverse 的质检台，按「只报不拒、不开 EEF–视频一致性、VLM doubao-seed-2-1-lite 不开思考」
+> 全量跑了一遍（84 个任务、562 条，设计 16 §7.9）：15 个任务共 41 条执行出错、待补跑，2 个任务在汇总时失败，crafted 的 DROID 标定子集 6 条全被拒。
+> 需求方要求修，并定了两处口径：视频开头解不出的那段报 FILE-4、只报告（info）；数据集里没有任务描述就按没有标注处理，不加声明字段、不改数据集。
+
+## 0. 开工指引
+
+1. **五件事互不依赖**，各是一个 feature（F28.1–F28.5），F28.6 是修完后的重跑与打分。改的多是 B 类：`adapters/video_input.py`、
+   `adapters/decode.py`、`pipeline/episode_checks.py`、`cli/aggregate.py`、`extensions/integrity/declared.py`。唯一的 A 类是 `ingest/mcap_reader.py`
+   （§3 的 repeated 字段，加一个判断、不改算法），在 `tools/parity/a_class_declared.json` 登记新哈希与理由，对账的黄金基线回放守着判决不变。
+2. **注册表 8.5 → 8.6**，加两个细码：视觉质量的 `head_undecodable`（FILE-4，info）、数据完整性的 `index_range_invalid`（FILE-9，blocking，不可复议）；
+   回归样本分类表的平台注记重新生成。C2、C3、C4 的结构不变。
+3. **不做**：给没有任务描述的数据集补描述（需求方：没有就按没有标注）；crafted DROID 标定子集的封装（要不要修等需求方确认，§4）；
+   mcap 映射起草的改进（ABC-130k 的映射本身没错，§3）。
+
+## 1. 给模型的视频按预算降档重编（D98）
+
+**现象**：22 条在任务成败的「视频准备」报 `episode clip exceeds video byte limit`，GenRobot、MolmoAct2、HIW-500、RH20T、双 UR5e 都有。
+
+**根因**：`prepare_videos` 给一次请求定一个总字节预算（缺省 32 MB），几路相机按顺序扣减；第一路编得大，后面的相机分到的就少，超了直接报错，
+没有退路。片段按 crf 20、长边 720 编，长条目或画面细碎的相机很容易超。
+
+**做法**：
+
+- 预算按还没编的相机均分：第 k 路拿 `剩余 / (相机数 − k)`，前面省下的留给后面。
+- 一路超了就降档重编，一档比一档省：长边 720 → 540 → 448 → 360，crf 20 → 26 → 30 → 34；请求要的抽帧率（`fps`）不变，模型读到的帧时刻不变。
+- 降到最低档还超才报错（仍是执行出错）。
+- 片段元数据多记 `encode`（实际用的长边与 crf），记录里能看出哪一路降过档；没超的相机参数与请求内容和原来一字不差。
+
+## 2. seek 失败从头解；开头解不出是 FILE-4 的 info 发现（D99）
+
+**现象**：16 条 GenRobot（mcap）在视觉质量、视频-动作同步、任务成败三处同时执行出错，原因都是 `PermissionError: [Errno 1] Operation not permitted`。
+设计 16 §11 第 6 条早就记过：这批视频开头缺关键帧，应当报成解码问题。
+
+**根因**：解帧（`decode._decode_once`）和编片段（`video_input._encode`）都先 `seek` 到窗口起点之前最近的关键帧（`any_frame=False`）。
+视频的第一个包不是关键帧时，起点之前没有关键帧，FFmpeg 的 `av_seek_frame` 返回 -1，PyAV 把它当成 errno 1 抛出。解码包装器（`incidents.wrap_decode`）
+记下这条就成了执行出错（D33），而 D93 只认解码器明确判定的损坏，接不住它。
+
+**做法**：
+
+- seek 失败（`PermissionError`，即 FFmpeg 返回 -1）时重新打开、不 seek，从头解码，窗口起点之前的帧照常丢掉。不再抛错，也就没有执行出错。
+- 从头解码时记下第一个包与第一个能解出的帧的时刻：后者比前者（或窗口起点，取晚的）晚过一帧以上，这一段就是「开头解不出」。
+  解帧把它交给调用方（可选的 `notes` 参数），视觉质量按相机报 `head_undecodable`：FILE-4、低严重度、info，范围写到相机，读数写起止秒数，
+  例「robot0_sensor_camera0_compressed 开头 0.00–1.07 秒解不出（缺关键帧）」。后面的画面照常判。
+- 编片段（任务成败）同样从第一个能解出的帧开始编，片段的 `start_s` 本来就记着它比窗口起点晚多少，提示里照常说明。
+- 只报一次：同步与任务成败也会遇到同一段，但 FILE-4 的发现只由视觉质量出，免得一路相机报三条。
+
+## 3. 汇总不因读不了元数据失败；protobuf repeated 字段取数（D100）
+
+**现象**：两个任务在 `aggregate` 失败——`genrobot_mcap_structure_injected`（故意注入了 mcap 结构损坏）报
+`RecordLengthLimitExceeded`，ABC-130k 报「topic 存在但按 fields='position' 没取出任何数值」。
+
+**根因**：
+
+- `aggregate` 为了给交付清单写每条的任务描述（`task_text`），用 v1 的读取器一次读出全部条目的元数据行；任何一条读不了，整个任务就失败。
+  坏 mcap 由数据完整性报了 FILE-3（`structure_invalid` 等），各模块也都有记录，只差这一步。
+- ABC-130k 的动作消息是自定义 protobuf `RobotState`，`position` 是 repeated double（每条 6 个值），映射没写错。mcap 读取器的 `_flatten_numeric`
+  只认 list、tuple、protobuf 消息与 dict，protobuf 的 repeated 字段在 Python 里是 `RepeatedScalarContainer`，被当成认不出的东西返回空。
+
+**做法**：
+
+- `aggregate` 先整批读；整批失败时逐条读，读不了的条目没有任务描述（交付清单里来源记「无」），日志写一条警告与条数，判决不受影响。
+- `_flatten_numeric` 把有长度、可迭代、又不是字符串 / 字节 / dict / protobuf 消息的东西当序列展平（protobuf 的 repeated 字段、numpy 数组）。
+
+## 4. v3 的行区间落在数据文件 index 之外是 FILE-9（D101）
+
+**现象**：crafted 的 `droid_extrinsics_mv5` 6 条全被完整性按 FILE-5「数据有 0 帧，episode 表记 184 帧」拒了。
+
+**根因**：样本的封装不一致——从 DROID 1.0.1 挑出 6 条、保留原编号重新打包时，episode 表的 `dataset_from_index` / `dataset_to_index` 改成了子集内的
+0–1240，数据表的 `index` 却保留了原数据集的全局编号（第 5 条是 1453–1636）。平台照 v1 的切法（`index` 减去文件首行的 `index`）取出 0 行。
+这正是 FILE-9「索引与引用对不上」说的情形，按设计 29 却落进了 FILE-5。这个子集的期望只写了 MV-4（标定），封装问题不在设计里；
+要不要修样本由需求方定，平台这边先把诊断改对。
+
+**做法**：完整性逐条核 v3 时，本条的行区间与数据文件的 `index` 没有交集、文件里却有这条（`episode_index`）的行，报 `index_range_invalid`：
+FILE-9、blocking、不可复议（读不了，口径同 D95），例「episode 表的行区间 0–184 不在数据文件的 index 里（这条在文件里是 1453–1636）」，不再报 FILE-5。
+行区间有交集、只是长度不符的，照旧是 `length_mismatch`。
+
+## 5. 相机视频比条目短时照样判（D102）
+
+**现象**：3 条 GenRobot（clean_container）在任务成败报 `video ends before the requested episode window`。
+
+**根因**：编片段时要求视频覆盖整个窗口（容差一帧的十分之一），一路相机比条目早结束就报错。
+
+**做法**：有多少送多少——片段编到视频结束为止，片段元数据记 `video_end_s`（比窗口终点早时才有），给模型的说明里写「这一路录到第 x 秒就结束了，
+条目到第 y 秒」。完全没有帧的照旧报错。相机提前断流本身是数据完整性的事（STRM-2 / STRM-3），这里不另出发现。
+
+## 6. 验证
+
+- 单测：降档与最低档仍超（F28.1）；首包非关键帧的合成视频——seek 失败不抛错、报出开头解不出的区间（F28.2）；aggregate 逐条退路、
+  protobuf repeated 字段（F28.3）；行区间与 index 不交（F28.4）；视频提前结束（F28.5）。
+- 契约与锁、回归样本工具、对账的黄金基线回放；CLI、结果读取、Daemon 相关套件。
+- F28.6：需求方出镜像后，在 dataverse 重跑出过错的 17 个任务，用 `score.py` 对比修前修后，结果写回本篇 §7。
+
+## 7. 落地记录
+
+（实施后补。）
