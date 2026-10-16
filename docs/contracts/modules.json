@@ -1,5 +1,5 @@
 {
- "registry_version": "8.7",
+ "registry_version": "8.8",
  "taxonomy_version": "2.0",
  "blocks": [
   {
@@ -1369,6 +1369,15 @@
      "appealable": false
     },
     {
+     "code": "jagged",
+     "item": "ACT-1",
+     "name_zh": "动作来回抖动",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
      "code": "spike",
      "item": "ACT-2",
      "name_zh": "动作尖刺",
@@ -1435,6 +1444,15 @@
      "code": "action_semantics_undetermined",
      "item": "ACT-6",
      "name_zh": "判断不了动作的语义",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    },
+    {
+     "code": "columns_not_joints",
+     "item": null,
+     "name_zh": "名为关节的列不是关节读数",
      "severity": "medium",
      "level": "info",
      "scope_kind": "dataset",

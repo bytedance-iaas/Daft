@@ -54,6 +54,8 @@ _ROT_TOKENS = ("rot6d", "rot_6d", "6d", "quat", "qx", "qy", "qz", "qw", "roll", 
                "rx", "ry", "rz", "rotvec", "axis_angle", "axisangle", "rot", "orient", "euler",
                "wx", "wy", "wz")
 _POS_TOKENS = ("pos_x", "pos_y", "pos_z", "x", "y", "z", "pos", "position", "trans", "tx", "ty", "tz")
+#: 下面几份词表是**没有档案时**按列名猜列种类的缺省;正门是语义档案(dataset_profiles/*.yaml)的 action 段:
+#: velocity_dims / hand_dims / limbs 直接声明,声明了就不靠词(2026-10-15:新命名习惯进档案一行,不改代码)
 _GRIP_TOKENS = ("gripper", "grip", "width", "open", "finger", "claw",
                 "trigger", "squeeze")   # 手柄扳机 / 握力 = 手部指令(2026-10-14 HIW-500 left_trigger / left_squeeze)
 #: 速度型指令列(2026-10-14 HIW-500:pivot_vx / pivot_vy / pivot_vyaw 是底盘速度,91–94% 的帧步长为零、
@@ -234,9 +236,52 @@ def limbs_from_names(names: list, exclude=()) -> list:
     return [[side, cols] for side, cols in groups.items() if cols]
 
 
+#: 「列名说是关节、数值说是归一化开合量」的指纹(2026-10-15,G1 右臂六列):归一化的手指 / 夹爪指令是 [0,1] 区间、
+#: 会顶到边界饱和(G1 Inspire 手 0 = 张开 1 = 握紧),关节角(弧度 / 度)不会恰好在 1.000 或 0.000 饱和还用掉大半个区间。
+#: 三条都要:从不离开 [0,1](浮点容差)、顶到过一端(1e-3 内)、量程 ≥ 半个区间(恒定列与 0–0.35 rad 的小角度关节都不算)。
+#: 88 个 anchor 子集 669 根关节名列核过(spikes/mv3/bench 的 colscan):只有 G1 的右臂六列中招,其余零命中。
+_UNIT_BOUND_TOL = 1e-6
+_UNIT_TOUCH_TOL = 1e-3
+_UNIT_RANGE_MIN = 0.5
+
+
+def nonjoint_columns(arrays: list, names: list, layout: dict | None) -> list:
+    """关节空间里按名字是关节、按数值却像归一化开合量的列(数据集级,样本是前几条的 action 与 state)。
+    已经声明 / 认出的夹爪、手指、速度、平移列不在候选里;任一张表(指令或读数)中招就算。
+    中招数达到候选的一半就全部不算:整库都在 [0,1] 里是归一化约定,不是列名错。"""
+    lay = layout if isinstance(layout, dict) else {}
+    known = set()
+    for k in ("gripper_dims", "hand_dims", "velocity_dims", "translation_dims"):
+        known |= {int(c) for c in (lay.get(k) or ())}
+    mats = [np.asarray(a, dtype=np.float64) for a in arrays if a is not None]
+    mats = [m for m in mats if m.ndim == 2 and m.shape[0] >= 8]
+    if not mats or not names:
+        return []
+    dim = min(m.shape[1] for m in mats)
+    cand = [c for c in range(min(dim, len(names))) if c not in known]
+    hits = []
+    for c in cand:
+        for m in mats:
+            col = m[:, c]
+            if not np.all(np.isfinite(col)):
+                continue
+            lo, hi = float(col.min()), float(col.max())
+            inside = lo >= -_UNIT_BOUND_TOL and hi <= 1.0 + _UNIT_BOUND_TOL
+            touch = abs(hi - 1.0) <= _UNIT_TOUCH_TOL or abs(lo) <= _UNIT_TOUCH_TOL
+            if inside and touch and hi - lo >= _UNIT_RANGE_MIN:
+                hits.append(c)
+                break
+    if not hits or len(hits) * 2 >= len(cand):
+        return []
+    return hits
+
+
 def layout_for_extras(layout: dict) -> dict:
     """布局写进 semantics_extras(JSON 列,随行流到漏斗;tuple 型语义字段进不了 daft)。"""
-    return {"angle_dims": list(layout.get("angle_dims") or ()),
+    nonjoint = [int(c) for c in (layout.get("nonjoint_dims") or ())]
+    extra = ({"nonjoint_dims": nonjoint, "nonjoint_names": [str(n) for n in (layout.get("nonjoint_names") or ())]}
+             if nonjoint else {})   # 只在有命中时写,没命中的数据集布局一字不变
+    return {**extra, "angle_dims": list(layout.get("angle_dims") or ()),
             "rotation_blocks": [list(b) for b in (layout.get("rotation_blocks") or [])],
             "euler_triplet": bool(layout.get("euler_triplet")),
             "gripper_dims": list(layout.get("gripper_dims") or ()),
@@ -340,15 +385,36 @@ def _profile_extras_with_layout(prof: dict) -> dict:
                              "closed": gripper_closed_of(act),
                              "closed_source": ("profile" if act.get("gripper_closed") else "default")}
     blocks = act.get("rotation_blocks")
-    if blocks:
+    # 列种类声明(2026-10-15):速度型列 / 灵巧手手指列 / 肢体分组,档案写了就是正门,列名词表只是没档案时的缺省
+    declared = {k: act.get(k) for k in ("velocity_dims", "hand_dims", "limbs") if act.get(k)}
+    if blocks or declared:
         lay = {"angle_dims": tuple(act.get("angle_dims", [])),
-               "rotation_blocks": [tuple(b) for b in blocks],
+               "rotation_blocks": [tuple(b) for b in (blocks or [])],
                "euler_triplet": bool(act.get("euler_triplet", False)),
                "gripper_dims": tuple(act.get("gripper_dims", [])),
                "translation_dims": tuple(act.get("translation_dims", [])),
+               "velocity_dims": tuple(int(x) for x in (act.get("velocity_dims") or [])),
+               "hand_dims": tuple(int(x) for x in (act.get("hand_dims") or [])),
+               "limbs": limbs_declared(act.get("limbs")),
+               "informative": bool(blocks or act.get("translation_dims")),
                "source": "profile"}
         extras["layout"] = layout_for_extras(lay)
     return extras
+
+
+def limbs_declared(value) -> list:
+    """档案里的肢体分组 → [[side, [列...]], ...]。接受映射 {left: [...], right: [...]} 或列表 [[left, [...]], ...];
+    side 是任意短名(left / right / arm / base),同步检查按组各读一次滞后再求一致。写错了(不是整数列号)抛错,
+    档案错误要在加载时暴露,不能静默变成没声明。"""
+    if not value:
+        return []
+    items = list(value.items()) if isinstance(value, dict) else [tuple(v) for v in value]
+    out = []
+    for side, cols in items:
+        cols = [int(c) for c in (cols or [])]
+        if cols:
+            out.append([str(side), cols])
+    return out
 
 
 def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
