@@ -327,7 +327,7 @@ class ContainerRowSource:
 
             self._fetch(sample)
             validate_info(lance_dataset_info(input_dir), input_dir)  # v1: validate=True
-        rows = self._rows(sample)
+        rows = self._sample_rows(sample)
         if not rows:
             raise lr.NotADatasetError(f"'{input_dir}': none of the episodes {sample[:8]} "
                                       f"could be read")
@@ -345,6 +345,22 @@ class ContainerRowSource:
     @property
     def available(self) -> set[int]:
         return set(self.order)
+
+    def _sample_rows(self, sample: list[int]) -> list[dict]:
+        """The semantics sample's rows. One episode the reader cannot open - a corrupt mcap data integrity rejects -
+        must not stop every episode of the stage (design doc 30 §8, the mcap / lance twin of design doc 28 §1): a
+        sample that cannot be read as a whole is read one episode at a time and what cannot be read is left out
+        (an episode of the stage's own is still its own error, :meth:`get`). A readable sample is read as before."""
+        try:
+            return self._rows(sample)
+        except Exception:  # noqa: BLE001 - which file breaks the sample is the data's business
+            rows: list[dict] = []
+            for ep in sample:
+                try:
+                    rows += self._rows([ep])
+                except Exception:  # noqa: BLE001
+                    continue
+            return rows
 
     def _rows(self, episodes: list[int]) -> list[dict]:
         self._fetch(list(episodes))

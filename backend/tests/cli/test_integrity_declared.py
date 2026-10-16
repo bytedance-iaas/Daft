@@ -235,6 +235,29 @@ def test_mcap_without_its_action_topic(cli, mini_mcap, tmp_path):
     assert c2(recs[4]) == [("action_missing", "STRM-1", "high")]
 
 
+def test_mcap_a_corrupt_file_does_not_stop_the_stages_after_data_integrity(cli, mini_mcap, tmp_path):
+    """Design doc 30 §8: the reader cannot open a cut-off mcap at all (``RecordLengthLimitExceeded``). Data integrity
+    rejects it; the stages after it used to read the semantics sample - the selection's first episodes - in one go and
+    fail every episode with it. They read the sample without it now and judge the others."""
+    from regression_samples.inject_mcap import cut_off
+
+    ds = str(tmp_path / "mcap")
+    shutil.copytree(mini_mcap, ds)
+    path = os.path.join(ds, "episode_1.mcap")
+    with open(path, "rb") as fh:
+        buf, _ = cut_off(fh.read())
+    with open(path, "wb") as fh:
+        fh.write(buf)
+    rd = str(tmp_path / "run")
+    check(cli, ds, rd)
+    assert [lv for lv, _ in codes(results(rd)[1])] == ["reject"]
+    res = cli("check", "--modules", "timestamp_check", "--input", ds, "--run-dir", rd, "--episodes", "0-7")
+    assert res.rc == 0, res.doc
+    entry = res.doc["modules"]["timestamp_check"]
+    assert entry["episodes"]["error"] == 0 and entry["skipped_reasons"] == {"integrity_rejected": 1}
+    judged = {e for e, r in latest_results(rd, "timestamp_check").items() if not r["details"].get("skipped")}
+    assert judged == {0, 2, 3, 4, 5, 6, 7}
+
 def test_mcap_a_topic_the_mapping_names(cli, mini_mcap, tmp_path):
     """D96: with a confirmed mapping, a camera it names that no episode has is a suspect in each - the other episodes
     need not have it."""
