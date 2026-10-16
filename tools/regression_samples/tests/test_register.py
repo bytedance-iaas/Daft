@@ -179,12 +179,12 @@ def test_the_console_picks_file_is_well_formed():
 
 
 def test_the_v2_picks_list_every_subset_of_the_three_sets():
-    """console_picks_v2.json: sample set v2 whole - anchor 63, anchor-nc 25, crafted 11 subsets, named <set>-v2/<subset>."""
+    """console_picks_v2.json: sample set v2 whole - anchor 63, anchor-nc 25, crafted 17 subsets (11 + the 6 TASK-11 subsets of 2026-10-16), named <set>-v2/<subset>."""
     picks = _picks("console_picks_v2.json")
     uris, names = [p["uri"] for p in picks], [p["name"] for p in picks]
-    assert len(set(uris)) == len(set(names)) == len(picks) == 99
+    assert len(set(uris)) == len(set(names)) == len(picks) == 105
     sets = [u.split("/")[3] for u in uris]                      # tos://curation-robo-anchor/<set>/v2/<format>/<subset>/
-    assert {s: sets.count(s) for s in set(sets)} == {"anchor": 63, "anchor-nc": 25, "crafted": 11}
+    assert {s: sets.count(s) for s in set(sets)} == {"anchor": 63, "anchor-nc": 25, "crafted": 17}
     for p, s in zip(picks, sets):
         assert p["uri"].startswith(f"tos://curation-robo-anchor/{s}/v2/") and p["uri"].endswith("/")
         assert p["name"] == f"{s}-v2/" + p["uri"].rstrip("/").rsplit("/", 1)[1]
