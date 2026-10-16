@@ -3,7 +3,7 @@
 // the UI sends (a violation fails the test that caused it).
 import './polyfills';
 import '@testing-library/jest-dom/vitest';
-import { Message, Modal } from '@arco-design/web-react';
+import { Message, Modal, Notification } from '@arco-design/web-react';
 import { cleanup, configure, waitFor } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { resetDb } from '../mocks/db';
@@ -38,15 +38,23 @@ beforeEach(() => {
 });
 afterEach(async () => {
   cleanup();
-  // Modal.confirm and Message render into their own roots, outside RTL's containers. destroyAll only
-  // starts a dialog's closing animation: the next test waits until it has left the page, or a find
-  // there could take this test's dialog for its own (a loaded runner was slow enough, 2026-10-07)
+  // Modal.confirm, Message and Notification render into their own roots, outside RTL's containers.
+  // destroyAll only starts a dialog's closing animation: the next test waits until it has left the
+  // page, or a find there could take this test's dialog for its own (a loaded runner was slow enough,
+  // 2026-10-07)
   Modal.destroyAll();
   Message.clear();
+  Notification.clear();
   server.resetHandlers();
   server.events.removeAllListeners();
   window.localStorage.clear();
   expect(violations, violations.join('\n\n')).toEqual([]);
   await waitFor(() => expect(document.querySelector('.arco-modal')).toBeNull());
 });
-afterAll(() => server.close());
+afterAll(async () => {
+  // a cleared message or notification leaves on a timer of Node's own, which outlives this file's
+  // jsdom: one that fired after the teardown failed a CI run where every test passed (React reads
+  // `window` when the transition sets its state, 2026-10-16), so the file ends when they have left
+  await waitFor(() => expect(document.querySelector('.arco-message, .arco-notification')).toBeNull());
+  server.close();
+});
