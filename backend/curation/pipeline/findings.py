@@ -188,6 +188,11 @@ def _visual_quality(passed, score, d, p) -> Derived:
         name = short_camera(cam)
         out.add(m, "dead_or_padded", f"{name} 没有信号：画面近乎全黑且不变，或是填充的空画面",
                 scope={"camera": name})
+    # D99 (design doc 30 §2): the first packets are not a keyframe, the frames before the first one cannot be decoded
+    for cam, (start, end) in sorted((d.get("undecodable_head") or {}).items()):
+        name = short_camera(cam)
+        out.add(m, "head_undecodable", f"{name} 开头 {float(start):.2f}–{float(end):.2f} 秒解不出（视频开头缺关键帧）",
+                scope={"camera": name}, readings={"from_s": _r(float(start)), "to_s": _r(float(end))})
     return out
 
 

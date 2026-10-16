@@ -17,7 +17,7 @@ import argparse
 import os
 
 from . import runctx
-from .errors import UsageError
+from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
 
 SCHEMA_VERSION = "1.0"
@@ -110,8 +110,22 @@ def _task_text(ctx, args, run_dir: str, episodes: list[int]):
     instructions: dict[int, str] = {}
     if args.input:
         src = runctx.open_source(ctx, args)
-        instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
-                        for r in runctx.meta_rows(src, episodes, args, what="aggregate")}
+        try:
+            rows = runctx.meta_rows(src, episodes, args, what="aggregate")
+        except ModuleFailed:
+            # one episode the reader cannot open (a corrupt mcap, design doc 30 §3, D100) must not take the task with
+            # it: read them one by one; an episode that cannot be read is delivered without task text
+            rows, unread = [], []
+            for ep in episodes:
+                try:
+                    rows += runctx.meta_rows(src, [ep], args, what="aggregate")
+                except ModuleFailed:
+                    unread.append(ep)
+            if unread:
+                ctx.log("warning", f"task text: {len(unread)} of {len(episodes)} episodes cannot be read and are "
+                                   f"delivered without it: {', '.join(map(str, unread[:20]))}"
+                                   + (" ..." if len(unread) > 20 else ""))
+        instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "") for r in rows}
     return TaskText(run_dir, instructions)
 
 

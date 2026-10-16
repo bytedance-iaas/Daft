@@ -51,6 +51,7 @@ import json
 import os
 import re
 import tempfile
+from collections import abc
 from fractions import Fraction
 
 import numpy as np
@@ -336,6 +337,13 @@ def _as_frame(decoded) -> tuple[str, bytes] | None:
 _SKIP_LEAF_NAMES = {"timestamp", "sequence_num", "frame_id", "header"}
 
 
+def _is_sequence(node) -> bool:
+    """A sequence that is not a list: protobuf's repeated field (``RepeatedScalarContainer`` /
+    ``RepeatedCompositeContainer``), a numpy array. Not text, bytes, a dict or a protobuf message (D100:
+    ABC-130k's ``RobotState.position`` is a repeated double and read as nothing before)."""
+    return isinstance(node, (abc.Sequence, np.ndarray)) and not isinstance(node, (str, bytes))
+
+
 def _flatten_numeric(node) -> list[float]:
     """任意解码结果 → 数值叶子按声明序展平(protobuf 按 DESCRIPTOR 字段序,dict 按
     插入序)。字符串/字节/header 类字段跳过 —— 只收"像运动量"的数。"""
@@ -345,7 +353,7 @@ def _flatten_numeric(node) -> list[float]:
         return [float(node)]
     if isinstance(node, (str, bytes)):
         return []
-    if isinstance(node, (list, tuple)):
+    if isinstance(node, (list, tuple)) or _is_sequence(node):
         out: list[float] = []
         for x in node:
             out.extend(_flatten_numeric(x))

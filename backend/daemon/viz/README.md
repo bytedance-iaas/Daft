@@ -150,8 +150,8 @@ mcap 的时间：零点是映射里各 topic 的第一条消息；帧号基准�
 
 14. **H.265 / H.264 重封装**：同样登记 `viz_abc`。它没有 `/action`，质检按缺省读不了：登记的 `format` 是 `unsupported`，`viz.state` 仍是 `mapping_pending`，
     `GET /datasets/<id>/mapping` 的警告 `checks_unreadable`。探测出的草稿命中不了内置的 UMI，由 `builtin:foxglove` 起草（`/left-arm-state` 与 `/left-arm-action` 自动配对，
-    任务来自 `/instruction`，分段来自 `/subtask`），探测应答带两条 `checks_gap`（质检读不出 `q` 这个 repeated 字段、读不了 H.265）。确认草稿后登记按新映射重新预检，
-    `viz.state` 变成 `ready`，应答仍带这两条 `checks_gap`。`episodes/0/viz` 的两路相机都是 `access: remux`，`camera_top` 的 `codec_string` 是 `hvc1.1.6.L120.90`；
+    任务来自 `/instruction`，分段来自 `/subtask`），探测应答带一条 `checks_gap`（质检读不了 H.265；`q` 这个 repeated 字段 D100 起读得了）。确认草稿后登记按新映射重新预检，
+    `viz.state` 变成 `ready`，应答仍带这条 `checks_gap`。`episodes/0/viz` 的两路相机都是 `access: remux`，`camera_top` 的 `codec_string` 是 `hvc1.1.6.L120.90`；
     `curl -s -o /tmp/top.mp4 $B/datasets/<id>/episodes/0/cameras/camera_top.mp4 && ffprobe -v error -show_entries stream=codec_name,codec_tag_string,nb_frames /tmp/top.mp4`
     → `hevc`、`hvc1`；带 `Range: bytes=0-31` 回 206。曲线组 `left-arm-state` 是状态与动作叠画的 12 条线，状态 40 点（相机两倍的频率）；分段轨一段 `reach`（0–1 s）。
 

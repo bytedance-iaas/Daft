@@ -29,6 +29,7 @@ CODES: dict[str, tuple[str, str]] = {
     "action_missing": (REJECT, "缺少动作数据"),
     "column_missing": (REJECT, "缺少声明了的数据列"),
     "length_mismatch": (REJECT, "数据长度与帧数对不上"),
+    "index_range_invalid": (REJECT, "episode 表的行区间与数据文件的 index 对不上"),   # D101 (design doc 30 §4)
     "values_invalid": (REJECT, "数值不合规"),
     "timestamps_invalid": (REJECT, "时间戳不合规"),
     "row_invalid": (REJECT, "数据不合规"),

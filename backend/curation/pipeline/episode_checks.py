@@ -418,19 +418,23 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
         live_cams, dead_cams = [], []
         sync_cams = {}        # 同步读数:相机短名 → per_camera 条目
         sync_curves = {}      # 同步曲线(画图用):相机短名 → {t/flow/speed/...}
+        heads = {}            # 开头解不出的区间(D99):相机短名 → [from_s, to_s]
         for c in cams:
             v = video[c]
             # ⚠️ 同步检查必须全帧率解码:lag 分辨率=帧间隔,抽稀到 0.5s 会粗于容忍度
             # (0.25s)→干净数据被量化误差误杀(2026-07-02 e2e 实测)。一次解码两用:
             # sync 用全帧,visual 从同批帧里按 interval 抽稀。
+            notes: dict = {}
             try:
                 frames, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                            max_side=max_side)
+                                            max_side=max_side, notes=notes)
             except Exception:  # noqa: BLE001  解码失败=少一路,不中断整条
                 dead_cams.append(c)           # 拿不到画面 = 不能声称这一路在拍
                 if c != cam0:
                     padded.append(c)
                 continue
+            if notes.get("undecodable_head"):
+                heads[_short_of[c]] = notes["undecodable_head"]
             if not frames:
                 dead_cams.append(c)
                 if c != cam0:
@@ -511,6 +515,8 @@ def make_frame_checks(cfg: dict, registry, *, decode: Callable | None = None) ->
                                     "dead_or_padded": dead_cams},
                 "params": {"blur_ref_var": pv.get("blur_ref_var", 100.0),
                            "frame_max_side": max_side}})
+            if heads:
+                vdetail["undecodable_head"] = heads
             out["visual"] = result_to_struct(_VCR(
                 name="visual_quality", passed=None,
                 score=round(score, 4), detail=vdetail))

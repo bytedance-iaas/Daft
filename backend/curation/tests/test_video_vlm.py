@@ -94,9 +94,77 @@ def test_video_limit_and_missing_camera_are_explicit(video):
     bad["cam"]["to_ts"] = 1.0
     with pytest.raises(ValueError, match="window"):
         prepare_videos(bad)
-    bad["cam"]["to_ts"] = 10
-    with pytest.raises(ValueError, match="ends before"):
-        prepare_videos(bad)
+    bad["cam"]["to_ts"] = 10                      # the video stops at 3.0 s (D102): sent as far as it goes
+    clips = prepare_videos(bad)
+    assert clips[0].end_s == 9 and clips[0].video_end_s == pytest.approx(2.0, abs=1e-6)
+    assert clips[0].metadata()["video_end_s"] == pytest.approx(2.0, abs=1e-6) and clips[0].frames == 20
+    from curation.adapters.video_input import video_content
+
+    assert "recording stops at episode time 2.000000s" in video_content(clips)[0]["text"]
+    assert "video_end_s" not in prepare_videos(video)[0].metadata()   # a whole video: as before
+
+
+def noise_video(path, *, n=40, fps=10, gop=10, drop=0):
+    """A noisy x264 video (crf matters for its size); ``drop`` packets cut from its head and the rest moved to t=0,
+    so its first packet is not a keyframe - what FFmpeg cannot seek a window start in (D99)."""
+    full = str(path) + ".full.mp4"
+    with av.open(full, "w") as out:
+        st = out.add_stream("libx264", rate=fps)
+        st.width = st.height = 64
+        st.pix_fmt = "yuv420p"
+        st.options = {"g": str(gop), "keyint_min": str(gop), "sc_threshold": "0", "bf": "0"}
+        rng = np.random.default_rng(0)
+        for i in range(n):
+            frame = av.VideoFrame.from_ndarray(rng.integers(0, 255, (64, 64, 3), dtype=np.uint8), format="rgb24")
+            frame.pts, frame.time_base = i, Fraction(1, fps)
+            for packet in st.encode(frame):
+                out.mux(packet)
+        for packet in st.encode():
+            out.mux(packet)
+    with av.open(full) as inp, av.open(str(path), "w") as out:
+        src = inp.streams.video[0]
+        dst = out.add_stream_from_template(src)
+        kept, base = 0, None
+        for packet in inp.demux(src):
+            if packet.dts is None:
+                continue
+            kept += 1
+            if kept <= drop:
+                continue
+            base = packet.pts if base is None else base
+            packet.pts -= base
+            packet.dts -= base
+            packet.stream = dst
+            out.mux(packet)
+    return str(path)
+
+
+def test_a_request_over_its_budget_is_encoded_cheaper(tmp_path):
+    """D98: a request that does not fit is encoded again, each camera an even share, cheaper until it fits; what
+    fits is sent exactly as before."""
+    one = {"a": {"path": noise_video(tmp_path / "a.mp4"), "from_ts": 0.0, "to_ts": 4.0}}
+    plain = prepare_videos(one)[0]
+    assert plain.encode is None and "encode" not in plain.metadata()
+    cheap = prepare_videos(one, max_bytes=plain.byte_size - 1)[0]
+    assert cheap.byte_size <= plain.byte_size - 1 and cheap.frames == plain.frames
+    assert cheap.encode["crf"] > 20 and cheap.metadata()["encode"] == cheap.encode
+    two = {**one, "b": {"path": noise_video(tmp_path / "b.mp4"), "from_ts": 0.0, "to_ts": 4.0}}
+    budget = plain.byte_size * 3 // 2            # the first camera alone left the second too little before
+    clips = prepare_videos(two, max_bytes=budget)
+    assert [c.camera for c in clips] == ["a", "b"] and sum(c.byte_size for c in clips) <= budget
+    assert clips[0].encode is not None
+    with pytest.raises(ValueError, match="byte limit"):
+        prepare_videos(one, max_bytes=64)          # the cheapest encode does not fit either
+
+
+def test_a_video_whose_first_packet_is_not_a_keyframe_is_clipped_from_its_first_keyframe(tmp_path):
+    """D99 (design doc 30 §2): GenRobot's videos start with packets that are not keyframes; seeking a window start
+    in them fails (FFmpeg's -1 is PyAV's PermissionError). The clip is decoded from the video's start instead."""
+    path = noise_video(tmp_path / "headless.mp4", drop=3)          # first packet at 0.0 s, first keyframe at 0.7 s
+    with av.open(path) as container, pytest.raises(PermissionError):
+        container.seek(0, stream=container.streams.video[0], any_frame=False)
+    clip = prepare_videos({"cam": {"path": path, "from_ts": 0.0, "to_ts": 3.0}})[0]
+    assert clip.start_s == pytest.approx(0.7, abs=1e-3) and clip.frames == 23 and clip.video_end_s is None
 
 
 class Response:
@@ -446,3 +514,20 @@ def test_the_request_carries_what_the_dataset_says(monkeypatch):
     make_video_assessor("http://test/v1", "m")([clip()], "pick up")
     plain = sent[0]["messages"][0]["content"][0]["text"]
     assert "What the dataset says" not in plain and DATASET_SAYS not in plain
+
+
+def test_frames_of_a_video_whose_first_packet_is_not_a_keyframe(tmp_path):
+    """D99: the frame decoder decodes it from its start as well and says which head it could not decode - the frames
+    before the first keyframe (visual quality reports that as ``head_undecodable``, FILE-4, info)."""
+    from curation.adapters.decode import decode_window
+
+    notes: dict = {}
+    frames, ts = decode_window(noise_video(tmp_path / "headless.mp4", drop=3), 0.0, 3.0, notes=notes)
+    assert len(frames) == 23 and ts[0] == pytest.approx(0.7, abs=1e-3)
+    assert notes == {"undecodable_head": [0.0, 0.7]}
+    whole: dict = {}
+    frames, _ = decode_window(noise_video(tmp_path / "whole.mp4"), 0.0, 3.0, notes=whole)
+    assert len(frames) == 30 and whole == {}
+    later: dict = {}                                   # a window that starts after the first keyframe: nothing to say
+    decode_window(noise_video(tmp_path / "late.mp4", drop=3), 1.0, 3.0, notes=later)
+    assert later == {}

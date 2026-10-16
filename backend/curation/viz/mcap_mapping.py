@@ -468,9 +468,9 @@ def check_mapping(mapping: dict) -> dict:
 
 def check_gaps(mapping: dict, probe) -> list[dict]:
     """What the check reader will not read in ``mapping`` (design doc 18 §6.2, the reader is an A-class
-    file and stays as it is in this phase): numbers it cannot take from a source (protobuf repeated
-    fields picked by a path, ROS 2 nested messages), H.265 cameras. The visualizer reads both; the
-    warnings say the checks cannot use this mapping."""
+    file): numbers it cannot take from a source (ROS 2 nested messages, say; protobuf repeated fields
+    are read since D100, design doc 30 §3), H.265 cameras. The visualizer reads both; the warnings say
+    the checks cannot use this mapping."""
     gaps: list[dict] = []
     chk = check_mapping(mapping)
     unread = []
@@ -487,7 +487,7 @@ def check_gaps(mapping: dict, probe) -> list[dict]:
     if unread:
         gaps.append({"code": "checks_gap",
                      "message": f"质检读取器读不出 {'、'.join(unread[:6])}{' 等' if len(unread) > 6 else ''}的数值"
-                                "（protobuf 的 repeated 字段、ROS 2 的嵌套消息）：质检用不了这份映射，可视化不受影响"})
+                                "（如 ROS 2 的嵌套消息）：质检用不了这份映射，可视化不受影响"})
     h265 = [t for t in chk.get("video_topics") or [] if t in probe.topics and probe.topics[t].codec == "h265"]
     if h265:
         gaps.append({"code": "checks_gap",

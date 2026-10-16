@@ -137,6 +137,7 @@
     "data_integrity.decode_failed",
     "data_integrity.decode_concealed",
     "visual_quality.decode_failed",
+    "visual_quality.head_undecodable",
     "video_action_sync.decode_failed",
     "task_success.decode_failed"
    ],
@@ -287,6 +288,7 @@
    "platform_status": "能判",
    "platform_codes": [
     "data_integrity.table_inconsistent",
+    "data_integrity.index_range_invalid",
     "data_integrity.table_overlap"
    ],
    "explain_zh": "表里的索引或引用指错了：帧号重复或跳号、episode 编号和它所在的位置对不上、任务编号指向不存在的任务；LeRobot v3 里一条 episode 在共享文件里的起止偏移写错，读出来会混进别的 episode 的数据。"

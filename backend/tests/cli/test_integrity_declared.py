@@ -307,3 +307,18 @@ def test_mcap_problems_from_the_readers_words():
     assert DC.mcap_problems(err("动作来源 '/a'(topic 存在但按 fields='x' 没取出任何数值,字段路径/消息形状不对)")) == []
     assert DC.mcap_problems(err("动作 '/action'")) == []
     assert DC.mcap_problems(ValueError("something else")) == []
+
+
+def test_a_v3_table_range_outside_the_file_index_is_file_9():
+    """D101 (design doc 30 §4), crafted droid_extrinsics_mv5: the data file keeps the source's global index while the
+    episode table counts from 0, so the episode's slice is empty. That is FILE-9 ``index_range_invalid``, not FILE-5."""
+    df = pd.DataFrame({"index": [1453, 1454, 1455, 3699, 3700], "episode_index": [5, 5, 5, 14, 14],
+                       "frame_index": [0, 1, 2, 0, 1], "timestamp": [0.0, 0.1, 0.2, 0.0, 0.1],
+                       "action": [[0.0]] * 5})
+    ep = pd.Series({"episode_index": 5, "dataset_from_index": 0, "dataset_to_index": 3, "length": 3})
+    found = DC.v3_episode_problems(df, ep, None)
+    assert [p["code"] for p in found] == ["index_range_invalid"]
+    assert found[0]["message"] == "episode 表写的行区间是 [0, 3)，数据文件里这条的 index 是 1453–1455，对不上"
+    assert DC.v3_episode_problems(df.assign(index=range(5)), ep, None) == []     # re-based: read as before
+    short = pd.Series({"episode_index": 5, "dataset_from_index": 1453, "dataset_to_index": 1456, "length": 4})
+    assert [p["code"] for p in DC.v3_episode_problems(df, short, None)] == ["length_mismatch"]

@@ -136,6 +136,10 @@ make the camera undecidable; the limbs' summed motion must itself match the pict
 reading counts (sum_unexplained otherwise). ``per_camera`` readings gain optional ``basis`` / ``whole_stable`` /
 ``groups`` / ``instability`` / ``sum``. G1 ep7/42/108: six columns named as right-arm joints are a bounded finger-like signal; mixed into
 one curve they bent the whole-episode correlation to -1.8 s while every window read 0.
+8.6 (2026-10-15, design doc 30): ``visual_quality`` reports ``head_undecodable`` (FILE-4, low, info) for a video whose
+first packets are not a keyframe - decoded from its start now instead of failing the seek (D99); ``data_integrity``
+reports ``index_range_invalid`` (FILE-9, blocking) when a LeRobot v3 episode's table range misses the data file's
+index while the file holds the episode's rows (D101), where it said FILE-5 before.
 """
 from __future__ import annotations
 
@@ -143,7 +147,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.5"
+REGISTRY_VERSION = "8.6"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.0"
 
@@ -598,6 +602,8 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
                _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
                _review("table_inconsistent", "FILE-9", "episode 表前后不一致", "integrity_check"),
+               # 8.6 (design doc 30 §4, D101): the table's range misses the data file's index
+               _blocking("index_range_invalid", "FILE-9", "episode 表的行区间与数据文件的 index 对不上"),
                # 8.3: the picture size the frames actually have, against what the dataset and the
                # container header say it is (the decode for FILE-4 measures it on the way past)
                _review("resolution_mismatch", "FILE-7", "分辨率与声明不符", "integrity_check"),
@@ -680,7 +686,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("sharpness_low", "IMG-4", "画面模糊", "medium", scope_kind="camera"),
                _info("dead_or_padded", "STRM-1", "相机没有信号或被填充", "medium", scope_kind="camera"),
                # 7.1 (design doc 28 §2, D93): the decoder says the video is corrupt
-               _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera")),
+               _blocking("decode_failed", "FILE-4", "视频解码失败（文件损坏）", scope_kind="camera"),
+               # 8.6 (design doc 30 §2, D99): the first packets are not a keyframe, the head cannot be decoded
+               _info("head_undecodable", "FILE-4", "视频开头解不出（缺关键帧）", "low", scope_kind="camera")),
         param_schema=_visual_params(),
         tables=(TableSpec("visual_quality", "逐机位打分", ("episode_index", "score", "camera")),)),
     ModuleSpec(

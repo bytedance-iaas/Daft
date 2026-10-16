@@ -1,6 +1,6 @@
 # 30 · 全量实跑暴露的五个问题
 
-> 状态：**实施中（2026-10-15）**。D98–D102 登记在 00 §7；账本阶段 28（F28.1–F28.6）；§7 是落地时的细化。
+> 状态：**已实施（2026-10-15，F28.1–F28.5；F28.6 的重跑等镜像）**。D98–D102 登记在 00 §7；账本阶段 28（F28.1–F28.6）；§7 是落地记录。
 > 来源：2026-10-15 样本集 v2 的 99 个子集全部登记到 dataverse 的质检台，按「只报不拒、不开 EEF–视频一致性、VLM doubao-seed-2-1-lite 不开思考」
 > 全量跑了一遍（84 个任务、562 条，设计 16 §7.9）：15 个任务共 41 条执行出错、待补跑，2 个任务在汇总时失败，crafted 的 DROID 标定子集 6 条全被拒。
 > 需求方要求修，并定了两处口径：视频开头解不出的那段报 FILE-4、只报告（info）；数据集里没有任务描述就按没有标注处理，不加声明字段、不改数据集。
@@ -95,4 +95,18 @@ FILE-9、blocking、不可复议（读不了，口径同 D95），例「episode 
 
 ## 7. 落地记录
 
-（实施后补。）
+2026-10-15 实施 F28.1–F28.5，照 §1–§5，注册表 8.6：
+
+- **D98**：`prepare_videos` 先照原样编一遍（一个总预算、配置的长边、crf 20），超了才按相机均分剩余预算、逐档重编；片段元数据只在降过档时多
+  `encode`，原样编得下的请求一字不变。
+- **D99**：解帧（`decode._decode_once`）与编片段（`video_input._open_at`）seek 抛 `PermissionError` 时重新打开、从头解；解帧经 `notes` 交出
+  `undecodable_head`，视觉质量的读数多同名键，发现推导报 `head_undecodable`。合成样本复现了 GenRobot 的情形：首包在 0 秒、第一个关键帧在 0.7 秒，
+  seek 到 0 或 0.2 秒都抛 `[Errno 1] Operation not permitted`；首包早于 seek 目标时 FFmpeg 自己从首包开始，不出错。
+- **D100**：`aggregate._task_text` 整批读失败时逐条读；`mcap_reader._is_sequence` 认 `collections.abc.Sequence`（protobuf 的两种 repeated 容器都登记成它）
+  与 numpy 数组。连带：mcap 探测与映射的应答不再把按路径挑出的 repeated 字段算 `checks_gap`（ABC-130k 一类只剩 H.265 那一条）。
+- **D101**：`declared.v3_episode_problems` 切片为空、而文件里按 `episode_index` 有这条的行时报 `index_range_invalid`；有交集只是长度不符的照旧。
+- **D102**：`_encode` 视频提前结束时记 `video_end_s`，`video_content` 给模型多一句「这一路录到第几秒就结束了」，没有这一键时文字一字不变。
+- **测试**：新增单测——降档与最低档仍超、两路相机分预算；首包非关键帧的片段与解帧；视频提前结束；aggregate 逐条退路；protobuf repeated 字段；
+  v3 行区间与 index 不交；两个新细码的读数夹具。本机：契约 216、后端各套件 2192 通过 40 跳过（缺本地数据）、编排 / 密钥 / 部署（非慢）400、
+  对账（含 A 类守卫与黄金基线回放）与回归样本工具 86、前端五项全过。
+- **未做**：F28.6 等需求方出镜像后在 dataverse 重跑出过错的 17 个任务、重新打分；crafted DROID 子集的封装要不要修，等需求方确认。

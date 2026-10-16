@@ -336,6 +336,21 @@ def test_protobuf_composite_mapping(tmp_path):
     assert os.path.exists(r["video"]["robot0_sensor_camera0_compressed"]["path"])
 
 
+def test_protobuf_repeated_field_reads_like_a_list():
+    """A repeated scalar field is protobuf's ``RepeatedScalarContainer``, not a list: a field path ending on one reads
+    its numbers (D100, design doc 30 §3 - ABC-130k's ``RobotState.position`` read as nothing before)."""
+    pytest.importorskip("foxglove_schemas_protobuf", reason="未装 foxglove 消息类")
+    from foxglove_schemas_protobuf.CameraCalibration_pb2 import CameraCalibration
+
+    from curation.ingest.mcap_reader import _extract_source
+
+    msg = CameraCalibration(width=640, K=[500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0])
+    assert not isinstance(msg.K, (list, tuple))
+    assert np.allclose(_extract_source(msg, "K"), [500, 0, 320, 0, 500, 240, 0, 0, 1])
+    assert _extract_source(msg, "D") is None                       # an empty repeated field is still nothing
+    assert np.allclose(_extract_source({"position": np.array([1.0, 2.0])}, "position"), [1, 2])
+
+
 def test_builtin_umi_detection(tmp_path, capsys):
     """默认约定不命中但 topic 形如 /robotN/vio/eef_pose → 零配置自动识别,
     双设备按名序横拼(本合成文件无编码器 topic → 7 维/设备;编码器字段的

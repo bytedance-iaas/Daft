@@ -22,8 +22,8 @@ def test_the_rules():
     assert items["FILE-4"]["platform_status"] == "能判"
     # registry 7.1 (D93): the modules that decode the videos report a corrupt one too
     assert items["FILE-4"]["platform_codes"] == ["data_integrity.decode_failed", "data_integrity.decode_concealed",
-                                                 "visual_quality.decode_failed", "video_action_sync.decode_failed",
-                                                 "task_success.decode_failed"]
+                                                 "visual_quality.decode_failed", "visual_quality.head_undecodable",
+                                                 "video_action_sync.decode_failed", "task_success.decode_failed"]
     # reported only: the retired soft scores and the camera defects (registry 1.14 rides on task_success)
     for item, code in (("IMG-1", "visual_quality.frozen"), ("IMG-5", "camera_defects.glitch"),
                        ("IMG-6", "camera_defects.shake"), ("IMG-7", "camera_defects.contamination"),

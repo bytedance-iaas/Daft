@@ -594,3 +594,31 @@ def test_every_entry_lists_its_findings_with_the_level_they_have(tmp_path):
     assert graded(after, 3) == [("task_success", "failure", "TASK-4", "blocking", None, None, True, False)]
     assert after["reject"][3]["findings"][0]["message_zh"] == "人工裁决判失败（任务未完成）"
     assert graded(after, 4) == []                                              # its abstention is settled
+
+
+def test_task_text_outlives_an_episode_the_reader_cannot_open(monkeypatch, tmp_path):
+    """D100 (design doc 30 §3): one episode the reader cannot open (a corrupt mcap) does not fail aggregate: the
+    episodes are read one by one and that one is delivered without task text; a warning names it."""
+    from types import SimpleNamespace
+
+    from curation.cli import aggregate, runctx
+    from curation.cli.errors import ModuleFailed
+    from curation.pipeline.tasktext import SRC_NONE, SRC_ORIGINAL
+
+    calls: list[list[int]] = []
+
+    def meta_rows(src, episodes, args, *, what):
+        calls.append(list(episodes))
+        if 2 in episodes:
+            raise ModuleFailed(f"{what}: the dataset cannot be read: RecordLengthLimitExceeded: unknown record")
+        return [{"episode_id": f"ep{e:06d}", "instruction": f"task {e}"} for e in episodes]
+
+    monkeypatch.setattr(runctx, "open_source", lambda ctx, args: object())
+    monkeypatch.setattr(runctx, "meta_rows", meta_rows)
+    logged: list[tuple[str, str]] = []
+    ctx = SimpleNamespace(log=lambda level, msg, **kw: logged.append((level, msg)))
+    text = aggregate._task_text(ctx, SimpleNamespace(input="tos://bucket/ds"), str(tmp_path), [1, 2, 3])
+    assert calls == [[1, 2, 3], [1], [2], [3]]
+    assert text.resolve(1)[:2] == ("task 1", SRC_ORIGINAL) and text.resolve(3)[:2] == ("task 3", SRC_ORIGINAL)
+    assert text.resolve(2)[:2] == ("", SRC_NONE)
+    assert [lv for lv, _ in logged] == ["warning"] and "1 of 3 episodes" in logged[0][1] and ": 2" in logged[0][1]

@@ -129,7 +129,17 @@ def v3_episode_problems(df, ep, info: dict | None) -> list[dict]:
         return [missing_column("index", "数据文件", info)]
     base = int(df["index"].iloc[0]) if len(df) else 0
     lo, hi = int(ep["dataset_from_index"]), int(ep["dataset_to_index"])
-    return frame_problems(df.iloc[max(lo - base, 0):max(hi - base, 0)], info, int(ep["length"]))
+    rows = df.iloc[max(lo - base, 0):max(hi - base, 0)]
+    if not len(rows) and "episode_index" in df.columns:
+        # D101 (design doc 30 §4): the table's range misses the file's index while the file holds the episode's rows -
+        # the index and the reference disagree (FILE-9), the episode is not short
+        own = df.loc[df["episode_index"] == int(ep["episode_index"]), "index"]
+        if len(own):
+            first, last = int(own.min()), int(own.max())
+            return [problem("index_range_invalid",
+                            f"episode 表写的行区间是 [{lo}, {hi})，数据文件里这条的 index 是 {first}–{last}，对不上",
+                            table_from=lo, table_to=hi, file_first=first, file_last=last)]
+    return frame_problems(rows, info, int(ep["length"]))
 
 
 #: v1's mcap reader (``mcap_reader._require_topics``) says which topics an episode lacks; its words are A-class
