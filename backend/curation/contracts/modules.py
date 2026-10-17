@@ -160,6 +160,15 @@ ends, a recording that was not trimmed) is appended to the TASK dimension, and `
 the same thing: TASK-1 is where each step starts and ends (the sample set's pedal-marked steps and task-end
 marks), which nothing in the platform measures yet, so TASK-1 is left without a producer rather than kept
 covered by a reading that happens to share a word with it.
+8.10 (2026-10-16): ``motion_quality`` measures rest with a normalized speed - the eligible columns (unchanged
+eligibility rules) each scaled to their own range, the norm of the per-frame steps times fps, at rest below
+clamp(3 x p10, 0.005, 0.02) range/s with a 2x hysteresis - instead of "every column's step under 10 % of its
+median positive step", which on float32 poses never fired (HABIT's cartesian state: 0 of 529 frames at rest while
+the arms waited 1.3 s). The closing window grows from 0.15 s to 0.3 s (the settling flicker after a recording
+starts), and the idle edges (TASK-11) are read from the arm's own state alone when there is one (a leader arm
+moving in the operator's hand does not move the robot); the mid-episode pauses and the fluency keep the
+command-and-state rule. Same rule and constants as the sample set's ruler (curation-project
+spikes/task11/idle_edges_ruler.py); on crafted/v2 TASK-11 recall goes from 54 % to see the PR.
 """
 from __future__ import annotations
 
@@ -167,7 +176,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.9"
+REGISTRY_VERSION = "8.10"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.1"
 

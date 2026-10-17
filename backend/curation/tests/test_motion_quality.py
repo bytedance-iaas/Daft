@@ -376,3 +376,32 @@ def test_smooth_motion_and_a_still_noisy_joint_are_not_jagged():
     y = x.copy(); y[:, 2] = 0.3 + rng.normal(0, 0.01, t)            # still joint, white noise is its whole range
     assert not (motion_quality(y, None, fps).detail.get("jagged") or [])
     assert motion_quality(y, None, fps).detail["jagged_amp"] == 0.0
+
+
+def test_rest_on_noisy_float_pose_is_seen():
+    """2026-10-16 (TASK-11): a float32 cartesian pose at rest jitters at 1e-5 per frame; the old rule (a step under
+    10 % of the column's median positive step) never fired on it - HABIT ep 31 read 0 of 529 frames at rest while the
+    arms waited 1.3 s. The normalized-speed rule reads the rest."""
+    rng = np.random.default_rng(21)
+    fps, rest, move = 10.0, 13, 200
+    t = rest + move
+    pose = np.zeros((t, 7), np.float32)
+    pose[rest:, :6] = (0.3 * np.sin(np.linspace(0, np.pi, move))[:, None] * np.linspace(0.4, 1.0, 6)[None, :]).astype(np.float32)
+    pose += rng.normal(0, 1e-5, pose.shape).astype(np.float32)        # sensor jitter, also while at rest
+    cmd = np.diff(pose, axis=0, prepend=pose[:1])                          # a delta command: zero while at rest
+    d = motion_quality(cmd, pose, fps, gripper_dims=(6,), control_mode="delta").detail
+    assert abs(d["idle_head_s"] - rest / fps) <= 0.2, d["idle_head_s"]
+    assert d["idle_tail_s"] < 0.5, d["idle_tail_s"]
+
+
+def test_idle_edges_follow_the_arm_not_the_leader():
+    """The idle edges (TASK-11) are the robot's own rest: a leader arm creeping in the operator's hand before the
+    follower moves (so101 ep 1: the command moves from 0.17 s, the state from 1.2 s) does not shorten them; the
+    mid-episode pauses keep the command-and-state rule."""
+    fps, t = 30.0, 240
+    state = np.zeros((t, 6), np.float32)
+    state[36:, 0] = np.linspace(0, 50, t - 36, dtype=np.float32)        # the follower starts at 1.2 s
+    cmd = state.copy()
+    cmd[5:36, 0] = np.cumsum(np.full(31, 0.05, np.float32))             # the leader creeps from 0.17 s
+    d = motion_quality(cmd, state, fps, gripper_dims=(5,), control_mode="absolute").detail
+    assert abs(d["idle_head_s"] - 1.2) <= 0.15, d["idle_head_s"]
