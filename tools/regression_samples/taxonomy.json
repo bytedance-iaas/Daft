@@ -1523,8 +1523,11 @@
    "origin": "需",
    "samples": "真实：C1 的逐帧模式标签、B8 的分步起止时间（都仅内部）",
    "platform": "有读数：运动质量给出开头和结尾的空闲秒数、活动占比，只报不罚",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform_status": "有读数",
+   "platform_codes": [
+    "declared_steps.step_declared",
+    "declared_steps.task_end_declared"
+   ],
    "kind": "phenomenon",
    "level": "episode",
    "description": "动作起止点",

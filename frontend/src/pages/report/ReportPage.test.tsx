@@ -30,7 +30,7 @@ describe('质检报告 (07 §5)', () => {
     const skipped = (await within(scope).findByText('运动学极限')).closest('tr') as HTMLElement;
     expect(skipped).toHaveTextContent('未运行');
     expect(skipped).toHaveTextContent('预检没读到机器人型号');
-    expect(sectionIds()).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
+    expect(sectionIds()).toEqual(['timestamp_check', 'motion_quality', 'declared_steps', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
     const ts = screen.getByTestId('section-task_success');
     expect(within(ts).getByText('错误')).toBeInTheDocument();
     expect(within(ts).getByText('调用模型')).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('质检报告 (07 §5)', () => {
     ]);
     expect(own('task_success')).toHaveTextContent('一次请求：各机位的连续视频一起交给模型');
     expect(own('task_success')).not.toHaveTextContent(/仲裁|护栏|自产/);
-    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']) {
+    for (const id of ['timestamp_check', 'motion_quality', 'declared_steps', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']) {
       const section = screen.getByTestId(`section-${id}`);
       expect(section.textContent, id).not.toMatch(/[{}"]|ep \d+/);
       expect(within(section).queryByRole('link', { name: /^ep \d+$/ })).toBeNull();
@@ -221,7 +221,7 @@ describe('质检报告 (07 §5)', () => {
     expect(within(summary).getByTestId('episode-task-text')).toHaveTextContent('任务文本：Close the microwave door（来源：原始标注）');
     await waitFor(() => expect(within(summary).getByText('待裁')).toBeInTheDocument());
     const blocks = [...document.querySelectorAll('[data-testid^="episode-module-"]')].map((e) => e.getAttribute('data-testid')!.replace('episode-module-', ''));
-    expect(blocks).toEqual(['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
+    expect(blocks).toEqual(['timestamp_check', 'motion_quality', 'declared_steps', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
     const task = screen.getByTestId('episode-module-task_success');
     expect(within(task).getByTestId('level-review')).toHaveTextContent('待人工复核');
     // the one request (video-task/2): the episode's verdict, every camera's answer, the conclusion

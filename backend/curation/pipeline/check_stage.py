@@ -336,10 +336,25 @@ class StageRun:
                         column(row, "proprio_space", "joint"), row["embodiment_id"],
                         column(row, "stuck_strategy", "auto"),
                         column(row, "semantics_extras", "{}"))
+                elif m == "declared_steps":
+                    modes = (self.o.params.get(m) or {}).get("post_task_modes") or None
+                    out[m] = episode_checks.result_to_struct(self._declared().episode(ep, post_task_modes=modes))
             except Exception as e:  # noqa: BLE001 - one episode's failure stays its own
                 out[m] = None
                 logs[m].add("internal", cause=f"{type(e).__name__}: {e}")
         return out
+
+    def _declared(self):
+        """The dataset's declared-step reader (8.11), built on first use; a container format gets a reader
+        that only says why it reads nothing."""
+        if getattr(self, "_declared_reader", None) is None:
+            from . import declared_steps as ds
+            if self.o.fmt in ("mcap", "lance"):
+                self._declared_reader = ds.DeclaredSteps(input_dir=self.o.input_dir, info={},
+                                                         reason=f"{self.o.fmt} 数据集的分步标注暂不读")
+            else:
+                self._declared_reader = ds.DeclaredSteps.open(self.o.input_dir)
+        return self._declared_reader
 
     def _frame(self, ep: int, row: dict, logs) -> dict:
         shared = IncidentLog()

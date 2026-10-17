@@ -144,6 +144,46 @@ def short_camera(name: Any) -> str:
 
 # ---------------------------------------------------------------- frame stage
 
+@deriver("declared_steps")
+def _declared_steps(passed, score, d, p) -> Derived:
+    """The steps and the task end a dataset declares (8.11, TASK-1's declared track): one ``step_declared`` per
+    step of the primary segments track, ``task_end_declared`` where a mode column switches to a post-task mode;
+    every track stays a reading (the player draws them). No source at all: TASK-1 not assessed."""
+    out = Derived()
+    m = "declared_steps"
+    tracks = [t for t in (d.get("tracks") or []) if isinstance(t, dict)]
+    if d.get("sources"):
+        out.readings["sources"] = d.get("sources")
+    if tracks:
+        out.readings["tracks"] = [{"key": t.get("key"), "name": t.get("name"), "format": t.get("format"),
+                                   "primary": bool(t.get("primary")), "n_steps": len(t.get("segments") or []),
+                                   "segments": [{"start_s": s.get("start_s"), "end_s": s.get("end_s"),
+                                                 "frames": s.get("frames"), "label": s.get("label")}
+                                                for s in (t.get("segments") or []) if isinstance(s, dict)][:200]}
+                                  for t in tracks]
+    primary = next((t for t in tracks if t.get("primary")), None)
+    segs = [s for s in ((primary or {}).get("segments") or []) if isinstance(s, dict) and s.get("frames")]
+    for k, s in enumerate(segs):
+        a, b = int(s["frames"][0]), int(s["frames"][1])
+        label = str(s.get("label") or "")[:120]
+        out.add(m, "step_declared", f"第 {k + 1} 步「{label}」：第 {a + 1}–{b + 1} 帧",
+                frames=(a, b), time_s=(float(s.get("start_s") or 0.0), float(s.get("end_s") or 0.0)),
+                readings={"source": "declared", "track": primary.get("key"), "step": k + 1, "n_steps": len(segs),
+                          "label": label})
+    te = d.get("task_end") if isinstance(d.get("task_end"), dict) else None
+    if te and te.get("time_s") is not None:
+        t = float(te["time_s"])
+        fr = int(te.get("frame") or 0)
+        out.add(m, "task_end_declared",
+                f"任务在 {t:.1f} 秒结束：{te.get('column')} 从「{te.get('mode_before')}」切到「{te.get('mode_after')}」",
+                frames=(fr, fr), time_s=(t, t),
+                readings={"source": "declared", "column": te.get("column"), "mode_before": te.get("mode_before"),
+                          "mode_after": te.get("mode_after")})
+    if not segs and not te:
+        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "数据集没有分步标注")[:200])
+    return out
+
+
 @deriver("visual_quality")
 def _visual_quality(passed, score, d, p) -> Derived:
     """Per camera, from ``per_camera_detail`` (design doc 17 §2.2): frozen share, exposure, sharpness,
@@ -565,6 +605,8 @@ def _motion_quality(passed, score, d, p) -> Derived:
     for key in ("smoothness", "spike", "gripper_jitter", "actuator_saturation", "stuck", "fluency",
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
                 "idle_mid_count", "idle_mid_total_s",
+                # 8.11: the rest stretches themselves, for the player's motion strip (design doc 18 §4.6)
+                "idle_mid_segments", "still_segments",
                 # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
                 "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols", "nonjoint_cols", "jagged_amp"):
         if d.get(key) is not None:

@@ -1,5 +1,5 @@
 {
- "registry_version": "8.10",
+ "registry_version": "8.11",
  "taxonomy_version": "2.1",
  "blocks": [
   {
@@ -1557,6 +1557,67 @@
      "default_sort": "episode_index"
     }
    ],
+   "mergeable": false
+  },
+  {
+   "id": "declared_steps",
+   "name_zh": "声明分步",
+   "summary_zh": "读出数据集自带的分步与模式标注，报每一步的起止和任务结束（TASK-1 的声明轨，不做检测）",
+   "level": "episode",
+   "needs": [],
+   "block": "cpu",
+   "stage": "numeric",
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "step_declared",
+     "item": "TASK-1",
+     "name_zh": "数据集声明的一步",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "task_end_declared",
+     "item": "TASK-1",
+     "name_zh": "数据集声明的任务结束",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "TASK-1"
+   ],
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "post_task_modes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "default": [
+       "restore",
+       "align",
+       "reset",
+       "home",
+       "return",
+       "idle",
+       "done",
+       "finish",
+       "end"
+      ],
+      "title": "任务后的模式词",
+      "description": "模式列（如 RSS 2026 的 observation.commander_state）收尾那一段的名字含这些词之一（不分大小写），就当任务在那一段开头结束，报「数据集声明的任务结束」",
+      "x-advanced": true
+     }
+    }
+   },
+   "tables": [],
    "mergeable": false
   },
   {

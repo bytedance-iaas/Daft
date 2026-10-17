@@ -306,7 +306,20 @@ INTEG_CASES = [
 ]
 
 # (module, passed, score, details) -> expected codes; unassessable items
+DECLARED = {"sources": ["index_table:low_level_task_index", "mode_column:observation.commander_state"],
+            "tracks": [{"key": "low_level_task_index", "name": "机器人分步", "format": "index_table", "primary": True,
+                        "segments": [{"start_s": 0.0, "end_s": 1.3, "frames": [0, 12], "label": "reach"},
+                                     {"start_s": 1.3, "end_s": 2.6, "frames": [13, 25], "label": "grasp"}]},
+                       {"key": "observation.commander_state", "name": "模式", "format": "mode_column", "primary": False,
+                        "segments": [{"start_s": 0.0, "end_s": 2.2, "frames": [0, 21], "label": "inference"},
+                                     {"start_s": 2.2, "end_s": 3.0, "frames": [22, 29], "label": "restore"}]}],
+            "task_end": {"time_s": 2.2, "frame": 22, "mode_before": "inference", "mode_after": "restore",
+                         "column": "observation.commander_state"}, "n_frames": 30, "fps": 10}
+DECLARED_NONE = {"sources": [], "reason": "数据集没有分步、模式之类的逐帧标注"}
+
 CASES = [
+    ("declared_steps", True, 1.0, DECLARED, {"step_declared", "task_end_declared"}, set()),
+    ("declared_steps", True, 1.0, DECLARED_NONE, set(), {"TASK-1"}),
     ("timestamp_check", True, None, TS_PASS, set(), set()),
     ("timestamp_check", False, None, TS_GAP, {"gap"}, set()),
     ("timestamp_check", False, None, TS_FRAGMENT, {"fragment"}, set()),
@@ -630,7 +643,7 @@ def test_p20_items_have_fixtures():
     items.add("ACT-6")                                # dataset level, test_dataset_level_findings
     assert {"LABEL-2", "IMG-3", "TASK-11", "AV-3", "MV-3", "ACT-6"} <= items
     assert "LABEL-1" not in items
-    assert "TASK-1" not in items                      # 8.9: the idle edges are TASK-11
+    assert "TASK-1" in items                          # 8.11: declared_steps (8.9 moved the idle edges to TASK-11)
 
 
 def test_borrowed_peak_readings():

@@ -11,6 +11,8 @@ language_persistent per-frame ``language_persistent`` lists, ``style: subtask`` 
 task_index         per-frame ``task_index`` that changes inside an episode (Galaxea)     segments
 index_table        another ``*_index`` column + a ``meta/*.jsonl`` lookup (HABIT)         segments
 string_column      a per-frame string column named like subtask / step / phase           segments
+mode_column        a per-frame string column of the controller's mode (RSS's                 segments
+                   ``observation.commander_state``: inference / restore / align)
 bool_segments      0 / 1 columns named ``is_*`` (``is_intervention_segment``)            segments
 language_events    per-frame ``language_events`` lists                                   events
 quality / labels   ``*quality_index``, ``next.success``, ``meta.rating``, ``task_status``  labels
@@ -47,7 +49,9 @@ _KNOWN_INDEX = frozenset({"subtask_index", "coarse_task_index", "quality_index",
 _LABEL_TEXT_KEYS = ("task", "subtask", "text", "name", "label", "description", "instruction")
 #: priority of the segment layouts for the primary track (lower first)
 PRIORITY = {"subtask_index": 1, "language_persistent": 2, "task_index": 3, "index_table": 4,
-            "string_column": 5, "argus": 6, "bool_segments": 7}
+            "string_column": 5, "argus": 6, "bool_segments": 7, "mode_column": 8}
+#: a per-frame string column that names the controller's mode rather than a step (RSS 2026: commander_state)
+_MODE_WORDS = ("commander", "mode")
 
 
 @dataclass
@@ -167,6 +171,10 @@ def detect_sources(info: dict, meta_files: list[str], *,
     for k in feats:
         if dtype(k) == "string" and any(w in k.lower() for w in _SEGMENT_WORDS):
             out.append(Source(k, "segments", k, "string_column", f"逐帧文字列 {k}", columns=[k]))
+    for k in feats:
+        if (dtype(k) == "string" and any(w in k.lower() for w in _MODE_WORDS)
+                and not any(w in k.lower() for w in _SEGMENT_WORDS)):
+            out.append(Source(k, "segments", "模式", "mode_column", f"逐帧模式列 {k}", columns=[k]))
     flags = [k for k in feats if (dtype(k) == "bool" or dtype(k).startswith(("int", "uint")))
              and k.rsplit(".", 1)[-1].startswith("is_") and k.rsplit(".", 1)[-1] not in _RLDS_FLAGS
              and k not in _SUCCESS_COLUMNS
@@ -453,6 +461,17 @@ def episode_annotations(sources: list[Source], columns: dict[str, list], times: 
             segs = [_segment(*_bounds(times, a, b), t) for a, b, t in _runs(texts) if not _is_placeholder(t)]
             tracks.append((PRIORITY["string_column"], {"key": s.key, "name": s.name, "source": s.source,
                                                         "primary": False, "segments": segs}))
+        elif s.format == "mode_column":
+            vals = col(s.columns[0])
+            if vals is None:
+                continue
+            texts = [_text(v) for v in vals]
+            if all(_is_placeholder(t) for t in texts):
+                continue
+            segs = [_segment(*_bounds(times, a, b), t) for a, b, t in _runs(texts) if not _is_placeholder(t)]
+            if segs:
+                tracks.append((PRIORITY["mode_column"], {"key": s.key, "name": s.name, "source": s.source,
+                                                          "primary": False, "segments": segs}))
         elif s.format == "bool_segments":
             flags_per_row = [[] for _ in range(n)]
             for c in s.columns:

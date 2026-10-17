@@ -169,6 +169,13 @@ starts), and the idle edges (TASK-11) are read from the arm's own state alone wh
 moving in the operator's hand does not move the robot); the mid-episode pauses and the fluency keep the
 command-and-state rule. Same rule and constants as the sample set's ruler (curation-project
 spikes/task11/idle_edges_ruler.py); on crafted/v2 TASK-11 recall goes from 54 % to see the PR.
+8.11 (2026-10-17): ``declared_steps``, a numeric-stage module that reads the steps and the task end a dataset
+declares (the visualizer's annotation reader: subtask tables, a per-frame task_index, HABIT's
+low_level_task_index, string step columns, and since 8.11 a controller-mode column such as RSS 2026's
+observation.commander_state) and reports them as ``step_declared`` / ``task_end_declared`` (TASK-1, info,
+``readings.source`` = declared). It measures nothing: it is TASK-1's declared track, the answer key a detected
+track is compared with; a dataset without such labels leaves TASK-1 not assessed. ``motion_quality``'s
+``idle_mid_segments`` and ``still_segments`` become readings for the player's motion strip.
 """
 from __future__ import annotations
 
@@ -176,7 +183,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.10"
+REGISTRY_VERSION = "8.11"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.1"
 
@@ -408,6 +415,20 @@ class ModuleSpec:
 
 def _no_params() -> dict:
     return {"type": "object", "properties": {}, "additionalProperties": False}
+
+
+#: the words that name a controller's post-task mode (8.11, declared_steps)
+POST_TASK_MODES = ("restore", "align", "reset", "home", "return", "idle", "done", "finish", "end")
+
+
+def _declared_params() -> dict:
+    return {"type": "object", "additionalProperties": False,
+            "properties": {"post_task_modes": {
+                "type": "array", "items": {"type": "string"}, "default": list(POST_TASK_MODES),
+                "title": "任务后的模式词",
+                "description": "模式列（如 RSS 2026 的 observation.commander_state）收尾那一段的名字含这些词之一（不分大小写），"
+                               "就当任务在那一段开头结束，报「数据集声明的任务结束」",
+                "x-advanced": True}}}
 
 
 def _evidence_param(name: str, title: str, labels: dict[str, str], description: str) -> dict:
@@ -713,6 +734,15 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("columns_not_joints", None, "名为关节的列不是关节读数", "medium", scope_kind="dataset")),
         param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
+    ModuleSpec(
+        id="declared_steps", name_zh="声明分步",
+        summary_zh="读出数据集自带的分步与模式标注，报每一步的起止和任务结束（TASK-1 的声明轨，不做检测）",
+        level="episode", needs=frozenset(), block="cpu", stage="numeric", depends_on=(),
+        # 8.11: the dataset's own labels, surfaced; readings.source = "declared" on every finding
+        codes=(_info("step_declared", "TASK-1", "数据集声明的一步"),
+               _info("task_end_declared", "TASK-1", "数据集声明的任务结束")),
+        param_schema=_declared_params(),
+        tables=()),
     ModuleSpec(
         id="visual_quality", name_zh="视觉质量",
         summary_zh="逐机位检查清晰度、曝光与画面冻结（打分项）",

@@ -1165,7 +1165,7 @@ export function mainPlan(): Plan {
     vlm_parallelism: 64,
     limits: { cpu_concurrency: { value: 30, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
     stages: [
-      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected' },
+      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality', 'declared_steps'], episodes: 'selected' },
       { id: 'frame', block: 'cpu', after: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'selected' },
       { id: 'duplicate', block: 'cpu', after: 'frame', kind: 'cpu', command: 'check', concurrency: 1, modules: ['duplicate_check'], episodes: 'selected' },
       { id: 'vlm', block: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64 }, merge: { strategy: 'none', groups: [] } },
@@ -1489,6 +1489,17 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
       readings: { score: vis.score },
     }),
     video_action_sync: record(ep, 'video_action_sync', syncDetails(ep), { findings: syncFindings }),
+    // 8.11: the steps the dataset declares (every third episode has none)
+    declared_steps:
+      ep % 3 === 2
+        ? record(ep, 'declared_steps', { sources: [], reason: '数据集没有分步、模式之类的逐帧标注' }, { unassessable: [{ item: 'TASK-1', reason: 'not_applicable', message_zh: '数据集没有分步、模式之类的逐帧标注' }] })
+        : record(ep, 'declared_steps', { sources: ['index_table:low_level_task_index'] }, {
+            findings: [
+              finding('declared_steps', 'step_declared', '第 1 步「伸手」：第 1–60 帧', { frames: [0, 59], time_s: [0, 6], readings: { source: 'declared', track: 'low_level_task_index', step: 1, n_steps: 2, label: '伸手' } }),
+              finding('declared_steps', 'step_declared', '第 2 步「放下」：第 61–120 帧', { frames: [60, 119], time_s: [6, 12], readings: { source: 'declared', track: 'low_level_task_index', step: 2, n_steps: 2, label: '放下' } }),
+            ],
+            readings: { tracks: [{ key: 'low_level_task_index', name: '机器人分步', format: 'index_table', primary: true, n_steps: 2, segments: [{ start_s: 0, end_s: 6, frames: [0, 59], label: '伸手' }, { start_s: 6, end_s: 12, frames: [60, 119], label: '放下' }] }] },
+          }),
   };
   if (quotaRun) {
     records.task_success = errorRecord(ep, 'task_success', { step: 'probe', cause: '429 QuotaExceeded', call_kind: 'probe', attempts: 3 });
@@ -1840,6 +1851,7 @@ function mainOwnSummary(id: string, quotaRun: boolean): Record<string, unknown> 
 const TABLES: Record<string, Section['tables']> = {
   timestamp_check: [{ id: 'timestamp_check', rows: 50, file: 'tables/timestamp_check.parquet' }],
   motion_quality: [{ id: 'motion_quality', rows: 50, file: 'tables/motion_quality.parquet' }],
+  declared_steps: [],
   visual_quality: [{ id: 'visual_quality', rows: 150, file: 'tables/visual_quality.parquet' }],
   video_action_sync: [{ id: 'video_action_sync', rows: 150, file: 'tables/video_action_sync.parquet' }],
   task_success: [{ id: 'task_success', rows: 50, file: 'tables/task_success.parquet' }],

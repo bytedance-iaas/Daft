@@ -117,7 +117,7 @@ describe('任务列表 (07 §4.1)', () => {
     renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });
     const droid = within(row('droid 前 50 条质检')).getByTestId('module-summary');
-    expect(droid).toHaveTextContent('6 项');
+    expect(droid).toHaveTextContent('7 项');
     expect(droid).toHaveTextContent('1 项错误');
     expect(droid).toHaveTextContent('自选');                                   // without data_integrity, which is in every preset
     expect(within(row('so101 夜间批次')).getByTestId('module-summary')).toHaveTextContent('完整质检');

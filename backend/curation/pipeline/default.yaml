@@ -44,6 +44,9 @@ checks:
   motion_quality:                  # M4b(六个分项,只报告)
     enable: true
     params: {}
+  declared_steps:                  # 8.11:读数据集自带的分步 / 模式标注(TASK-1 声明轨,不做检测)
+    enable: true
+    params: {}
   visual_quality:
     # 多相机权重:默认每路 1.0;按相机名(全名或短名如 wrist)覆盖,设 0 =该路不进总分
     # 例: camera_weights: {wrist: 0.5}

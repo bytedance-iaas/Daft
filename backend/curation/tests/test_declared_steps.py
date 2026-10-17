@@ -1,0 +1,119 @@
+"""declared_steps (registry 8.11): the steps and the task end a dataset declares, read from its own columns."""
+from __future__ import annotations
+
+import json
+import os
+
+import numpy as np
+import pytest
+
+pytest.importorskip("pandas")
+pytest.importorskip("pyarrow")
+import pandas as pd  # noqa: E402
+
+from curation.pipeline import declared_steps as DS  # noqa: E402
+from curation.pipeline.findings import derive  # noqa: E402
+from curation.viz import annotations as A  # noqa: E402
+
+FPS = 10
+
+
+def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30)) -> str:
+    """A minimal LeRobot v2.0 dataset: HABIT-like ``low_level_task_index`` + ``meta/subtasks.jsonl`` when
+    ``steps``, an RSS-like ``observation.commander_state`` string column when ``modes``."""
+    feats = {
+        "observation.state": {"dtype": "float32", "shape": [3], "names": ["a", "b", "c"]},
+        "action": {"dtype": "float32", "shape": [3], "names": ["a", "b", "c"]},
+        "timestamp": {"dtype": "float32", "shape": [1]}, "frame_index": {"dtype": "int64", "shape": [1]},
+        "episode_index": {"dtype": "int64", "shape": [1]}, "index": {"dtype": "int64", "shape": [1]},
+        "task_index": {"dtype": "int64", "shape": [1]},
+    }
+    if steps:
+        feats["low_level_task_index"] = {"dtype": "int64", "shape": [1]}
+    if modes:
+        feats["observation.commander_state"] = {"dtype": "string", "shape": [1]}
+    info = {"codebase_version": "v2.0", "robot_type": "testarm", "total_episodes": len(lengths),
+            "total_frames": sum(lengths), "total_tasks": 1, "total_videos": 0, "total_chunks": 1, "chunks_size": 1000,
+            "fps": FPS, "splits": {"train": f"0:{len(lengths)}"},
+            "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+            "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
+            "features": feats}
+    os.makedirs(os.path.join(root, "meta"), exist_ok=True)
+    os.makedirs(os.path.join(root, "data", "chunk-000"), exist_ok=True)
+    json.dump(info, open(os.path.join(root, "meta", "info.json"), "w"))
+    with open(os.path.join(root, "meta", "episodes.jsonl"), "w") as fh:
+        for i, n in enumerate(lengths):
+            fh.write(json.dumps({"episode_index": i, "tasks": ["do the thing"], "length": n}) + "\n")
+    with open(os.path.join(root, "meta", "tasks.jsonl"), "w") as fh:
+        fh.write(json.dumps({"task_index": 0, "task": "do the thing"}) + "\n")
+    if steps:
+        with open(os.path.join(root, "meta", "subtasks.jsonl"), "w") as fh:
+            for i, t in enumerate(["reach", "grasp", "place"]):
+                fh.write(json.dumps({"task_index": i, "task": t}) + "\n")
+    start = 0
+    for i, n in enumerate(lengths):
+        df = pd.DataFrame({
+            "observation.state": [np.zeros(3, np.float32)] * n, "action": [np.zeros(3, np.float32)] * n,
+            "timestamp": (np.arange(n) / FPS).astype(np.float32), "frame_index": np.arange(n),
+            "episode_index": np.full(n, i), "index": np.arange(start, start + n), "task_index": np.zeros(n, int)})
+        if steps:
+            df["low_level_task_index"] = np.where(np.arange(n) < n // 3, 0, np.where(np.arange(n) < 2 * n // 3, 1, 2))
+        if modes:
+            df["observation.commander_state"] = ["inference"] * (n - 8) + ["restore"] * 8
+        df.to_parquet(os.path.join(root, "data", "chunk-000", f"episode_{i:06d}.parquet"), index=False)
+        start += n
+    return root
+
+
+def test_mode_column_is_a_segment_source():
+    info = {"features": {"observation.commander_state": {"dtype": "string", "shape": [1]},
+                         "subtask": {"dtype": "string", "shape": [1]}}}
+    src = {s.key: s for s in A.detect_sources(info, [])}
+    assert src["observation.commander_state"].format == "mode_column"
+    assert src["subtask"].format == "string_column"             # a step column is not a mode column
+    ann = A.episode_annotations([src["observation.commander_state"]],
+                                {"observation.commander_state": ["inference"] * 3 + ["restore"] * 2},
+                                [0.0, 0.1, 0.2, 0.3, 0.4])
+    assert [(s["label"], s["start_s"], s["end_s"]) for s in ann.tracks[0]["segments"]] == \
+        [("inference", 0.0, 0.3), ("restore", 0.3, 0.5)]
+
+
+def test_declared_steps_reads_habit_like_steps(tmp_path):
+    root = _v2(str(tmp_path / "ds"), steps=True, modes=False)
+    r = DS.DeclaredSteps.open(root)
+    assert [s.format for s in r.sources] == ["index_table"]
+    res = r.episode(0)
+    d = res.detail
+    assert d["tracks"][0]["primary"] and [s["label"] for s in d["tracks"][0]["segments"]] == ["reach", "grasp", "place"]
+    assert [s["frames"] for s in d["tracks"][0]["segments"]] == [[0, 12], [13, 25], [26, 39]]
+    assert "task_end" not in d
+    out = derive("declared_steps", True, 1.0, d, {})
+    codes = [f["code"] for f in out.findings]
+    assert codes == ["step_declared"] * 3
+    assert out.findings[1]["frames"] == [13, 25] and out.findings[1]["readings"]["source"] == "declared"
+    assert out.findings[1]["item"] == "TASK-1"
+    assert not out.unassessable and out.readings["tracks"][0]["n_steps"] == 3
+
+
+def test_declared_steps_reads_a_mode_column_task_end(tmp_path):
+    root = _v2(str(tmp_path / "ds"), steps=False, modes=True, lengths=(30,))
+    r = DS.DeclaredSteps.open(root)
+    d = r.episode(0).detail
+    assert d["task_end"] == {"time_s": 2.2, "frame": 22, "mode_before": "inference", "mode_after": "restore",
+                             "column": "observation.commander_state"}
+    out = derive("declared_steps", True, 1.0, d, {})
+    assert [f["code"] for f in out.findings] == ["task_end_declared"]
+    assert out.findings[0]["time_s"] == [2.2, 2.2] and out.findings[0]["frames"] == [22, 22]
+    # a task's own post-task words: "restore" not among them -> no task end, no step: TASK-1 not assessed
+    d2 = r.episode(0, post_task_modes=["home"]).detail
+    out2 = derive("declared_steps", True, 1.0, d2, {})
+    assert not out2.findings and out2.unassessable[0]["item"] == "TASK-1"
+    assert out2.readings["tracks"][0]["format"] == "mode_column" and not out2.readings["tracks"][0]["primary"]
+
+
+def test_declared_steps_without_any_source(tmp_path):
+    root = _v2(str(tmp_path / "ds"), steps=False, modes=False)
+    r = DS.DeclaredSteps.open(root)
+    assert r.reason and not r.sources
+    out = derive("declared_steps", True, 1.0, r.episode(0).detail, {})
+    assert not out.findings and out.unassessable == [{"item": "TASK-1", "reason": "not_applicable", "message_zh": r.reason}]
