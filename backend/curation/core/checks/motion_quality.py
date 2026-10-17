@@ -738,58 +738,77 @@ def motion_quality(
             return 0.0
         return float(np.dot(x, y) / (sx * sy))
 
-    def _static_mask(sig: np.ndarray, raw: np.ndarray, frac: float = 0.10,
+    def _static_mask(sig: np.ndarray, raw: np.ndarray,
                      coh_rho: float = 0.5, coh_span_floor: float = 4.0,
-                     coh_min_steps: int = 8) -> np.ndarray:
-        """[T-1, n] 信号 → 每帧'全列静止'掩码。逐列自身尺度(10%×正值中位),
-        免跨列量纲问题(夹爪步长天然大)。'从未动过'的列不否决静止——判据:
-        位置量程 < k×典型步长(全静止列的"步长"只是传感噪声,量程仅其 ~2-5
-        倍——自尺度阈值在纯噪声上会失效,全静止 episode 曾被判成"全程活跃")。
-        ⚠️ k 必须随片长收紧(2026-07-29 bridge 教训):匀速运动的 量程/步长
-        比值上限就是步数 T-1,固定 k=20 隐含"真运动量程≫步长"只对长片成立;
-        bridge 每条仅 21 帧(fps=5),真在动的列比值只有 14~20 → 八列全落进
-        豁免,ep000199 被判 0-4.2s 全程 idle/still 而视频里手臂一直在动
-        (active_ratio=0.85)。地板 4.0 = 真静止列的噪声漫游量程;长片 k 仍
-        为 20,行为不变。
-        资格审查是**双路径取或**(2026-07-29 用户定,补幅度判据的盲区):
-        ①幅度路径(上述):量程 ≥ k×中位正步长;
-        ②连贯路径:增量的 lag-1 自相关 ρ ≥ coh_rho(0.5)**且** 量程 ≥
-          coh_span_floor(4.0)×中位正步长。动因:小包络持续往复(擦拭/搅拌类)
-          的量程不随来回次数增长,幅度路径必然误判为噪声弃权,长片上全列如此
-          就会给出"死录制=全程 idle"的冤案(与 bridge 案同构)。
-        常数 why(均属 P5.1 校准清单):ρ 阈 0.5——白噪声下 ρ 的 null 分布
-        ≈N(0, 1/√n),n≈20 时波动 ±0.23,0.5≈2 倍波动,且对应周期 6 帧的往复;
-        幅度地板 4.0——纯噪声列的漫游包络约是步长的 2~5 倍,地板挡住"增量确实
-        相关但只是噪声带内游走"的结构性噪声(如 AR(1) 传感器漂移);
-        样本地板 8 步——n<8 时 ρ 估计不可信(null 波动 >0.35),短片本就有
-        收紧的 k 和"全豁免不主张"护栏兜底,不需要连贯路径。
-        sig: **带符号**增量序列 [T-1, n](需要幅度的地方内部自取 abs);
-        raw: 位置量纲序列(算量程用)。"""
-        # 全豁免的含义按片长分岔(2026-07-29 用户裁决):短片(k<20)的豁免判据
-        # 本身就失真(真运动也够不着 k),此时"没有一列有否决资格"= 零证据,拒绝
-        # 主张静止;长片(k=20)的豁免判据可信,全豁免=整条从未动过的死录制,
-        # 维持旧语义(每列全 True → np.all → 全程静止),这正是豁免规则的初衷。
-        cols, voting = [], 0
+                     coh_min_steps: int = 8, lo_abs: float = 0.005, lo_cap: float = 0.02,
+                     floor_mult: float = 3.0, hyst: float = 2.0) -> np.ndarray:
+        """[T-1, n] 信号 → 每帧'全列静止'掩码。
+
+        两步:①资格审查(哪些列有否决权,逐列,与 2026-07-29 版一致);②在有资格的列上量一个
+        **归一化速度**,按绝对线判静止(2026-10-16 改,TASK-11 修静止判据)。
+
+        ①资格审查(双路径取或,2026-07-29 用户定):'从未动过'的列不否决静止——判据:位置量程
+        < k×典型步长(全静止列的"步长"只是传感噪声,量程仅其 ~2-5 倍)。
+        ⚠️ k 必须随片长收紧(2026-07-29 bridge 教训):匀速运动的 量程/步长 比值上限就是步数
+        T-1,固定 k=20 隐含"真运动量程≫步长"只对长片成立;bridge 每条仅 21 帧(fps=5),真在动
+        的列比值只有 14~20 → 八列全落进豁免,ep000199 被判 0-4.2s 全程 idle/still 而视频里
+        手臂一直在动(active_ratio=0.85)。地板 4.0 = 真静止列的噪声漫游量程;长片 k 仍为 20。
+        幅度路径:量程 ≥ k×中位正步长;连贯路径:增量的 lag-1 自相关 ρ ≥ coh_rho(0.5)**且**
+        量程 ≥ coh_span_floor(4.0)×中位正步长(小包络持续往复——擦拭/搅拌类——的量程不随
+        来回次数增长,幅度路径必然误判为噪声弃权)。常数 why 见 git 历史(P5.1 校准清单)。
+        全豁免的含义按片长分岔(2026-07-29 用户裁决):短片(k<20)的豁免判据本身就失真,
+        "没有一列有否决资格"= 零证据,拒绝主张静止;长片(k=20)全豁免 = 整条从未动过的死录制,
+        维持旧语义(全程静止)。
+
+        ②静止判据(2026-10-16,替换旧的「每列步长 < 10% × 该列正步长中位数」):
+        旧判据按数据自己的尺度定阈,在 float32 位姿这类传感噪声上失效——HABIT 的笛卡尔状态
+        正步长中位数只有 1e-5(纯噪声),10% 之下几乎没有帧能满足,ep31 的 529 帧里 0 帧算静止,
+        尽管双臂歇了 1.3 s;22 条开头都歇 0.9–2.0 s 而 16 条读成 0.0。
+        新判据:有资格的列各按本条量程归一到 [0,1],v_t = ‖Δ‖ × fps(单位:量程 / 秒);
+        静止线 lo = clamp(floor_mult × p10(v), lo_abs, lo_cap):
+        - lo_abs 0.005 /s:1 秒只走量程的 0.5%,比遥操作里最慢的有意动作慢一个量级
+          (HABIT 22 条有意动作段的中位速度 0.05–0.2 /s);
+        - lo_cap 0.02 /s:慢于 2% 量程/秒一律算不动——上限防「整条都在动」的片子把慢段当静止
+          (p10 取自运动本身时会很大;匀速/往复合成片在此线下 <1% 帧);
+        - floor_mult × p10:噪声地板从数据估,假设一条里至少一成帧是歇着的;没歇的条目地板偏高
+          但被 lo_cap 压住,只会把静止量短,不会凭空造出静止;
+        - 滞回 hi = hyst × lo:低于 lo 进静止、高于 hi 才算动,中间沿用上一帧的状态——开录头
+          几帧的舵机安定毛刺(so101、HABIT 都有 1–4 帧)不再把开头静止切成「中段停顿」。
+        与样本集真值量尺(curation-project spikes/task11/idle_edges_ruler.py)同一套规则。
+        sig: **带符号**增量序列 [T-1, n];raw: 位置量纲序列(算量程用)。"""
+        if not len(sig):
+            return np.zeros(0, bool)
         k = min(20.0, max(4.0, 0.5 * len(sig)))        # len(sig)=T-1=步数
+        voting_steps = []
+        n_cols = 0
         for c, rc in zip(sig.T, raw.T):
+            n_cols += 1
             mag = np.abs(c)                            # 幅度判据只看大小
             pos = mag[mag > 0]
             if not len(pos):
-                cols.append(np.ones(len(c), bool))     # 从未动过:不否决
-                continue
+                continue                               # 从未动过:不否决
             med = float(np.median(pos))
             span = float(rc.max() - rc.min())
             ok = span >= k * med                       # ①幅度路径
             if not ok and len(c) >= coh_min_steps and span >= coh_span_floor * med:
                 ok = _lag1_rho(c) >= coh_rho           # ②连贯路径(带符号增量)
-            if not ok:
-                cols.append(np.ones(len(c), bool))     # 纯噪声/结构性噪声:不否决
-            else:
-                voting += 1
-                cols.append(mag < frac * med)
-        if not cols or (not voting and k < 20.0):
-            return np.zeros(len(sig), bool)       # 短片全豁免:不主张,不诬告
-        return np.all(np.column_stack(cols), axis=1)
+            if ok and span > 0.0:
+                voting_steps.append(mag / span)
+        if not voting_steps:
+            # 短片全豁免:不主张,不诬告;长片全豁免:死录制,全程静止
+            return np.zeros(len(sig), bool) if k < 20.0 else np.ones(len(sig), bool)
+        v = np.sqrt(np.sum(np.square(np.column_stack(voting_steps)), axis=1)) * float(fps)
+        lo = min(lo_cap, max(lo_abs, floor_mult * float(np.percentile(v, 10))))
+        hi = hyst * lo
+        out = np.zeros(len(v), bool)
+        state = bool(v[0] < lo)
+        for t, vt in enumerate(v):
+            if vt < lo:
+                state = True
+            elif vt > hi:
+                state = False
+            out[t] = state
+        return out
 
     # 传给 _static_mask 的增量一律**带符号**(2026-07-29 连贯路径需要方向信息;
     # 幅度判据在函数内部自取 abs,数值与旧版逐位相同)
@@ -831,7 +850,10 @@ def motion_quality(
         return out
 
     if len(idle):
-        min_run = max(3, int(np.ceil(0.15 * fps)))       # <0.15s 的间隙不算停顿
+        # <0.3 s 的抽动不算动作开始 / 停顿(2026-10-16 从 0.15 s 放宽,与样本集量尺同一常数:HABIT 10 fps
+        # 开录后 1–4 帧的安定毛刺曾把 1.0 s 的开头静止切成「中段停顿」;0.4 s 试过,在 30 fps 上把 so101
+        # 开录 0.33 s 的真动作也吞掉了——video-revised ep11 开头在动却读出 1.2 s 空闲)
+        min_run = max(3, int(np.ceil(0.3 * fps)))
         segs = _close_and_segment(idle, min_run)
         head_n = tail_n = mid_n = 0
         mid = []
@@ -844,6 +866,14 @@ def motion_quality(
                 mid_n += s1 - s0
                 mid.append({"start_frame": int(s0), "start_s": round(s0 / fps, 2),
                             "dur_s": round((s1 - s0) / fps, 2)})
+        # 首尾空闲(TASK-11,2026-10-16)只看机械臂本身动没动:有实际读数时按 proprio 单独的静止段取
+        # 开头 / 结尾。so101 ep1 实测:操作员的主臂从 0.17 s 起就在手里微动(指令 0.06–0.2 量程/秒),
+        # 从臂 1.2 s 才起步——按「指令+实际双静止」只能量到 0.4 s,而录制里多出来的是 1.2 s 的不动。
+        # 中段停顿与流畅度维持双静止口径(操作员行为),不变。
+        if proprio is not None:
+            segs_p = _close_and_segment(_static_mask(np.diff(p_all, axis=0), p_all), min_run)
+            head_n = next((s1 - s0 for s0, s1 in segs_p if s0 == 0), 0)
+            tail_n = next((s1 - s0 for s0, s1 in segs_p if s1 == len(idle) and s0 != 0), 0)
         # 两个口径分开(2026-07-14 用户定):头尾空闲=录制卫生(没掐好起止,可修剪,
         # 与操作技能无关),不属于流畅度 → fluency 只看**执行窗**(首个活跃帧~末个
         # 活跃帧)内的中段犹豫;active_ratio 保留全程口径(修剪价值/存储浪费信号)。
