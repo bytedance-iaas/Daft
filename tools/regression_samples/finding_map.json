@@ -1,7 +1,7 @@
 {
  "schema_version": "2.0",
  "version": "2.1",
- "taxonomy_version": "2.0",
+ "taxonomy_version": "2.1",
  "about": "What a run's records do not say about the check items (taxonomy.json): the controls, legitimate situations the platform must not report, and the ingestion items, input formats it must read. Everything else the records name themselves (C2 2.0 findings, design doc 17 §6.1), and the registry (modules.json) says which modules cover an item.",
  "controls": {
   "about": "A control item marks a legitimate situation; the platform passes it when it reports none of not_items (the taxonomy's guards) on the episode and, with not_drop, does not drop the episode unless the episode carries an episode-level defect of its own.",

@@ -1,6 +1,6 @@
 {
- "date": "2026-10-15",
- "about": "every subset of sample set v2 (design doc 16 §7.9; Feishu 《质检回归样本集 v2 · 交付说明》): anchor 63, anchor-nc 25, crafted 11 - 99 subsets, 608 episodes; names <set>-v2/<subset>; notes list the positives, controls and items with negatives from the set's expectation.json",
+ "date": "2026-10-16",
+ "about": "every subset of sample set v2 (design doc 16 §7.9; Feishu 《质检回归样本集 v2 · 交付说明》): anchor 63, anchor-nc 25, crafted 17 - 105 subsets, 635 episodes; names <set>-v2/<subset>; notes list the positives, controls and items with negatives from the set's expectation.json",
  "region": "cn-beijing",
  "picks": [
   {
@@ -497,6 +497,36 @@
    "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v30/droid_extrinsics_mv5/",
    "name": "crafted-v2/droid_extrinsics_mv5",
    "note": "回归样本集 v2 · crafted（自造样本）｜LeRobot v3.0｜Franka（DROID 1.0.1），标定写错的机位｜6 条｜正例：MV-4 2｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v30/droid_extrinsics_mv5）｜许可：Apache-2.0｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v30/so101-mini-idle-head-1p7s/",
+   "name": "crafted-v2/so101-mini-idle-head-1p7s",
+   "note": "回归样本集 v2 · crafted（自造样本）｜LeRobot v3.0｜SO-101 单臂抓放，自造（首尾空闲）｜3 条｜正例：TASK-11 1｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v30/so101-mini-idle-head-1p7s）｜许可：未声明（仓库没有写许可）｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v30/so101-mini-idle-head-5p2s/",
+   "name": "crafted-v2/so101-mini-idle-head-5p2s",
+   "note": "回归样本集 v2 · crafted（自造样本）｜LeRobot v3.0｜SO-101 单臂抓放，自造（首尾空闲）｜3 条｜正例：TASK-11 1｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v30/so101-mini-idle-head-5p2s）｜许可：未声明（仓库没有写许可）｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v30/so101-mini-idle-tail-3s/",
+   "name": "crafted-v2/so101-mini-idle-tail-3s",
+   "note": "回归样本集 v2 · crafted（自造样本）｜LeRobot v3.0｜SO-101 单臂抓放，自造（首尾空闲）｜3 条｜正例：TASK-11 1｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v30/so101-mini-idle-tail-3s）｜许可：未声明（仓库没有写许可）｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v30/so101-mini-idle-head-0p7s/",
+   "name": "crafted-v2/so101-mini-idle-head-0p7s",
+   "note": "回归样本集 v2 · crafted（自造样本）｜LeRobot v3.0｜SO-101 单臂抓放，自造（首尾空闲）｜3 条｜正例：TASK-11 0｜有反例的检测项 1 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v30/so101-mini-idle-head-0p7s）｜许可：未声明（仓库没有写许可）｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v20/habit-idle-edges/",
+   "name": "crafted-v2/habit-idle-edges",
+   "note": "回归样本集 v2 · crafted（真实样本重打包）｜LeRobot v2.0｜双臂 Franka FR3（HABIT，人机协作）｜10 条｜正例：TASK-11 10｜有反例的检测项 0 个｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v20/habit-idle-edges）｜许可：CC-BY-4.0｜只在内部用"
+  },
+  {
+   "uri": "tos://curation-robo-anchor/crafted/v2/lerobot_v21/rss-restore-tail/",
+   "name": "crafted-v2/rss-restore-tail",
+   "note": "回归样本集 v2 · crafted（真实样本重打包）｜LeRobot v2.1｜ARX 双臂（RSS 2026 挑战赛，失败）｜5 条｜正例：无｜有反例的检测项 1 个（TASK-11）｜期望值：tos://curation-robo-anchor/crafted/v2/expectation.json（dataset = lerobot_v21/rss-restore-tail）｜许可：CC-BY-NC-4.0｜只在内部用"
   }
  ]
 }

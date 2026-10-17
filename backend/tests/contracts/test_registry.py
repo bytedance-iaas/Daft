@@ -177,8 +177,10 @@ def test_p20_items_have_codes():
     LABEL-1 (one episode with several descriptions that disagree) left the list with the skill
     profile: it was the only module that read the descriptions against each other."""
     covered = {item for m in M.MODULES for item in m.covers}
-    assert {"LABEL-2", "IMG-3", "TASK-1", "AV-3", "MV-3", "ACT-6"} <= covered
+    assert {"LABEL-2", "IMG-3", "TASK-11", "AV-3", "MV-3", "ACT-6"} <= covered
     assert "LABEL-1" not in covered
+    # 8.9: the idle edges moved to TASK-11; nothing measures the step boundaries (TASK-1) yet
+    assert "TASK-1" not in covered
 
 
 def test_the_eef_module_gives_opinions():

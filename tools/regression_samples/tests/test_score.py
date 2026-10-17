@@ -244,9 +244,9 @@ def test_unsupported_and_not_run_stay_out_of_the_metrics(tmp_path):
 def test_a_run_the_preflight_refused_leaves_its_items_not_assessed(tmp_path):
     """No record, no report: the items are the registry's and not assessed because no module could run - not items
     without a check."""
-    exp = expectation(episode(0, problems=["TASK-1"]))
-    row = score2(tmp_path, exp, [], supported=False, availability={"motion_quality": "unsupported"})["items"]["TASK-1"]
-    assert "motion_quality" in COVERS["TASK-1"] and row["mapped"] is True
+    exp = expectation(episode(0, problems=["TASK-11"]))
+    row = score2(tmp_path, exp, [], supported=False, availability={"motion_quality": "unsupported"})["items"]["TASK-11"]
+    assert "motion_quality" in COVERS["TASK-11"] and row["mapped"] is True
     assert row["not_assessed"] == {"present": 1, "absent": 0, "of_which_unsupported": 1}
 
 
@@ -360,6 +360,10 @@ def test_an_expectation_of_taxonomy_1_3_is_scored_with_the_new_ids(tmp_path):
     newer = dict(same, taxonomy="taxonomy.json v9.0 (later)")
     with pytest.raises(S.InputError):
         S.upgrade_expectation(newer, TAXONOMY, TAXONOMY)
+    # 2.1: ids are frozen since 2.0 and a release only appends items - a 2.0 expectation (the sample set v2 as
+    # published) is scored as it is, against the current taxonomy
+    frozen_era = dict(same, taxonomy="taxonomy.json v2.0 (design 16 §3, 67 items in 9 dimensions)")
+    assert S.upgrade_expectation(frozen_era, {"taxonomy_version": "2.0", "items": []}, TAXONOMY) == (frozen_era, TAXONOMY)
     # the command: the set's own taxonomy.json next to the expectation is 1.3, the score is in 2.0
     (tmp_path / "set").mkdir()
     (tmp_path / "set" / "taxonomy.json").write_text(json.dumps(dict(TAXONOMY, taxonomy_version="1.3")), encoding="utf-8")
@@ -368,7 +372,7 @@ def test_an_expectation_of_taxonomy_1_3_is_scored_with_the_new_ids(tmp_path):
     assert S.main(["--expectation", str(tmp_path / "set" / "expectation.json"), "--runs-map", runs,
                    "--out", str(tmp_path / "s.json")]) == 0
     doc = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
-    assert doc["taxonomy_version"] == "2.0" and doc["items"]["TASK-10"]["present"] == 1 and doc["items"]["FILE-4"]["tp"] == 1
+    assert doc["taxonomy_version"] == TAXONOMY["taxonomy_version"] and doc["items"]["TASK-10"]["present"] == 1 and doc["items"]["FILE-4"]["tp"] == 1
 
 
 def test_bad_input_exits_2(tmp_path):

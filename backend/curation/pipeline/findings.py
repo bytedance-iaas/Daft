@@ -556,7 +556,7 @@ SCORE_READINGS = {
 def _motion_quality(passed, score, d, p) -> Derived:
     """Every sub-item reports on its own (the composite score is retired, P18; it stays a reading): smoothness,
     spikes, gripper jitter, actuator saturation, stuck actuators (with their frozen stretch), fluency, and the
-    idle opening and closing (TASK-1). A sub-item v1 left empty (None) could not be assessed - its own reason,
+    idle opening and closing (TASK-11, registry 8.9; TASK-1 until then). A sub-item v1 left empty (None) could not be assessed - its own reason,
     or no state columns."""
     out = Derived()
     m = "motion_quality"
@@ -608,7 +608,7 @@ def _motion_quality(passed, score, d, p) -> Derived:
     if tail is not None and tail >= p["idle_edge_min_s"]:
         out.add(m, "idle_closing", f"动作结束后空转 {tail:.1f} 秒", readings={"idle_s": _r(tail)})
     if head is None and tail is None:                      # no idle reading at all: the edges were not looked at
-        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "算不出开头与结尾的空转")[:200])
+        out.cannot("TASK-11", "not_applicable", str(d.get("reason") or "算不出开头与结尾的空转")[:200])
     # sub-items v1 could not compute: why (its own reason, else no state columns)
     no_state = d.get("stuck") is None and "stuck_reason" not in d and "stuck_strategy" not in d
     for key, item, why_key in (("smoothness", "ACT-1", "smoothness_reason"), ("spike", "ACT-2", "spike_reason"),

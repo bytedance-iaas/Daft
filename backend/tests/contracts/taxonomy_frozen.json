@@ -1,7 +1,7 @@
 {
  "about": "Taxonomy (C6) ids, frozen since 2.0 (2026-10-14, the sample set v2): id -> [dimension, name_zh, kind, level, guards]. An id keeps all five; a new item is appended with the next number of its dimension; a dropped item stays here and is listed under dropped, so its number is never used again (tests/contracts/test_registry.py::test_taxonomy_ids_keep_their_meaning).",
  "frozen_at": "2026-10-14",
- "taxonomy_version": "2.0",
+ "taxonomy_version": "2.1",
  "items": {
   "FILE-1": ["FILE", "文件缺失、0 字节、过小", "defect", "episode", []],
   "FILE-2": ["FILE", "视频或表格截断、零填充", "defect", "episode", []],
@@ -64,6 +64,7 @@
   "TASK-8": ["TASK", "达成后被撤销", "defect", "episode", []],
   "TASK-9": ["TASK", "未记录的外部干预、场景重置", "defect", "episode", []],
   "TASK-10": ["TASK", "执行失误（抓取失败、掉落、碰撞、反复尝试）", "phenomenon", "episode", []],
+  "TASK-11": ["TASK", "首尾空闲", "defect", "episode", []],
   "LABEL-1": ["LABEL", "一条有多份描述，彼此不一致", "defect", "episode", []],
   "LABEL-2": ["LABEL", "没有标注、只有类别名、占位没填", "defect", "episode", []],
   "LABEL-3": ["LABEL", "纯中文、中英混排、混进元数据", "phenomenon", "dataset", []],
