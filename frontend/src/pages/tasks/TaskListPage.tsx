@@ -93,6 +93,9 @@ function ProgressCell({ t }: { t: TaskListItem }) {
   return <span className="muted">—</span>;
 }
 
+/** 任务名称 and 数据集 have no width of their own: they share what the others leave, each at least this (07 §4.1). */
+const FLEX_MIN = 160;
+
 export function TaskListPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -146,14 +149,14 @@ export function TaskListPage() {
   const live = query.data?.items.some(changing);
   const deletedView = state === 'deleted';
 
-  // Widths (07 §4.1): every column has room for its longest value, so a state tag or a longer
-  // name scrolls the table rather than squeezing the others. Rows take two lines at most
-  // (fourth round): the name and its id; 待裁决 goes by the state.
+  // Widths (07 §4.1; rebalanced 2026-10-16): every column has room for its longest value - 操作 for 查看报告 /
+  // 继续运行 and 更多, 进度 / 结果 for 通过 · 拒绝 · 缺源文件 - and no more; 任务名称 and 数据集, whose values
+  // are as long as people make them, share what is left on a wide window, each at least FLEX_MIN, and below
+  // that the table scrolls. Rows take two lines at most (fourth round): the name and its id; 待裁决 goes by the state.
   const columns: ColumnProps<TaskListItem>[] = [
     {
       title: zh.taskList.colName,
       dataIndex: 'name',
-      width: 195,
       render: (_: unknown, t) => (
         <div>
           <Link to={`/tasks/${t.id}`}>
@@ -166,7 +169,7 @@ export function TaskListPage() {
     {
       title: zh.taskList.colState,
       dataIndex: 'state',
-      width: 185,
+      width: 165,
       render: (_: unknown, t) => (
         <div className="state-cell">
           <TaskStateTag task={t} />
@@ -183,7 +186,6 @@ export function TaskListPage() {
     {
       title: zh.taskList.colDataset,
       dataIndex: 'dataset',
-      width: 160,
       render: (_: unknown, t) => (
         <div>
           {t.dataset_id ? <Link to={`/datasets/${t.dataset_id}`}>{t.dataset}</Link> : t.dataset}
@@ -191,12 +193,12 @@ export function TaskListPage() {
         </div>
       ),
     },
-    { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 260, render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colModules, dataIndex: 'modules', width: 125, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 275, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
-      width: 95,
+      width: 100,
       render: (_: unknown, t) => <span className="mono">{totalTokens(t.usage) ? compactNumber(totalTokens(t.usage)) : '—'}</span>,
     },
     {
@@ -209,7 +211,7 @@ export function TaskListPage() {
       title: zh.taskList.colActions,
       dataIndex: 'id',
       fixed: 'right',
-      width: 160,
+      width: 200,
       render: (_: unknown, t) => (
         <TaskActionButtons
           plan={actionsFor(t)}
@@ -220,6 +222,8 @@ export function TaskListPage() {
       ),
     },
   ];
+  // below this the table scrolls; above it 任务名称 and 数据集 grow
+  const tableMin = 2 * FLEX_MIN + columns.reduce((sum, c) => sum + (Number(c.width) || 0), 0);
 
   return (
     <div>
@@ -275,7 +279,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1300 }}
+            scroll={{ x: `max(${tableMin}px, 100%)` }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,
