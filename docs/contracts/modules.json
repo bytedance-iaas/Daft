@@ -1,5 +1,5 @@
 {
- "registry_version": "8.11",
+ "registry_version": "8.12",
  "taxonomy_version": "2.1",
  "blocks": [
   {
@@ -1613,6 +1613,57 @@
       ],
       "title": "任务结束后的模式词",
       "description": "模式列（如 RSS 2026 的 observation.commander_state）最后一段的名字含这些词之一（不分大小写）时，当作任务在那一段开头结束，报「数据集标注的任务结束」",
+      "x-advanced": true
+     }
+    }
+   },
+   "tables": [],
+   "mergeable": false
+  },
+  {
+   "id": "step_detection",
+   "name_zh": "分步检测",
+   "summary_zh": "按整机停顿和夹爪开合找出动作边界的候选并打分；测出来的边界可以和数据集自带的分步对照",
+   "level": "episode",
+   "needs": [
+    "action"
+   ],
+   "block": "cpu",
+   "stage": "numeric",
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "step_candidate",
+     "item": "TASK-1",
+     "name_zh": "测出的动作边界候选",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "TASK-1"
+   ],
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "min_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "title": "候选边界的最低分",
+      "description": "分数不到这个值的候选只记在读数里，不报发现。停顿按时长给分（多长算满分见下一项），夹爪开合一律 0.8 分"
+     },
+     "pause_ref_s": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 60,
+      "default": 3.0,
+      "title": "停顿多久算满分",
+      "description": "整机停顿够这个秒数就给 1 分，更短的按比例给；不到 0.3 秒的停顿不算",
       "x-advanced": true
      }
     }

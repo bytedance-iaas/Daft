@@ -62,10 +62,10 @@ describe('preflight → availability and reasons', () => {
   it('presets follow availability', () => {
     const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
     expect(availability(r, 'motion_quality')).toBe('unsupported');
-    expect(presetSelection('full', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'declared_steps', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
-    expect(presetSelection('quick', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'declared_steps', 'visual_quality', 'video_action_sync', 'duplicate_check']);
+    expect(presetSelection('full', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'declared_steps', 'step_detection', 'visual_quality', 'video_action_sync', 'task_success', 'duplicate_check']);
+    expect(presetSelection('quick', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'declared_steps', 'step_detection', 'visual_quality', 'video_action_sync', 'duplicate_check']);
     expect(presetSelection('full', registry, preflightFor(rrd, {}))).toEqual([]);
-    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'declared_steps', 'visual_quality', 'video_action_sync', 'duplicate_check']);
+    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'declared_steps', 'step_detection', 'visual_quality', 'video_action_sync', 'duplicate_check']);
   });
 
   it('ticking a module ticks that module only', () => {

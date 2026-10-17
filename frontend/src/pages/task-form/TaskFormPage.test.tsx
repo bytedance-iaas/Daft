@@ -168,7 +168,7 @@ describe('新建任务 · 两屏与提交', () => {
     const body = create?.body as Record<string, unknown>;
     expect(body.input).toEqual({ dataset_id: expect.stringMatching(/^ds-[a-z]{9}$/) });
     expect(body.output).toEqual({ uri: 'tos://pai-kit-deliveries/new-set-0921', region: 'cn-beijing', credential: 'prod-tos' });
-    expect(body.modules).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'declared_steps', 'visual_quality', { id: 'video_action_sync', params: { sync_plots: 'all' } }, 'duplicate_check']);
+    expect(body.modules).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'declared_steps', 'step_detection', 'visual_quality', { id: 'video_action_sync', params: { sync_plots: 'all' } }, 'duplicate_check']);
     expect(body).not.toHaveProperty('vlm');
     expect((body.params as Record<string, unknown>).start_now).toBe(false);
     expect(seen.some((s) => s.method === 'POST' && /\/tasks\/[^/]+\/actions\/start$/.test(s.path))).toBe(true);
@@ -381,7 +381,7 @@ describe('新建任务 · 两屏与提交', () => {
     await waitFor(() => expect(fieldErrors(s2())).toEqual(['请选择机器人型号']));
     await user.click(within(needs).getByRole('button', { name: '跳过该模块' }));
     expect(within(s2()).getByText('已跳过')).toBeInTheDocument();
-    expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 7 个模块');
+    expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 8 个模块');
   });
 
   it('a plain new task starts with the default access key too (C4 1.17)', async () => {

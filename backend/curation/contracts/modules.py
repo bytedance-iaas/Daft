@@ -176,6 +176,14 @@ observation.commander_state) and reports them as ``step_declared`` / ``task_end_
 ``readings.source`` = declared). It measures nothing: it is TASK-1's declared track, the answer key a detected
 track is compared with; a dataset without such labels leaves TASK-1 not assessed. ``motion_quality``'s
 ``idle_mid_segments`` and ``still_segments`` become readings for the player's motion strip.
+8.12 (2026-10-17): ``step_detection``, a numeric-stage module that measures step boundary candidates - the start
+of a whole-body pause (the 8.10 rest rule; score = min(1, duration / pause_ref_s)) and a gripper opening or
+closing (score 0.8) - and reports the ones at or above ``min_score`` as ``step_candidate`` (TASK-1, info,
+``readings.source`` = detected); every candidate is a reading. TASK-1's detected track, scored against the
+declared one by the regression scorer (score 2.1, boundaries by source). Measured on the sample sets at a 1 s
+tolerance: HABIT (22 episodes, 43 pedal boundaries) pauses recall 0.56 / precision 0.49 at min_score 0.3, both cues
+0.93 / 0.24; Galaxea arrange_mineral_water_bottles (10 / 75) grippers 0.75 / 0.70; push_in_chairs (2 / 5) nothing -
+a step with neither cue is what a picture-reading track would add.
 """
 from __future__ import annotations
 
@@ -183,7 +191,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.11"
+REGISTRY_VERSION = "8.12"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.1"
 
@@ -429,6 +437,19 @@ def _declared_params() -> dict:
                 "description": "模式列（如 RSS 2026 的 observation.commander_state）最后一段的名字含这些词之一（不分大小写）时，"
                                "当作任务在那一段开头结束，报「数据集标注的任务结束」",
                 "x-advanced": True}}}
+
+
+def _step_detection_params() -> dict:
+    return {"type": "object", "additionalProperties": False,
+            "properties": {
+                "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.3,
+                              "title": "候选边界的最低分",
+                              "description": "分数不到这个值的候选只记在读数里，不报发现。停顿按时长给分（多长算满分见下一项），"
+                                             "夹爪开合一律 0.8 分"},
+                "pause_ref_s": {"type": "number", "minimum": 0.5, "maximum": 60, "default": 3.0,
+                                "title": "停顿多久算满分",
+                                "description": "整机停顿够这个秒数就给 1 分，更短的按比例给；不到 0.3 秒的停顿不算",
+                                "x-advanced": True}}}
 
 
 def _evidence_param(name: str, title: str, labels: dict[str, str], description: str) -> dict:
@@ -743,6 +764,14 @@ MODULES: tuple[ModuleSpec, ...] = (
         codes=(_info("step_declared", "TASK-1", "数据集标注的一步"),
                _info("task_end_declared", "TASK-1", "数据集标注的任务结束")),
         param_schema=_declared_params(),
+        tables=()),
+    ModuleSpec(
+        id="step_detection", name_zh="分步检测",
+        summary_zh="按整机停顿和夹爪开合找出动作边界的候选并打分；测出来的边界可以和数据集自带的分步对照",
+        level="episode", needs=frozenset({"action"}), block="cpu", stage="numeric", depends_on=(), native=True,
+        # 8.12: TASK-1's detected track; readings.source = "detected" on every finding
+        codes=(_info("step_candidate", "TASK-1", "测出的动作边界候选"),),
+        param_schema=_step_detection_params(),
         tables=()),
     ModuleSpec(
         id="visual_quality", name_zh="视觉质量",

@@ -339,6 +339,14 @@ class StageRun:
                 elif m == "declared_steps":
                     modes = (self.o.params.get(m) or {}).get("post_task_modes") or None
                     out[m] = episode_checks.result_to_struct(self._declared().episode(ep, post_task_modes=modes))
+                elif m == "step_detection":
+                    from . import step_detection as sd
+                    pm = self.o.params.get(m) or {}
+                    dims = sd.gripper_dims_of(column(row, "semantics_extras", "{}"), row["embodiment_id"], reg)
+                    out[m] = episode_checks.result_to_struct(sd.detect(
+                        row["action"], row["proprio_state"], row["fps"], dims,
+                        min_score=float(pm.get("min_score", sd.MIN_SCORE)),
+                        pause_ref_s=float(pm.get("pause_ref_s", sd.PAUSE_REF_S))))
             except Exception as e:  # noqa: BLE001 - one episode's failure stays its own
                 out[m] = None
                 logs[m].add("internal", cause=f"{type(e).__name__}: {e}")

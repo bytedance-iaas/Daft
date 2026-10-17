@@ -1165,7 +1165,7 @@ export function mainPlan(): Plan {
     vlm_parallelism: 64,
     limits: { cpu_concurrency: { value: 30, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
     stages: [
-      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality', 'declared_steps'], episodes: 'selected' },
+      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality', 'declared_steps', 'step_detection'], episodes: 'selected' },
       { id: 'frame', block: 'cpu', after: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'selected' },
       { id: 'duplicate', block: 'cpu', after: 'frame', kind: 'cpu', command: 'check', concurrency: 1, modules: ['duplicate_check'], episodes: 'selected' },
       { id: 'vlm', block: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64 }, merge: { strategy: 'none', groups: [] } },
@@ -1507,6 +1507,14 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
             ],
             readings: { tracks: [{ key: 'low_level_task_index', name: '机器人分步', format: 'index_table', primary: true, n_steps: 2, segments: [{ start_s: 0, end_s: 6, frames: [0, 59], label: '伸手' }, { start_s: 6, end_s: 12, frames: [60, 119], label: '放下' }] }] },
           }),
+    // 8.12: the boundaries measured from the numbers (the detected track): a pause, a gripper event
+    step_detection: record(ep, 'step_detection', { min_score: 0.3, pause_ref_s: 3, fps: 10, gripper_dims: [6], stream: 'state', n_frames: 120 }, {
+      findings: [
+        finding('step_detection', 'step_candidate', '候选边界 1：5.8 秒（停了 1.2 秒）', { frames: [58, 58], time_s: [5.8, 5.8], readings: { source: 'detected', cue: 'pause', score: 0.4, dur_s: 1.2 } }),
+        finding('step_detection', 'step_candidate', '候选边界 2：9.0 秒（夹爪松开）', { frames: [90, 90], time_s: [9, 9], readings: { source: 'detected', cue: 'release', score: 0.8 } }),
+      ],
+      readings: { n_candidates: 3, n_reported: 2, stream: 'state', cues: { pause: 2, release: 1 }, candidates: [{ frame: 58, t_s: 5.8, cue: 'pause', score: 0.4, dur_s: 1.2 }, { frame: 90, t_s: 9, cue: 'release', score: 0.8, column: 6 }, { frame: 101, t_s: 10.1, cue: 'pause', score: 0.1, dur_s: 0.3 }] },
+    }),
   };
   if (quotaRun) {
     records.task_success = errorRecord(ep, 'task_success', { step: 'probe', cause: '429 QuotaExceeded', call_kind: 'probe', attempts: 3 });
@@ -1859,6 +1867,7 @@ const TABLES: Record<string, Section['tables']> = {
   timestamp_check: [{ id: 'timestamp_check', rows: 50, file: 'tables/timestamp_check.parquet' }],
   motion_quality: [{ id: 'motion_quality', rows: 50, file: 'tables/motion_quality.parquet' }],
   declared_steps: [],
+  step_detection: [],
   visual_quality: [{ id: 'visual_quality', rows: 150, file: 'tables/visual_quality.parquet' }],
   video_action_sync: [{ id: 'video_action_sync', rows: 150, file: 'tables/video_action_sync.parquet' }],
   task_success: [{ id: 'task_success', rows: 50, file: 'tables/task_success.parquet' }],

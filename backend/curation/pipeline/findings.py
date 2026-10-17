@@ -184,6 +184,42 @@ def _declared_steps(passed, score, d, p) -> Derived:
     return out
 
 
+#: what a candidate's cue reads as in its finding
+_CUE_ZH = {"pause": "停顿", "grasp": "夹爪合上", "release": "夹爪松开"}
+
+
+@deriver("step_detection")
+def _step_detection(passed, score, d, p) -> Derived:
+    """Step boundary candidates measured from the numbers (8.12, TASK-1's detected track): one ``step_candidate``
+    per candidate at or above ``min_score`` (readings.source = detected, the cue and the score); every candidate
+    stays a reading. No stream to read: TASK-1 not assessed."""
+    out = Derived()
+    m = "step_detection"
+    if d.get("reason"):
+        out.cannot("TASK-1", "not_applicable", str(d["reason"])[:200])
+        return out
+    cands = [c for c in (d.get("candidates") or []) if isinstance(c, dict)]
+    out.readings["candidates"] = cands[:200]
+    out.readings["n_candidates"] = len(cands)
+    out.readings["stream"] = d.get("stream")
+    out.readings["cues"] = d.get("cues") or {}
+    min_score = float(d.get("min_score", 0.3) or 0.0)
+    k = 0
+    for c in cands:
+        sc = float(c.get("score") or 0.0)
+        if sc < min_score:
+            continue
+        k += 1
+        t, fr = float(c.get("t_s") or 0.0), int(c.get("frame") or 0)
+        cue = str(c.get("cue") or "")
+        how = f"停了 {float(c.get('dur_s') or 0.0):.1f} 秒" if cue == "pause" else _CUE_ZH.get(cue, cue)
+        out.add(m, "step_candidate", f"候选边界 {k}：{t:.1f} 秒（{how}）", frames=(fr, fr), time_s=(t, t),
+                readings={"source": "detected", "cue": cue, "score": sc,
+                          **({"dur_s": c.get("dur_s")} if cue == "pause" else {})})
+    out.readings["n_reported"] = k
+    return out
+
+
 @deriver("visual_quality")
 def _visual_quality(passed, score, d, p) -> Derived:
     """Per camera, from ``per_camera_detail`` (design doc 17 §2.2): frozen share, exposure, sharpness,

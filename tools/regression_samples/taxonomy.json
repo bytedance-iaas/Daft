@@ -1526,7 +1526,8 @@
    "platform_status": "有读数",
    "platform_codes": [
     "declared_steps.step_declared",
-    "declared_steps.task_end_declared"
+    "declared_steps.task_end_declared",
+    "step_detection.step_candidate"
    ],
    "kind": "phenomenon",
    "level": "episode",

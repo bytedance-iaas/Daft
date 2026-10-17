@@ -316,10 +316,17 @@ DECLARED = {"sources": ["index_table:low_level_task_index", "mode_column:observa
             "task_end": {"time_s": 2.2, "frame": 22, "mode_before": "inference", "mode_after": "restore",
                          "column": "observation.commander_state"}, "n_frames": 30, "fps": 10}
 DECLARED_NONE = {"sources": [], "reason": "数据集没有逐帧的分步或模式标注"}
+STEPDET = {"min_score": 0.3, "pause_ref_s": 3.0, "fps": 10.0, "gripper_dims": [6], "stream": "state", "n_frames": 300,
+           "candidates": [{"frame": 100, "t_s": 10.0, "cue": "pause", "score": 0.83, "dur_s": 2.5},
+                          {"frame": 180, "t_s": 18.0, "cue": "grasp", "score": 0.8, "column": 6},
+                          {"frame": 200, "t_s": 20.0, "cue": "pause", "score": 0.1, "dur_s": 0.3}],
+           "n_candidates": 3, "n_reported": 2, "cues": {"pause": 2, "grasp": 1}}
 
 CASES = [
     ("declared_steps", True, 1.0, DECLARED, {"step_declared", "task_end_declared"}, set()),
     ("declared_steps", True, 1.0, DECLARED_NONE, set(), {"TASK-1"}),
+    ("step_detection", True, 1.0, STEPDET, {"step_candidate"}, set()),
+    ("step_detection", True, 1.0, {"reason": "没有可用的读数列或指令列"}, set(), {"TASK-1"}),
     ("timestamp_check", True, None, TS_PASS, set(), set()),
     ("timestamp_check", False, None, TS_GAP, {"gap"}, set()),
     ("timestamp_check", False, None, TS_FRAGMENT, {"fragment"}, set()),
