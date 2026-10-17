@@ -187,7 +187,7 @@ def test_the_eef_module_gives_opinions():
     """D49: one module, CPU then model; 5.0 (design doc 25 §7.3, D81): opinions with a confidence - nothing it
     reports rejects, a conflict between its channels is asked on eef_check. 7.0 (D90): the codes it no longer
     reports are gone from the catalogue."""
-    assert M.native_ids() == ("data_integrity", "eef_video_consistency", "duplicate_check")
+    assert M.native_ids() == ("data_integrity", "declared_steps", "eef_video_consistency", "duplicate_check")
     spec = M.get("eef_video_consistency")
     assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video"} <= spec.needs
     assert spec.depends_on == () and "eef_video_review" not in M.ids()

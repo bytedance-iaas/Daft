@@ -305,17 +305,6 @@ def _viz_descriptor(doc: dict, info: dict, listing, storage) -> None:
                              viz_ann.detect_sources(info, meta_files, peek=peek, episode_fields=fields)]
 
 
-def _declared_sources(info: dict, listing) -> bool:
-    """Whether the dataset carries any segment annotation the declared_steps module reads (8.11)."""
-    try:
-        from ..viz import annotations as viz_ann
-        meta_files = sorted(k for k in listing if str(k).startswith("meta/"))
-        return any(s.kind == "segments" and s.supported and s.format != "unknown"
-                   for s in viz_ann.detect_sources(info or {}, meta_files))
-    except Exception:  # noqa: BLE001 - a malformed info: the module will say so itself
-        return False
-
-
 def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                     container: dict | None = None, storage=None) -> None:
     """``container`` (D44, ``preflight_containers``): an mcap / lance dataset described as
@@ -476,11 +465,6 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                          reason=f"declared steps are read from LeRobot datasets only, not {container['kind']}",
                          reason_code="format_unsupported_by_module",
                          reason_args={"format": container["kind"]})
-        elif spec.id == "declared_steps" and not _declared_sources(info, listing):
-            entry.update(availability="unsupported",
-                         reason="the dataset declares no steps or modes (no subtask table, per-frame task_index, "
-                                "step column or controller-mode column)",
-                         reason_code="no_declared_steps")
         elif "vlm" in spec.needs and not vlm_backend:
             entry.update(availability="needs_input",
                          reason="no VLM backend chosen; pick one (add one first if there is "

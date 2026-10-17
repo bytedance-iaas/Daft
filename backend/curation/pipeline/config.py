@@ -10,7 +10,7 @@ import os
 import yaml
 
 KNOWN_CHECKS = (
-    "timestamp_check", "kinematic_limits", "motion_quality", "declared_steps",
+    "timestamp_check", "kinematic_limits", "motion_quality",
     "visual_quality", "video_action_sync", "task_success",
 )
 

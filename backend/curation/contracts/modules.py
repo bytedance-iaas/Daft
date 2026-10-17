@@ -737,8 +737,9 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
         id="declared_steps", name_zh="数据集分步",
         summary_zh="读出数据集自带的分步和模式标注，报每一步的起止和任务结束时刻；只搬标注，不做检测",
-        level="episode", needs=frozenset(), block="cpu", stage="numeric", depends_on=(),
-        # 8.11: the dataset's own labels, surfaced; readings.source = "declared" on every finding
+        level="episode", needs=frozenset(), block="cpu", stage="numeric", depends_on=(), native=True,
+        # 8.11: the dataset's own labels, surfaced; readings.source = "declared" on every finding. Native: v2 runs
+        # it itself (check_stage), v1's check configuration never sees it
         codes=(_info("step_declared", "TASK-1", "数据集标注的一步"),
                _info("task_end_declared", "TASK-1", "数据集标注的任务结束")),
         param_schema=_declared_params(),
