@@ -1481,7 +1481,14 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
     }),
     motion_quality: record(ep, 'motion_quality', motion.details, {
       findings: motionFindings,
-      readings: { score: motion.score },
+      readings: {
+        score: motion.score,
+        // 8.11: the rest stretches the player's motion strip draws
+        idle_head_s: ep % 3 === 0 ? 1.2 : 0,
+        idle_tail_s: ep % 5 === 1 ? 0.8 : 0,
+        idle_mid_segments: ep % 4 === 2 ? [{ start_frame: 50, start_s: 5, dur_s: 1.5 }] : [],
+        still_segments: ep % 3 === 0 ? [{ start_s: 0, end_s: 1.2 }] : [],
+      },
       unassessable: [{ item: 'ACT-4', reason: 'not_applicable', message_zh: '速度型指令和位置读数含义不同，执行器饱和无从比较' }],
     }),
     visual_quality: record(ep, 'visual_quality', vis.details, {
@@ -1492,7 +1499,7 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
     // 8.11: the steps the dataset declares (every third episode has none)
     declared_steps:
       ep % 3 === 2
-        ? record(ep, 'declared_steps', { sources: [], reason: '数据集没有分步、模式之类的逐帧标注' }, { unassessable: [{ item: 'TASK-1', reason: 'not_applicable', message_zh: '数据集没有分步、模式之类的逐帧标注' }] })
+        ? record(ep, 'declared_steps', { sources: [], reason: '数据集没有逐帧的分步或模式标注' }, { unassessable: [{ item: 'TASK-1', reason: 'not_applicable', message_zh: '数据集没有逐帧的分步或模式标注' }] })
         : record(ep, 'declared_steps', { sources: ['index_table:low_level_task_index'] }, {
             findings: [
               finding('declared_steps', 'step_declared', '第 1 步「伸手」：第 1–60 帧', { frames: [0, 59], time_s: [0, 6], readings: { source: 'declared', track: 'low_level_task_index', step: 1, n_steps: 2, label: '伸手' } }),

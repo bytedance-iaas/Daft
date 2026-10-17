@@ -425,9 +425,9 @@ def _declared_params() -> dict:
     return {"type": "object", "additionalProperties": False,
             "properties": {"post_task_modes": {
                 "type": "array", "items": {"type": "string"}, "default": list(POST_TASK_MODES),
-                "title": "任务后的模式词",
-                "description": "模式列（如 RSS 2026 的 observation.commander_state）收尾那一段的名字含这些词之一（不分大小写），"
-                               "就当任务在那一段开头结束，报「数据集声明的任务结束」",
+                "title": "任务结束后的模式词",
+                "description": "模式列（如 RSS 2026 的 observation.commander_state）最后一段的名字含这些词之一（不分大小写）时，"
+                               "当作任务在那一段开头结束，报「数据集标注的任务结束」",
                 "x-advanced": True}}}
 
 
@@ -735,12 +735,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(
-        id="declared_steps", name_zh="声明分步",
-        summary_zh="读出数据集自带的分步与模式标注，报每一步的起止和任务结束（TASK-1 的声明轨，不做检测）",
+        id="declared_steps", name_zh="数据集分步",
+        summary_zh="读出数据集自带的分步和模式标注，报每一步的起止和任务结束时刻；只搬标注，不做检测",
         level="episode", needs=frozenset(), block="cpu", stage="numeric", depends_on=(),
         # 8.11: the dataset's own labels, surfaced; readings.source = "declared" on every finding
-        codes=(_info("step_declared", "TASK-1", "数据集声明的一步"),
-               _info("task_end_declared", "TASK-1", "数据集声明的任务结束")),
+        codes=(_info("step_declared", "TASK-1", "数据集标注的一步"),
+               _info("task_end_declared", "TASK-1", "数据集标注的任务结束")),
         param_schema=_declared_params(),
         tables=()),
     ModuleSpec(

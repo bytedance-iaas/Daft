@@ -315,7 +315,7 @@ DECLARED = {"sources": ["index_table:low_level_task_index", "mode_column:observa
                                      {"start_s": 2.2, "end_s": 3.0, "frames": [22, 29], "label": "restore"}]}],
             "task_end": {"time_s": 2.2, "frame": 22, "mode_before": "inference", "mode_after": "restore",
                          "column": "observation.commander_state"}, "n_frames": 30, "fps": 10}
-DECLARED_NONE = {"sources": [], "reason": "数据集没有分步、模式之类的逐帧标注"}
+DECLARED_NONE = {"sources": [], "reason": "数据集没有逐帧的分步或模式标注"}
 
 CASES = [
     ("declared_steps", True, 1.0, DECLARED, {"step_declared", "task_end_declared"}, set()),

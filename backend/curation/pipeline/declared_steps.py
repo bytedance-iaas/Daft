@@ -76,7 +76,7 @@ class DeclaredSteps:
         self.sources = [s for s in A.detect_sources(info, meta_files, peek=peek, episode_fields=ep_fields)
                         if s.kind == "segments" and s.supported and s.format != "unknown"]
         if not self.sources:
-            self.reason = "数据集没有分步、模式之类的逐帧标注"
+            self.reason = "数据集没有逐帧的分步或模式标注"
             return self
         for s in self.sources:
             if s.table and s.table not in self.lookups and s.format in ("subtask_index", "index_table"):

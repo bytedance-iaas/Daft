@@ -175,12 +175,12 @@ def _declared_steps(passed, score, d, p) -> Derived:
         t = float(te["time_s"])
         fr = int(te.get("frame") or 0)
         out.add(m, "task_end_declared",
-                f"任务在 {t:.1f} 秒结束：{te.get('column')} 从「{te.get('mode_before')}」切到「{te.get('mode_after')}」",
+                f"任务在 {t:.1f} 秒结束：{te.get('column')} 从 {te.get('mode_before')} 切到 {te.get('mode_after')}",
                 frames=(fr, fr), time_s=(t, t),
                 readings={"source": "declared", "column": te.get("column"), "mode_before": te.get("mode_before"),
                           "mode_after": te.get("mode_after")})
     if not segs and not te:
-        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "数据集没有分步标注")[:200])
+        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "数据集没有逐帧的分步或模式标注")[:200])
     return out
 
 

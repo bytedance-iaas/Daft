@@ -351,7 +351,7 @@ class StageRun:
             from . import declared_steps as ds
             if self.o.fmt in ("mcap", "lance"):
                 self._declared_reader = ds.DeclaredSteps(input_dir=self.o.input_dir, info={},
-                                                         reason=f"{self.o.fmt} 数据集的分步标注暂不读")
+                                                         reason=f"{self.o.fmt} 数据集的分步标注暂不支持")
             else:
                 self._declared_reader = ds.DeclaredSteps.open(self.o.input_dir)
         return self._declared_reader

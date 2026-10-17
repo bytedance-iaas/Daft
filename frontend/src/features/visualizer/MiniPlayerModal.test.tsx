@@ -211,3 +211,34 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     await waitFor(() => expect(readPrefs().eefOverlay).toMatchObject({ maxGapMs: null }));
   });
 });
+
+describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
+  beforeEach(() => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
+  });
+
+  it('draws the rest at the edges, the pauses and the stuck joints from the motion readings', async () => {
+    const view = await episode(6);                                   // ep 6: an idle head and a mid pause (mock world)
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    const strip = await screen.findByTestId('vz-motion');
+    expect(strip.querySelectorAll('span.idle_head')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.pause')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.still')).toHaveLength(1);
+    expect(strip.querySelector('span.idle_head')?.getAttribute('title')).toContain(zh.viz.motion.idleHead);
+  });
+
+  it('draws nothing when the motion check has no rest readings', async () => {
+    const view = await episode(7);                                   // ep 7: no idle, no pause
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    await screen.findByTestId('vz-progress');
+    expect(screen.queryByTestId('vz-motion')).toBeNull();
+  });
+});

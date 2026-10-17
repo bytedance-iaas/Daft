@@ -7,6 +7,15 @@ import { zh } from '../../locales/zh';
 import type { PlayerClock } from './clock';
 import { useClockValue } from './useClock';
 
+/** A stretch of the arm's motion state on the timeline (the motion strip, design doc 18 §4.6): read from the
+ * motion check's readings and its stuck findings; the labels are the strip's tooltips. */
+export interface MotionSeg {
+  kind: 'idle_head' | 'idle_tail' | 'pause' | 'still' | 'stuck';
+  start: number;
+  end: number;
+  label: string;
+}
+
 /** A finding placed on the timeline (mini player). */
 export interface Evidence {
   id: string;
@@ -83,6 +92,7 @@ export function Progress({
   others,
   evidence,
   events,
+  motion = [],
   focusEvidence,
   onFocusEvidence,
 }: {
@@ -92,6 +102,8 @@ export function Progress({
   others: readonly VizTrack[];
   evidence: readonly Evidence[];
   events: readonly VizEvent[];
+  /** the motion strip under the findings: rest at the edges, pauses, still stretches, stuck joints */
+  motion?: readonly MotionSeg[];
   focusEvidence: string | null;
   onFocusEvidence?: (id: string) => void;
 }) {
@@ -101,6 +113,7 @@ export function Progress({
   const pct = useClockValue(clock, (s) => (tl.duration > 0 ? Math.round((s.t / tl.duration) * 10000) / 100 : 0));
   const extra = others.length;
   const off = extra * ROW;
+  const strip = motion.length ? 10 : 0;
   const dur = tl.duration > 0 ? tl.duration : 1;
   const at = (clientX: number) => {
     const r = box.current?.getBoundingClientRect();
@@ -113,7 +126,7 @@ export function Progress({
     <div
       ref={box}
       className="vz-prog"
-      style={{ height: 34 + off }}
+      style={{ height: 34 + off + strip }}
       onPointerDown={(e) => {
         drag.current = true;
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -179,6 +192,13 @@ export function Progress({
           <span key={`e${i}`} className="event" style={{ left: left(ev.t_s) }} title={`${ev.label} · ${fmtClock(ev.t_s)}`} />
         ))}
       </div>
+      {motion.length ? (
+        <div className="motion" style={{ top: off + 34 }} title={zh.viz.motion.title} data-testid="vz-motion">
+          {motion.map((m, i) => (
+            <span key={i} className={m.kind} style={{ left: left(m.start), width: width(m.start, m.end) }} title={`${m.label} · ${fmtClock(m.start)}–${fmtClock(m.end)}`} />
+          ))}
+        </div>
+      ) : null}
       {tip ? (
         <span className="tip" style={{ left: `${tip.left}%`, display: 'block', top: off - 26 }}>
           {tip.text}
