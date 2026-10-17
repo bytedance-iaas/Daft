@@ -435,3 +435,29 @@ def test_an_unregistered_joint_robot_takes_its_gripper_columns_from_the_names_la
     out2 = check(a, s, 15.0, "joint", "absolute", "joint", "r1lite", "auto", "{}")
     d2 = json.loads(out2["detail"]) if isinstance(out2.get("detail"), str) else out2["detail"]
     assert d2["gripper_jitter"] is None and "没有夹爪列" in d2["gripper_reason"]
+
+
+# ---- 2026-10-18:增量指令的常值小偏置不是「在推」(HABIT 踏板停顿) ----------------------------
+
+def _delta_episode(bias: float, push: float = 0.0, T: int = 400, fps: float = 10.0):
+    """A delta command (±0.03 while moving) with a 6 s halt in the middle where the state freezes; during the halt
+    the command holds ``bias`` (a teleop device at rest is never exactly zero) or keeps pushing at ``push``."""
+    rng = np.random.default_rng(5)
+    t = np.arange(T) / fps
+    cmd = 0.03 * np.sin(t * 0.8)[:, None] * np.ones((1, 6))
+    halt = slice(150, 210)
+    cmd[halt] = push if push else bias
+    state = np.cumsum(cmd, axis=0) * 0.9 + rng.normal(scale=1e-4, size=(T, 6))
+    state[halt] = state[150]
+    state[210:] += state[209] - state[210]
+    return cmd, state
+
+
+def test_a_delta_commands_resting_bias_is_not_a_push():
+    cmd, state = _delta_episode(bias=0.0009)
+    d = motion_quality(cmd, state, 10.0, control_mode="delta", stuck_strategy="increment_vs_pos").detail
+    assert d["stuck"] == 1.0 and not d.get("stuck_joints"), d.get("stuck_joints")
+    # a real push at full amplitude during the same frozen stretch is still stuck
+    cmd2, state2 = _delta_episode(bias=0.0, push=0.03)
+    d2 = motion_quality(cmd2, state2, 10.0, control_mode="delta", stuck_strategy="increment_vs_pos").detail
+    assert d2["stuck"] < 1.0 and d2.get("stuck_joints")
