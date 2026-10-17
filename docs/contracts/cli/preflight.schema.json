@@ -104,6 +104,21 @@
                 }
               }
             },
+            "composed_streams": {
+              "type": "object",
+              "description": "LeRobot: a stream the dataset splits over several columns (Galaxea: action.left_arm, action.left_gripper … with no top-level action) and the reader composes (ingest.split_features): the columns taken, in reading order; the ones left out as rates or sensor readings; the suffixes action and observation.state share (first in both, so command and reading align by index); the composed width. Absent when nothing is split",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["columns", "left_out", "paired", "dim"],
+                "properties": {
+                  "columns": {"type": "array", "items": {"type": "string"}},
+                  "left_out": {"type": "array", "items": {"type": "string"}},
+                  "paired": {"type": "array", "items": {"type": "string"}},
+                  "dim": {"type": "integer", "minimum": 1}
+                }
+              }
+            },
             "topics": {
               "type": "array",
               "description": "mcap: the topics in the first episode file's summary; which of them are cameras and curves is the dataset's field mapping (C7)",

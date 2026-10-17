@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from . import dsfs   # 本地路径与 tos:// 同一套读法(2026-08-21 读端会说 tos://)
+from .split_features import compose as _compose_split, stream_array as _stream
 
 # 语义多数票采样条数:控制模式是数据集级约定,前 N 条足够;懒/急两路同一常数保证一致
 SEMANTICS_VOTE_EPISODES = 100
@@ -98,6 +99,9 @@ def _load_info(dataset_dir: str) -> dict:
             f"'{dataset_dir}' 不是有效的 LeRobot 数据集(缺 meta/info.json)。\n"
             "  应指向单个数据集目录,其结构为: <数据集>/meta/info.json + data/ + videos/")
     info = dsfs.read_json(info_path)
+    # 拆成多列的 action / observation.state(Galaxea:action.left_arm …)拼成一列(split_features;
+    # 读的是内存里这份 info,磁盘上的 info.json 不动)
+    _compose_split(info)
     # lance 后端标记(lerobot-lance-convert 打进 info.json 的):开关关着时给明确
     # 的话 —— 否则会顺着 LeRobot 路径读到"找不到 data parquet"这种误导性报错
     if str(info.get("storage_format") or "") == "lance":
@@ -232,9 +236,8 @@ def _row_v2(dataset_dir: str, info: dict, ep: dict) -> dict:
         "action_space": _infer_action_space(info),
         "proprio_space": _infer_proprio_space(info),
         "instruction": str(tasks[0]) if tasks else "",
-        "action": np.stack(df["action"].to_numpy()).astype(np.float32),
-        "proprio_state": (
-            np.stack(df[state_key].to_numpy()).astype(np.float32) if state_key else None),
+        "action": _stream(df, info, "action"),
+        "proprio_state": _stream(df, info, state_key) if state_key else None,
         "video": videos,
         "timestamps": df["timestamp"].to_numpy().astype(np.float64),
         "fps": float(info["fps"]),
@@ -350,10 +353,8 @@ def _rows_v3_group(dataset_dir: str, info: dict, grp: pd.DataFrame) -> list[dict
             "action_space": _infer_action_space(info),
             "proprio_space": _infer_proprio_space(info),
             "instruction": instruction,
-            "action": np.stack(frames["action"].to_numpy()).astype(np.float32),
-            "proprio_state": (
-                np.stack(frames[state_key].to_numpy()).astype(np.float32)
-                if state_key else None),
+            "action": _stream(frames, info, "action"),
+            "proprio_state": _stream(frames, info, state_key) if state_key else None,
             "video": _v3_video_pointers(dataset_dir, info, ep),
             "timestamps": frames["timestamp"].to_numpy().astype(np.float64),
             "fps": float(info["fps"]),

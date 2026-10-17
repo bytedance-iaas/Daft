@@ -101,10 +101,12 @@ def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, grippe
     elif dof and a.shape[1] == dof:
         ev["joint_absolute"] = 0.35        # 维数对但没极限可验:弱证据
         ev["joint_delta"] = 0.2
-    elif s is not None and s.shape[1] == a.shape[1] and len(s) == len(a) and len(a) >= 10:
+    elif s is not None and s.shape[1] >= a.shape[1] and len(s) == len(a) and len(a) >= 10:
         # 没有规格库(未登记本体):关节位置指令就是关节读数的目标,两者逐列高度相关;幅值在 ±2π 内
-        # (弧度)或 ±360(度)。末端位姿的 xyz 也和自己的读数相关,所以这条只给到 0.8,靠列名和维数门分胜负
-        r = float(np.median(_corr_cols(a, s)))
+        # (弧度)或 ±360(度)。末端位姿的 xyz 也和自己的读数相关,所以这条只给到 0.8,靠列名和维数门分胜负。
+        # 读数比指令宽时取前 a 列(与上面关节-增量一条同口径):拆列拼成的流把与指令配对的列放在最前
+        # (split_features,Galaxea 指令 14 列、读数 24 列)
+        r = float(np.median(_corr_cols(a, s[:, :a.shape[1]])))
         mag_ok = float(np.percentile(np.abs(arm), 99)) <= 2 * np.pi + 1e-6 or float(np.percentile(np.abs(arm), 99)) <= 360.0
         ev["joint_absolute"] = 0.8 * float(np.clip(r, 0, 1)) * (1.0 if mag_ok else 0.3)
         ev["joint_delta"] = 0.1

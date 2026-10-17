@@ -18,9 +18,11 @@ from curation.viz import annotations as A  # noqa: E402
 FPS = 10
 
 
-def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30)) -> str:
+def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30), task_steps: bool = False) -> str:
     """A minimal LeRobot v2.0 dataset: HABIT-like ``low_level_task_index`` + ``meta/subtasks.jsonl`` when
-    ``steps``, an RSS-like ``observation.commander_state`` string column when ``modes``."""
+    ``steps``, an RSS-like ``observation.commander_state`` string column when ``modes``, Galaxea-like per-frame
+    ``task_index`` (+ ``coarse_task_index``) changing inside the episode, labelled by ``meta/tasks.jsonl``, when
+    ``task_steps``."""
     feats = {
         "observation.state": {"dtype": "float32", "shape": [3], "names": ["a", "b", "c"]},
         "action": {"dtype": "float32", "shape": [3], "names": ["a", "b", "c"]},
@@ -30,6 +32,8 @@ def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30)) -> str:
     }
     if steps:
         feats["low_level_task_index"] = {"dtype": "int64", "shape": [1]}
+    if task_steps:
+        feats["coarse_task_index"] = {"dtype": "int64", "shape": [1]}
     if modes:
         feats["observation.commander_state"] = {"dtype": "string", "shape": [1]}
     info = {"codebase_version": "v2.0", "robot_type": "testarm", "total_episodes": len(lengths),
@@ -45,7 +49,8 @@ def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30)) -> str:
         for i, n in enumerate(lengths):
             fh.write(json.dumps({"episode_index": i, "tasks": ["do the thing"], "length": n}) + "\n")
     with open(os.path.join(root, "meta", "tasks.jsonl"), "w") as fh:
-        fh.write(json.dumps({"task_index": 0, "task": "do the thing"}) + "\n")
+        for i, t in enumerate(["do the thing", "push the chair", "pull the chair"] if task_steps else ["do the thing"]):
+            fh.write(json.dumps({"task_index": i, "task": t}) + "\n")
     if steps:
         with open(os.path.join(root, "meta", "subtasks.jsonl"), "w") as fh:
             for i, t in enumerate(["reach", "grasp", "place"]):
@@ -58,6 +63,9 @@ def _v2(root: str, *, steps: bool, modes: bool, lengths=(40, 30)) -> str:
             "episode_index": np.full(n, i), "index": np.arange(start, start + n), "task_index": np.zeros(n, int)})
         if steps:
             df["low_level_task_index"] = np.where(np.arange(n) < n // 3, 0, np.where(np.arange(n) < 2 * n // 3, 1, 2))
+        if task_steps:
+            df["task_index"] = np.where(np.arange(n) < n // 2, 1, 2)
+            df["coarse_task_index"] = np.zeros(n, int)
         if modes:
             df["observation.commander_state"] = ["inference"] * (n - 8) + ["restore"] * 8
         df.to_parquet(os.path.join(root, "data", "chunk-000", f"episode_{i:06d}.parquet"), index=False)
@@ -117,3 +125,13 @@ def test_declared_steps_without_any_source(tmp_path):
     assert r.reason and not r.sources
     out = derive("declared_steps", True, 1.0, r.episode(0).detail, {})
     assert not out.findings and out.unassessable == [{"item": "TASK-1", "reason": "not_applicable", "message_zh": r.reason}]
+
+
+def test_declared_steps_labels_a_per_frame_task_index_from_the_v2_task_table(tmp_path):
+    root = _v2(str(tmp_path / "ds"), steps=False, modes=False, task_steps=True, lengths=(20,))
+    r = DS.DeclaredSteps.open(root)
+    assert [s.format for s in r.sources] == ["task_index"] and r.tasks == {0: "do the thing", 1: "push the chair", 2: "pull the chair"}
+    d = r.episode(0).detail
+    assert [(s["label"], s["frames"]) for s in d["tracks"][0]["segments"]] == [("push the chair", [0, 9]), ("pull the chair", [10, 19])]
+    out = derive("declared_steps", True, 1.0, d, {})
+    assert out.findings[1]["message_zh"].startswith("第 2 步「pull the chair」")

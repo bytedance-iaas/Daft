@@ -405,3 +405,33 @@ def test_idle_edges_follow_the_arm_not_the_leader():
     cmd[5:36, 0] = np.cumsum(np.full(31, 0.05, np.float32))             # the leader creeps from 0.17 s
     d = motion_quality(cmd, state, fps, gripper_dims=(5,), control_mode="absolute").detail
     assert abs(d["idle_head_s"] - 1.2) <= 0.15, d["idle_head_s"]
+
+
+# ---- 2026-10-17:没登记的本体,夹爪列按列名布局 ----------------------------------------------
+
+def test_an_unregistered_joint_robot_takes_its_gripper_columns_from_the_names_layout():
+    """Galaxea r1lite: the semantics preflight is confident (joint / absolute), the embodiment registry does not
+    know the robot, and the names layout says columns 0 and 1 are the grippers - ACT-5 is assessed on them."""
+    from curation.pipeline.episode_checks import make_motion_check
+
+    class _Reg:
+        def get(self, _id):
+            raise KeyError(_id)
+    check = make_motion_check({"checks": {"motion_quality": {"params": {}}}}, _Reg())
+    rng = np.random.default_rng(3)
+    t = np.linspace(0, 20, 300)
+    arms = np.stack([np.sin(t * (1 + 0.2 * j)) for j in range(12)], axis=1)
+    grip = np.stack([(np.sin(t * 0.5) > 0).astype(float), (np.sin(t * 0.7) > 0).astype(float)], axis=1)
+    a = np.concatenate([grip, arms], axis=1)
+    s = a + rng.normal(scale=0.002, size=a.shape)
+    extras = json.dumps({"layout": {"gripper_dims": [0, 1], "angle_dims": [], "rotation_blocks": [], "euler_triplet": False,
+                                    "translation_dims": [], "velocity_dims": [], "hand_dims": [], "source": "names",
+                                    "informative": True}})
+    out = check(a, s, 15.0, "joint", "absolute", "joint", "r1lite", "auto", extras)
+    d = json.loads(out["detail"]) if isinstance(out.get("detail"), str) else out["detail"]
+    assert d["gripper_jitter"] is not None and "gripper_reason" not in d
+    assert not ({"0", "1"} & set(d["smoothness_cols"]))                     # the grippers stay out of the kinematics
+    # without a layout the old answer stands
+    out2 = check(a, s, 15.0, "joint", "absolute", "joint", "r1lite", "auto", "{}")
+    d2 = json.loads(out2["detail"]) if isinstance(out2.get("detail"), str) else out2["detail"]
+    assert d2["gripper_jitter"] is None and "没有夹爪列" in d2["gripper_reason"]

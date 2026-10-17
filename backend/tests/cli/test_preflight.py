@@ -507,3 +507,48 @@ def test_a_dataset_of_images_only_has_no_eef_check(cli, dataset):
                "eef_video_consistency")
     assert (eef["availability"], eef["reason_code"]) == ("unsupported", "missing_input")
     assert eef["reason_args"] == {"missing": ["video"], "video_cause": "none_declared"}
+
+
+def test_a_stream_split_over_columns_is_composed(cli, dataset):
+    """Galaxea's export has no top-level action / observation.state, only action.left_arm, action.left_gripper,
+    action.chassis.velocities … (ingest.split_features): the preflight reads them as one stream each, says what
+    it took and what it left out, and the modules that need the stream stay available."""
+    import glob
+
+    import numpy as np
+    import pandas as pd
+
+    info = json.load(open(f"{dataset}/meta/info.json"))
+    adim = info["features"]["action"]["shape"][0]
+    sdim = info["features"]["observation.state"]["shape"][0]
+    feats = {k: v for k, v in info["features"].items() if k not in ("action", "observation.state")}
+    feats["action.arm"] = {"dtype": "float32", "shape": [adim - 1], "names": [f"/cmd/arm.position[{i}]" for i in range(adim - 1)]}
+    feats["action.gripper"] = {"dtype": "float32", "shape": [1], "names": ["/cmd/gripper.position[0]"]}
+    feats["action.base.velocities"] = {"dtype": "float32", "shape": [2], "names": None}
+    feats["observation.state.arm"] = {"dtype": "float32", "shape": [sdim - 1], "names": None}
+    feats["observation.state.gripper"] = {"dtype": "float32", "shape": [1], "names": None}
+    feats["observation.state.imu"] = {"dtype": "float32", "shape": [3], "names": None}
+    edit_info(dataset, features=feats)
+    for path in glob.glob(f"{dataset}/data/chunk-*/episode_*.parquet"):
+        df = pd.read_parquet(path)
+        a = np.stack(df.pop("action").to_numpy())
+        s = np.stack(df.pop("observation.state").to_numpy())
+        df["action.arm"] = list(a[:, :-1])
+        df["action.gripper"] = list(a[:, -1:])
+        df["action.base.velocities"] = [np.zeros(2, np.float32)] * len(df)
+        df["observation.state.arm"] = list(s[:, :-1])
+        df["observation.state.gripper"] = list(s[:, -1:])
+        df["observation.state.imu"] = [np.zeros(3, np.float32)] * len(df)
+        df.to_parquet(path, index=False)
+    doc = _valid(cli("preflight", "--input", dataset, "--vlm-backend", "ark").doc)
+    assert doc["dataset"]["composed_streams"] == {
+        "action": {"columns": ["action.arm", "action.gripper"], "left_out": ["action.base.velocities"],
+                   "paired": ["arm", "gripper"], "dim": adim},
+        "observation.state": {"columns": ["observation.state.arm", "observation.state.gripper"],
+                              "left_out": ["observation.state.imu"], "paired": ["arm", "gripper"], "dim": sdim}}
+    assert any(w.startswith("action is composed from 2 columns (action.arm, action.gripper), ") and
+               w.endswith("left out as rates, sensor readings or derived poses: action.base.velocities") for w in doc["warnings"])
+    for mid in ("kinematic_limits", "motion_quality", "video_action_sync"):
+        assert _mod(doc, mid)["availability"] == "available", mid
+    # the visualizer's field tree still lists the columns as declared, not the composed stream
+    assert "action" not in [f["key"] for f in doc["dataset"]["features"]]

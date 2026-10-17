@@ -81,8 +81,11 @@ class DeclaredSteps:
         for s in self.sources:
             if s.table and s.table not in self.lookups and s.format in ("subtask_index", "index_table"):
                 self.lookups[s.table] = self._lookup(s.table)
-        if any(s.format == "task_index" for s in self.sources):
-            self.tasks = lr._load_tasks_map(input_dir) if hasattr(lr, "_load_tasks_map") else {}
+        for s in self.sources:
+            if s.format == "task_index":
+                # the task table: v3's tasks.parquet (the reader's map), else the source's own table (v2's tasks.jsonl)
+                self.tasks = lr._load_tasks_map(input_dir) or (self._lookup(s.table) if s.table else {})
+                break
         return self
 
     def _lookup(self, rel: str) -> dict[int, str]:
