@@ -287,6 +287,34 @@ def test_boundaries_are_scored_by_position_and_per_source(tmp_path):
     assert (m2["matched"], m2["extra"]) == (1, 2)
 
 
+def test_the_episodes_end_is_nobodys_boundary(tmp_path):
+    """The last step ends where the recording stops (HABIT: 22 of 65 expected boundaries); no detector can find that,
+    so a boundary within half a frame of the episode's length - read from a record's ``n_frames`` (else a
+    ``duration_s``) - leaves both sides and is counted apart."""
+    exp = expectation(episode(0, phenomena=[{"item": "TASK-1", "intervals": STEPS}]),              # 80 frames: ends at 8.0 s
+                      episode(1, phenomena=[{"item": "TASK-1", "intervals": [{"start_s": 0.0, "end_s": 3.0}, {"start_s": 3.0, "end_s": 6.0}]}]))
+    r0 = record2(0, "declared_steps", [_declared("step_declared", frames=[0, 19]), _declared("step_declared", frames=[20, 49]),
+                                       _declared("step_declared", frames=[50, 79])])
+    r0["details"] = {"n_frames": 80}
+    d0 = record2(0, "motion_quality", [finding("step_detected", "TASK-1", time_s=[2.1, 2.1]), finding("step_detected", "TASK-1", time_s=[7.98, 7.98])])
+    r1 = record2(1, "timestamp_check")
+    r1["readings"] = {"duration_s": 6.0}
+    d1 = record2(1, "motion_quality", [finding("step_detected", "TASK-1", time_s=[3.2, 3.2])])
+    b = score2(tmp_path, exp, [r0, d0, r1, d1], fps=10)["items"]["TASK-1"]["boundaries"]
+    # episode 0 keeps 2.0 and 5.0 (8.0 is the end), episode 1 keeps 3.0 (6.0 is the end)
+    assert (b["declared"]["expected"], b["declared"]["at_episode_end"], b["declared"]["matched"], b["declared"]["extra"]) == (3, 2, 2, 0)
+    assert S.episode_end_s({"declared_steps": {0: r0}}, 0, 10.0) == 8.0 and S.episode_end_s({"t": {1: r1}}, 1, None) == 6.0
+    assert S.episode_end_s({"m": {0: d0}}, 0, 10.0) is None
+    m = b["detected"]
+    assert (m["expected"], m["at_episode_end"], m["matched"], m["extra"]) == (3, 2, 2, 0)      # 7.98 is the end too, not extra
+    assert m["recall"] == round(2 / 3, 4) and m["precision"] == 1
+    assert "| TASK-1 | declared | 2 (1) | 3 (+2 at the end) | 2 |" in S.markdown(score2(tmp_path, exp, [r0, d0, r1, d1], fps=10))
+    # without a record that says how long the episode is, nothing is left out (and 7.98 then counts as finding 8.0)
+    r0b = dict(r0, details={})
+    b2 = score2(tmp_path / "again", exp, [r0b, d0, d1], fps=10)["items"]["TASK-1"]["boundaries"]
+    assert (b2["declared"]["expected"], b2["declared"]["at_episode_end"], b2["detected"]["matched"], b2["detected"]["extra"]) == (5, 0, 3, 0)
+
+
 def test_frame_positions_need_the_runs_fps_and_unassessed_episodes_stay_in_the_denominator(tmp_path):
     exp = expectation(episode(0, phenomena=[{"item": "TASK-1", "intervals": STEPS}]),
                       episode(1, phenomena=[{"item": "TASK-1", "intervals": [{"start_s": 0.0, "end_s": 3.0}]}]))
