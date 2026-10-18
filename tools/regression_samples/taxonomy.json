@@ -1336,7 +1336,8 @@
    "platform": "**有读数（实测）**：状态量从第 70 帧起沿用旧值，运动质量的 `stuck` 子项给 0 并定位到冻结段，但综合分 0.93 放行",
    "platform_status": "部分",
    "platform_codes": [
-    "motion_quality.stuck"
+    "motion_quality.stuck",
+    "motion_quality.stuck_declared"
    ],
    "platform_conditions": [
     "数据集要有状态量"

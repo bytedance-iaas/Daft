@@ -51,6 +51,7 @@ KIN_EE = {"mode": "ee", "n_violations": 3, "violations": [
 KIN_DOF = {"reason": "关节数 6 与 franka 规格表的 7 个关节对不上(…)"}
 KIN_DRAFT = {"reason": "agibot 极限表不可用于硬判(quality=draft),仅做了格式校验"}
 
+MQ_STUCK_DECLARED = None  # filled below MQ_STUCK
 MQ_STUCK = {"accel_rms": 0.3878, "spike_frames": [], "spike_isolation": 1.12,
             "gripper_reason": "本数据集没有夹爪列(规格档未配置 gripper_dims)", "saturation_gap_ratio": 0.1027,
             "stuck_strategy": "cmd_delta_vs_pos",
@@ -69,6 +70,8 @@ MQ_NO_STATE = {"accel_rms": 0.3878, "spike_frames": [], "gripper_reason": "本�
                "active_ratio": 0.8543, "idle_head_s": 0.0, "idle_tail_s": 2.9, "smoothness": 0.8311,
                "path_efficiency": 0.1989, "spike": 1.0, "joint_stability": 1.0, "gripper_jitter": None,
                "actuator_saturation": None, "stuck": None, "fluency": 1.0}
+MQ_STUCK_DECLARED = {**MQ_STUCK, "stuck_joints": [{**MQ_STUCK["stuck_joints"][0], "declared_step": {
+    "track": "human_role_subtask_index", "label": "Pick up the organizing box extended by the robot.", "frames": [40, 120]}}]}
 
 VQ = {"sharpness": 1.0, "exposure": 1.0, "integrity": 0.0, "dead_ratio": 0.0, "frozen_ratio": 1.0, "n_frames": 12,
       "per_camera": {"observation.images.front": 1.0, "observation.images.wrist": 0.0},
@@ -341,6 +344,8 @@ CASES = [
     ("kinematic_limits", False, None, KIN_DOF, {"data_invalid"}, set()),
     ("kinematic_limits", None, None, KIN_DRAFT, set(), {"ACT-4"}),
     ("motion_quality", None, 0.8177, MQ_STUCK, {"stuck"}, {"ACT-5"}),
+    # 8.13: the frozen stretch lies inside a step the dataset gives to the person: a protocol halt, informational
+    ("motion_quality", None, 0.8177, MQ_STUCK_DECLARED, {"stuck_declared"}, {"ACT-5"}),
     # 8.7: a jagged stretch on the reading (the answer key's sawtooth) next to the stuck joint
     ("motion_quality", None, 0.8177, {**MQ_STUCK, "jagged_amp": 0.12, "jagged": [
         {"col": 0, "stream": "state", "start": 90, "end": 209, "amp_rel": 0.12, "step_corr": -0.98}]}, {"stuck", "jagged"}, {"ACT-5"}),
@@ -536,6 +541,10 @@ def test_intervals_scopes_and_readings():
     assert gap["frames"] == [89, 90] and gap["readings"]["gaps"] == [{"frame": 89, "dt_s": 1.1}]
     stuck = _record("motion_quality", None, 0.8, MQ_STUCK)["findings"][0]
     assert stuck["frames"] == [49, 92] and stuck["scope"] == {"channel": "joint 2"}
+    halt = _record("motion_quality", None, 0.8, MQ_STUCK_DECLARED)["findings"][0]
+    assert halt["code"] == "stuck_declared" and halt["item"] == "ACT-8" and halt["severity"] == "low"
+    assert halt["frames"] == [49, 92] and halt["readings"]["declared_step"]["frames"] == [40, 120]
+    assert halt["message_zh"] == "关节 2 第 50–93 帧指令在变、读数不动，整段都在数据集标注的人的分步『Pick up the organizing box extended by the robot.』里，是协议停机，不算故障"
     idle = next(f for f in _record("motion_quality", None, 0.49, MQ_IDLE)["findings"] if f["code"] == "idle_opening")
     assert idle["time_s"] == [0.0, 2.0]
     spike = next(f for f in _record("motion_quality", None, 0.49, MQ_IDLE)["findings"] if f["code"] == "spike")

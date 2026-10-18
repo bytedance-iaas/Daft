@@ -135,3 +135,24 @@ def test_declared_steps_labels_a_per_frame_task_index_from_the_v2_task_table(tmp
     assert [(s["label"], s["frames"]) for s in d["tracks"][0]["segments"]] == [("push the chair", [0, 9]), ("pull the chair", [10, 19])]
     out = derive("declared_steps", True, 1.0, d, {})
     assert out.findings[1]["message_zh"].startswith("第 2 步「pull the chair」")
+
+
+def test_human_segments_and_the_stuck_stretches_inside_them():
+    """8.13: a stuck stretch entirely inside a segment the dataset gives to the person is a protocol halt; one that
+    only touches such a segment is not marked. Human segments come from a human-named track or an intervention flag."""
+    detail = {"tracks": [
+        {"key": "low_level_task_index", "segments": [{"frames": [0, 99], "label": "robot step"}]},
+        {"key": "human_role_subtask_index", "segments": [{"frames": [0, 40], "label": "human a"}, {"frames": [41, 99], "label": "human b"}]},
+        {"key": "flags", "segments": [{"frames": [60, 70], "label": "is_intervention_segment", "flags": ["is_intervention_segment"]},
+                                      {"frames": [80, 85], "label": "is_pad", "flags": ["is_pad"]}]}]}
+    segs = DS.human_segments(detail)
+    assert [(s["track"], s["frames"]) for s in segs] == [("human_role_subtask_index", [0, 40]), ("human_role_subtask_index", [41, 99]),
+                                                         ("flags", [60, 70])]
+    stuck = [{"joint": 1, "freeze_start_frame": 10, "freeze_end_frame": 30},     # inside human a
+             {"joint": 2, "freeze_start_frame": 35, "freeze_end_frame": 50},     # straddles a -> b: stays stuck
+             {"joint": 3, "freeze_start_frame": 62, "freeze_end_frame": 68},     # inside human b (and the intervention)
+             {"joint": 4}]
+    assert DS.mark_declared_halts(stuck, segs) == 2
+    assert stuck[0]["declared_step"] == {"track": "human_role_subtask_index", "label": "human a", "frames": [0, 40]}
+    assert "declared_step" not in stuck[1] and stuck[2]["declared_step"]["label"] == "human b" and "declared_step" not in stuck[3]
+    assert DS.human_segments({"tracks": [{"key": "low_level_task_index", "segments": [{"frames": [0, 9], "label": "x"}]}]}) == []

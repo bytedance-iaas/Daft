@@ -675,9 +675,19 @@ def _motion_quality(passed, score, d, p) -> Derived:
             continue
         a, b = s.get("freeze_start_frame"), s.get("freeze_end_frame")
         joint = s.get("joint")
-        out.add(m, "stuck", f"关节 {joint} 卡死：第 {int(a) + 1}–{int(b) + 1} 帧指令在变、读数不动" if a is not None and b is not None
-                else f"关节 {joint} 卡死", scope={"channel": f"joint {joint}"},
-                frames=(int(a), int(b)) if a is not None and b is not None else None,
+        span = f"第 {int(a) + 1}–{int(b) + 1} 帧" if a is not None and b is not None else ""
+        declared = s.get("declared_step") if isinstance(s.get("declared_step"), dict) else None
+        if declared:
+            # 8.13: the whole stretch lies inside a step the dataset gives to the person: the protocol halted the robot
+            label = str(declared.get("label") or "")
+            out.add(m, "stuck_declared",
+                    f"关节 {joint} {span}指令在变、读数不动，整段都在数据集标注的人的分步『{label[:60]}』里，是协议停机，不算故障",
+                    scope={"channel": f"joint {joint}"}, frames=(int(a), int(b)) if span else None,
+                    readings={"max_dead_run": s.get("max_dead_run"), "declared_step": declared})
+            continue
+        out.add(m, "stuck", f"关节 {joint} 卡死：{span}指令在变、读数不动" if span else f"关节 {joint} 卡死",
+                scope={"channel": f"joint {joint}"},
+                frames=(int(a), int(b)) if span else None,
                 readings={"max_dead_run": s.get("max_dead_run")})
     head, tail = _num(d.get("idle_head_s")), _num(d.get("idle_tail_s"))
     if head is not None and head >= p["idle_edge_min_s"]:

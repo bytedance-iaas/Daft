@@ -13,6 +13,11 @@ inference -> restore). This module reads the same columns of one episode and rep
 
 Datasets without any of these are not assessed (TASK-1 ``not_applicable``: the dataset declares no steps).
 Only LeRobot v2 / v3 datasets are read; mcap and Lance are reported as not assessed for now.
+
+Since 8.13 the tracks that declare a *human's* turn (a column named with ``human`` - HABIT's
+``human_role_subtask_index`` - or an ``intervention`` flag) also serve the motion check: a stuck stretch that lies
+entirely inside one such segment is the protocol halting the robot while the person works, not an actuator fault
+(``mark_declared_halts``; the finding becomes ``stuck_declared``, an informational one).
 """
 from __future__ import annotations
 
@@ -192,3 +197,44 @@ def _frame_at(times: list[float], t: float) -> int:
     step = float(np.median(np.diff(arr))) if len(arr) > 1 else 0.0
     i = int(np.searchsorted(arr, float(t) - 0.5 * step, side="left"))
     return max(0, min(i, len(arr)))
+
+
+#: a declared track is a human's turn when its column is named with one of these words, or its flags say so
+HUMAN_TRACK_WORDS = ("human", "intervention")
+
+
+def human_segments(detail: dict) -> list[dict]:
+    """The segments of ``detail["tracks"]`` (an ``episode()`` detail) during which the dataset says a person is
+    acting: every segment of a track whose key names a human, plus flag segments flagged as an intervention.
+    Each is ``{"track", "label", "frames": [first, last]}``."""
+    out = []
+    for t in detail.get("tracks") or []:
+        key = str(t.get("key") or "").lower()
+        by_name = any(w in key for w in HUMAN_TRACK_WORDS)
+        for sg in t.get("segments") or []:
+            flags = [str(f).lower() for f in (sg.get("flags") or [])]
+            if by_name or any("intervention" in f for f in flags):
+                fr = sg.get("frames")
+                if isinstance(fr, (list, tuple)) and len(fr) == 2:
+                    out.append({"track": t.get("key"), "label": sg.get("label"), "frames": [int(fr[0]), int(fr[1])]})
+    return out
+
+
+def mark_declared_halts(stuck_joints: list, segments: list[dict]) -> int:
+    """Mark every stuck stretch (``freeze_start_frame`` .. ``freeze_end_frame``, inclusive) that lies entirely
+    inside one declared human segment with that segment (``declared_step``); one that only touches a segment is
+    left as it is. Returns how many were marked."""
+    n = 0
+    for s in stuck_joints or []:
+        if not isinstance(s, dict):
+            continue
+        a, b = s.get("freeze_start_frame"), s.get("freeze_end_frame")
+        if a is None or b is None:
+            continue
+        for seg in segments:
+            lo, hi = seg["frames"]
+            if lo <= int(a) and int(b) <= hi:
+                s["declared_step"] = {"track": seg["track"], "label": seg["label"], "frames": [lo, hi]}
+                n += 1
+                break
+    return n

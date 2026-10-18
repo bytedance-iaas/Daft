@@ -1,5 +1,5 @@
 {
- "registry_version": "8.12",
+ "registry_version": "8.13",
  "taxonomy_version": "2.1",
  "blocks": [
   {
@@ -1417,6 +1417,15 @@
      "item": "ACT-8",
      "name_zh": "执行器卡死",
      "severity": "medium",
+     "level": "info",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
+     "code": "stuck_declared",
+     "item": "ACT-8",
+     "name_zh": "人的分步里的停机",
+     "severity": "low",
      "level": "info",
      "scope_kind": "channel",
      "appealable": false

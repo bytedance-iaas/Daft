@@ -184,6 +184,12 @@ declared one by the regression scorer (score 2.1, boundaries by source). Measure
 tolerance: HABIT (22 episodes, 43 pedal boundaries) pauses recall 0.56 / precision 0.49 at min_score 0.3, both cues
 0.93 / 0.24; Galaxea arrange_mineral_water_bottles (10 / 75) grippers 0.75 / 0.70; push_in_chairs (2 / 5) nothing -
 a step with neither cue is what a picture-reading track would add.
+8.13 (2026-10-18): ``motion_quality`` tells a protocol halt from a stuck actuator: a frozen stretch that lies
+entirely inside a segment the dataset declares as the person's turn (a ``human``-named step column such as HABIT's
+``human_role_subtask_index``, or an ``intervention`` flag; read through the declared-steps reader) is reported as
+``stuck_declared`` (ACT-8, low) instead of ``stuck``; a stretch that only touches such a segment stays ``stuck``.
+On HABIT (22 episodes) 110 of 117 stuck findings are such halts - the human track there covers the whole episode,
+so the rule leaves only the stretches that straddle a human step boundary.
 """
 from __future__ import annotations
 
@@ -191,7 +197,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "8.12"
+REGISTRY_VERSION = "8.13"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "2.1"
 
@@ -745,6 +751,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("actuator_saturation", "ACT-4", "执行器饱和", "medium", scope_kind="channel"),
                _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),
                _info("stuck", "ACT-8", "执行器卡死", "medium", scope_kind="channel"),
+               # 8.13 (2026-10-18): the stretch lies inside a step the dataset gives to the person (HABIT's pedal
+               # halt while the human works at the robot): the protocol, not a fault - an informational finding
+               _info("stuck_declared", "ACT-8", "人的分步里的停机", "low", scope_kind="channel"),
                _info("fluency_low", "TASK-7", "操作不流畅"),
                # 8.9 (2026-10-16): the idle edges are TASK-11, not the step boundaries (TASK-1)
                _info("idle_opening", "TASK-11", "开头空转"),
