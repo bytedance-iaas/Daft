@@ -34,24 +34,68 @@ from ..core.contract import CheckResult
 MIN_RUN_S, FLOOR_PCT, LO_MULT, LO_ABS, LO_CAP, HI_MULT = 0.3, 10, 3.0, 0.005, 0.02, 2.0
 #: a gripper event closer than this to the previous one on the same column is bounce, not a step
 GRIPPER_GAP_S = 0.5
+#: the gripper reading is median-filtered over this long before an event is read off it (HABIT's bounce)
+GRIPPER_SETTLE_S = 0.5
+#: an event is the filtered reading crossing out of this band of its range (hysteresis: 40 % down, 60 % up)
+GRIPPER_BAND = (0.4, 0.6)
 #: candidates closer than this merge
 MERGE_S = 0.5
 GRIPPER_SCORE = 0.8
+#: the end of a pause scores this fraction of its start. On HABIT every matched pause start left its resume as an
+#: extra (48 of 111 extras, 2026-10-18) and at half score the sample sets still lost precision (HABIT 0.35 -> 0.27)
+#: for one more boundary on Galaxea push_in_chairs, whose labels sit on the resumes after 3 s waits; so a resume
+#: stays a reading (0.25 x 1.0 < min_score 0.3) unless a task lowers min_score or raises pause_ref_s's reach
+RESUME_FACTOR = 0.25
 #: defaults of the module's parameters
 MIN_SCORE = 0.3
 PAUSE_REF_S = 3.0
 
 
+def _lag1_rho(d: np.ndarray) -> float:
+    x, y = d[:-1] - d[:-1].mean(), d[1:] - d[1:].mean()
+    sx, sy = float(np.sqrt(np.dot(x, x))), float(np.sqrt(np.dot(y, y)))
+    return float(np.dot(x, y) / (sx * sy)) if sx > 0.0 and sy > 0.0 else 0.0
+
+
+def voting_columns(state: np.ndarray) -> list[int]:
+    """The columns that may say the body moves: the same eligibility as motion_quality's rest rule - a column
+    whose whole range is only a few of its typical steps never moved (a sensor's noise, a 4 mm torso reading
+    that jumps once), so it gets no vote; a small, coherent back-and-forth keeps its vote through the lag-1
+    coherence of its steps. Without it a column like that, normalized by its tiny range, reads as perpetual
+    motion and no pause is ever seen (Galaxea 2026-10-18: 0 of 829 frames at rest)."""
+    s = np.asarray(state, dtype=np.float64)
+    if s.ndim != 2 or len(s) < 2:
+        return []
+    steps = len(s) - 1
+    k = min(20.0, max(4.0, 0.5 * steps))
+    out = []
+    for j in range(s.shape[1]):
+        d = np.diff(s[:, j])
+        pos = np.abs(d)[np.abs(d) > 0]
+        if not len(pos):
+            continue
+        med = float(np.median(pos))
+        span = float(s[:, j].max() - s[:, j].min())
+        ok = span >= k * med
+        if not ok and steps >= 8 and span >= 4.0 * med:
+            ok = _lag1_rho(d) >= 0.5
+        if ok and span > 0.0:
+            out.append(j)
+    return out
+
+
 def normalized_speed(state: np.ndarray, fps: float) -> np.ndarray:
-    """Per-frame speed (range/s) of the state's moving columns normalized by their range; length T-1."""
+    """Per-frame speed (range/s) of the state's voting columns (``voting_columns``) normalized by their range;
+    length T-1. Nothing votes: zeros (no claim of motion, none of rest either - the caller sees no pause)."""
     s = np.asarray(state, dtype=np.float64)
     if s.ndim != 2 or len(s) < 2:
         return np.zeros(max(len(s) - 1, 0))
-    rng = s.max(0) - s.min(0)
-    keep = rng > 1e-9
-    if not keep.any():
+    cols = voting_columns(s)
+    if not cols:
         return np.zeros(len(s) - 1)
-    n = (s[:, keep] - s[:, keep].min(0)) / rng[keep]
+    s = s[:, cols]
+    rng = s.max(0) - s.min(0)
+    n = (s - s.min(0)) / rng
     return np.linalg.norm(np.diff(n, axis=0), axis=1) * float(fps)
 
 
@@ -97,20 +141,36 @@ def rest_segments(v: np.ndarray, fps: float) -> list[tuple[int, int]]:
 
 
 def gripper_events(g: np.ndarray, fps: float, min_gap_s: float = GRIPPER_GAP_S) -> list[tuple[int, str]]:
-    """``(frame, "grasp" | "release")`` where a gripper column crosses the middle of its range, debounced."""
+    """``(frame, "grasp" | "release")`` where a gripper column settles on the other side of its range. The
+    reading is median-filtered over ``GRIPPER_SETTLE_S`` (HABIT's gripper bounces 0.27 -> 1.0 -> 0.37 -> 0.87
+    inside the second it closes: every crossing of the middle counted as an event before, 2026-10-18), then it
+    has to cross a 40 % / 60 % band (hysteresis) and stay there; events closer than ``min_gap_s`` are one."""
     g = np.asarray(g, dtype=np.float64).ravel()
     if len(g) < 2:
         return []
     rng = float(g.max() - g.min())
     if rng < 1e-9:
         return []
-    b = (g > g.min() + 0.5 * rng).astype(int)
-    d = np.diff(b)
+    w = int(np.ceil(GRIPPER_SETTLE_S * fps))
+    w = max(1, w + (1 - w % 2))                         # odd window
+    if w > 1 and len(g) > w:
+        pad = w // 2
+        padded = np.concatenate([np.full(pad, g[0]), g, np.full(pad, g[-1])])
+        g = np.median(np.lib.stride_tricks.sliding_window_view(padded, w), axis=1)
+    lo, hi = g.min() + GRIPPER_BAND[0] * rng, g.min() + GRIPPER_BAND[1] * rng
+    state = bool(g[0] > (lo + hi) / 2)
     out: list[tuple[int, str]] = []
-    for i in np.where(d != 0)[0] + 1:
-        if out and (i - out[-1][0]) / fps < min_gap_s:
+    for i in range(1, len(g)):
+        if not state and g[i] > hi:
+            state, kind = True, "grasp"
+        elif state and g[i] < lo:
+            state, kind = False, "release"
+        else:
             continue
-        out.append((int(i), "grasp" if d[i - 1] > 0 else "release"))
+        if out and (i - out[-1][0]) / fps < min_gap_s:
+            out.pop()                                   # an excursion shorter than the gap: neither edge is an event
+            continue
+        out.append((int(i), kind))
     return out
 
 
@@ -128,8 +188,13 @@ def candidates(stream: np.ndarray, fps: float, gripper_dims, *, pause_ref_s: flo
         if a == 0 or b >= len(v):                   # the head and the tail idle are TASK-11, not a step
             continue
         dur = (b - a) / fps
-        out.append({"frame": int(a), "t_s": round(a / fps, 3), "cue": "pause",
-                    "score": round(min(1.0, dur / pause_ref_s), 2), "dur_s": round(dur, 2)})
+        score = round(min(1.0, dur / pause_ref_s), 2)
+        # both ends of a pause are candidates: a step ends when the body stops (pause), and the next one
+        # starts when it moves again (resume) - Galaxea's step labels and RSS 2026's task end sit on the resume
+        # (2026-10-18: push_in_chairs ep15 declared 43.7 s, the pause there ends at 43.87 s and starts at 40.6 s)
+        out.append({"frame": int(a), "t_s": round(a / fps, 3), "cue": "pause", "score": score, "dur_s": round(dur, 2)})
+        out.append({"frame": int(b), "t_s": round(b / fps, 3), "cue": "resume",
+                    "score": round(min(1.0, dur / pause_ref_s) * RESUME_FACTOR, 2), "dur_s": round(dur, 2)})
     g = np.asarray(gripper_stream, dtype=np.float64) if gripper_stream is not None else s
     for j in dims:
         if j >= g.shape[1]:

@@ -132,9 +132,9 @@
       "why": "split streams (2026-10-17): validate_info accepts a dataset whose action is split over action.<part> columns that split_features composes; everything else unchanged."
     },
     "ingest/split_features.py": {
-      "blob": "17591a57e9b09cc1e35184fa3775240f3f1290d4",
+      "blob": "5556f4f636b602ca5adb7020637fbaac9952793b",
       "since": "feat/declared-steps-timeline (2026-10-17)",
-      "why": "new (2026-10-17): the composition of split streams - which sub-columns make up action / observation.state (rates, sensor readings and derived poses left out), the paired columns first in both, per-dimension names; used by the reader, info validation and the preflight (composed_streams)."
+      "why": "new (2026-10-17): the composition of split streams - which sub-columns make up action / observation.state (rates, sensor readings and derived poses left out), the paired columns first in both, per-dimension names; used by the reader, info validation and the preflight (composed_streams). | 2026-10-18: a dimension whose own name says rate (Galaxea's observation.state.chassis carries feedback_chassis.velocity[0..2] beside the positions) stays out of the composed stream (keep / dropped per column; stream_array stacks only the kept dimensions). Parity: a dataset without such names composes exactly as before; Galaxea's state goes from 24 to 21 dimensions and its pauses become visible to step_detection (push_in_chairs ep2: 0 -> several rest segments)."
     }
   }
 }

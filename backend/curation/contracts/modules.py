@@ -183,7 +183,12 @@ closing (score 0.8) - and reports the ones at or above ``min_score`` as ``step_c
 declared one by the regression scorer (score 2.1, boundaries by source). Measured on the sample sets at a 1 s
 tolerance: HABIT (22 episodes, 43 pedal boundaries) pauses recall 0.56 / precision 0.49 at min_score 0.3, both cues
 0.93 / 0.24; Galaxea arrange_mineral_water_bottles (10 / 75) grippers 0.75 / 0.70; push_in_chairs (2 / 5) nothing -
-a step with neither cue is what a picture-reading track would add.
+a step with neither cue is what a picture-reading track would add. 2026-10-18: the end of a pause (``resume``) is a
+candidate too, at a quarter of its pause's score - a reading, not a finding, at the default min_score (Galaxea's
+labels and RSS 2026's task end sit where the body moves again, HABIT's never do, and reporting resumes cost more
+precision on the sample sets than the boundaries they found); the
+gripper reading is median-filtered over 0.5 s and read through a 40 / 60 % band (HABIT's bouncing gripper gave
+four events per grasp); columns that never moved (motion_quality's eligibility) do not vote on the pauses.
 8.13 (2026-10-18): ``motion_quality`` tells a protocol halt from a stuck actuator: a frozen stretch that lies
 entirely inside a segment the dataset declares as the person's turn (a ``human``-named step column such as HABIT's
 ``human_role_subtask_index``, or an ``intervention`` flag; read through the declared-steps reader) is reported as

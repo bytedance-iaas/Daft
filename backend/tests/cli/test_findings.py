@@ -321,9 +321,10 @@ DECLARED = {"sources": ["index_table:low_level_task_index", "mode_column:observa
 DECLARED_NONE = {"sources": [], "reason": "数据集没有逐帧的分步或模式标注"}
 STEPDET = {"min_score": 0.3, "pause_ref_s": 3.0, "fps": 10.0, "gripper_dims": [6], "stream": "state", "n_frames": 300,
            "candidates": [{"frame": 100, "t_s": 10.0, "cue": "pause", "score": 0.83, "dur_s": 2.5},
+                          {"frame": 125, "t_s": 12.5, "cue": "resume", "score": 0.21, "dur_s": 2.5},
                           {"frame": 180, "t_s": 18.0, "cue": "grasp", "score": 0.8, "column": 6},
                           {"frame": 200, "t_s": 20.0, "cue": "pause", "score": 0.1, "dur_s": 0.3}],
-           "n_candidates": 3, "n_reported": 2, "cues": {"pause": 2, "grasp": 1}}
+           "n_candidates": 4, "n_reported": 2, "cues": {"pause": 2, "resume": 1, "grasp": 1}}
 
 CASES = [
     ("declared_steps", True, 1.0, DECLARED, {"step_declared", "task_end_declared"}, set()),

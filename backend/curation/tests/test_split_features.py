@@ -171,3 +171,31 @@ def test_the_semantics_preflight_reads_a_command_against_a_wider_readings_leadin
     # a reading narrower than the command still says nothing
     pf2 = preflight([{"action": action, "proprio_state": state[:, :10], "fps": 15.0}], names_hint="joint", gripper_hint=(0, 1))
     assert pf2["scores"]["joint_absolute"] <= 0.1
+
+
+def test_dimensions_named_as_rates_inside_a_kept_column_stay_out():
+    """Galaxea's observation.state.chassis is six wide: feedback_chassis.position[0..2] and
+    feedback_chassis.velocity[0..2] - the velocities never rest and hid every pause (2026-10-18)."""
+    feats = dict(GALAXEA)
+    feats["observation.state.chassis"] = {"dtype": "float64", "shape": [6], "names": [
+        f"/hdas/feedback_chassis.position[{i}]" for i in range(3)] + [f"/hdas/feedback_chassis.velocity[{i}]" for i in range(3)]}
+    comp = SF.composition(feats)
+    s = comp["observation.state"]
+    assert s["keep"]["observation.state.chassis"] == [0, 1, 2] and s["dim"] == 24 - 3
+    assert s["dropped"] == [f"chassis.feedback_chassis.velocity[{i}]" for i in range(3)]
+    assert "chassis.feedback_chassis.velocity[0]" not in s["names"] and "chassis.feedback_chassis.position[2]" in s["names"]
+    assert any("dimensions named as rates left out: chassis.feedback_chassis.velocity[0]" in line for line in SF.describe(comp))
+    # the array of a frame follows: the three velocity dimensions are not stacked
+    import pandas as pd
+    info = {"features": feats}
+    SF.compose(info)
+    n = 4
+    frame = pd.DataFrame({k: [np.arange(f["shape"][0], dtype=np.float64) + 10 * i for i in range(n)]
+                          for k, f in feats.items() if k.startswith("observation.state.") and isinstance(f.get("shape"), list)})
+    arr = SF.stream_array(frame, info, "observation.state")
+    assert arr.shape == (n, 24 - 3)
+    # a column whose every dimension is a rate is left out whole
+    feats2 = {k: f for k, f in GALAXEA.items()}
+    feats2["observation.state.chassis"] = {"dtype": "float64", "shape": [6], "names": [f"/hdas/feedback_chassis.velocity[{i}]" for i in range(6)]}
+    comp2 = SF.composition(feats2)
+    assert "observation.state.chassis" in comp2["observation.state"]["left_out"]

@@ -185,7 +185,7 @@ def _declared_steps(passed, score, d, p) -> Derived:
 
 
 #: what a candidate's cue reads as in its finding
-_CUE_ZH = {"pause": "停顿", "grasp": "夹爪合上", "release": "夹爪松开"}
+_CUE_ZH = {"pause": "停顿", "resume": "动起来", "grasp": "夹爪合上", "release": "夹爪松开"}
 
 
 @deriver("step_detection")
@@ -212,10 +212,12 @@ def _step_detection(passed, score, d, p) -> Derived:
         k += 1
         t, fr = float(c.get("t_s") or 0.0), int(c.get("frame") or 0)
         cue = str(c.get("cue") or "")
-        how = f"停了 {float(c.get('dur_s') or 0.0):.1f} 秒" if cue == "pause" else _CUE_ZH.get(cue, cue)
+        dur = float(c.get("dur_s") or 0.0)
+        how = (f"停了 {dur:.1f} 秒" if cue == "pause" else f"停了 {dur:.1f} 秒后动起来" if cue == "resume"
+               else _CUE_ZH.get(cue, cue))
         out.add(m, "step_candidate", f"候选边界 {k}：{t:.1f} 秒（{how}）", frames=(fr, fr), time_s=(t, t),
                 readings={"source": "detected", "cue": cue, "score": sc,
-                          **({"dur_s": c.get("dur_s")} if cue == "pause" else {})})
+                          **({"dur_s": c.get("dur_s")} if cue in ("pause", "resume") else {})})
     out.readings["n_reported"] = k
     return out
 

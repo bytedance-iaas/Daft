@@ -89,11 +89,24 @@ def composition(features: dict) -> dict:
         subs = [(k, w) for k, w in subs if w]
         if not subs:
             continue
-        kept = [k for k, _ in subs if not (set(_tokens(k[len(prefix):])) & RATE_TOKENS)]
+        kept, keep, widths, dropped = [], {}, {}, []
+        for k, w in subs:
+            if set(_tokens(k[len(prefix):])) & RATE_TOKENS:
+                continue
+            # a sub-column's own names can say rate too (Galaxea's observation.state.chassis carries
+            # feedback_chassis.position[0..2] and feedback_chassis.velocity[0..2]): those dimensions stay out
+            names = _names_of(features[k], w)
+            idx = [i for i, n in enumerate(names) if n is None or not (set(_tokens(n)) & RATE_TOKENS)]
+            dropped.extend(short_name(names[i], k[len(prefix):], i) for i in range(w) if i not in idx)
+            if not idx:
+                continue
+            kept.append(k)
+            keep[k] = idx
+            widths[k] = len(idx)
         if not kept:
             continue
         out[stream] = {"columns": kept, "left_out": [k for k, _ in subs if k not in kept],
-                       "widths": {k: w for k, w in subs}}
+                       "widths": widths, "keep": keep, "dropped": dropped}
     if "action" in out and "observation.state" in out:
         a, s = out["action"], out["observation.state"]
         s_by = {k[len("observation.state."):]: k for k in s["columns"]}
@@ -111,8 +124,8 @@ def composition(features: dict) -> dict:
         names = []
         for k in c["columns"]:
             suffix = k[len(stream) + 1:]
-            w = c["widths"][k]
-            names.extend(short_name(n, suffix, i) for i, n in enumerate(_names_of(features[k], w)))
+            raw = _names_of(features[k], _vector(features[k]) or c["widths"][k])
+            names.extend(short_name(raw[i], suffix, i) for i in c["keep"][k])
         c.setdefault("paired", [])
         c["dim"] = len(names)
         c["names"] = names
@@ -145,6 +158,9 @@ def stream_array(frame, info: dict, stream: str, dtype=np.float32) -> np.ndarray
         arr = np.stack(v) if v.dtype == object else np.asarray(v)
         if arr.ndim == 1:
             arr = arr[:, None]
+        idx = (comp.get("keep") or {}).get(col)
+        if idx is not None and len(idx) != arr.shape[1]:
+            arr = arr[:, idx]
         parts.append(arr.astype(dtype))
     return np.concatenate(parts, axis=1)
 
@@ -156,5 +172,7 @@ def describe(comp: dict) -> list[str]:
         line = f"{stream} is composed from {len(c['columns'])} columns ({', '.join(c['columns'])}), {c['dim']} dimensions"
         if c.get("left_out"):
             line += f"; left out as rates, sensor readings or derived poses: {', '.join(c['left_out'])}"
+        if c.get("dropped"):
+            line += f"; dimensions named as rates left out: {', '.join(c['dropped'])}"
         out.append(line)
     return out
