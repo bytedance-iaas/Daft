@@ -158,9 +158,13 @@
 .vz-prog .motion span { position: absolute; top: 0; height: 6px; border-radius: 2px; }
 /* one grey for every kind of rest (the still arm, the edges, the pauses: the tooltips tell them apart), red for stuck;
    the grey sits apart from the findings row's darker grey above */
-.vz-prog .motion span.still, .vz-prog .motion span.pause, .vz-prog .motion span.idle_head, .vz-prog .motion span.idle_tail, .vz-prog .motion-legend .sw.rest { background: #c9cdd4; }
-.vz-prog .motion span.stuck, .vz-prog .motion-legend .sw.stuck { background: var(--c-danger); opacity: 0.85; }
-.vz-prog .motion-legend .sw.steps { background: #e8f7ff; border: 1px solid #9fd4fd; box-sizing: border-box; height: 7px; }
+.vz-prog .motion span.still, .vz-prog .motion span.pause, .vz-prog .motion span.idle_head, .vz-prog .motion span.idle_tail, .vz-prog .motion-legend .sw-rest { background: #c9cdd4; }
+.vz-prog .motion span.stuck, .vz-prog .motion-legend .sw-stuck { background: var(--c-danger); opacity: 0.85; }
+.vz-prog .motion-legend .sw-steps { background: #e8f7ff; border: 1px solid #9fd4fd; box-sizing: border-box; height: 7px; }
+/* the findings row's levels, the chips' own colours */
+.vz-prog .motion-legend .sw-blocking { background: var(--c-danger); opacity: 0.85; height: 5px; }
+.vz-prog .motion-legend .sw-review { background: var(--c-warning); opacity: 0.85; height: 5px; }
+.vz-prog .motion-legend .sw-info { background: var(--c-text-3); opacity: 0.85; height: 5px; }
 /* the legend under the strip: the kinds this episode has, swatch + word, no tooltip needed to read the colours */
 .vz-prog .motion-legend { position: absolute; left: 0; right: 0; height: 18px; display: flex; align-items: center; gap: 12px; font-size: 11px; line-height: 18px; color: var(--c-text-3); cursor: default; white-space: nowrap; overflow: hidden; }
 .vz-prog .motion-legend .item { display: inline-flex; align-items: center; }

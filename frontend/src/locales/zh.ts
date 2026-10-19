@@ -2120,6 +2120,7 @@ export const zh = {
       title: '动作状态：手臂什么时候动、什么时候停',
       legend: '时间线图例',
       rest: '没动',
+      findings: { blocking: '判废的发现', review: '待人工复核的发现', info: '仅报告的发现' } as Record<string, string>,
       idleHead: '开头没动',
       idleTail: '结尾没动',
       pause: '中途停顿',

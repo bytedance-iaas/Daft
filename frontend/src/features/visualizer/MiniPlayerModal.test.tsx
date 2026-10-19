@@ -234,9 +234,12 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     const legend = screen.getByTestId('vz-motion-legend');
     expect(legend).toHaveAccessibleName(zh.viz.motion.legend);
     const trackNames = Array.from(screen.getByTestId('vz-progress').querySelectorAll('.steps[title]')).map((el) => el.getAttribute('title'));
-    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([...trackNames, zh.viz.motion.rest]);
-    expect(legend.querySelectorAll('.sw.steps')).toHaveLength(trackNames.length);
-    expect(legend.querySelector('.sw.stuck')).toBeNull();
+    const levels = (['blocking', 'review', 'info'] as const).filter((lv) => screen.getByTestId('vz-progress').querySelector(`.ev span.${lv}`));
+    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([...trackNames, ...levels.map((lv) => zh.viz.motion.findings[lv]), zh.viz.motion.rest]);
+    expect(legend.querySelectorAll('.sw-steps')).toHaveLength(trackNames.length);
+    expect(legend.querySelector('.sw-stuck')).toBeNull();
+    // the step swatch must not be caught by the step row's own rule (it was drawn as a band over the first word)
+    expect(legend.querySelector('.steps')).toBeNull();
     // every kind of rest is the same grey on the strip; only the tooltip says which
     expect(strip.querySelector('span.pause')?.getAttribute('title')).toContain(zh.viz.motion.pause);
   });
@@ -252,8 +255,8 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     expect(screen.queryByTestId('vz-motion')).toBeNull();
     // the legend then names the step tracks alone: no grey, no red
     const legend = screen.getByTestId('vz-motion-legend');
-    expect(legend.querySelectorAll('.sw.steps').length).toBeGreaterThan(0);
-    expect(legend.querySelector('.sw.rest')).toBeNull();
-    expect(legend.querySelector('.sw.stuck')).toBeNull();
+    expect(legend.querySelectorAll('.sw-steps').length).toBeGreaterThan(0);
+    expect(legend.querySelector('.sw-rest')).toBeNull();
+    expect(legend.querySelector('.sw-stuck')).toBeNull();
   });
 });

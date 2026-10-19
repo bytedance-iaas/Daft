@@ -22,16 +22,18 @@ const LEGEND_H = 18;
 const STRIP_H = 12;
 
 export interface LegendEntry {
-  kind: 'steps' | 'rest' | 'stuck';
+  kind: 'steps' | 'blocking' | 'review' | 'info' | 'rest' | 'stuck';
   label: string;
 }
 
 /** The legend of the progress area: one entry per step track drawn (the dataset's own step annotations, by
- * name), then the motion strip's two colours - rest (still arm, the edges, pauses: one grey) and stuck joints -
- * each only when present. */
-export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: string }[]): LegendEntry[] {
+ * name), the findings row's levels that are placed on the timeline, then the motion strip's two colours - rest
+ * (still arm, the edges, pauses: one grey) and stuck joints - each only when present. */
+export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: string }[], evidence: readonly Evidence[] = []): LegendEntry[] {
   const M = zh.viz.motion;
   const out: LegendEntry[] = tracks.map((t) => ({ kind: 'steps' as const, label: t.name }));
+  const levels = new Set(evidence.filter((e) => e.start !== null && e.end !== null).map((e) => e.level));
+  for (const lv of ['blocking', 'review', 'info'] as const) if (levels.has(lv)) out.push({ kind: lv, label: M.findings[lv] });
   const kinds = new Set(motion.map((m) => m.kind));
   if (['still', 'idle_head', 'idle_tail', 'pause'].some((k) => kinds.has(k as MotionSeg['kind']))) out.push({ kind: 'rest', label: M.rest });
   if (kinds.has('stuck')) out.push({ kind: 'stuck', label: M.stuck });
@@ -138,7 +140,7 @@ export function Progress({
   const strip = motion.length ? STRIP_H : 0;
   // the legend under the strip: the step tracks by name and the strip's colours this episode has; a reader should
   // not need the tooltips to tell the rows and colours apart
-  const legend = legendOf(motion, [...others, ...(track ? [track] : [])]);
+  const legend = legendOf(motion, [...others, ...(track ? [track] : [])], evidence);
   const legendH = legend.length ? LEGEND_H : 0;
   const dur = tl.duration > 0 ? tl.duration : 1;
   const at = (clientX: number) => {
@@ -229,7 +231,7 @@ export function Progress({
         <div className="motion-legend" style={{ top: off + 34 + strip }} aria-label={zh.viz.motion.legend} data-testid="vz-motion-legend" onPointerDown={(e) => e.stopPropagation()}>
           {legend.map((l) => (
             <span key={`${l.kind}:${l.label}`} className="item">
-              <i className={`sw ${l.kind}`} />
+              <i className={`sw sw-${l.kind}`} />
               {l.label}
             </span>
           ))}
