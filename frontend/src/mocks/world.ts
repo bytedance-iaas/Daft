@@ -1274,6 +1274,8 @@ function errorRecord(ep: number, module: string, incident: { step: string; cause
 // The main task's per-episode readings, shaped like the details the checks write (the Episode tab renders them):
 // four episodes with a stuck actuator, six with a sync reading worth a look.
 export const STUCK = [8, 21, 34, 46];
+/** of those, one whose second halt lies inside a declared human step (stuck_declared, 8.13) */
+export const STUCK_DECLARED = [21];
 export const SYNC_NOTE: Record<number, 'annotated' | 'no_motion' | 'suspect' | 'undecidable'> = { 12: 'annotated', 20: 'no_motion', 26: 'suspect', 35: 'undecidable', 5: 'undecidable', 41: 'undecidable' };
 
 /** A small deterministic generator (the mockups' rng). */
@@ -1465,6 +1467,7 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
   const sync = SYNC_NOTE[ep];
   const motionFindings: Finding[] = [];
   if (STUCK.includes(ep)) motionFindings.push(finding('motion_quality', 'stuck', '关节 3 从第 40 帧到第 95 帧卡住不动', { frames: [40, 95], scope: { channel: 'joint_3' } }));
+  if (STUCK_DECLARED.includes(ep)) motionFindings.push(finding('motion_quality', 'stuck_declared', '关节 3 第 120–150 帧指令在变、读数不动，整段都在数据集标注的人的分步里，是协议停机，不算故障', { frames: [120, 150], scope: { channel: 'joint_3' } }));
   if (ep % 3 === 0) motionFindings.push(finding('motion_quality', 'idle_opening', '开头空转 1.2 秒才开始动作', { time_s: [0, 1.2] }));
   const syncFindings: Finding[] =
     sync === 'annotated'

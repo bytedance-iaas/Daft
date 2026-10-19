@@ -160,6 +160,8 @@
    the grey sits apart from the findings row's darker grey above */
 .vz-prog .motion span.still, .vz-prog .motion span.pause, .vz-prog .motion span.idle_head, .vz-prog .motion span.idle_tail, .vz-prog .motion-legend .sw-rest { background: #c9cdd4; }
 .vz-prog .motion span.stuck, .vz-prog .motion-legend .sw-stuck { background: var(--c-danger); opacity: 0.85; }
+/* a halt the protocol asks for (stuck_declared): the same red, a shade lighter */
+.vz-prog .motion span.stuck_declared, .vz-prog .motion-legend .sw-stuck_declared { background: var(--c-danger); opacity: 0.4; }
 .vz-prog .motion-legend .sw-steps { background: #e8f7ff; border: 1px solid #9fd4fd; box-sizing: border-box; height: 7px; }
 /* the findings row's levels, the chips' own colours */
 .vz-prog .motion-legend .sw-blocking { background: var(--c-danger); opacity: 0.85; height: 5px; }

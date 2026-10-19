@@ -10,7 +10,7 @@ import { useClockValue } from './useClock';
 /** A stretch of the arm's motion state on the timeline (the motion strip, design doc 18 §4.6): read from the
  * motion check's readings and its stuck findings; the labels are the strip's tooltips. */
 export interface MotionSeg {
-  kind: 'idle_head' | 'idle_tail' | 'pause' | 'still' | 'stuck';
+  kind: 'idle_head' | 'idle_tail' | 'pause' | 'still' | 'stuck' | 'stuck_declared';
   start: number;
   end: number;
   label: string;
@@ -22,13 +22,13 @@ const LEGEND_H = 18;
 const STRIP_H = 12;
 
 export interface LegendEntry {
-  kind: 'steps' | 'blocking' | 'review' | 'info' | 'rest' | 'stuck';
+  kind: 'steps' | 'blocking' | 'review' | 'info' | 'rest' | 'stuck' | 'stuck_declared';
   label: string;
 }
 
 /** The legend of the progress area: one entry per step track drawn (the dataset's own step annotations, by
  * name), the findings row's levels that are placed on the timeline, then the motion strip's two colours - rest
- * (still arm, the edges, pauses: one grey) and stuck joints - each only when present. */
+ * (still arm, the edges, pauses: one grey), stuck joints and protocol halts - each only when present. */
 export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: string }[], evidence: readonly Evidence[] = []): LegendEntry[] {
   const M = zh.viz.motion;
   const out: LegendEntry[] = tracks.map((t) => ({ kind: 'steps' as const, label: t.name }));
@@ -37,6 +37,7 @@ export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: 
   const kinds = new Set(motion.map((m) => m.kind));
   if (['still', 'idle_head', 'idle_tail', 'pause'].some((k) => kinds.has(k as MotionSeg['kind']))) out.push({ kind: 'rest', label: M.rest });
   if (kinds.has('stuck')) out.push({ kind: 'stuck', label: M.stuck });
+  if (kinds.has('stuck_declared')) out.push({ kind: 'stuck_declared', label: M.stuckDeclared });
   return out;
 }
 

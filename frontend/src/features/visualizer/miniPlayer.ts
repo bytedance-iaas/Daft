@@ -56,9 +56,12 @@ export function motionStrip(record: ResultRecord | undefined | null, findings: r
     if (at) out.push({ kind: 'idle_tail', start: at[0], end: at[1], label: M.idleTail });
   }
   for (const f of findings) {
-    if (f.module !== 'motion_quality' || f.finding.code !== 'stuck') continue;
+    // stuck joints, and the halts inside a declared human step (8.13): the arm is as still, the cause is the protocol
+    if (f.module !== 'motion_quality' || (f.finding.code !== 'stuck' && f.finding.code !== 'stuck_declared')) continue;
     const at = evidenceRange(f.finding, tl, frames, clock);
-    if (at) out.push({ kind: 'stuck', start: at[0], end: at[1], label: f.finding.message_zh || M.stuck });
+    if (!at) continue;
+    if (f.finding.code === 'stuck') out.push({ kind: 'stuck', start: at[0], end: at[1], label: f.finding.message_zh || M.stuck });
+    else out.push({ kind: 'stuck_declared', start: at[0], end: at[1], label: f.finding.message_zh || M.stuckDeclared });
   }
   return out;
 }

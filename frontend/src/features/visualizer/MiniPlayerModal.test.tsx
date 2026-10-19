@@ -244,6 +244,22 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     expect(strip.querySelector('span.pause')?.getAttribute('title')).toContain(zh.viz.motion.pause);
   });
 
+  it('draws a stuck joint and a protocol halt in their own reds, both in the legend', async () => {
+    const view = await episode(21);                                  // ep 21: a stuck joint and a declared halt (mock world)
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    const strip = await screen.findByTestId('vz-motion');
+    expect(strip.querySelectorAll('span.stuck')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.stuck_declared')).toHaveLength(1);
+    expect(strip.querySelector('span.stuck_declared')?.getAttribute('title')).toContain('协议停机');
+    const legend = screen.getByTestId('vz-motion-legend');
+    const items = Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent);
+    expect(items.slice(-2)).toEqual([zh.viz.motion.stuck, zh.viz.motion.stuckDeclared]);
+  });
+
   it('draws nothing when the motion check has no rest readings', async () => {
     const view = await episode(7);                                   // ep 7: no idle, no pause
     renderWithProviders(

@@ -2126,6 +2126,7 @@ export const zh = {
       pause: '中途停顿',
       still: '手臂静止',
       stuck: '关节卡死',
+      stuckDeclared: '协议停机',
     },
     cell: {
       swap: '更换',
