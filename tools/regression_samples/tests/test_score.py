@@ -260,25 +260,26 @@ def test_boundaries_are_scored_by_position_and_per_source(tmp_path):
     recs = [record2(0, "declared_steps", [_declared("step_declared", frames=[0, 19]), _declared("step_declared", frames=[20, 49]),
                                           _declared("step_declared", frames=[50, 79])]),
             record2(0, "motion_quality", [finding("step_detected", "TASK-1", time_s=[2.4, 2.4]),
-                                          finding("step_detected", "TASK-1", time_s=[6.5, 6.5])]),
+                                          finding("step_detected", "TASK-1", time_s=[9.9, 9.9])]),
             record2(1, "declared_steps", [_declared("task_end_declared", time_s=[5.0, 5.0], frames=[50, 50])]),
             record2(1, "motion_quality", [finding("step_detected", "TASK-1", time_s=[5.2, 5.2])])]
     doc = score2(tmp_path, exp, recs, fps=10)
     row = doc["items"]["TASK-1"]
     assert (row["tp"], row["fn"]) == (2, 0)                                       # presence alone would call this solved
     b = row["boundaries"]
-    assert b["tolerance_s"] == 1.0 and b["ladder_s"] == [0.25, 0.5, 1.0]
+    assert b["tolerance_s"] == 1.5 and b["ladder_s"] == [0.25, 0.5, 1.0]
     d = b["declared"]
     assert (d["episodes"], d["episodes_reported"], d["expected"], d["matched"], d["extra"]) == (2, 2, 4, 4, 0)
     assert d["at"] == {"0.25": 4, "0.5": 4, "1.0": 4} and d["recall"] == 1 and d["precision"] == 1
     assert d["median_err_s"] == 0 and d["p90_err_s"] == 0 and d["episodes_without_clock"] == 0
     m = b["detected"]
-    # episode 0: 2.4 lands on 2.0 (0.4 s), 6.5 lands on nothing; episode 1: 5.2 on 5.0 within its own 0.3 s
+    # episode 0: 2.4 lands on 2.0 (0.4 s), 9.9 lands on nothing (1.9 s past the last boundary); episode 1: 5.2 on 5.0 within
+    # its own 0.3 s
     assert (m["expected"], m["matched"], m["missed"], m["extra"]) == (4, 2, 2, 1)
     assert m["at"] == {"0.25": 1, "0.5": 2, "1.0": 2}
     assert m["precision"] == round(2 / 3, 4) and m["recall"] == 0.5 and m["recall_assessed"] == 0.5
     assert m["median_err_s"] == 0.4 and m["p90_err_s"] == 0.4
-    assert doc["schema_version"] == "2.1" and doc["boundary_tolerance_s"] == 1.0
+    assert doc["schema_version"] == "2.1" and doc["boundary_tolerance_s"] == 1.5
     md = S.markdown(doc)
     assert "**Boundaries**" in md and "| TASK-1 | declared | 2 (2) | 4 | 4 | 4 | 4 | 4 | 0 |" in md
     assert "| TASK-1 | detected | 2 (2) | 4 | 2 | 1 | 2 | 2 | 1 | 0.67 | 0.50 | 0.50 | 0.40 s | 0.40 s |" in md

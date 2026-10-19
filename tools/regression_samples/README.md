@@ -42,7 +42,7 @@ score 2.0（设计 17 §6.1）读平台的运行目录（`checks/<模块>/`、`r
 - 写了位置的现象类期望（`intervals` 分步、`value: task_end` 的 `time_s` / `frames`、`at_s`）另按位置比对（`boundaries`，score 2.1）：
   期望的每段起止各是一个边界（episode 开头不算，上一段的终点就是下一段的起点；episode 结尾也不算：最后一步在录像停下的地方结束，
   谁也测不出来，离记录里 `n_frames` / `duration_s` 算出的结尾半帧以内的边界两边都剔掉，剔掉的个数记在 `at_episode_end`），平台发现的 `time_s`（没有就按预检记的 fps 换算 `frames`）
-  给出平台的边界，两边就近一对一配对，容差取条目的 `boundary_tolerance_s`，没写就用 `--boundary-tolerance`（缺省 1.0 秒）。
+  给出平台的边界，两边就近一对一配对，容差取条目的 `boundary_tolerance_s`，没写就用 `--boundary-tolerance`（缺省 1.5 秒：人打的点或控制器切的模式离机器人身体真正停下、松手的时刻能差到一秒半，RSS 2026 的模式切换比停下早 1.2 秒，Galaxea 的任务表切换比动作晚 1.1 到 1.4 秒，2026-10-18 定）。
   平台边界按来源分开出数：`readings.source = declared` 的（数据集自带标注搬出来的，如 `declared_steps`）是 declared 轨，其余是 detected 轨，
   各给期望数 / 配上数 / 多报数、0.25 / 0.5 / 1.0 秒三档命中、误差中位数与 p90；把答案搬出来不会被记成检测。
 - 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。数据集级发现取结果版本 `report.json` 各小节的

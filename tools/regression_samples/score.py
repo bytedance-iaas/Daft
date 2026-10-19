@@ -18,7 +18,9 @@ detector can find - a boundary within half a frame of the episode's length, read
 ``duration_s``, is left out on both sides and counted as ``at_episode_end``), a platform finding's ``time_s`` (else
 ``frames`` over the run's fps, read from ``preflight.json``) gives the platform's, and the two sets are matched
 nearest-first within a tolerance - the entry's
-``boundary_tolerance_s``, else ``--boundary-tolerance`` (default 1.0 s: a hand-marked step boundary wobbles that much).
+``boundary_tolerance_s``, else ``--boundary-tolerance`` (default 1.5 s: a boundary a person or a controller marks sits
+up to about a second and a half from the body's own pause or release - RSS 2026's mode switch comes 1.2 s before the
+robot stops, Galaxea's task-table switch 1.1-1.4 s after the motion; 2026-10-18).
 The platform's boundaries are kept apart by where they come from: ``readings.source = declared`` (the dataset's own
 labels surfaced, e.g. ``declared_steps``) against everything else (``detected``), so surfacing the answer key never
 reads as detection. Each source gets expected / matched / extra, the hits at 0.25 / 0.5 / 1.0 s, and the error's
@@ -61,7 +63,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 SCHEMA_VERSION = "2.1"
 #: a platform boundary counts as the expected one within this many seconds (the entry's ``boundary_tolerance_s`` wins)
-BOUNDARY_TOLERANCE_S = 1.0
+BOUNDARY_TOLERANCE_S = 1.5
 #: the fixed tolerances every boundary comparison is also reported at
 BOUNDARY_LADDER = (0.25, 0.5, 1.0)
 #: the sources a platform boundary is scored under: the dataset's own labels, or a measurement
@@ -948,7 +950,7 @@ def main(argv=None):
                     help="the EEF module's opinions count as found from this inconsistency confidence on (default 0.7)")
     ap.add_argument("--boundary-tolerance", type=float, default=BOUNDARY_TOLERANCE_S,
                     help="a platform boundary counts as an expected one within this many seconds, unless the entry sets "
-                         "boundary_tolerance_s (default 1.0)")
+                         "boundary_tolerance_s (default 1.5)")
     a = ap.parse_args(argv)
     try:
         exp = load_json(a.expectation)
