@@ -165,12 +165,17 @@ def test_the_semantics_preflight_reads_a_command_against_a_wider_readings_leadin
     action = np.roll(state[:, :14], -1, axis=0) + rng.normal(scale=0.005, size=(300, 14))
     action[:, :2] = (action[:, :2] > 0).astype(float)                    # two grippers, open / closed
     rows = [{"action": action, "proprio_state": state, "fps": 15.0}]
-    pf = preflight(rows, names_hint="joint", gripper_hint=(0, 1))
+    pf = preflight(rows, names_hint="joint", gripper_hint=(0, 1), paired_prefix=True)
     assert pf["status"] == "confident" and pf["hypothesis"] == "joint_absolute"
     assert pf["action_space"] == "joint" and pf["control_mode"] == "absolute"
     # a reading narrower than the command still says nothing
-    pf2 = preflight([{"action": action, "proprio_state": state[:, :10], "fps": 15.0}], names_hint="joint", gripper_hint=(0, 1))
+    pf2 = preflight([{"action": action, "proprio_state": state[:, :10], "fps": 15.0}], names_hint="joint", gripper_hint=(0, 1),
+                    paired_prefix=True)
     assert pf2["scores"]["joint_absolute"] <= 0.1
+    # and a wider reading that nobody composed says nothing either: only split_features guarantees the paired columns
+    # come first (2026-10-19: RH20T's 8-column pose command against its 15-column reading was read as joint space)
+    pf3 = preflight(rows, names_hint="joint", gripper_hint=(0, 1))
+    assert pf3["scores"]["joint_absolute"] <= 0.1
 
 
 def test_dimensions_named_as_rates_inside_a_kept_column_stay_out():

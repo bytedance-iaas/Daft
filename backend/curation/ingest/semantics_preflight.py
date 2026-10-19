@@ -72,8 +72,9 @@ def _corr_cols(x: np.ndarray, y: np.ndarray) -> list[float]:
     return out
 
 
-def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, gripper):
-    """单条的各假设证据(0..1);None = 该假设在本条上不适用。"""
+def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, gripper, paired_prefix: bool = False):
+    """单条的各假设证据(0..1);None = 该假设在本条上不适用。paired_prefix:读数的前 a 列就是指令的配对列
+    (拆列拼成的流,split_features)——只有这时比指令宽的读数才拿来验关节-绝对。"""
     arm_cols = [j for j in range(a.shape[1]) if j not in gripper]
     arm = a[:, arm_cols]
     ev: dict = {}
@@ -101,11 +102,13 @@ def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, grippe
     elif dof and a.shape[1] == dof:
         ev["joint_absolute"] = 0.35        # 维数对但没极限可验:弱证据
         ev["joint_delta"] = 0.2
-    elif s is not None and s.shape[1] >= a.shape[1] and len(s) == len(a) and len(a) >= 10:
+    elif (s is not None and len(s) == len(a) and len(a) >= 10
+          and (s.shape[1] == a.shape[1] or (paired_prefix and s.shape[1] > a.shape[1]))):
         # 没有规格库(未登记本体):关节位置指令就是关节读数的目标,两者逐列高度相关;幅值在 ±2π 内
         # (弧度)或 ±360(度)。末端位姿的 xyz 也和自己的读数相关,所以这条只给到 0.8,靠列名和维数门分胜负。
-        # 读数比指令宽时取前 a 列(与上面关节-增量一条同口径):拆列拼成的流把与指令配对的列放在最前
-        # (split_features,Galaxea 指令 14 列、读数 24 列)
+        # 读数比指令宽时只在拆列拼成的流上取前 a 列(split_features 把与指令配对的列放在最前,Galaxea
+        # 指令 14 列、读数 24 列);别的数据集读数更宽说明不了什么——RH20T 的 8 列位姿指令对 15 列读数,
+        # 前 8 列恰好同值,按前 a 列比会把末端位姿当成关节角(2026-10-19 回归,CI test_ee_layout_rot6d)
         r = float(np.median(_corr_cols(a, s[:, :a.shape[1]])))
         mag_ok = float(np.percentile(np.abs(arm), 99)) <= 2 * np.pi + 1e-6 or float(np.percentile(np.abs(arm), 99)) <= 360.0
         ev["joint_absolute"] = 0.8 * float(np.clip(r, 0, 1)) * (1.0 if mag_ok else 0.3)
@@ -137,8 +140,9 @@ def _episode_evidence(a: np.ndarray, s, fps: float, *, joint_limits, dof, grippe
 
 
 def preflight(sample_rows: list[dict], *, joint_limits=None, dof: int | None = None,
-              gripper_hint=(), names_hint: str | None = None) -> dict:
+              gripper_hint=(), names_hint: str | None = None, paired_prefix: bool = False) -> dict:
     """样本行 → 最像的语义假设与证据。names_hint: "ee"/"joint"/None(字段名的弱先验,+0.1)。
+    paired_prefix: 读数是拆列拼成、与指令配对的列在最前(split_features),比指令宽的读数才按前 a 列验关节。
 
     返回 {status: confident|ambiguous|none, hypothesis, action_space, control_mode,
           proprio_space, fit(吻合度=最像假设的分), scores{假设:分}, gripper_dims, n}
@@ -160,7 +164,7 @@ def preflight(sample_rows: list[dict], *, joint_limits=None, dof: int | None = N
         if s is not None and s.ndim != 2:
             s = None
         ev = _episode_evidence(a, s, float(r.get("fps") or 0) or 1.0,
-                               joint_limits=joint_limits, dof=dof, gripper=gripper)
+                               joint_limits=joint_limits, dof=dof, gripper=gripper, paired_prefix=paired_prefix)
         for h in HYPOTHESES:
             per[h].append(ev.get(h, 0.0))
     scores = {h: (float(np.median(v)) if v else 0.0) for h, v in per.items()}

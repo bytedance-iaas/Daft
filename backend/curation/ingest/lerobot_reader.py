@@ -421,9 +421,12 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
         pass
     from .semantics_preflight import names_hint_of
     names_hint = names_hint_of(_action_names_list(info))      # 分词识别(2026-10-14):kLeftShoulderPitch / left_joint_0.pos 都是关节
+    # 读数是拆列拼成且与指令配对的列在最前(split_features,Galaxea)时,比指令宽的读数才按前 a 列验关节;
+    # 别的数据集读数更宽不算证据(2026-10-19:RH20T 8 列位姿对 15 列读数曾被判成关节空间)
+    paired_prefix = bool(((info.get("composed_streams") or {}).get("observation.state") or {}).get("paired"))
     try:
         pf = preflight(sample_rows, joint_limits=limits, dof=dof, gripper_hint=hint,
-                       names_hint=names_hint)
+                       names_hint=names_hint, paired_prefix=paired_prefix)
     except Exception as e:  # noqa: BLE001  预检自身异常不拖垮摄入
         pf = {"status": "error", "error": f"{type(e).__name__}: {e}"}
     extras = dict(sem.extras or {})
