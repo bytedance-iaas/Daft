@@ -18,15 +18,22 @@ export interface MotionSeg {
 
 /** the legend row's height under the motion strip */
 const LEGEND_H = 18;
+/** the strip's height plus the gap that keeps it off the findings row above */
+const STRIP_H = 12;
 
-/** The legend's entries for a strip: still, the edges (head and tail as one), pauses, stuck - those present only. */
-export function legendOf(motion: readonly MotionSeg[]): { kind: 'still' | 'idle_head' | 'pause' | 'stuck'; label: string }[] {
+export interface LegendEntry {
+  kind: 'steps' | 'rest' | 'stuck';
+  label: string;
+}
+
+/** The legend of the progress area: one entry per step track drawn (the dataset's own step annotations, by
+ * name), then the motion strip's two colours - rest (still arm, the edges, pauses: one grey) and stuck joints -
+ * each only when present. */
+export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: string }[]): LegendEntry[] {
   const M = zh.viz.motion;
+  const out: LegendEntry[] = tracks.map((t) => ({ kind: 'steps' as const, label: t.name }));
   const kinds = new Set(motion.map((m) => m.kind));
-  const out: { kind: 'still' | 'idle_head' | 'pause' | 'stuck'; label: string }[] = [];
-  if (kinds.has('still')) out.push({ kind: 'still', label: M.still });
-  if (kinds.has('idle_head') || kinds.has('idle_tail')) out.push({ kind: 'idle_head', label: M.idleEdge });
-  if (kinds.has('pause')) out.push({ kind: 'pause', label: M.pause });
+  if (['still', 'idle_head', 'idle_tail', 'pause'].some((k) => kinds.has(k as MotionSeg['kind']))) out.push({ kind: 'rest', label: M.rest });
   if (kinds.has('stuck')) out.push({ kind: 'stuck', label: M.stuck });
   return out;
 }
@@ -128,10 +135,10 @@ export function Progress({
   const pct = useClockValue(clock, (s) => (tl.duration > 0 ? Math.round((s.t / tl.duration) * 10000) / 100 : 0));
   const extra = others.length;
   const off = extra * ROW;
-  const strip = motion.length ? 10 : 0;
-  // the legend under the strip: only the kinds this episode has, in the strip's own colours (the two edge kinds share
-  // one entry); a reader should not need the tooltip to tell the colours apart
-  const legend = legendOf(motion);
+  const strip = motion.length ? STRIP_H : 0;
+  // the legend under the strip: the step tracks by name and the strip's colours this episode has; a reader should
+  // not need the tooltips to tell the rows and colours apart
+  const legend = legendOf(motion, [...others, ...(track ? [track] : [])]);
   const legendH = legend.length ? LEGEND_H : 0;
   const dur = tl.duration > 0 ? tl.duration : 1;
   const at = (clientX: number) => {
@@ -172,7 +179,7 @@ export function Progress({
           ))}
         </div>
       ))}
-      <div className="steps" style={{ top: off + 4 }}>
+      <div className="steps" style={{ top: off + 4 }} title={track?.name}>
         {(track?.segments ?? []).map((s, j) => (
           <span
             key={j}
@@ -212,7 +219,7 @@ export function Progress({
         ))}
       </div>
       {motion.length ? (
-        <div className="motion" style={{ top: off + 34 }} title={zh.viz.motion.title} data-testid="vz-motion">
+        <div className="motion" style={{ top: off + 34 + (STRIP_H - 6) }} title={zh.viz.motion.title} data-testid="vz-motion">
           {motion.map((m, i) => (
             <span key={i} className={m.kind} style={{ left: left(m.start), width: width(m.start, m.end) }} title={`${m.label} · ${fmtClock(m.start)}–${fmtClock(m.end)}`} />
           ))}
@@ -221,7 +228,7 @@ export function Progress({
       {legend.length ? (
         <div className="motion-legend" style={{ top: off + 34 + strip }} aria-label={zh.viz.motion.legend} data-testid="vz-motion-legend" onPointerDown={(e) => e.stopPropagation()}>
           {legend.map((l) => (
-            <span key={l.kind} className="item">
+            <span key={`${l.kind}:${l.label}`} className="item">
               <i className={`sw ${l.kind}`} />
               {l.label}
             </span>

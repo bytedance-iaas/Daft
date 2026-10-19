@@ -229,11 +229,16 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     expect(strip.querySelectorAll('span.pause')).toHaveLength(1);
     expect(strip.querySelectorAll('span.still')).toHaveLength(1);
     expect(strip.querySelector('span.idle_head')?.getAttribute('title')).toContain(zh.viz.motion.idleHead);
-    // the legend names the colours this episode has, and only those: no stuck joint here, no red entry
+    // the legend: the step tracks by name, then the strip's colours this episode has - rest (one grey for the still
+    // arm, the edges and the pauses) and, absent here, stuck joints
     const legend = screen.getByTestId('vz-motion-legend');
     expect(legend).toHaveAccessibleName(zh.viz.motion.legend);
-    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([zh.viz.motion.still, zh.viz.motion.idleEdge, zh.viz.motion.pause]);
+    const trackNames = Array.from(screen.getByTestId('vz-progress').querySelectorAll('.steps[title]')).map((el) => el.getAttribute('title'));
+    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([...trackNames, zh.viz.motion.rest]);
+    expect(legend.querySelectorAll('.sw.steps')).toHaveLength(trackNames.length);
     expect(legend.querySelector('.sw.stuck')).toBeNull();
+    // every kind of rest is the same grey on the strip; only the tooltip says which
+    expect(strip.querySelector('span.pause')?.getAttribute('title')).toContain(zh.viz.motion.pause);
   });
 
   it('draws nothing when the motion check has no rest readings', async () => {
@@ -245,6 +250,10 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     );
     await screen.findByTestId('vz-progress');
     expect(screen.queryByTestId('vz-motion')).toBeNull();
-    expect(screen.queryByTestId('vz-motion-legend')).toBeNull();
+    // the legend then names the step tracks alone: no grey, no red
+    const legend = screen.getByTestId('vz-motion-legend');
+    expect(legend.querySelectorAll('.sw.steps').length).toBeGreaterThan(0);
+    expect(legend.querySelector('.sw.rest')).toBeNull();
+    expect(legend.querySelector('.sw.stuck')).toBeNull();
   });
 });

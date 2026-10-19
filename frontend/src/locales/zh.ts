@@ -2118,8 +2118,8 @@ export const zh = {
     stepTitle: (label: string, s: number, e: number, unqualified: boolean) => `${label} · ${s.toFixed(1)}–${e.toFixed(1)} s${unqualified ? ' · 不合格' : ''}`,
     motion: {
       title: '动作状态：手臂什么时候动、什么时候停',
-      legend: '动作状态图例',
-      idleEdge: '首尾没动',
+      legend: '时间线图例',
+      rest: '没动',
       idleHead: '开头没动',
       idleTail: '结尾没动',
       pause: '中途停顿',
