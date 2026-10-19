@@ -2116,7 +2116,16 @@ export const zh = {
     stamp: (time: string, frame: number) => `${time} · 帧 ${frame + 1}`,
     tip: (time: string, frame: number, step: string | null) => `${time} · 帧 ${frame + 1}${step ? ` · ${step}` : ''}`,
     stepTitle: (label: string, s: number, e: number, unqualified: boolean) => `${label} · ${s.toFixed(1)}–${e.toFixed(1)} s${unqualified ? ' · 不合格' : ''}`,
-    motion: { title: '动作状态：灰色是开头或结尾没动，橙色是中途停顿，浅色是手臂静止，红色是关节卡死', idleHead: '开头没动', idleTail: '结尾没动', pause: '中途停顿', still: '手臂静止', stuck: '关节卡死' },
+    motion: {
+      title: '动作状态：手臂什么时候动、什么时候停',
+      legend: '动作状态图例',
+      idleEdge: '首尾没动',
+      idleHead: '开头没动',
+      idleTail: '结尾没动',
+      pause: '中途停顿',
+      still: '手臂静止',
+      stuck: '关节卡死',
+    },
     cell: {
       swap: '更换',
       swapTitle: '更换这个格子显示的内容',

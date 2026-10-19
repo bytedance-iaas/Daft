@@ -229,6 +229,11 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     expect(strip.querySelectorAll('span.pause')).toHaveLength(1);
     expect(strip.querySelectorAll('span.still')).toHaveLength(1);
     expect(strip.querySelector('span.idle_head')?.getAttribute('title')).toContain(zh.viz.motion.idleHead);
+    // the legend names the colours this episode has, and only those: no stuck joint here, no red entry
+    const legend = screen.getByTestId('vz-motion-legend');
+    expect(legend).toHaveAccessibleName(zh.viz.motion.legend);
+    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([zh.viz.motion.still, zh.viz.motion.idleEdge, zh.viz.motion.pause]);
+    expect(legend.querySelector('.sw.stuck')).toBeNull();
   });
 
   it('draws nothing when the motion check has no rest readings', async () => {
@@ -240,5 +245,6 @@ describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
     );
     await screen.findByTestId('vz-progress');
     expect(screen.queryByTestId('vz-motion')).toBeNull();
+    expect(screen.queryByTestId('vz-motion-legend')).toBeNull();
   });
 });

@@ -16,6 +16,21 @@ export interface MotionSeg {
   label: string;
 }
 
+/** the legend row's height under the motion strip */
+const LEGEND_H = 18;
+
+/** The legend's entries for a strip: still, the edges (head and tail as one), pauses, stuck - those present only. */
+export function legendOf(motion: readonly MotionSeg[]): { kind: 'still' | 'idle_head' | 'pause' | 'stuck'; label: string }[] {
+  const M = zh.viz.motion;
+  const kinds = new Set(motion.map((m) => m.kind));
+  const out: { kind: 'still' | 'idle_head' | 'pause' | 'stuck'; label: string }[] = [];
+  if (kinds.has('still')) out.push({ kind: 'still', label: M.still });
+  if (kinds.has('idle_head') || kinds.has('idle_tail')) out.push({ kind: 'idle_head', label: M.idleEdge });
+  if (kinds.has('pause')) out.push({ kind: 'pause', label: M.pause });
+  if (kinds.has('stuck')) out.push({ kind: 'stuck', label: M.stuck });
+  return out;
+}
+
 /** A finding placed on the timeline (mini player). */
 export interface Evidence {
   id: string;
@@ -114,6 +129,10 @@ export function Progress({
   const extra = others.length;
   const off = extra * ROW;
   const strip = motion.length ? 10 : 0;
+  // the legend under the strip: only the kinds this episode has, in the strip's own colours (the two edge kinds share
+  // one entry); a reader should not need the tooltip to tell the colours apart
+  const legend = legendOf(motion);
+  const legendH = legend.length ? LEGEND_H : 0;
   const dur = tl.duration > 0 ? tl.duration : 1;
   const at = (clientX: number) => {
     const r = box.current?.getBoundingClientRect();
@@ -126,7 +145,7 @@ export function Progress({
     <div
       ref={box}
       className="vz-prog"
-      style={{ height: 34 + off + strip }}
+      style={{ height: 34 + off + strip + legendH }}
       onPointerDown={(e) => {
         drag.current = true;
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -196,6 +215,16 @@ export function Progress({
         <div className="motion" style={{ top: off + 34 }} title={zh.viz.motion.title} data-testid="vz-motion">
           {motion.map((m, i) => (
             <span key={i} className={m.kind} style={{ left: left(m.start), width: width(m.start, m.end) }} title={`${m.label} · ${fmtClock(m.start)}–${fmtClock(m.end)}`} />
+          ))}
+        </div>
+      ) : null}
+      {legend.length ? (
+        <div className="motion-legend" style={{ top: off + 34 + strip }} aria-label={zh.viz.motion.legend} data-testid="vz-motion-legend" onPointerDown={(e) => e.stopPropagation()}>
+          {legend.map((l) => (
+            <span key={l.kind} className="item">
+              <i className={`sw ${l.kind}`} />
+              {l.label}
+            </span>
           ))}
         </div>
       ) : null}

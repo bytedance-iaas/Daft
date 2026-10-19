@@ -156,10 +156,14 @@
 .vz-prog .ev span.event { background: var(--c-text-2); color: var(--c-text-2); width: 3px !important; margin-left: -1px; }
 .vz-prog .motion { position: absolute; left: 0; right: 0; height: 6px; }
 .vz-prog .motion span { position: absolute; top: 0; height: 6px; border-radius: 2px; }
-.vz-prog .motion span.still { background: var(--color-fill-3); }
-.vz-prog .motion span.pause { background: #ffcf8b; }
-.vz-prog .motion span.idle_head, .vz-prog .motion span.idle_tail { background: #a9aeb8; }
-.vz-prog .motion span.stuck { background: var(--c-danger); opacity: 0.85; }
+.vz-prog .motion span.still, .vz-prog .motion-legend .sw.still { background: var(--color-fill-3); }
+.vz-prog .motion span.pause, .vz-prog .motion-legend .sw.pause { background: #ffcf8b; }
+.vz-prog .motion span.idle_head, .vz-prog .motion span.idle_tail, .vz-prog .motion-legend .sw.idle_head { background: #a9aeb8; }
+.vz-prog .motion span.stuck, .vz-prog .motion-legend .sw.stuck { background: var(--c-danger); opacity: 0.85; }
+/* the legend under the strip: the kinds this episode has, swatch + word, no tooltip needed to read the colours */
+.vz-prog .motion-legend { position: absolute; left: 0; right: 0; height: 18px; display: flex; align-items: center; gap: 12px; font-size: 11px; line-height: 18px; color: var(--c-text-3); cursor: default; white-space: nowrap; overflow: hidden; }
+.vz-prog .motion-legend .item { display: inline-flex; align-items: center; }
+.vz-prog .motion-legend .sw { display: inline-block; width: 10px; height: 6px; border-radius: 2px; margin-right: 4px; }
 .vz-prog .tip { position: absolute; top: -26px; transform: translateX(-50%); padding: 2px 6px; border-radius: 2px; background: rgba(29, 33, 41, 0.9); color: #fff; font-size: 11px; white-space: nowrap; display: none; pointer-events: none; z-index: 5; }
 .vz-prog:hover .tip { display: block; }
 
