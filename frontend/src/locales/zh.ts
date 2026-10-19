@@ -2116,6 +2116,18 @@ export const zh = {
     stamp: (time: string, frame: number) => `${time} · 帧 ${frame + 1}`,
     tip: (time: string, frame: number, step: string | null) => `${time} · 帧 ${frame + 1}${step ? ` · ${step}` : ''}`,
     stepTitle: (label: string, s: number, e: number, unqualified: boolean) => `${label} · ${s.toFixed(1)}–${e.toFixed(1)} s${unqualified ? ' · 不合格' : ''}`,
+    motion: {
+      title: '动作状态：手臂什么时候动、什么时候停',
+      legend: '时间线图例',
+      rest: '没动',
+      findings: { blocking: '判废的发现', review: '待人工复核的发现', info: '仅报告的发现' } as Record<string, string>,
+      idleHead: '开头没动',
+      idleTail: '结尾没动',
+      pause: '中途停顿',
+      still: '手臂静止',
+      stuck: '关节卡死',
+      stuckDeclared: '协议停机',
+    },
     cell: {
       swap: '更换',
       swapTitle: '更换这个格子显示的内容',

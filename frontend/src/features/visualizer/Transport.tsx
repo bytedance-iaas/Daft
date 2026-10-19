@@ -7,6 +7,40 @@ import { zh } from '../../locales/zh';
 import type { PlayerClock } from './clock';
 import { useClockValue } from './useClock';
 
+/** A stretch of the arm's motion state on the timeline (the motion strip, design doc 18 §4.6): read from the
+ * motion check's readings and its stuck findings; the labels are the strip's tooltips. */
+export interface MotionSeg {
+  kind: 'idle_head' | 'idle_tail' | 'pause' | 'still' | 'stuck' | 'stuck_declared';
+  start: number;
+  end: number;
+  label: string;
+}
+
+/** the legend row's height under the motion strip */
+const LEGEND_H = 18;
+/** the strip's height plus the gap that keeps it off the findings row above */
+const STRIP_H = 12;
+
+export interface LegendEntry {
+  kind: 'steps' | 'blocking' | 'review' | 'info' | 'rest' | 'stuck' | 'stuck_declared';
+  label: string;
+}
+
+/** The legend of the progress area: one entry per step track drawn (the dataset's own step annotations, by
+ * name), the findings row's levels that are placed on the timeline, then the motion strip's two colours - rest
+ * (still arm, the edges, pauses: one grey), stuck joints and protocol halts - each only when present. */
+export function legendOf(motion: readonly MotionSeg[], tracks: readonly { name: string }[], evidence: readonly Evidence[] = []): LegendEntry[] {
+  const M = zh.viz.motion;
+  const out: LegendEntry[] = tracks.map((t) => ({ kind: 'steps' as const, label: t.name }));
+  const levels = new Set(evidence.filter((e) => e.start !== null && e.end !== null).map((e) => e.level));
+  for (const lv of ['blocking', 'review', 'info'] as const) if (levels.has(lv)) out.push({ kind: lv, label: M.findings[lv] });
+  const kinds = new Set(motion.map((m) => m.kind));
+  if (['still', 'idle_head', 'idle_tail', 'pause'].some((k) => kinds.has(k as MotionSeg['kind']))) out.push({ kind: 'rest', label: M.rest });
+  if (kinds.has('stuck')) out.push({ kind: 'stuck', label: M.stuck });
+  if (kinds.has('stuck_declared')) out.push({ kind: 'stuck_declared', label: M.stuckDeclared });
+  return out;
+}
+
 /** A finding placed on the timeline (mini player). */
 export interface Evidence {
   id: string;
@@ -83,6 +117,7 @@ export function Progress({
   others,
   evidence,
   events,
+  motion = [],
   focusEvidence,
   onFocusEvidence,
 }: {
@@ -92,6 +127,8 @@ export function Progress({
   others: readonly VizTrack[];
   evidence: readonly Evidence[];
   events: readonly VizEvent[];
+  /** the motion strip under the findings: rest at the edges, pauses, still stretches, stuck joints */
+  motion?: readonly MotionSeg[];
   focusEvidence: string | null;
   onFocusEvidence?: (id: string) => void;
 }) {
@@ -101,6 +138,11 @@ export function Progress({
   const pct = useClockValue(clock, (s) => (tl.duration > 0 ? Math.round((s.t / tl.duration) * 10000) / 100 : 0));
   const extra = others.length;
   const off = extra * ROW;
+  const strip = motion.length ? STRIP_H : 0;
+  // the legend under the strip: the step tracks by name and the strip's colours this episode has; a reader should
+  // not need the tooltips to tell the rows and colours apart
+  const legend = legendOf(motion, [...others, ...(track ? [track] : [])], evidence);
+  const legendH = legend.length ? LEGEND_H : 0;
   const dur = tl.duration > 0 ? tl.duration : 1;
   const at = (clientX: number) => {
     const r = box.current?.getBoundingClientRect();
@@ -113,7 +155,7 @@ export function Progress({
     <div
       ref={box}
       className="vz-prog"
-      style={{ height: 34 + off }}
+      style={{ height: 34 + off + strip + legendH }}
       onPointerDown={(e) => {
         drag.current = true;
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -140,7 +182,7 @@ export function Progress({
           ))}
         </div>
       ))}
-      <div className="steps" style={{ top: off + 4 }}>
+      <div className="steps" style={{ top: off + 4 }} title={track?.name}>
         {(track?.segments ?? []).map((s, j) => (
           <span
             key={j}
@@ -179,6 +221,23 @@ export function Progress({
           <span key={`e${i}`} className="event" style={{ left: left(ev.t_s) }} title={`${ev.label} · ${fmtClock(ev.t_s)}`} />
         ))}
       </div>
+      {motion.length ? (
+        <div className="motion" style={{ top: off + 34 + (STRIP_H - 6) }} title={zh.viz.motion.title} data-testid="vz-motion">
+          {motion.map((m, i) => (
+            <span key={i} className={m.kind} style={{ left: left(m.start), width: width(m.start, m.end) }} title={`${m.label} · ${fmtClock(m.start)}–${fmtClock(m.end)}`} />
+          ))}
+        </div>
+      ) : null}
+      {legend.length ? (
+        <div className="motion-legend" style={{ top: off + 34 + strip }} aria-label={zh.viz.motion.legend} data-testid="vz-motion-legend" onPointerDown={(e) => e.stopPropagation()}>
+          {legend.map((l) => (
+            <span key={`${l.kind}:${l.label}`} className="item">
+              <i className={`sw sw-${l.kind}`} />
+              {l.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {tip ? (
         <span className="tip" style={{ left: `${tip.left}%`, display: 'block', top: off - 26 }}>
           {tip.text}

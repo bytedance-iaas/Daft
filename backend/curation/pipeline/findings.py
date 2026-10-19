@@ -144,6 +144,84 @@ def short_camera(name: Any) -> str:
 
 # ---------------------------------------------------------------- frame stage
 
+@deriver("declared_steps")
+def _declared_steps(passed, score, d, p) -> Derived:
+    """The steps and the task end a dataset declares (8.11, TASK-1's declared track): one ``step_declared`` per
+    step of the primary segments track, ``task_end_declared`` where a mode column switches to a post-task mode;
+    every track stays a reading (the player draws them). No source at all: TASK-1 not assessed."""
+    out = Derived()
+    m = "declared_steps"
+    tracks = [t for t in (d.get("tracks") or []) if isinstance(t, dict)]
+    if d.get("sources"):
+        out.readings["sources"] = d.get("sources")
+    if tracks:
+        out.readings["tracks"] = [{"key": t.get("key"), "name": t.get("name"), "format": t.get("format"),
+                                   "primary": bool(t.get("primary")), "n_steps": len(t.get("segments") or []),
+                                   "segments": [{"start_s": s.get("start_s"), "end_s": s.get("end_s"),
+                                                 "frames": s.get("frames"), "label": s.get("label")}
+                                                for s in (t.get("segments") or []) if isinstance(s, dict)][:200]}
+                                  for t in tracks]
+    primary = next((t for t in tracks if t.get("primary")), None)
+    segs = [s for s in ((primary or {}).get("segments") or []) if isinstance(s, dict) and s.get("frames")]
+    for k, s in enumerate(segs):
+        a, b = int(s["frames"][0]), int(s["frames"][1])
+        label = str(s.get("label") or "")[:120]
+        out.add(m, "step_declared", f"第 {k + 1} 步「{label}」：第 {a + 1}–{b + 1} 帧",
+                frames=(a, b), time_s=(float(s.get("start_s") or 0.0), float(s.get("end_s") or 0.0)),
+                readings={"source": "declared", "track": primary.get("key"), "step": k + 1, "n_steps": len(segs),
+                          "label": label})
+    te = d.get("task_end") if isinstance(d.get("task_end"), dict) else None
+    if te and te.get("time_s") is not None:
+        t = float(te["time_s"])
+        fr = int(te.get("frame") or 0)
+        out.add(m, "task_end_declared",
+                f"任务在 {t:.1f} 秒结束：{te.get('column')} 从 {te.get('mode_before')} 切到 {te.get('mode_after')}",
+                frames=(fr, fr), time_s=(t, t),
+                readings={"source": "declared", "column": te.get("column"), "mode_before": te.get("mode_before"),
+                          "mode_after": te.get("mode_after")})
+    if not segs and not te:
+        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "数据集没有逐帧的分步或模式标注")[:200])
+    return out
+
+
+#: what a candidate's cue reads as in its finding
+_CUE_ZH = {"pause": "停顿", "resume": "动起来", "grasp": "夹爪合上", "release": "夹爪松开"}
+
+
+@deriver("step_detection")
+def _step_detection(passed, score, d, p) -> Derived:
+    """Step boundary candidates measured from the numbers (8.12, TASK-1's detected track): one ``step_candidate``
+    per candidate at or above ``min_score`` (readings.source = detected, the cue and the score); every candidate
+    stays a reading. No stream to read: TASK-1 not assessed."""
+    out = Derived()
+    m = "step_detection"
+    if d.get("reason"):
+        out.cannot("TASK-1", "not_applicable", str(d["reason"])[:200])
+        return out
+    cands = [c for c in (d.get("candidates") or []) if isinstance(c, dict)]
+    out.readings["candidates"] = cands[:200]
+    out.readings["n_candidates"] = len(cands)
+    out.readings["stream"] = d.get("stream")
+    out.readings["cues"] = d.get("cues") or {}
+    min_score = float(d.get("min_score", 0.3) or 0.0)
+    k = 0
+    for c in cands:
+        sc = float(c.get("score") or 0.0)
+        if sc < min_score:
+            continue
+        k += 1
+        t, fr = float(c.get("t_s") or 0.0), int(c.get("frame") or 0)
+        cue = str(c.get("cue") or "")
+        dur = float(c.get("dur_s") or 0.0)
+        how = (f"停了 {dur:.1f} 秒" if cue == "pause" else f"停了 {dur:.1f} 秒后动起来" if cue == "resume"
+               else _CUE_ZH.get(cue, cue))
+        out.add(m, "step_candidate", f"候选边界 {k}：{t:.1f} 秒（{how}）", frames=(fr, fr), time_s=(t, t),
+                readings={"source": "detected", "cue": cue, "score": sc,
+                          **({"dur_s": c.get("dur_s")} if cue in ("pause", "resume") else {})})
+    out.readings["n_reported"] = k
+    return out
+
+
 @deriver("visual_quality")
 def _visual_quality(passed, score, d, p) -> Derived:
     """Per camera, from ``per_camera_detail`` (design doc 17 §2.2): frozen share, exposure, sharpness,
@@ -565,6 +643,8 @@ def _motion_quality(passed, score, d, p) -> Derived:
     for key in ("smoothness", "spike", "gripper_jitter", "actuator_saturation", "stuck", "fluency",
                 "path_efficiency", "joint_stability", "active_ratio", "idle_head_s", "idle_tail_s",
                 "idle_mid_count", "idle_mid_total_s",
+                # 8.11: the rest stretches themselves, for the player's motion strip (design doc 18 §4.6)
+                "idle_mid_segments", "still_segments",
                 # per column (2026-10-14): which column the smoothness came from, and the switch-like columns left out
                 "smoothness_cols", "smoothness_min_col", "discrete_cols", "velocity_cols", "nonjoint_cols", "jagged_amp"):
         if d.get(key) is not None:
@@ -597,9 +677,19 @@ def _motion_quality(passed, score, d, p) -> Derived:
             continue
         a, b = s.get("freeze_start_frame"), s.get("freeze_end_frame")
         joint = s.get("joint")
-        out.add(m, "stuck", f"关节 {joint} 卡死：第 {int(a) + 1}–{int(b) + 1} 帧指令在变、读数不动" if a is not None and b is not None
-                else f"关节 {joint} 卡死", scope={"channel": f"joint {joint}"},
-                frames=(int(a), int(b)) if a is not None and b is not None else None,
+        span = f"第 {int(a) + 1}–{int(b) + 1} 帧" if a is not None and b is not None else ""
+        declared = s.get("declared_step") if isinstance(s.get("declared_step"), dict) else None
+        if declared:
+            # 8.13: the whole stretch lies inside a step the dataset gives to the person: the protocol halted the robot
+            label = str(declared.get("label") or "")
+            out.add(m, "stuck_declared",
+                    f"关节 {joint} {span}指令在变、读数不动，整段都在数据集标注的人的分步『{label[:60]}』里，是协议停机，不算故障",
+                    scope={"channel": f"joint {joint}"}, frames=(int(a), int(b)) if span else None,
+                    readings={"max_dead_run": s.get("max_dead_run"), "declared_step": declared})
+            continue
+        out.add(m, "stuck", f"关节 {joint} 卡死：{span}指令在变、读数不动" if span else f"关节 {joint} 卡死",
+                scope={"channel": f"joint {joint}"},
+                frames=(int(a), int(b)) if span else None,
                 readings={"max_dead_run": s.get("max_dead_run")})
     head, tail = _num(d.get("idle_head_s")), _num(d.get("idle_tail_s"))
     if head is not None and head >= p["idle_edge_min_s"]:

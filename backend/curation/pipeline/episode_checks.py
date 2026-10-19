@@ -247,6 +247,10 @@ def make_motion_check(cfg: dict, registry) -> Callable:
                     float(hi - lo) for lo, hi in _prof_m.joint_limits))
         except Exception:  # noqa: BLE001  未知 embodiment → 无夹爪约定,不猜
             pass
+        if kw.get("gripper_dims") is None and isinstance(_layout, dict) and _layout.get("gripper_dims"):
+            # 规格档没说夹爪在哪(没登记的本体,2026-10-17 Galaxea r1lite):列名布局认出的夹爪列顶上,
+            # 关节空间也要——否则夹爪抖动(ACT-5)在这类数据上永远「没有夹爪列」
+            kw["gripper_dims"] = tuple(int(x) for x in _layout["gripper_dims"] if int(x) < a.shape[1]) or None
         if isinstance(_layout, dict) and _layout.get("nonjoint_dims"):
             # 名为关节、实为开合量的列(2026-10-15 G1 右臂六列):不进平滑度与尖刺,关节空间也要
             kw.setdefault("nonjoint_dims", tuple(int(x) for x in _layout["nonjoint_dims"] if int(x) < a.shape[1]))

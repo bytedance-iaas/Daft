@@ -8,7 +8,7 @@ import { EEF_MODULE, cameraOfScope, miniLayout, playerChips, type FindingScope }
 import { evidenceRange, frameCount } from '../../lib/vizTime';
 import { zh } from '../../locales/zh';
 import { noEefOverlay, useEefOverlay, useVizEpisode, useVizModel, type VizRef } from './data';
-import type { MiniSeek } from './miniPlayer';
+import { motionStrip, type MiniSeek } from './miniPlayer';
 import { Player, type Evidence, type PlayerOverlays } from './Player';
 
 /**
@@ -32,7 +32,7 @@ export function MiniPlayerModal({
 }: {
   taskId: string;
   /** the episode: its findings when a revision has them (a running task's pipeline has none yet) */
-  view: Pick<EpisodeView, 'episode_index' | 'findings' | 'dataset_id'>;
+  view: Pick<EpisodeView, 'episode_index' | 'findings' | 'dataset_id'> & Partial<Pick<EpisodeView, 'modules'>>;
   /** index into view.findings, or null */
   focus: number | null;
   onFocus: (i: number) => void;
@@ -64,6 +64,8 @@ export function MiniPlayerModal({
       }),
     [groups, ep.data],
   );
+  // the motion strip: the motion check's rest readings and stuck findings, placed with the checks' clock
+  const motion = useMemo(() => motionStrip(view.modules?.motion_quality, findings, ep.data), [view.modules, findings, ep.data]);
   // the bundle's cameras by their own ids -> the player's cameras (findings of the EEF module name the former)
   const alias = useMemo(() => Object.fromEntries((overlay.data?.cameras ?? []).flatMap((c) => (c.viz_camera ? [[c.camera_id, c.viz_camera]] : []))) as Record<string, string>, [overlay.data]);
   const focused = chipOf >= 0 ? groups[chipOf].finding : undefined;
@@ -120,6 +122,7 @@ export function MiniPlayerModal({
         index={view.episode_index}
         mode="mini"
         evidence={evidence}
+        motion={motion}
         focusEvidence={chipOf >= 0 ? String(chipOf) : null}
         onFocusEvidence={(id) => onFocus(groups[Number(id)]?.indices[0] ?? Number(id))}
         arrangement={arrangement}

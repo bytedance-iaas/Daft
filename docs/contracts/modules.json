@@ -1,5 +1,5 @@
 {
- "registry_version": "8.10",
+ "registry_version": "8.13",
  "taxonomy_version": "2.1",
  "blocks": [
   {
@@ -1422,6 +1422,15 @@
      "appealable": false
     },
     {
+     "code": "stuck_declared",
+     "item": "ACT-8",
+     "name_zh": "人的分步里的停机",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
      "code": "fluency_low",
      "item": "TASK-7",
      "name_zh": "操作不流畅",
@@ -1557,6 +1566,118 @@
      "default_sort": "episode_index"
     }
    ],
+   "mergeable": false
+  },
+  {
+   "id": "declared_steps",
+   "name_zh": "数据集分步",
+   "summary_zh": "读出数据集自带的分步和模式标注，报每一步的起止和任务结束时刻；只搬标注，不做检测",
+   "level": "episode",
+   "needs": [],
+   "block": "cpu",
+   "stage": "numeric",
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "step_declared",
+     "item": "TASK-1",
+     "name_zh": "数据集标注的一步",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "task_end_declared",
+     "item": "TASK-1",
+     "name_zh": "数据集标注的任务结束",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "TASK-1"
+   ],
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "post_task_modes": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "default": [
+       "restore",
+       "align",
+       "reset",
+       "home",
+       "return",
+       "idle",
+       "done",
+       "finish",
+       "end"
+      ],
+      "title": "任务结束后的模式词",
+      "description": "模式列（如 RSS 2026 的 observation.commander_state）最后一段的名字含这些词之一（不分大小写）时，当作任务在那一段开头结束，报「数据集标注的任务结束」",
+      "x-advanced": true
+     }
+    }
+   },
+   "tables": [],
+   "mergeable": false
+  },
+  {
+   "id": "step_detection",
+   "name_zh": "分步检测",
+   "summary_zh": "按整机停顿和夹爪开合找出动作边界的候选并打分；测出来的边界可以和数据集自带的分步对照",
+   "level": "episode",
+   "needs": [
+    "action"
+   ],
+   "block": "cpu",
+   "stage": "numeric",
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "step_candidate",
+     "item": "TASK-1",
+     "name_zh": "测出的动作边界候选",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "TASK-1"
+   ],
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "min_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "title": "候选边界的最低分",
+      "description": "分数不到这个值的候选只记在读数里，不报发现。停顿按时长给分（多长算满分见下一项），夹爪开合一律 0.8 分"
+     },
+     "pause_ref_s": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 60,
+      "default": 3.0,
+      "title": "停顿多久算满分",
+      "description": "整机停顿够这个秒数就给 1 分，更短的按比例给；不到 0.3 秒的停顿不算",
+      "x-advanced": true
+     }
+    }
+   },
+   "tables": [],
    "mergeable": false
   },
   {

@@ -1336,7 +1336,8 @@
    "platform": "**有读数（实测）**：状态量从第 70 帧起沿用旧值，运动质量的 `stuck` 子项给 0 并定位到冻结段，但综合分 0.93 放行",
    "platform_status": "部分",
    "platform_codes": [
-    "motion_quality.stuck"
+    "motion_quality.stuck",
+    "motion_quality.stuck_declared"
    ],
    "platform_conditions": [
     "数据集要有状态量"
@@ -1523,8 +1524,12 @@
    "origin": "需",
    "samples": "真实：C1 的逐帧模式标签、B8 的分步起止时间（都仅内部）",
    "platform": "有读数：运动质量给出开头和结尾的空闲秒数、活动占比，只报不罚",
-   "platform_status": "没有",
-   "platform_codes": [],
+   "platform_status": "有读数",
+   "platform_codes": [
+    "declared_steps.step_declared",
+    "declared_steps.task_end_declared",
+    "step_detection.step_candidate"
+   ],
    "kind": "phenomenon",
    "level": "episode",
    "description": "动作起止点",

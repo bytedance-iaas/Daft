@@ -579,7 +579,11 @@ def motion_quality(
                         frozen_w[m:, jj] = unresp[m - 1]
                         responsive[m:, jj] = strong[m - 1]
             else:
-                active_arr[:, jj] = cmd_step[:, jj] > cmd_scale[jj]
+                # 增量/速度指令的「在推」:高于自身中位,且至少是满幅(p95)的 5%(2026-10-18 HABIT 教训:
+                # 踏板停顿时遥操作增量停在 0.0009 的常值偏置上,中位是一堆更小的保持值,偏置被当成在推;
+                # 5% 与净位移判据的 5% 量程同口径)
+                _p95 = float(np.percentile(cmd_step[:, jj], 95)) if n_steps else 0.0
+                active_arr[:, jj] = cmd_step[:, jj] > max(cmd_scale[jj], 0.05 * _p95)
         # 全局冻结门(2026-07-15 ep3 假阳性教训):纯运动学分不出"执行器卡死"和
         # "顶着物体施力"(抓取压紧时 z 指令猛而不动=任务本身!)。判别靠上下文:
         # 真卡死=**全面死机**(ep89/ep23:平移+旋转+夹爪全冻);接触施力=选择性

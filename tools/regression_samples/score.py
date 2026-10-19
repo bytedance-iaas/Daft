@@ -11,6 +11,21 @@ report (``dataset_findings``) and count once per subset, for the items scored pe
 read from the episodes' own records. The episode level reads the final lists. A run made before findings (C2 1.0, D59)
 is refused: run the subset again.
 
+Phenomena whose expectation says *where* (``intervals`` of steps, a ``task_end`` with its ``time_s`` / ``frames``, an
+``at_s``) are also compared by position (``boundaries``; a defect's position stays a note): every start and end of an expected interval is a boundary
+(the episode's start is nobody's, and neither is its end: the last step ends where the recording stops, which no
+detector can find - a boundary within half a frame of the episode's length, read from the records' ``n_frames`` /
+``duration_s``, is left out on both sides and counted as ``at_episode_end``), a platform finding's ``time_s`` (else
+``frames`` over the run's fps, read from ``preflight.json``) gives the platform's, and the two sets are matched
+nearest-first within a tolerance - the entry's
+``boundary_tolerance_s``, else ``--boundary-tolerance`` (default 1.5 s: a boundary a person or a controller marks sits
+up to about a second and a half from the body's own pause or release - RSS 2026's mode switch comes 1.2 s before the
+robot stops, Galaxea's task-table switch 1.1-1.4 s after the motion; 2026-10-18).
+The platform's boundaries are kept apart by where they come from: ``readings.source = declared`` (the dataset's own
+labels surfaced, e.g. ``declared_steps``) against everything else (``detected``), so surfacing the answer key never
+reads as detection. Each source gets expected / matched / extra, the hits at 0.25 / 0.5 / 1.0 s, and the error's
+median and p90.
+
 ``finding_map.json`` holds what the records do not say: the ``controls`` (legitimate situations the platform must not
 report) and the ``ingestion`` items (input formats it must read). Per item:
 
@@ -46,7 +61,13 @@ from collections import Counter, defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "2.1"
+#: a platform boundary counts as the expected one within this many seconds (the entry's ``boundary_tolerance_s`` wins)
+BOUNDARY_TOLERANCE_S = 1.5
+#: the fixed tolerances every boundary comparison is also reported at
+BOUNDARY_LADDER = (0.25, 0.5, 1.0)
+#: the sources a platform boundary is scored under: the dataset's own labels, or a measurement
+BOUNDARY_SOURCES = ("declared", "detected")
 #: the registry export (C1) whose ``covers`` say which modules assess an item on a run of findings
 REGISTRY = os.path.join(REPO, "docs", "contracts", "modules.json")
 #: preflight availabilities under which a module never runs on the subset
@@ -242,21 +263,210 @@ def preflight(run_dir):
     return bool((p.get("format") or {}).get("supported")), avail
 
 
+def preflight_fps(run_dir):
+    """The dataset's frame rate the preflight recorded (``dataset.fps``), or None."""
+    path = os.path.join(run_dir, "preflight.json")
+    if not os.path.exists(path):
+        return None
+    fps = ((load_json(path).get("dataset") or {}).get("fps"))
+    return float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) and fps > 0 else None
+
+
+# ---------------------------------------------------------------- boundaries (design doc 17 §6.3)
+
+def _num(v):
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def episode_end_s(recs, ep, fps):
+    """Where the episode's recording stops, in seconds, from what its records say: a module's ``details.n_frames``
+    over the fps (``declared_steps``, ``step_detection``), else a ``duration_s`` (the timestamp check's reading).
+    None when no record says."""
+    frames, duration = [], []
+    for mrecs in recs.values():
+        rec = mrecs.get(ep)
+        if not isinstance(rec, dict) or rec.get("status") == "error":
+            continue
+        for part in (rec.get("details") or {}, rec.get("readings") or {}):
+            n = _num(part.get("n_frames"))
+            if n is not None and n > 0:
+                frames.append(n)
+            d = _num(part.get("duration_s"))
+            if d is not None and d > 0:
+                duration.append(d)
+    if frames and fps:
+        return max(frames) / fps
+    if duration:
+        return max(duration)
+    return None
+
+
+def _range_seconds(obj, fps, time_key="time_s", frame_key="frames"):
+    """(start, end) in seconds of an object's ``time_s`` pair (else its ``frames`` pair over fps, the end frame
+    inclusive), None without a usable position, False when it is in frames and there is no fps."""
+    t = obj.get(time_key)
+    if isinstance(t, (list, tuple)) and len(t) == 2 and _num(t[0]) is not None and _num(t[1]) is not None:
+        return float(t[0]), float(t[1])
+    if _num(t) is not None:
+        return float(t), float(t)
+    fr = obj.get(frame_key)
+    if isinstance(fr, (list, tuple)) and len(fr) == 2 and _num(fr[0]) is not None and _num(fr[1]) is not None:
+        if not fps:
+            return False
+        return float(fr[0]) / fps, (float(fr[1]) + 1.0) / fps
+    if _num(fr) is not None:
+        if not fps:
+            return False
+        return float(fr) / fps, float(fr) / fps
+    return None
+
+
+def positions_of(obj, fps):
+    """The boundaries (seconds, sorted, the episode's start left out) an expectation entry or a finding places in
+    the episode: every start and end of its ``intervals`` (``start_s`` / ``end_s``, or ``start_frame`` /
+    ``end_frame`` with the end frame inclusive), the start of a task end (``value: task_end``), both ends of a
+    ``time_s`` / ``frames`` range (one boundary when the range is a point), an ``at_s``. Returns (boundaries,
+    in_frames_without_fps): the second is True when a position is in frames and the run has no fps."""
+    out, no_clock = [], False
+    ivs = obj.get("intervals")
+    if isinstance(ivs, list) and ivs:
+        for iv in ivs:
+            if not isinstance(iv, dict):
+                continue
+            a, b = _num(iv.get("start_s")), _num(iv.get("end_s"))
+            if a is None and b is None:
+                fa, fb = _num(iv.get("start_frame")), _num(iv.get("end_frame"))
+                if fa is None and fb is None:
+                    continue
+                if not fps:
+                    no_clock = True
+                    continue
+                a = fa / fps if fa is not None else None
+                b = (fb + 1.0) / fps if fb is not None else None
+            out.extend(x for x in (a, b) if x is not None)
+    else:
+        rng = _range_seconds(obj, fps)
+        if rng is False:
+            no_clock = True
+        elif rng is not None:
+            out.append(rng[0])
+            if obj.get("value") != "task_end":
+                out.append(rng[1])
+        at = _num(obj.get("at_s"))
+        if at is not None:
+            out.append(at)
+    return _dedup(out, fps), no_clock
+
+
+def _clock_eps(fps):
+    return 0.5 / fps if fps else 0.01
+
+
+def _dedup(values, fps, end_s=None):
+    """Sorted boundaries with the episode's start left out (nobody's boundary), its end too when ``end_s`` says where
+    it is (the recording stopping is not a boundary anyone detects), and the ones within half a frame of each other
+    merged (the end of one step is the start of the next, also across findings)."""
+    eps = _clock_eps(fps)
+    out = []
+    for x in sorted(values):
+        if x <= eps:
+            continue
+        if end_s is not None and x >= end_s - eps:
+            continue
+        if out and x - out[-1] <= eps:
+            continue
+        out.append(x)
+    return out
+
+
+def finding_source(f) -> str:
+    """Where a finding's position comes from: the dataset's own labels (``readings.source = declared``), else a
+    measurement."""
+    return "declared" if (f.get("readings") or {}).get("source") == "declared" else "detected"
+
+
+def match_boundaries(expected, got, tolerance):
+    """The errors (seconds) of the pairs matched nearest-first within ``tolerance``, one boundary to one."""
+    pairs = sorted((abs(e - g), i, j) for i, e in enumerate(expected) for j, g in enumerate(got) if abs(e - g) <= tolerance)
+    used_e, used_g, errs = set(), set(), []
+    for d, i, j in pairs:
+        if i in used_e or j in used_g:
+            continue
+        used_e.add(i)
+        used_g.add(j)
+        errs.append(round(d, 3))
+    return errs
+
+
+def _score_boundaries(acc, entries, got_by_source, fps, default_tolerance, assessed, end_s=None):
+    """One episode's boundaries of one item into ``acc[source]`` (a Counter + the matched errors). ``end_s``: where
+    the recording stops; an expected or reported boundary there is left out (``at_episode_end`` counts the expected
+    ones)."""
+    expected, no_clock, tol = [], False, None
+    for entry in entries:
+        b, nc = positions_of(entry, fps)
+        expected.extend(b)
+        no_clock = no_clock or nc
+        t = _num(entry.get("boundary_tolerance_s"))
+        if t is not None:
+            tol = max(tol or 0.0, t)
+    all_expected = _dedup(expected, fps)
+    expected = _dedup(all_expected, fps, end_s)
+    at_end = len(all_expected) - len(expected)
+    tolerance = tol if tol is not None else default_tolerance
+    for source in BOUNDARY_SOURCES:
+        a = acc[source]
+        n = a["n"]
+        got = _dedup(got_by_source.get(source, []), fps, end_s)
+        n["episodes"] += 1
+        n["expected"] += len(expected)
+        n["at_episode_end"] += at_end
+        if no_clock:
+            n["episodes_without_clock"] += 1
+        if not assessed:
+            n["expected_not_assessed"] += len(expected)
+        if got:
+            n["episodes_reported"] += 1
+        errs = match_boundaries(expected, got, tolerance)
+        n["matched"] += len(errs)
+        n["extra"] += len(got) - len(errs)
+        for lvl in BOUNDARY_LADDER:
+            n[f"at_{lvl}"] += sum(1 for d in errs if d <= lvl)
+        a["errs"].extend(errs)
+
+
+def _boundary_row(acc):
+    n, errs = acc["n"], sorted(acc["errs"])
+    k = len(errs)
+    return {"episodes": n["episodes"], "episodes_reported": n["episodes_reported"],
+            "episodes_without_clock": n["episodes_without_clock"],
+            "expected": n["expected"], "expected_not_assessed": n["expected_not_assessed"],
+            "at_episode_end": n["at_episode_end"], "matched": n["matched"], "missed": n["expected"] - n["matched"], "extra": n["extra"],
+            "precision": _ratio(n["matched"], n["matched"] + n["extra"]), "recall": _ratio(n["matched"], n["expected"]),
+            "recall_assessed": _ratio(n["matched"], n["expected"] - n["expected_not_assessed"]),
+            "at": {str(lvl): n[f"at_{lvl}"] for lvl in BOUNDARY_LADDER},
+            "median_err_s": round(errs[k // 2], 3) if k else None,
+            "p90_err_s": round(errs[min(k - 1, int(0.9 * k))], 3) if k else None}
+
+
 # ---------------------------------------------------------------- scoring
 
 def expectation_index(exp, taxonomy=None):
-    """(dataset, episode) -> {item: {"present": [scopes], "absent": [scopes], "unit": "episode" | "subset"}}, plus per-episode
+    """(dataset, episode) -> {item: {"present": [scopes], "absent": [scopes], "unit": "episode" | "subset", "positions":
+    [the present entries that say where]}}, plus per-episode
     facts: lineage, verdict, the items it was checked on, whether it carries an episode-level defect."""
     level = {i["id"]: i.get("level") for i in (taxonomy or {}).get("items", [])}
     idx, meta = {}, {}
     for e in exp["episodes"]:
         key = (e["dataset"], int(e["episode_index"]))
-        items = defaultdict(lambda: {"present": [], "absent": [], "unit": "episode"})
+        items = defaultdict(lambda: {"present": [], "absent": [], "unit": "episode", "positions": []})
         has_defect = False
         for group, side in (("problems", "present"), ("phenomena", "present"), ("clean", "absent")):
             for entry in e.get(group) or []:
                 it = items[entry["item"]]
                 it[side].append(scope_cameras(entry.get("scope")))
+                if group == "phenomena" and any(k in entry for k in ("intervals", "time_s", "frames", "at_s")):
+                    it["positions"].append(entry)        # a phenomenon that says where is compared by position too
                 if entry.get("unit") == "subset" or level.get(entry["item"]) == "dataset":
                     it["unit"] = "subset"
                 if group == "problems" and (entry.get("level") or level.get(entry["item"]) or "episode") == "episode":
@@ -332,10 +542,13 @@ def _eef_below(f: dict, min_p: float) -> bool:
     return isinstance(p, (int, float)) and not isinstance(p, bool) and p < min_p
 
 
-def _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p=EEF_MIN_P):
-    """The evidence of one episode: its records' findings, what they assessed, what failed.
+def _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p=EEF_MIN_P, fps=None):
+    """The evidence of one episode: its records' findings, what they assessed, what failed, where the findings
+    place themselves (``positions``: item -> source -> boundaries in seconds, see ``positions_of``).
     The EEF module's opinions count from ``eef_min_p`` on (label + p, design doc 25 §7)."""
     hits = defaultdict(list)
+    positions = defaultdict(lambda: defaultdict(list))
+    end_s = episode_end_s(recs, ep, fps)
     per_module = defaultdict(lambda: defaultdict(list))      # item -> module -> cameras
     assessed = defaultdict(set)                              # item -> modules that assessed it
     errored = set()
@@ -360,6 +573,9 @@ def _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p=E
             intervals[item]["findings"] += 1
             if f.get("frames") or f.get("time_s"):
                 intervals[item]["with_interval"] += 1
+            where, _ = positions_of(f, fps)
+            if where:
+                positions[item][finding_source(f)].extend(where)
 
     def states(mods, item):
         # judged by any module that assessed it (the union); else an error of a covering module; else not assessed
@@ -372,13 +588,15 @@ def _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p=E
     name, entry = lists.get(ep, (None, {}))
     verdict = {"reject": "drop", "held": "held", "passed": "keep"}.get(name)
     by = {r.get("module") for r in entry.get("reasons") or [] if isinstance(r, dict) and r.get("kind") != "execution_error"}
-    return {"hits": hits, "dataset_hits": dataset_hits, "states": states, "verdict": verdict, "by": by,
-            "per_module": {"items": per_module, "assessed": assessed, "errored": errored}}
+    return {"hits": hits, "dataset_hits": dataset_hits, "states": states, "verdict": verdict, "by": by, "positions": positions,
+            "end_s": end_s, "per_module": {"items": per_module, "assessed": assessed, "errored": errored}}
 
 
-def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, registry=None, eef_min_p=EEF_MIN_P):
-    """runs: {subset: run_dir}; registry: the C1 export (modules.json), which says the modules that cover an item.
-    Returns the score document."""
+def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, registry=None, eef_min_p=EEF_MIN_P,
+          boundary_tolerance=BOUNDARY_TOLERANCE_S):
+    """runs: {subset: run_dir}; registry: the C1 export (modules.json), which says the modules that cover an item;
+    boundary_tolerance: how close (seconds) a platform boundary must land on an expected one when the entry sets no
+    ``boundary_tolerance_s``. Returns the score document."""
     if registry is None:
         raise InputError("the registry (modules.json) is needed: it says which modules cover an item")
     idx, meta = expectation_index(expectation, taxonomy)
@@ -405,6 +623,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
     stats = defaultdict(lambda: Counter())
     module_stats = defaultdict(lambda: defaultdict(Counter))  # item -> module -> cells (runs of findings)
     intervals = defaultdict(Counter)
+    boundaries = defaultdict(lambda: defaultdict(lambda: {"n": Counter(), "errs": []}))   # item -> source
     samples = defaultdict(lambda: defaultdict(list))
     units = defaultdict(set)
     episode_level = Counter()
@@ -425,6 +644,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         if made_before_findings(run_dir):
             raise InputError(f"{run_dir} was made before findings (C2 1.0, D59): run the subset again to score it")
         supported, availability = preflight(run_dir)
+        fps = preflight_fps(run_dir)
         recs = {m: module_records(run_dir, m) for m in run_modules(run_dir)}
         lists = final_lists(run_dir)
         # the subset's own findings: they count for the items scored per subset (every episode carries them, one
@@ -441,7 +661,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         for key in keys:
             ep = key[1]
             scored_eps += 1
-            ev = _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p)
+            ev = _episode(ep, recs, lists, availability, dataset_hits, intervals, eef_min_p, fps=fps)
             hits = ev["hits"]
             subset_hits = ev.get("dataset_hits") or {}
             dropped = ev["verdict"] == "drop"
@@ -482,6 +702,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                 if mods:
                     item_modules[item].update(mods)
                 st = ev["states"](mods, item) if mods else []
+                present_cell = None
                 for side in ("present", "absent"):
                     if not sides[side]:
                         continue
@@ -497,6 +718,8 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                     else:
                         cell = _cell(side, hits.get(item, []), sides)
                     units[item].add(sides["unit"])
+                    if side == "present":
+                        present_cell = cell
                     if sides["unit"] == "subset":
                         subset_cells[(item, side)].append((cell, unsupported, flagged_any or any(subset_hits.values()),
                                                            meta[key]["episode_id"]))
@@ -510,6 +733,10 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                             if m in pm["errored"] or m not in pm["assessed"].get(item, set()):
                                 continue
                             module_stats[item][m][_cell(side, pm["items"][item].get(m, []), sides)] += weight(key, item, side)
+                # by position: the entries that say where, against where the findings put themselves, per source
+                if sides.get("positions") and sides["unit"] != "subset":
+                    _score_boundaries(boundaries[item], sides["positions"], ev["positions"].get(item, {}), fps,
+                                      boundary_tolerance, assessed=present_cell in ("tp", "fn"), end_s=ev["end_s"])
         # subset-level items: one cell per subset and side, the strongest outcome among its episodes
         for (item, side), cells in subset_cells.items():
             kind = next(k for k in _SUBSET_ORDER[side] if any(c[0] == k for c in cells))
@@ -549,6 +776,10 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
             # P19: how many of the item's findings say where in the episode (design doc 17 §6.3)
             n, w = intervals[iid]["findings"], intervals[iid]["with_interval"]
             row["intervals"] = {"findings": n, "with_interval": w, "share": _ratio(w, n)}
+        if boundaries.get(iid):
+            # by position, per source: the dataset's own labels surfaced are not a detection
+            row["boundaries"] = {"tolerance_s": boundary_tolerance, "ladder_s": list(BOUNDARY_LADDER),
+                                 **{src: _boundary_row(boundaries[iid][src]) for src in BOUNDARY_SOURCES}}
         if iid in controls:
             cs = control_stats.get(iid, Counter())
             row["control"] = {"pass": _r(cs["pass"]), "fail": _r(cs["fail"]), "pass_rate": _ratio(cs["pass"], cs["pass"] + cs["fail"]),
@@ -564,7 +795,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         "set": expectation.get("set"), "set_version": expectation.get("set_version"),
         "expectation_schema": expectation.get("schema_version"),
         "taxonomy_version": taxonomy.get("taxonomy_version"), "map_version": fmap.get("version") or fmap.get("schema_version"),
-        "by_lineage": by_lineage,
+        "by_lineage": by_lineage, "boundary_tolerance_s": boundary_tolerance,
         "episodes": {"expected": len(idx), "scored": scored_eps, "subsets": len(subsets), "runs": len([s for s in subsets if s in runs]),
                      "missing_runs": missing},
         "episode_level": el,
@@ -629,6 +860,25 @@ def markdown(doc, regressions=None):
         er = r["error"]["present"] + r["error"]["absent"]
         L.append(f"| {iid} | {r['name']} | {r['kind']} | {r.get('unit', 'episode')} | {r['present']} | {r['absent']} | {r['tp']} | {r['fp']} | {r['fn']} | {r['tn']} | "
                  f"{_fmt(r['precision'])} | {_fmt(r['recall'])} | {_fmt(r.get('recall_end_to_end'))} | {_fmt(r['recall_any'])} | {na} | {er} |")
+    bnd = [(iid, r) for iid, r in doc["items"].items() if r.get("boundaries")]
+    if bnd:
+        lad = bnd[0][1]["boundaries"].get("ladder_s") or list(BOUNDARY_LADDER)
+        L.append(f"\n**Boundaries** (by position, tolerance {doc.get('boundary_tolerance_s', BOUNDARY_TOLERANCE_S)} s unless the entry says; "
+                 "declared = the dataset's own labels surfaced, detected = measured; recall over every expected boundary of the scored episodes, "
+                 "recall (assessed) over the episodes the platform judged the item on; a boundary where the recording stops is nobody's "
+                 "and is left out of both sides)")
+        L.append("| item | source | episodes (reported) | expected | matched | " + " | ".join(f"≤{x} s" for x in lad)
+                 + " | extra | precision | recall | recall (assessed) | median err | p90 err |")
+        L.append("|---|---|---|---|---|" + "---|" * len(lad) + "---|---|---|---|---|---|")
+        for iid, r in bnd:
+            b = r["boundaries"]
+            for src in BOUNDARY_SOURCES:
+                s = b[src]
+                at = " | ".join(str(s["at"].get(str(x), 0)) for x in lad)
+                nc = f" ({s['episodes_without_clock']} without fps)" if s.get("episodes_without_clock") else ""
+                ends = f" (+{s['at_episode_end']} at the end)" if s.get("at_episode_end") else ""
+                L.append(f"| {iid} | {src} | {s['episodes']} ({s['episodes_reported']}){nc} | {s['expected']}{ends} | {s['matched']} | {at} | {s['extra']} | "
+                         f"{_fmt(s['precision'])} | {_fmt(s['recall'])} | {_fmt(s['recall_assessed'])} | {_sec(s['median_err_s'])} | {_sec(s['p90_err_s'])} |")
     ctl = [(iid, r) for iid, r in doc["items"].items() if "control" in r and (r["control"]["pass"] or r["control"]["fail"])]
     if ctl:
         L.append("\n**Controls** (must not be reported)")
@@ -650,6 +900,10 @@ def markdown(doc, regressions=None):
 
 def _fmt(v):
     return "–" if v is None else f"{v:.2f}"
+
+
+def _sec(v):
+    return "–" if v is None else f"{v:.2f} s"
 
 
 # ---------------------------------------------------------------- cli
@@ -694,6 +948,9 @@ def main(argv=None):
     ap.add_argument("--require-all-runs", action="store_true", help="exit 2 when a subset of the expectation has no run")
     ap.add_argument("--eef-min-p", type=float, default=EEF_MIN_P,
                     help="the EEF module's opinions count as found from this inconsistency confidence on (default 0.7)")
+    ap.add_argument("--boundary-tolerance", type=float, default=BOUNDARY_TOLERANCE_S,
+                    help="a platform boundary counts as an expected one within this many seconds, unless the entry sets "
+                         "boundary_tolerance_s (default 1.5)")
     a = ap.parse_args(argv)
     try:
         exp = load_json(a.expectation)
@@ -710,7 +967,8 @@ def main(argv=None):
         if not runs:
             raise InputError("no run directories: pass --runs-map / --run")
         registry = load_json(a.registry) if a.registry and os.path.exists(a.registry) else None
-        doc = score(exp, tax, fmap, runs, by_lineage=a.by_lineage, registry=registry, eef_min_p=a.eef_min_p)
+        doc = score(exp, tax, fmap, runs, by_lineage=a.by_lineage, registry=registry, eef_min_p=a.eef_min_p,
+                    boundary_tolerance=a.boundary_tolerance)
     except InputError as ex:
         print(f"error: {ex}", file=sys.stderr)
         return 2

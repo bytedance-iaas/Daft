@@ -27,9 +27,12 @@ def validate_info(info: dict, dataset_dir: str = "<unknown>") -> None:
         raise IngestValidationError(
             f"{dataset_dir}: info.json fps 非法: {info['fps']!r}(应为正数)")
     if "action" not in info["features"]:
-        raise IngestValidationError(
-            f"{dataset_dir}: features 里没有 'action'(机器人数据必须有动作通道);"
-            f"现有 features: {sorted(info['features'])}")
+        # 拆成多列的 action(Galaxea:action.left_arm / action.left_gripper …)读取时拼成一列(split_features)
+        from .split_features import composition
+        if "action" not in composition(info["features"]):
+            raise IngestValidationError(
+                f"{dataset_dir}: features 里没有 'action'(机器人数据必须有动作通道);"
+                f"现有 features: {sorted(info['features'])}")
 
 
 def validate_episode_row(row: dict) -> None:

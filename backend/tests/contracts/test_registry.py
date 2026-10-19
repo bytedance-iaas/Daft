@@ -14,8 +14,8 @@ from curation.contracts import schemas
 
 def test_modules_in_block_and_stage_order():
     assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
-                       "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
-                       "camera_defects", "duplicate_check")
+                       "declared_steps", "step_detection", "visual_quality", "video_action_sync", "eef_video_consistency",
+                       "task_success", "camera_defects", "duplicate_check")
     for block, stages in M.BLOCKS.items():
         order = [stages.index(m.stage) for m in M.by_block(block)]
         assert order == sorted(order), f"the {block} block's modules must follow its stage order"
@@ -179,15 +179,15 @@ def test_p20_items_have_codes():
     covered = {item for m in M.MODULES for item in m.covers}
     assert {"LABEL-2", "IMG-3", "TASK-11", "AV-3", "MV-3", "ACT-6"} <= covered
     assert "LABEL-1" not in covered
-    # 8.9: the idle edges moved to TASK-11; nothing measures the step boundaries (TASK-1) yet
-    assert "TASK-1" not in covered
+    # 8.9: the idle edges moved to TASK-11; 8.11: declared_steps surfaces the dataset's own steps (TASK-1)
+    assert "TASK-1" in covered and "TASK-1" not in M.get("motion_quality").covers
 
 
 def test_the_eef_module_gives_opinions():
     """D49: one module, CPU then model; 5.0 (design doc 25 §7.3, D81): opinions with a confidence - nothing it
     reports rejects, a conflict between its channels is asked on eef_check. 7.0 (D90): the codes it no longer
     reports are gone from the catalogue."""
-    assert M.native_ids() == ("data_integrity", "eef_video_consistency", "duplicate_check")
+    assert M.native_ids() == ("data_integrity", "declared_steps", "step_detection", "eef_video_consistency", "duplicate_check")
     spec = M.get("eef_video_consistency")
     assert (spec.block, spec.stage) == ("vlm", "vlm") and {"eef_input", "video"} <= spec.needs
     assert spec.depends_on == () and "eef_video_review" not in M.ids()

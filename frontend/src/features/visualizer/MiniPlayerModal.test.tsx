@@ -211,3 +211,68 @@ describe('MiniPlayerModal: the EEF marks over the cameras (design doc 22 §3.3)'
     await waitFor(() => expect(readPrefs().eefOverlay).toMatchObject({ maxGapMs: null }));
   });
 });
+
+describe('the motion strip (design doc 18 §4.6, registry 8.11)', () => {
+  beforeEach(() => {
+    HTMLMediaElement.prototype.canPlayType = (type: string) => (/avc1|av01/.test(type) ? 'probably' : '');
+  });
+
+  it('draws the rest at the edges, the pauses and the stuck joints from the motion readings', async () => {
+    const view = await episode(6);                                   // ep 6: an idle head and a mid pause (mock world)
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    const strip = await screen.findByTestId('vz-motion');
+    expect(strip.querySelectorAll('span.idle_head')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.pause')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.still')).toHaveLength(1);
+    expect(strip.querySelector('span.idle_head')?.getAttribute('title')).toContain(zh.viz.motion.idleHead);
+    // the legend: the step tracks by name, then the strip's colours this episode has - rest (one grey for the still
+    // arm, the edges and the pauses) and, absent here, stuck joints
+    const legend = screen.getByTestId('vz-motion-legend');
+    expect(legend).toHaveAccessibleName(zh.viz.motion.legend);
+    const trackNames = Array.from(screen.getByTestId('vz-progress').querySelectorAll('.steps[title]')).map((el) => el.getAttribute('title'));
+    const levels = (['blocking', 'review', 'info'] as const).filter((lv) => screen.getByTestId('vz-progress').querySelector(`.ev span.${lv}`));
+    expect(Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent)).toEqual([...trackNames, ...levels.map((lv) => zh.viz.motion.findings[lv]), zh.viz.motion.rest]);
+    expect(legend.querySelectorAll('.sw-steps')).toHaveLength(trackNames.length);
+    expect(legend.querySelector('.sw-stuck')).toBeNull();
+    // the step swatch must not be caught by the step row's own rule (it was drawn as a band over the first word)
+    expect(legend.querySelector('.steps')).toBeNull();
+    // every kind of rest is the same grey on the strip; only the tooltip says which
+    expect(strip.querySelector('span.pause')?.getAttribute('title')).toContain(zh.viz.motion.pause);
+  });
+
+  it('draws a stuck joint and a protocol halt in their own reds, both in the legend', async () => {
+    const view = await episode(21);                                  // ep 21: a stuck joint and a declared halt (mock world)
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    const strip = await screen.findByTestId('vz-motion');
+    expect(strip.querySelectorAll('span.stuck')).toHaveLength(1);
+    expect(strip.querySelectorAll('span.stuck_declared')).toHaveLength(1);
+    expect(strip.querySelector('span.stuck_declared')?.getAttribute('title')).toContain('协议停机');
+    const legend = screen.getByTestId('vz-motion-legend');
+    const items = Array.from(legend.querySelectorAll('.item')).map((el) => el.textContent);
+    expect(items.slice(-2)).toEqual([zh.viz.motion.stuck, zh.viz.motion.stuckDeclared]);
+  });
+
+  it('draws nothing when the motion check has no rest readings', async () => {
+    const view = await episode(7);                                   // ep 7: no idle, no pause
+    renderWithProviders(
+      <StrictMode>
+        <Harness view={view} />
+      </StrictMode>,
+    );
+    await screen.findByTestId('vz-progress');
+    expect(screen.queryByTestId('vz-motion')).toBeNull();
+    // the legend then names the step tracks alone: no grey, no red
+    const legend = screen.getByTestId('vz-motion-legend');
+    expect(legend.querySelectorAll('.sw-steps').length).toBeGreaterThan(0);
+    expect(legend.querySelector('.sw-rest')).toBeNull();
+    expect(legend.querySelector('.sw-stuck')).toBeNull();
+  });
+});

@@ -4029,6 +4029,15 @@ export interface components {
                     supported: boolean;
                     reason?: string | null;
                 }[];
+                /** @description LeRobot: a stream the dataset splits over several columns (Galaxea: action.left_arm, action.left_gripper … with no top-level action) and the reader composes (ingest.split_features): the columns taken, in reading order; the ones left out as rates or sensor readings; the suffixes action and observation.state share (first in both, so command and reading align by index); the composed width. Absent when nothing is split */
+                composed_streams?: {
+                    [key: string]: {
+                        columns: string[];
+                        left_out: string[];
+                        paired: string[];
+                        dim: number;
+                    };
+                };
                 /** @description mcap: the topics in the first episode file's summary; which of them are cameras and curves is the dataset's field mapping (C7) */
                 topics?: {
                     topic: string;

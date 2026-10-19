@@ -38,7 +38,7 @@ import { PlayerClock } from './clock';
 import { fetchVizDisplay, prefetchVizEpisode, saveVizDisplay, useVizEpisode, useVizModel, useVizSeries, type VizRef } from './data';
 import { OverlayGateButton, OverlayMenu, type OverlayGate, type UnavailableCamera } from './OverlayMenu';
 import { SidePanel, type OverlaySide } from './SidePanel';
-import { Progress, Transport, type Evidence, type TimelineInfo } from './Transport';
+import { Progress, Transport, type Evidence, type MotionSeg, type TimelineInfo } from './Transport';
 import { useClockValue } from './useClock';
 import './visualizer.css';
 
@@ -75,6 +75,8 @@ export interface PlayerProps {
   onNextEpisode?: () => void;
   /** findings on this episode (mini) */
   evidence?: readonly Evidence[];
+  /** the motion strip under the findings (mini): from the motion check's readings */
+  motion?: readonly MotionSeg[];
   focusEvidence?: string | null;
   onFocusEvidence?: (id: string) => void;
   /** episode seconds to start at (a finding's start) */
@@ -168,6 +170,7 @@ function PlayerView({
   onPrevEpisode,
   onNextEpisode,
   evidence = [],
+  motion = [],
   focusEvidence = null,
   onFocusEvidence,
   startAt = null,
@@ -820,6 +823,7 @@ function PlayerView({
             others={otherTracks}
             evidence={evidence}
             events={ep.annotations.events}
+            motion={motion}
             focusEvidence={focusEvidence}
             onFocusEvidence={focusEv}
           />

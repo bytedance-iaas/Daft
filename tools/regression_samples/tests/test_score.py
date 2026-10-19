@@ -63,8 +63,9 @@ def record2(ep, module, findings=(), unassessable=(), status="ok"):
             "evidence": [], "elapsed_s": 0.1, "error": None}
 
 
-def write_run2(root, records, lists=None, dataset_findings=None, availability=None, supported=True):
-    """A run directory of findings: parts, the final lists and a report 2.0 of revision 1."""
+def write_run2(root, records, lists=None, dataset_findings=None, availability=None, supported=True, fps=None):
+    """A run directory of findings: parts, the final lists and a report 2.0 of revision 1 (``fps``: what the
+    preflight says the dataset runs at)."""
     os.makedirs(root, exist_ok=True)
     by_module = {}
     for r in records:
@@ -85,14 +86,16 @@ def write_run2(root, records, lists=None, dataset_findings=None, availability=No
     with open(os.path.join(rev, "report.json"), "w", encoding="utf-8") as fh:
         json.dump(report, fh)
     pre = {"format": {"supported": supported}, "modules": [{"id": m, "availability": a} for m, a in (availability or {}).items()]}
+    if fps:
+        pre["dataset"] = {"fps": fps}
     with open(os.path.join(root, "preflight.json"), "w", encoding="utf-8") as fh:
         json.dump(pre, fh)
     return root
 
 
-def score2(tmp_path, exp, records, by_lineage=False, **kw):
+def score2(tmp_path, exp, records, by_lineage=False, tolerance=S.BOUNDARY_TOLERANCE_S, **kw):
     run = write_run2(str(tmp_path / "run2"), records, **kw)
-    return S.score(exp, TAXONOMY, FMAP, {SUBSET: run}, registry=REGISTRY, by_lineage=by_lineage)
+    return S.score(exp, TAXONOMY, FMAP, {SUBSET: run}, registry=REGISTRY, by_lineage=by_lineage, boundary_tolerance=tolerance)
 
 
 def decode_failed(ep, camera=None):
@@ -110,7 +113,7 @@ def test_a_run_of_findings_is_scored_from_the_findings_themselves(tmp_path):
     # registry 7.1 (D93): every module that decodes the videos covers FILE-4 too
     assert row["modules"] == ["data_integrity", "task_success", "video_action_sync", "visual_quality"]
     assert row["mapped"] is True
-    assert doc["schema_version"] == "2.0"
+    assert doc["schema_version"] == "2.1"
     assert row["by_module"]["data_integrity"]["precision"] == 0.5
 
 
@@ -213,6 +216,116 @@ def test_intervals_are_counted_per_item(tmp_path):
             record2(1, "timestamp_check", [finding("gap", "STRM-3")])]
     row = score2(tmp_path, exp, recs)["items"]["STRM-3"]
     assert row["intervals"] == {"findings": 2, "with_interval": 1, "share": 0.5}
+
+
+# ---------------------------------------------------------------- boundaries (by position, per source)
+
+STEPS = [{"start_frame": 0, "end_frame": 19, "step": "reach"}, {"start_frame": 20, "end_frame": 49, "step": "grasp"},
+         {"start_frame": 50, "end_frame": 79, "step": "place"}]
+
+
+def _declared(code, **pos):
+    return finding(code, "TASK-1", readings={"source": "declared"}, **pos)
+
+
+def test_positions_of_an_entry_or_a_finding():
+    # inclusive end frames at 10 fps: the end of one step is the start of the next, the episode's start is no boundary
+    assert S.positions_of({"intervals": STEPS}, 10.0) == ([2.0, 5.0, 8.0], False)
+    assert S.positions_of({"intervals": [{"start_s": 0.0, "end_s": 29.0}, {"start_s": 32.0, "end_s": 66.7}]}, None) == ([29.0, 32.0, 66.7], False)
+    assert S.positions_of({"intervals": STEPS}, None) == ([], True)              # frames without a clock
+    # a task end is one boundary, at its start; a point range is one; a range is two; frames fall back on the fps
+    assert S.positions_of({"value": "task_end", "time_s": [54.717, 56.7], "frames": [3283, 3401]}, 60.0) == ([54.717], False)
+    assert S.positions_of({"time_s": [5.0, 5.0]}, None) == ([5.0], False)
+    assert S.positions_of({"frames": [20, 49]}, 10.0) == ([2.0, 5.0], False)
+    assert S.positions_of({"frames": [20, 49]}, None) == ([], True)
+    assert S.positions_of({"at_s": 3.5}, None) == ([3.5], False)
+    assert S.positions_of({"code": "x"}, 10.0) == ([], False)
+    assert S.finding_source({"readings": {"source": "declared"}}) == "declared"
+    assert S.finding_source({"readings": {}}) == "detected" and S.finding_source({}) == "detected"
+
+
+def test_boundaries_match_nearest_first_one_to_one():
+    assert S.match_boundaries([2.0, 5.0, 8.0], [2.4, 4.9, 6.5], 1.0) == [0.1, 0.4]
+    assert S.match_boundaries([5.0], [4.8, 5.1], 0.3) == [0.1]                   # the second platform boundary is extra
+    assert S.match_boundaries([], [1.0], 1.0) == [] and S.match_boundaries([1.0], [], 1.0) == []
+
+
+def test_boundaries_are_scored_by_position_and_per_source(tmp_path):
+    """TASK-1 (P0): the steps a dataset declares, surfaced by ``declared_steps`` (readings.source = declared), score on
+    their own track; what a module measures scores as detected, against the same expected boundaries. The entry's
+    ``boundary_tolerance_s`` wins over the default."""
+    exp = expectation(episode(0, phenomena=[{"item": "TASK-1", "intervals": STEPS}]),
+                      episode(1, phenomena=[{"item": "TASK-1", "value": "task_end", "time_s": [5.0, 6.0], "frames": [50, 60],
+                                             "boundary_tolerance_s": 0.3}]))
+    recs = [record2(0, "declared_steps", [_declared("step_declared", frames=[0, 19]), _declared("step_declared", frames=[20, 49]),
+                                          _declared("step_declared", frames=[50, 79])]),
+            record2(0, "motion_quality", [finding("step_detected", "TASK-1", time_s=[2.4, 2.4]),
+                                          finding("step_detected", "TASK-1", time_s=[9.9, 9.9])]),
+            record2(1, "declared_steps", [_declared("task_end_declared", time_s=[5.0, 5.0], frames=[50, 50])]),
+            record2(1, "motion_quality", [finding("step_detected", "TASK-1", time_s=[5.2, 5.2])])]
+    doc = score2(tmp_path, exp, recs, fps=10)
+    row = doc["items"]["TASK-1"]
+    assert (row["tp"], row["fn"]) == (2, 0)                                       # presence alone would call this solved
+    b = row["boundaries"]
+    assert b["tolerance_s"] == 1.5 and b["ladder_s"] == [0.25, 0.5, 1.0]
+    d = b["declared"]
+    assert (d["episodes"], d["episodes_reported"], d["expected"], d["matched"], d["extra"]) == (2, 2, 4, 4, 0)
+    assert d["at"] == {"0.25": 4, "0.5": 4, "1.0": 4} and d["recall"] == 1 and d["precision"] == 1
+    assert d["median_err_s"] == 0 and d["p90_err_s"] == 0 and d["episodes_without_clock"] == 0
+    m = b["detected"]
+    # episode 0: 2.4 lands on 2.0 (0.4 s), 9.9 lands on nothing (1.9 s past the last boundary); episode 1: 5.2 on 5.0 within
+    # its own 0.3 s
+    assert (m["expected"], m["matched"], m["missed"], m["extra"]) == (4, 2, 2, 1)
+    assert m["at"] == {"0.25": 1, "0.5": 2, "1.0": 2}
+    assert m["precision"] == round(2 / 3, 4) and m["recall"] == 0.5 and m["recall_assessed"] == 0.5
+    assert m["median_err_s"] == 0.4 and m["p90_err_s"] == 0.4
+    assert doc["schema_version"] == "2.1" and doc["boundary_tolerance_s"] == 1.5
+    md = S.markdown(doc)
+    assert "**Boundaries**" in md and "| TASK-1 | declared | 2 (2) | 4 | 4 | 4 | 4 | 4 | 0 |" in md
+    assert "| TASK-1 | detected | 2 (2) | 4 | 2 | 1 | 2 | 2 | 1 | 0.67 | 0.50 | 0.50 | 0.40 s | 0.40 s |" in md
+    # a tighter default tolerance: episode 0's 0.4 s miss drops out, episode 1 keeps its own 0.3 s
+    m2 = score2(tmp_path, exp, recs, fps=10, tolerance=0.25)["items"]["TASK-1"]["boundaries"]["detected"]
+    assert (m2["matched"], m2["extra"]) == (1, 2)
+
+
+def test_the_episodes_end_is_nobodys_boundary(tmp_path):
+    """The last step ends where the recording stops (HABIT: 22 of 65 expected boundaries); no detector can find that,
+    so a boundary within half a frame of the episode's length - read from a record's ``n_frames`` (else a
+    ``duration_s``) - leaves both sides and is counted apart."""
+    exp = expectation(episode(0, phenomena=[{"item": "TASK-1", "intervals": STEPS}]),              # 80 frames: ends at 8.0 s
+                      episode(1, phenomena=[{"item": "TASK-1", "intervals": [{"start_s": 0.0, "end_s": 3.0}, {"start_s": 3.0, "end_s": 6.0}]}]))
+    r0 = record2(0, "declared_steps", [_declared("step_declared", frames=[0, 19]), _declared("step_declared", frames=[20, 49]),
+                                       _declared("step_declared", frames=[50, 79])])
+    r0["details"] = {"n_frames": 80}
+    d0 = record2(0, "motion_quality", [finding("step_detected", "TASK-1", time_s=[2.1, 2.1]), finding("step_detected", "TASK-1", time_s=[7.98, 7.98])])
+    r1 = record2(1, "timestamp_check")
+    r1["readings"] = {"duration_s": 6.0}
+    d1 = record2(1, "motion_quality", [finding("step_detected", "TASK-1", time_s=[3.2, 3.2])])
+    b = score2(tmp_path, exp, [r0, d0, r1, d1], fps=10)["items"]["TASK-1"]["boundaries"]
+    # episode 0 keeps 2.0 and 5.0 (8.0 is the end), episode 1 keeps 3.0 (6.0 is the end)
+    assert (b["declared"]["expected"], b["declared"]["at_episode_end"], b["declared"]["matched"], b["declared"]["extra"]) == (3, 2, 2, 0)
+    assert S.episode_end_s({"declared_steps": {0: r0}}, 0, 10.0) == 8.0 and S.episode_end_s({"t": {1: r1}}, 1, None) == 6.0
+    assert S.episode_end_s({"m": {0: d0}}, 0, 10.0) is None
+    m = b["detected"]
+    assert (m["expected"], m["at_episode_end"], m["matched"], m["extra"]) == (3, 2, 2, 0)      # 7.98 is the end too, not extra
+    assert m["recall"] == round(2 / 3, 4) and m["precision"] == 1
+    assert "| TASK-1 | declared | 2 (1) | 3 (+2 at the end) | 2 |" in S.markdown(score2(tmp_path, exp, [r0, d0, r1, d1], fps=10))
+    # without a record that says how long the episode is, nothing is left out (and 7.98 then counts as finding 8.0)
+    r0b = dict(r0, details={})
+    b2 = score2(tmp_path / "again", exp, [r0b, d0, d1], fps=10)["items"]["TASK-1"]["boundaries"]
+    assert (b2["declared"]["expected"], b2["declared"]["at_episode_end"], b2["detected"]["matched"], b2["detected"]["extra"]) == (5, 0, 3, 0)
+
+
+def test_frame_positions_need_the_runs_fps_and_unassessed_episodes_stay_in_the_denominator(tmp_path):
+    exp = expectation(episode(0, phenomena=[{"item": "TASK-1", "intervals": STEPS}]),
+                      episode(1, phenomena=[{"item": "TASK-1", "intervals": [{"start_s": 0.0, "end_s": 3.0}]}]))
+    recs = [record2(0, "declared_steps", [_declared("step_declared", time_s=[0.0, 2.0]), _declared("step_declared", time_s=[2.0, 8.0])]),
+            record2(1, "declared_steps", unassessable=["TASK-1"])]
+    b = score2(tmp_path, exp, recs)["items"]["TASK-1"]["boundaries"]["declared"]        # no fps in the preflight
+    assert b["episodes_without_clock"] == 1 and b["expected"] == 1 and b["expected_not_assessed"] == 1
+    assert (b["matched"], b["extra"]) == (0, 2) and b["recall"] == 0 and b["recall_assessed"] is None
+    # an expectation without positions scores by presence only
+    assert "boundaries" not in score2(tmp_path, expectation(episode(0, phenomena=["TASK-1"])), recs[:1])["items"]["TASK-1"]
 
 
 def test_a_control_fails_when_a_finding_reports_its_guarded_item(tmp_path):

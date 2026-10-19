@@ -1165,7 +1165,7 @@ export function mainPlan(): Plan {
     vlm_parallelism: 64,
     limits: { cpu_concurrency: { value: 30, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
     stages: [
-      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected' },
+      { id: 'numeric', block: 'cpu', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality', 'declared_steps', 'step_detection'], episodes: 'selected' },
       { id: 'frame', block: 'cpu', after: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'selected' },
       { id: 'duplicate', block: 'cpu', after: 'frame', kind: 'cpu', command: 'check', concurrency: 1, modules: ['duplicate_check'], episodes: 'selected' },
       { id: 'vlm', block: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success', 'camera_defects'], episodes: 'selected', gates: { episode: 32, probe: 64 }, merge: { strategy: 'none', groups: [] } },
@@ -1274,6 +1274,8 @@ function errorRecord(ep: number, module: string, incident: { step: string; cause
 // The main task's per-episode readings, shaped like the details the checks write (the Episode tab renders them):
 // four episodes with a stuck actuator, six with a sync reading worth a look.
 export const STUCK = [8, 21, 34, 46];
+/** of those, one whose second halt lies inside a declared human step (stuck_declared, 8.13) */
+export const STUCK_DECLARED = [21];
 export const SYNC_NOTE: Record<number, 'annotated' | 'no_motion' | 'suspect' | 'undecidable'> = { 12: 'annotated', 20: 'no_motion', 26: 'suspect', 35: 'undecidable', 5: 'undecidable', 41: 'undecidable' };
 
 /** A small deterministic generator (the mockups' rng). */
@@ -1465,6 +1467,7 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
   const sync = SYNC_NOTE[ep];
   const motionFindings: Finding[] = [];
   if (STUCK.includes(ep)) motionFindings.push(finding('motion_quality', 'stuck', '关节 3 从第 40 帧到第 95 帧卡住不动', { frames: [40, 95], scope: { channel: 'joint_3' } }));
+  if (STUCK_DECLARED.includes(ep)) motionFindings.push(finding('motion_quality', 'stuck_declared', '关节 3 第 120–150 帧指令在变、读数不动，整段都在数据集标注的人的分步里，是协议停机，不算故障', { frames: [120, 150], scope: { channel: 'joint_3' } }));
   if (ep % 3 === 0) motionFindings.push(finding('motion_quality', 'idle_opening', '开头空转 1.2 秒才开始动作', { time_s: [0, 1.2] }));
   const syncFindings: Finding[] =
     sync === 'annotated'
@@ -1481,7 +1484,14 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
     }),
     motion_quality: record(ep, 'motion_quality', motion.details, {
       findings: motionFindings,
-      readings: { score: motion.score },
+      readings: {
+        score: motion.score,
+        // 8.11: the rest stretches the player's motion strip draws
+        idle_head_s: ep % 3 === 0 ? 1.2 : 0,
+        idle_tail_s: ep % 5 === 1 ? 0.8 : 0,
+        idle_mid_segments: ep % 4 === 2 ? [{ start_frame: 50, start_s: 5, dur_s: 1.5 }] : [],
+        still_segments: ep % 3 === 0 ? [{ start_s: 0, end_s: 1.2 }] : [],
+      },
       unassessable: [{ item: 'ACT-4', reason: 'not_applicable', message_zh: '速度型指令和位置读数含义不同，执行器饱和无从比较' }],
     }),
     visual_quality: record(ep, 'visual_quality', vis.details, {
@@ -1489,6 +1499,25 @@ function recordsOf(ep: number, quotaRun = false): Record<string, ResultRecord> {
       readings: { score: vis.score },
     }),
     video_action_sync: record(ep, 'video_action_sync', syncDetails(ep), { findings: syncFindings }),
+    // 8.11: the steps the dataset declares (every third episode has none)
+    declared_steps:
+      ep % 3 === 2
+        ? record(ep, 'declared_steps', { sources: [], reason: '数据集没有逐帧的分步或模式标注' }, { unassessable: [{ item: 'TASK-1', reason: 'not_applicable', message_zh: '数据集没有逐帧的分步或模式标注' }] })
+        : record(ep, 'declared_steps', { sources: ['index_table:low_level_task_index'] }, {
+            findings: [
+              finding('declared_steps', 'step_declared', '第 1 步「伸手」：第 1–60 帧', { frames: [0, 59], time_s: [0, 6], readings: { source: 'declared', track: 'low_level_task_index', step: 1, n_steps: 2, label: '伸手' } }),
+              finding('declared_steps', 'step_declared', '第 2 步「放下」：第 61–120 帧', { frames: [60, 119], time_s: [6, 12], readings: { source: 'declared', track: 'low_level_task_index', step: 2, n_steps: 2, label: '放下' } }),
+            ],
+            readings: { tracks: [{ key: 'low_level_task_index', name: '机器人分步', format: 'index_table', primary: true, n_steps: 2, segments: [{ start_s: 0, end_s: 6, frames: [0, 59], label: '伸手' }, { start_s: 6, end_s: 12, frames: [60, 119], label: '放下' }] }] },
+          }),
+    // 8.12: the boundaries measured from the numbers (the detected track): a pause, a gripper event
+    step_detection: record(ep, 'step_detection', { min_score: 0.3, pause_ref_s: 3, fps: 10, gripper_dims: [6], stream: 'state', n_frames: 120 }, {
+      findings: [
+        finding('step_detection', 'step_candidate', '候选边界 1：5.8 秒（停了 1.2 秒）', { frames: [58, 58], time_s: [5.8, 5.8], readings: { source: 'detected', cue: 'pause', score: 0.4, dur_s: 1.2 } }),
+        finding('step_detection', 'step_candidate', '候选边界 2：9.0 秒（夹爪松开）', { frames: [90, 90], time_s: [9, 9], readings: { source: 'detected', cue: 'release', score: 0.8 } }),
+      ],
+      readings: { n_candidates: 3, n_reported: 2, stream: 'state', cues: { pause: 2, release: 1 }, candidates: [{ frame: 58, t_s: 5.8, cue: 'pause', score: 0.4, dur_s: 1.2 }, { frame: 90, t_s: 9, cue: 'release', score: 0.8, column: 6 }, { frame: 101, t_s: 10.1, cue: 'pause', score: 0.1, dur_s: 0.3 }] },
+    }),
   };
   if (quotaRun) {
     records.task_success = errorRecord(ep, 'task_success', { step: 'probe', cause: '429 QuotaExceeded', call_kind: 'probe', attempts: 3 });
@@ -1840,6 +1869,8 @@ function mainOwnSummary(id: string, quotaRun: boolean): Record<string, unknown> 
 const TABLES: Record<string, Section['tables']> = {
   timestamp_check: [{ id: 'timestamp_check', rows: 50, file: 'tables/timestamp_check.parquet' }],
   motion_quality: [{ id: 'motion_quality', rows: 50, file: 'tables/motion_quality.parquet' }],
+  declared_steps: [],
+  step_detection: [],
   visual_quality: [{ id: 'visual_quality', rows: 150, file: 'tables/visual_quality.parquet' }],
   video_action_sync: [{ id: 'video_action_sync', rows: 150, file: 'tables/video_action_sync.parquet' }],
   task_success: [{ id: 'task_success', rows: 50, file: 'tables/task_success.parquet' }],

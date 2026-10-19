@@ -336,10 +336,65 @@ class StageRun:
                         column(row, "proprio_space", "joint"), row["embodiment_id"],
                         column(row, "stuck_strategy", "auto"),
                         column(row, "semantics_extras", "{}"))
+                    self._mark_declared_halts(ep, out[m])
+                elif m == "declared_steps":
+                    out[m] = episode_checks.result_to_struct(self._declared_result(ep))
+                elif m == "step_detection":
+                    from . import step_detection as sd
+                    pm = self.o.params.get(m) or {}
+                    dims = sd.gripper_dims_of(column(row, "semantics_extras", "{}"), row["embodiment_id"], reg)
+                    out[m] = episode_checks.result_to_struct(sd.detect(
+                        row["action"], row["proprio_state"], row["fps"], dims,
+                        min_score=float(pm.get("min_score", sd.MIN_SCORE)),
+                        pause_ref_s=float(pm.get("pause_ref_s", sd.PAUSE_REF_S))))
             except Exception as e:  # noqa: BLE001 - one episode's failure stays its own
                 out[m] = None
                 logs[m].add("internal", cause=f"{type(e).__name__}: {e}")
         return out
+
+    def _declared_result(self, ep: int):
+        """The declared steps of one episode (8.11), read once per episode: the module's own answer, and the
+        human segments the motion check's stuck findings are judged against (8.13)."""
+        cache = getattr(self, "_declared_cache", None)
+        if cache is not None and cache[0] == ep:
+            return cache[1]
+        modes = (self.o.params.get("declared_steps") or {}).get("post_task_modes") or None
+        res = self._declared().episode(ep, post_task_modes=modes)
+        self._declared_cache = (ep, res)
+        return res
+
+    def _mark_declared_halts(self, ep: int, struct: dict | None) -> None:
+        """8.13: a stuck stretch lying entirely inside a declared human segment (HABIT's human_role_subtask_index,
+        an intervention flag) is the protocol halting the robot, not a fault - the answer marks it so the finding
+        becomes ``stuck_declared``. Only datasets that declare such segments are read for it."""
+        if not struct or not struct.get("detail"):
+            return
+        try:
+            det = json.loads(struct["detail"])
+        except (TypeError, ValueError):
+            return
+        if not det.get("stuck_joints"):
+            return
+        from . import declared_steps as ds
+        reader = self._declared()
+        if reader.reason or not any(any(w in str(s.key).lower() for w in ds.HUMAN_TRACK_WORDS)
+                                    or s.format == "bool_segments" for s in reader.sources):
+            return
+        segs = ds.human_segments(self._declared_result(ep).detail)
+        if segs and ds.mark_declared_halts(det["stuck_joints"], segs):
+            struct["detail"] = json.dumps(det, ensure_ascii=False, default=str)
+
+    def _declared(self):
+        """The dataset's declared-step reader (8.11), built on first use; a container format gets a reader
+        that only says why it reads nothing."""
+        if getattr(self, "_declared_reader", None) is None:
+            from . import declared_steps as ds
+            if self.o.fmt in ("mcap", "lance"):
+                self._declared_reader = ds.DeclaredSteps(input_dir=self.o.input_dir, info={},
+                                                         reason=f"{self.o.fmt} 数据集的分步标注暂不支持")
+            else:
+                self._declared_reader = ds.DeclaredSteps.open(self.o.input_dir)
+        return self._declared_reader
 
     def _frame(self, ep: int, row: dict, logs) -> dict:
         shared = IncidentLog()

@@ -37,6 +37,7 @@ import os
 from ..contracts import modules as registry_modules
 from . import inputs, lerobot_meta, modparams, source_manifest
 from .errors import InputUnreachable, UsageError
+from ..ingest import split_features
 from .framework import Context, Result
 from .lerobot_meta import Format, MetaError
 
@@ -388,8 +389,14 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
         doc["dataset"]["episode_indices"] = compact(indices)
 
     feats = info.get("features") or {}
-    caps = {"timestamps": "timestamp" in feats, "action": "action" in feats,
-            "state": "observation.state" in feats, "video": bool(cams_with_files),
+    # a stream split over several columns (Galaxea's action.left_arm …) is read composed (ingest.split_features)
+    composed = split_features.composition(feats) if container is None else {}
+    if composed:
+        doc["dataset"]["composed_streams"] = {k: {"columns": c["columns"], "left_out": c["left_out"],
+                                                  "paired": c["paired"], "dim": c["dim"]} for k, c in composed.items()}
+        warnings.extend(split_features.describe(composed))
+    caps = {"timestamps": "timestamp" in feats, "action": "action" in feats or "action" in composed,
+            "state": "observation.state" in feats or "observation.state" in composed, "video": bool(cams_with_files),
             "raw_bytes": True}
     if not meta.cameras:
         video_reason = "the dataset declares no video camera"
@@ -460,6 +467,11 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                 if suggested:
                     notes.append(f"the dataset profile {profile['matched']} suggests "
                                  f"{suggested}")
+        elif spec.id == "declared_steps" and container is not None:
+            entry.update(availability="unsupported",
+                         reason=f"declared steps are read from LeRobot datasets only, not {container['kind']}",
+                         reason_code="format_unsupported_by_module",
+                         reason_args={"format": container["kind"]})
         elif "vlm" in spec.needs and not vlm_backend:
             entry.update(availability="needs_input",
                          reason="no VLM backend chosen; pick one (add one first if there is "
